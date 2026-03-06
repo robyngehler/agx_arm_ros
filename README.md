@@ -460,7 +460,7 @@ cd src/agx_arm_ros
     ros2 topic echo /feedback/arm_status
     ```
 
-4. 主臂关节角度(主臂模式下使用)
+4. 主导臂关节角度(主导臂模式下使用)
 
     ```bash
     ros2 topic echo /feedback/leader_joint_angles
@@ -489,7 +489,7 @@ cd src/agx_arm_ros
 | `/feedback/joint_states` | `sensor_msgs/JointState` | 关节状态 | 始终可用 |
 | `/feedback/tcp_pose` | `geometry_msgs/PoseStamped` | TCP 位姿 | 始终可用 |
 | `/feedback/arm_status` | `agx_arm_msgs/AgxArmStatus` | 机械臂状态 | 始终可用 |
-| `/feedback/leader_joint_angles` | `sensor_msgs/JointState` | 主臂关节角度 | Piper 系列 |
+| `/feedback/leader_joint_angles` | `sensor_msgs/JointState` | 主导臂关节角度 | 主导臂模式 |
 | `/feedback/gripper_status` | `agx_arm_msgs/GripperStatus` | 夹爪状态 | 配置 AgxGripper |
 | `/feedback/hand_status` | `agx_arm_msgs/HandStatus` | 灵巧手状态 | 配置 Revo2 |
 
@@ -497,13 +497,13 @@ cd src/agx_arm_ros
 
 该话题包含机械臂和末端执行器的组合关节状态：
 
-**机械臂关节** (`joint1` ~ `joint6`)
+**机械臂关节** (`joint1` ~ `joint*`)
 
 | 字段 | 说明 |
 |------|------|
 | `position` | 关节角度 (rad) |
-| `velocity` | 0.0 |
-| `effort` | 0.0 |
+| `velocity` | 关节速度 (rad/s) |
+| `effort` | 关节力矩 (Nm) |
 
 **夹爪关节** (`gripper`，需配置 `effector_type=agx_gripper`)
 

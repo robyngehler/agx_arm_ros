@@ -489,7 +489,7 @@ cd src/agx_arm_ros
 | `/feedback/joint_states` | `sensor_msgs/JointState` | Joint states | Always available |
 | `/feedback/tcp_pose` | `geometry_msgs/PoseStamped` | TCP pose | Always available |
 | `/feedback/arm_status` | `agx_arm_msgs/AgxArmStatus` | Arm status | Always available |
-| `/feedback/leader_joint_angles` | `sensor_msgs/JointState` | Leader joint angles | Piper series |
+| `/feedback/leader_joint_angles` | `sensor_msgs/JointState` | Leader joint angles | Leader arm mode |
 | `/feedback/gripper_status` | `agx_arm_msgs/GripperStatus` | Gripper status | AgxGripper configured |
 | `/feedback/hand_status` | `agx_arm_msgs/HandStatus` | Dexterous hand status | Revo2 configured |
 
@@ -497,19 +497,19 @@ cd src/agx_arm_ros
 
 This topic contains combined joint states for the arm and end-effector:
 
-**Arm Joints** (`joint1` ~ `joint6`)
+**Arm Joints** (`joint1` ~ `joint*`)
 | Field | Description |
 |-------|-------------|
 | `position` | Joint angle (rad) |
-| `velocity` | 0.0 |
-| `effort` | 0.0 |
+| `velocity` | Joint velocity (rad/s) |
+| `effort` | Joint torque (Nm) |
 
 **Gripper Joint** (`gripper`, requires `effector_type=agx_gripper`)
 | Field | Description |
 |-------|-------------|
 | `position` | Gripper width (m) |
 | `velocity` | 0.0 |
-| `effort` | Torque (N) |
+| `effort` | Force (N) |
 
 **Dexterous Hand Joints** (requires `effector_type=revo2`)
 
