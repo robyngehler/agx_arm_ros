@@ -334,6 +334,20 @@ cd src/agx_arm_ros
       "$(cat test/nero/test_move_p.yaml)" -1
     ```
 
+3. Linear motion
+
+    ```bash
+    ros2 topic pub /control/move_l geometry_msgs/msg/PoseStamped \
+      "$(cat test/nero/test_move_l.yaml)" -1
+    ```
+
+4. Circular motion (start → middle → end)
+
+    ```bash
+    ros2 topic pub /control/move_c geometry_msgs/msg/PoseArray \
+      "$(cat test/nero/test_move_c.yaml)" -1
+    ```
+
 ### Gripper
 
 1. Gripper control (via `/control/joint_states`)
@@ -444,10 +458,10 @@ cd src/agx_arm_ros
     ros2 topic echo /feedback/arm_status
     ```
 
-4. Master joint angles(For master arm mode)
+4. Leader joint angles(For leader arm mode)
 
     ```bash
-    ros2 topic echo /feedback/master_joint_angles
+    ros2 topic echo /feedback/leader_joint_angles
     ```
 
 5. Gripper status
@@ -473,7 +487,7 @@ cd src/agx_arm_ros
 | `/feedback/joint_states` | `sensor_msgs/JointState` | Joint states | Always available |
 | `/feedback/tcp_pose` | `geometry_msgs/PoseStamped` | TCP pose | Always available |
 | `/feedback/arm_status` | `agx_arm_msgs/AgxArmStatus` | Arm status | Always available |
-| `/feedback/master_joint_angles` | `sensor_msgs/JointState` | Master joint angles | Piper series |
+| `/feedback/leader_joint_angles` | `sensor_msgs/JointState` | Leader joint angles | Piper series |
 | `/feedback/gripper_status` | `agx_arm_msgs/GripperStatus` | Gripper status | AgxGripper configured |
 | `/feedback/hand_status` | `agx_arm_msgs/HandStatus` | Dexterous hand status | Revo2 configured |
 

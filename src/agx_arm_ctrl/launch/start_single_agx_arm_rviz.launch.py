@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import (
-    DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction,
+    DeclareLaunchArgument, IncludeLaunchDescription,
 )
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -9,36 +9,6 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
-
-# arm_type → (description_package, launch_relative_path)
-DESCRIPTION_LAUNCH_MAP = {
-    'piper':   ('piper_description',   'launch/piper_with_gripper/display_xacro.launch.py'),
-    'nero':    ('nero_description',    'launch/display_xacro.launch.py'),
-    'piper_x': ('piper_x_description', 'launch/display_xacro.launch.py'),
-    'piper_h': ('piper_h_description', 'launch/display_xacro.launch.py'),
-    'piper_l': ('piper_l_description', 'launch/display_xacro.launch.py'),
-}
-
-
-def _launch_description(context):
-    """Resolve description launch based on arm_type at runtime."""
-    arm_type = LaunchConfiguration('arm_type').perform(context)
-
-    if arm_type not in DESCRIPTION_LAUNCH_MAP:
-        raise ValueError(
-            f"Unknown arm_type '{arm_type}', "
-            f"valid options: {list(DESCRIPTION_LAUNCH_MAP.keys())}"
-        )
-
-    pkg, launch_rel = DESCRIPTION_LAUNCH_MAP[arm_type]
-    launch_path = os.path.join(get_package_share_directory(pkg), launch_rel)
-
-    return [
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(launch_path),
-            launch_arguments={'gui': 'true'}.items(),
-        )
-    ]
 
 
 def generate_launch_description():
@@ -114,8 +84,19 @@ def generate_launch_description():
         description='TCP offset in x, y, z, roll, pitch, yaw in meters/radians.'
     )
 
-    # description
-    description_launch = OpaqueFunction(function=_launch_description)
+    # description:统一使用 agx_arm_description/launch/display.launch.py
+    description_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('agx_arm_description'),
+                'launch',
+                'display.launch.py',
+            )
+        ),
+        launch_arguments={
+            'arm_type': LaunchConfiguration('arm_type'),
+        }.items(),
+    )
 
     # node
     agx_arm_node = Node(

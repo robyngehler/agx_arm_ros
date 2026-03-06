@@ -334,6 +334,20 @@ cd src/agx_arm_ros
       "$(cat test/nero/test_move_p.yaml)" -1
     ```
 
+3. 直线运动
+
+    ```bash
+    ros2 topic pub /control/move_l geometry_msgs/msg/PoseStamped \
+      "$(cat test/nero/test_move_l.yaml)" -1
+    ```
+
+4. 圆弧运动（起点 → 中间点 → 终点）
+
+    ```bash
+    ros2 topic pub /control/move_c geometry_msgs/msg/PoseArray \
+      "$(cat test/nero/test_move_c.yaml)" -1
+    ```
+
 ### Gripper 夹爪
 
 1. 夹爪控制（通过 `/control/joint_states`控制）
@@ -447,7 +461,7 @@ cd src/agx_arm_ros
 4. 主臂关节角度(主臂模式下使用)
 
     ```bash
-    ros2 topic echo /feedback/master_joint_angles
+    ros2 topic echo /feedback/leader_joint_angles
     ```
 
 5. 夹爪状态
@@ -473,7 +487,7 @@ cd src/agx_arm_ros
 | `/feedback/joint_states` | `sensor_msgs/JointState` | 关节状态 | 始终可用 |
 | `/feedback/tcp_pose` | `geometry_msgs/PoseStamped` | TCP 位姿 | 始终可用 |
 | `/feedback/arm_status` | `agx_arm_msgs/AgxArmStatus` | 机械臂状态 | 始终可用 |
-| `/feedback/master_joint_angles` | `sensor_msgs/JointState` | 主臂关节角度 | Piper 系列 |
+| `/feedback/leader_joint_angles` | `sensor_msgs/JointState` | 主臂关节角度 | Piper 系列 |
 | `/feedback/gripper_status` | `agx_arm_msgs/GripperStatus` | 夹爪状态 | 配置 AgxGripper |
 | `/feedback/hand_status` | `agx_arm_msgs/HandStatus` | 灵巧手状态 | 配置 Revo2 |
 

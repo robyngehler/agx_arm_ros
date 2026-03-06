@@ -132,6 +132,7 @@ class AgxArmRosNode(Node):
         self.agx_arm = AgxArmFactory.create_arm(config)
         self.agx_arm.connect()
         self.is_piper = "piper" in self.arm_type
+        self.is_nero = "nero" in self.arm_type
         self.arm_joint_names = list(config["joint_limits"].keys())
         self.arm_joint_count = self.agx_arm.joint_nums
         self.agx_arm.set_speed_percent(self.speed_percent)
@@ -146,6 +147,8 @@ class AgxArmRosNode(Node):
                 current_version = self._parse_firmware_version(self.firmware['software_version'])
                 if current_version < MIN_SEAMLESS_VERSION:
                     self.is_switch_seamlessly = False
+        elif self.is_nero:
+            self.agx_arm.set_normal_mode()
 
     def _init_effector(self):
         self.gripper: Optional[AgxGripperWrapper] = None
@@ -179,18 +182,17 @@ class AgxArmRosNode(Node):
         self.arm_status_pub = self.create_publisher(
             AgxArmStatus, "/feedback/arm_status", 1
         )
+        self.leader_joint_angles_pub = self.create_publisher(
+            JointState, "/feedback/leader_joint_angles", 1
+        )
+        if self.gripper is not None:
+            self.gripper_status_pub = self.create_publisher(
+                GripperStatus, "/feedback/gripper_status", 1
+            )
         if self.hand is not None:
             self.hand_status_pub = self.create_publisher(
                 HandStatus, "/feedback/hand_status", 1
             )
-        if self.is_piper:
-            self.master_joint_angles_pub = self.create_publisher(
-                JointState, "/feedback/master_joint_angles", 1
-            )
-            if self.gripper is not None:
-                self.gripper_status_pub = self.create_publisher(
-                    GripperStatus, "/feedback/gripper_status", 1
-                )
 
     def _setup_subscribers(self):
         self.create_subscription(
@@ -202,19 +204,18 @@ class AgxArmRosNode(Node):
         self.create_subscription(
             PoseStamped, "/control/move_p", self._move_p_callback, 1
         )
-        if self.is_piper:
-            self.create_subscription(
-                PoseStamped, "/control/move_l", self._move_l_callback, 1
-            )
-            self.create_subscription(
-                PoseArray, "/control/move_c", self._move_c_callback, 1
-            )
-            self.create_subscription(
-                JointState, "/control/move_js", self._move_js_callback, 1
-            )
-            self.create_subscription(
-                MoveMITMsg, "/control/move_mit", self._move_mit_callback, 1
-            )
+        self.create_subscription(
+            PoseStamped, "/control/move_l", self._move_l_callback, 1
+        )
+        self.create_subscription(
+            PoseArray, "/control/move_c", self._move_c_callback, 1
+        )
+        self.create_subscription(
+            JointState, "/control/move_js", self._move_js_callback, 1
+        )
+        self.create_subscription(
+            MoveMITMsg, "/control/move_mit", self._move_mit_callback, 1
+        )
         if self.hand is not None:
             self.create_subscription(
                 HandCmd, "/control/hand", self._hand_cmd_callback, 1
@@ -326,6 +327,8 @@ class AgxArmRosNode(Node):
                     f"Timeout waiting for arm to {action_name} after {timeout} seconds"
                 )
                 return False
+            if self.is_nero:
+                self.agx_arm.set_normal_mode()
             time.sleep(0.01)
         
         joints_status = self.agx_arm.get_joint_enable_status(255)
@@ -357,8 +360,7 @@ class AgxArmRosNode(Node):
                 self._publish_pose()
                 self._publish_arm_status()
                 self._publish_effector_status()
-                if self.is_piper:
-                    self._publish_master_joint_angles()
+                self._publish_leader_joint_angles()
             rate.sleep()
     
     ### publish methods
@@ -398,14 +400,23 @@ class AgxArmRosNode(Node):
         if joint_states is None or joint_states.hz <= 0:
             return
 
+        velocitys = []
+        efforts = []
+        for joint_index in range(1, self.arm_joint_count+1):
+            ms = self.agx_arm.get_motor_states(joint_index)
+            if ms is None:
+                return
+            velocitys.append(ms.msg.velocity)
+            efforts.append(ms.msg.torque)
+
         msg = JointState()
         msg.header.stamp = self._float_to_ros_time(joint_states.timestamp)
         
         joints_data = []
-        # arm 
+        # arm
         joints_data.extend(
-            (joint_name, joint_state, 0.0, 0.0)
-            for joint_name, joint_state in zip(self.arm_joint_names, joint_states.msg)
+            (joint_name, joint_state, velocity, effort)
+            for joint_name, joint_state, velocity, effort in zip(self.arm_joint_names, joint_states.msg, velocitys, efforts)
         )
         # gripper
         joints_data.extend(self._get_gripper_joint_data())
@@ -463,18 +474,18 @@ class AgxArmRosNode(Node):
 
         self.arm_status_pub.publish(msg)
 
-    def _publish_master_joint_angles(self):
-        master_joint_angles = self.agx_arm.get_master_joint_angles()
-        if master_joint_angles is None:
+    def _publish_leader_joint_angles(self):
+        leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+        if leader_joint_angles is None:
             return
 
         msg = JointState()
-        msg.header.stamp = self._float_to_ros_time(master_joint_angles.timestamp)
+        msg.header.stamp = self._float_to_ros_time(leader_joint_angles.timestamp)
         msg.name = self.arm_joint_names
-        msg.position = master_joint_angles.msg
+        msg.position = leader_joint_angles.msg
         msg.velocity = [0.0] * self.arm_joint_count
         msg.effort = [0.0] * self.arm_joint_count
-        self.master_joint_angles_pub.publish(msg)
+        self.leader_joint_angles_pub.publish(msg)
 
     def _publish_gripper_status(self):
         status = self.gripper.get_status()
@@ -624,9 +635,6 @@ class AgxArmRosNode(Node):
         self.is_mit_mode = False
 
     def _move_l_callback(self, msg: PoseStamped):
-        if not self.is_piper:
-            self.get_logger().warn("move_l just piper series supported")
-            return
         if not self._check_can_control():
             return
 
@@ -635,9 +643,6 @@ class AgxArmRosNode(Node):
         self.is_mit_mode = False
 
     def _move_c_callback(self, msg: PoseArray):
-        if not self.is_piper:
-            self.get_logger().warn("move_c just piper series supported")
-            return
         if not self._check_can_control():
             return
 
@@ -648,9 +653,6 @@ class AgxArmRosNode(Node):
         self.is_mit_mode = False
 
     def _move_js_callback(self, msg: JointState):
-        if not self.is_piper:
-            self.get_logger().warn("move_js just piper series supported")
-            return
         if not self._check_can_control():
             return
 
@@ -662,9 +664,6 @@ class AgxArmRosNode(Node):
         self.is_mit_mode = True
 
     def _move_mit_callback(self, msg: MoveMITMsg):
-        if not self.is_piper:
-            self.get_logger().warn("move_mit just piper series supported")
-            return
         if not self._check_can_control():
             return
         
