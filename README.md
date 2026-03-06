@@ -13,8 +13,10 @@
 
 |说明 |文档|
 |---|---|
-|官方can模块的使用|[can_user](./docs/CAN_USER.md)|
+|SDK|[pyAgxArm](https://github.com/agilexrobotics/pyAgxArm)|
+|官方CAN模块的使用|[can_user](./docs/CAN_USER.md)|
 |TCP偏移设置|[tcp_offset](./docs/tcp_offset/TCP_OFFSET.md)|
+|URDF|[URDF](https://github.com/agilexrobotics/agx_arm_urdf)|
 |Moveit| [Moveit](./src/agx_arm_moveit/README.md) |
 |Q&A|[Q&A](./docs/Q&A.md)|
 

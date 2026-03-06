@@ -13,9 +13,11 @@ This driver package provides full ROS2 interface support for AgileX series robot
 
 | Description | Documentation |
 |---|---|
+| SDK | [pyAgxArm](https://github.com/agilexrobotics/pyAgxArm) |
 | CAN module usage | [can_user](./docs/CAN_USER_EN.md) |
 | TCP Offset Configuration | [tcp_offset](./docs/tcp_offset/TCP_OFFSET_EN.md) |
-|Moveit| [Moveit](./src/agx_arm_moveit/README.md) |
+| URDF | [URDF](https://github.com/agilexrobotics/agx_arm_urdf) |
+| Moveit| [Moveit](./src/agx_arm_moveit/README_EN.md) |
 | Q&A | [Q&A](./docs/Q&A.md) |
 
 ---
