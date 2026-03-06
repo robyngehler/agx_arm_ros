@@ -554,8 +554,8 @@ class AgxArmRosNode(Node):
         # gripper_name → width scale
         gripper_joint_map = {
             GRIPPER_JOINT_NAME:   1.0,
-            "gripper_joint1":    2.0,
             "gripper_joint2":    2.0,
+            "gripper_joint1":    2.0,
         }
 
         matched = next(
