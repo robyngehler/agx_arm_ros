@@ -50,8 +50,8 @@ pip3 install .
 1. Create workspace
 
     ```bash
-    mkdir -p ~/catkin_ws/src
-    cd ~/catkin_ws/src
+    mkdir -p ~/agx_arm_ws/src
+    cd ~/agx_arm_ws/src
     ```
 
 2. Clone repository
@@ -70,7 +70,7 @@ pip3 install .
 Run the script to install all dependencies at once:
 
 ```bash
-cd ~/catkin_ws/src/agx_arm_ros/scripts/
+cd ~/agx_arm_ws/src/agx_arm_ros/scripts/
 chmod +x agx_arm_install_deps.sh
 bash ./agx_arm_install_deps.sh
 ```
@@ -150,7 +150,7 @@ which pip3
 Build and Source the workspace:
 
 ```bash
-cd ~/catkin_ws
+cd ~/agx_arm_ws
 colcon build
 source install/setup.bash
 ```
@@ -168,7 +168,7 @@ When only a single CAN module is connected to the computer, you can **quickly co
 Open a terminal window and execute the following command:
 
 ```bash
-cd ~/catkin_ws/src/agx_arm_ros/scripts 
+cd ~/agx_arm_ws/src/agx_arm_ros/scripts 
 bash can_activate.sh
 ```
 
@@ -205,78 +205,117 @@ ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_ty
 ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
-> **Note:** This launch file continuously occupies the `/joint_states` topic, preventing control commands in the [Control Examples](#control-examples) from executing properly. To run control commands, please terminate this launch file first.
+> **Note:**
+> - `start_single_agx_arm_rviz.launch.py` subscribes to the `/feedback/joint_states` topic. The parameter `control` controls whether RViz-side joint_state_publisher publishes `/control/joint_states` (by default `control:=false`, so no control topics are published from RViz).
+> - If you only want to visualize and follow the real arm state, it is recommended to keep `control:=false`.
+> - If you want to use RViz joint sliders to publish `/control/joint_states`, explicitly set `control:=true`. In this case, it may conflict with the control commands in [Control Examples](#control-examples).
+
+**MoveIt One-Click Launch (Arm Control + MoveIt + RViz):**
+
+```bash
+ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper effector_type:=agx_gripper
+```
+
+> This launch file starts both the arm control node and MoveIt2 simultaneously, automatically connecting joint feedback (`/feedback/joint_states`) to MoveIt. No need to start two terminals separately. Supports all `agx_arm_ctrl` parameters (e.g. `tcp_offset`, `speed_percent`, etc.). See [Moveit](./src/agx_arm_moveit/README_EN.md) for details.
 
 ### Launch Parameters
 
 | Parameter | Default | Description | Options |
 |-----------|---------|-------------|---------|
 | `can_port` | `can0` | CAN port | - |
-| `arm_type` | `piper` | Arm model | `piper`, `piper_h`, `piper_l`, `piper_x`, `nero` |
+| `arm_type` | `piper` | Arm model | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
 | `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2` |
-| `auto_enable` | `True` | Auto enable on startup | `True`, `False` |
+| `revo2_type` | `left` | Revo2 dexterous hand type | `left`, `right` |
+| `auto_enable` | `true` | Auto enable on startup | `true`, `false` |
 | `installation_pos` | `horizontal` | Mount orientation (Piper series only) | `horizontal`, `left`, `right` |
-| `payload` | `empty` | Payload config (Piper series only for now) | `full`, `half`, `empty` |
+| `payload` | `empty` | Payload configuration (currently only effective for Piper series) | `full`, `half`, `empty` |
 | `speed_percent` | `100` | Motion speed (%) | `0-100` |
 | `pub_rate` | `200` | Status publish rate (Hz) | - |
 | `enable_timeout` | `5.0` | Enable timeout (seconds) | - |
-| `tcp_offset` | `[0.0,0.0,0.0,0.0,0.0,0.0]` | Tool Center Point (TCP) offset relative to the flange center [x,y,z,rx,ry,rz] | - |
+| `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | Tool Center Point (TCP) offset relative to the flange center [x, y, z, rx, ry, rz] | - |
+| `publish_gripper_joint` | `true` | Whether to publish the `gripper` joint (gripper opening width) in `/feedback/joint_states`. Set to `false` when used with MoveIt, as the URDF only defines `gripper_joint1`/`gripper_joint2` | `true`, `false` |
 | `log_level` | `info` | Log level | `debug`, `info`, `warn`, `error`, `fatal` |
 
 ### URDF Model Visualization
 
-#### Standalone Model Viewer
+#### Standalone Model View
 
-No real robotic arm connection required. Load the URDF model in RViz and manually adjust joints using the GUI slider:
+Load the URDF model in RViz and adjust joints manually using the GUI sliders. No need to start the arm driver node:
 
 ```bash
 ros2 launch agx_arm_description display.launch.py arm_type:=piper
 ```
 
-**The `arm_type` parameter supports three ways to specify the model:**
+**The following three methods are supported to specify the model:**
 
-1. **Preset model name** (recommended): Use a built-in model name to automatically match the corresponding URDF file
+1. **Preset model name (via `arm_type`)** (recommended): Use a built-in model name to automatically match the corresponding URDF file
 
     ```bash
     ros2 launch agx_arm_description display.launch.py arm_type:=piper
     ```
 
-2. **Relative path**: Path relative to the `agx_arm_urdf/` directory, suitable for custom models
+2. **Relative path (via `custom_model`)**: Path relative to the `agx_arm_urdf/` directory, suitable for custom models
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=piper/urdf/piper_description.urdf
+    ros2 launch agx_arm_description display.launch.py custom_model:=piper/urdf/piper_description.urdf
     ```
 
-3. **Absolute path**: Directly specify the absolute path to a URDF file, suitable for model files at any location
+3. **Absolute path (via `custom_model`)**: Directly specify the absolute path to a URDF file, suitable for model files at any location
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=/home/user/my_robot/custom_arm.urdf
+    ros2 launch agx_arm_description display.launch.py custom_model:=/home/user/my_robot/custom_arm.urdf
     ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `arm_type` | `piper` | Arm model or URDF path. Presets: `piper`, `piper_x`, `piper_l`, `piper_h`, `nero`; also supports relative paths under `agx_arm_urdf/` or any absolute path |
-| `gui` | `true` | Enable joint_state_publisher_gui slider control interface |
+| `arm_type` | `piper` | Arm model. Presets: `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
+| `custom_model` | empty string | Optional custom model path. If relative, it is resolved under `agx_arm_urdf/`; if absolute, it can point to any URDF/xacro file. When set, `arm_type` and `effector_type` are ignored |
+| `effector_type` | `none` | End-effector type. Presets: `none`, `agx_gripper`, `revo2` |
+| `revo2_type` | `left` | Revo2 dexterous hand type. Presets: `left`, `right` |
+| `pub_rate` | `200` | Status publish rate (Hz) |
+| `gui` | `true` | Whether to enable the `joint_state_publisher_gui` slider control interface |
 | `rvizconfig` | Built-in config | Absolute path to a custom RViz configuration file |
+| `follow` | `false` | Whether to follow the real arm state (subscribe to `/feedback/joint_states`, and remap `/joint_states` to `feedback/joint_states` in `robot_state_publisher`) |
+| `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP offset [x, y, z, rx, ry, rz] in meters/radians. When non-zero, a `tcp_link` TF frame is published automatically |
+| `control` | `true` | Whether to publish control topics via `joint_state_publisher` (or GUI version). When `true`, publishes to `/control/joint_states`; when `false`, only follows/displays without publishing control topics. A common real-arm combination is `follow:=true, control:=false` (follow real arm without sending control from RViz). |
 
-#### Follow Real Arm
+#### Typical Usage Combinations (follow / control)
 
-Please [Launch the Arm Driver](./README_EN.md#launch-driver) first. The model in RViz will track the real arm's joint states in real time (subscribes to `feedback/joint_states`):
+Below are **common usage scenarios** with recommended `follow` and `control` combinations and example commands:
 
-```bash
-ros2 launch agx_arm_description display_urdf_follow.launch.py arm_type:=piper
-```
+- **Scenario 1: Pure model debugging (no real arm, view URDF and move via sliders only)**  
+  - Real arm required: No  
+  - Recommended configuration: `follow:=false, control:=true`  
+  - Example:  
+    ```bash
+    ros2 launch agx_arm_description display.launch.py arm_type:=piper follow:=false control:=true
+    ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `arm_type` | `piper` | Arm model or URDF path (same usage as `display.launch.py` above) |
-| `rvizconfig` | Built-in config | Absolute path to a custom RViz configuration file |
+- **Scenario 2: Real arm + control only, no follow** (use RViz to send control, but RViz does not follow real feedback)  
+  - Real arm required: Yes  
+  - Recommended configuration: `follow:=false, control:=true`  
+  - Example:  
+    ```bash
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=false control:=true
+    ```
 
-> **⚠️ Note: Configuration Consistency**
->
-> When running `display_urdf_follow`, the **arm type** and **end-effector type** of the selected `urdf` must strictly match the configuration in [Launch the Arm Driver](./README_EN.md#launch-driver)
->
-> - If mismatched, the URDF model will not align with the actual hardware joint definitions, resulting in a **broken TF tree** or **missing model parts in RViz**.
+- **Scenario 3: Real arm + follow only, no control** (common: monitor state only, avoid RViz interfering with control)  
+  - Real arm required: Yes  
+  - Recommended configuration: `follow:=true, control:=false`  
+  - Example:  
+    ```bash
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=false
+    ```
+
+- **Scenario 4: Real arm + control + follow** (use RViz to send control and follow real feedback)  
+  - Real arm required: Yes  
+  - Recommended configuration: `follow:=true, control:=false`
+  - Example:  
+    ```bash
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=true
+    ```
+
+> **Tip:** In general, it is recommended to keep the **control channel unique**, i.e. only one component should be responsible for publishing `/control/*` topics (choose one among the `agx_arm_ctrl` node, MoveIt, or RViz `joint_state_publisher`) to avoid conflicts from multiple control sources.
 
 ---
 
@@ -285,7 +324,7 @@ ros2 launch agx_arm_description display_urdf_follow.launch.py arm_type:=piper
 Open an additional terminal and run the following commands:
 
 ```bash
-cd ~/catkin_ws
+cd ~/agx_arm_ws
 source install/setup.bash
 cd src/agx_arm_ros
 ```
@@ -498,31 +537,48 @@ cd src/agx_arm_ros
 This topic contains combined joint states for the arm and end-effector:
 
 **Arm Joints** (`joint1` ~ `joint*`)
+
 | Field | Description |
 |-------|-------------|
 | `position` | Joint angle (rad) |
 | `velocity` | Joint velocity (rad/s) |
 | `effort` | Joint torque (Nm) |
 
-**Gripper Joint** (`gripper`, requires `effector_type=agx_gripper`)
-| Field | Description |
-|-------|-------------|
-| `position` | Gripper width (m) |
-| `velocity` | 0.0 |
-| `effort` | Force (N) |
+**Gripper Joints** (requires `effector_type=agx_gripper`)
+
+By default, three joints are published: `gripper`, `gripper_joint1`, and `gripper_joint2`. If `publish_gripper_joint` is set to `false`, only `gripper_joint1` and `gripper_joint2` are published (the URDF joint names, compatible with MoveIt).
+
+| Joint Name | `position` | `velocity` | `effort` |
+|------------|------------|------------|----------|
+| `gripper` | Gripper opening width (m), range [0, 0.1] | 0.0 | Force (N) |
+| `gripper_joint1` | Single jaw displacement = width × 0.5 (m) | 0.0 | Force (N) |
+| `gripper_joint2` | Single jaw displacement = width × -0.5 (m) | 0.0 | Force (N) |
 
 **Dexterous Hand Joints** (requires `effector_type=revo2`)
 
-Joint naming convention: `{hand}_f_joint{finger}_[segment]`
-- `l` = left hand, `r` = right hand
-- `joint1` = thumb, `joint2` ~ `joint5` = index to pinky
-- `_1` = base, `_2` = tip (thumb only has two segments)
+Left hand joint names:
 
-Example: `l_f_joint1_1` represents left hand thumb base joint
+- `left_thumb_metacarpal_joint`
+- `left_thumb_proximal_joint`
+- `left_index_proximal_joint`
+- `left_middle_proximal_joint`
+- `left_ring_proximal_joint`
+- `left_pinky_proximal_joint`
 
-Full joint name list:
-- Left hand: `l_f_joint1_1`, `l_f_joint1_2`, `l_f_joint2`, `l_f_joint3`, `l_f_joint4`, `l_f_joint5`
-- Right hand: `r_f_joint1_1`, `r_f_joint1_2`, `r_f_joint2`, `r_f_joint3`, `r_f_joint4`, `r_f_joint5`
+Right hand joint names:
+
+- `right_thumb_metacarpal_joint`
+- `right_thumb_proximal_joint`
+- `right_index_proximal_joint`
+- `right_middle_proximal_joint`
+- `right_ring_proximal_joint`
+- `right_pinky_proximal_joint`
+
+| Field | Description |
+|-------|-------------|
+| `position` | Finger joint angle (rad) |
+| `velocity` | 0.0 |
+| `effort` | 0.0 |
 
 #### Arm Status Details (`/feedback/arm_status`)
 
@@ -661,10 +717,10 @@ Message type: `agx_arm_msgs/HandStatus`
 | `/control/joint_states`       | `sensor_msgs/JointState`           | Joint control (with end-effector) | Always available          |
 | `/control/move_j`             | `sensor_msgs/JointState`           | Joint control motion       | Always available          |
 | `/control/move_p`             | `geometry_msgs/PoseStamped`        | Point-to-point motion        | Always available          |
-| `/control/move_l`             | `geometry_msgs/PoseStamped`        | Linear motion         | Piper series      |
-| `/control/move_c`             | `geometry_msgs/PoseArray`          | Circular motion         | Piper series      |
-| `/control/move_js`            | `sensor_msgs/JointState`           | MIT mode joint motion   | Piper series      |
-| `/control/move_mit`           | `agx_arm_msgs/MoveMITMsg`          | MIT torque control     | Piper series      |
+| `/control/move_l`             | `geometry_msgs/PoseStamped`        | Linear motion         | Always available      |
+| `/control/move_c`             | `geometry_msgs/PoseArray`          | Circular motion         | Always available      |
+| `/control/move_js`            | `sensor_msgs/JointState`           | MIT mode joint motion   | Always available      |
+| `/control/move_mit`           | `agx_arm_msgs/MoveMITMsg`          | MIT torque control     | Always available      |
 | `/control/hand`               | `agx_arm_msgs/HandCmd`             | Dexterous hand control        | Revo2 configured      |
 | `/control/hand_position_time` | `agx_arm_msgs/HandPositionTimeCmd` | Hand position-time control    | Revo2 configured      |
 
@@ -699,22 +755,22 @@ ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
 
 **Dexterous hand control via `/control/joint_states`** (requires `effector_type=revo2`)
 
-Include dexterous hand joint names in `name`, set target position via `position` (position mode, range [0, 100]). Only the joints to be controlled need to be sent; joints not included will maintain their current position.
+Include dexterous hand joint names in `name`, set the target position via `position` (position mode, unit: rad). Only the joints to be controlled need to be sent; joints not included will maintain their current position.
 
-Example: Control only the left index finger to position 80
+Example: Control only the left index finger to position 0.5 rad
 ```bash
 ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-  "{name: [l_f_joint2], position: [80], velocity: [], effort: []}" -1
+  "{name: [left_index_proximal_joint], position: [0.5], velocity: [], effort: []}" -1
 ```
 
 | Joint Name | Description | Position Range |
 |------------|-------------|---------------|
-| `l_f_joint1_1` / `r_f_joint1_1` | Thumb base | [0, 100] |
-| `l_f_joint1_2` / `r_f_joint1_2` | Thumb tip | [0, 100] |
-| `l_f_joint2` / `r_f_joint2` | Index finger | [0, 100] |
-| `l_f_joint3` / `r_f_joint3` | Middle finger | [0, 100] |
-| `l_f_joint4` / `r_f_joint4` | Ring finger | [0, 100] |
-| `l_f_joint5` / `r_f_joint5` | Pinky finger | [0, 100] |
+| `left_thumb_metacarpal_joint` / `right_thumb_metacarpal_joint` | Thumb base | [0, 1.57] |
+| `left_thumb_proximal_joint` / `right_thumb_proximal_joint` | Thumb tip | [0, 1.03] |
+| `left_index_proximal_joint` / `right_index_proximal_joint` | Index finger | [0, 1.41] |
+| `left_middle_proximal_joint` / `right_middle_proximal_joint` | Middle finger | [0, 1.41] |
+| `left_ring_proximal_joint` / `right_ring_proximal_joint` | Ring finger | [0, 1.41] |
+| `left_pinky_proximal_joint` / `right_pinky_proximal_joint` | Pinky finger | [0, 1.41] |
 
 #### `/control/move_mit` Details
 

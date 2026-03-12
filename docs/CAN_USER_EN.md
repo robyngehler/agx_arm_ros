@@ -17,7 +17,7 @@ When only a single CAN module is connected to the computer, you can **quickly ac
 Open a terminal window and execute the following commands in sequence:
 
 ```bash
-cd ~/catkin_ws/src/agx_arm_ros/scripts 
+cd ~/agx_arm_ws/src/agx_arm_ros/scripts 
 bash can_activate.sh
 ```
 

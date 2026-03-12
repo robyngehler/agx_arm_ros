@@ -17,7 +17,7 @@ sudo apt update && sudo apt install can-utils ethtool
 打开一个终端窗口，依次执行以下命令：
 
 ```bash
-cd ~/catkin_ws/src/agx_arm_ros/scripts 
+cd ~/agx_arm_ws/src/agx_arm_ros/scripts 
 bash can_activate.sh
 ```
 

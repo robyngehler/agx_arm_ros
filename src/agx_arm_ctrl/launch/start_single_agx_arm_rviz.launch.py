@@ -10,7 +10,6 @@ from ament_index_python.packages import get_package_share_directory
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 
-
 def generate_launch_description():
 
     # arg
@@ -29,28 +28,36 @@ def generate_launch_description():
     arm_type_arg = DeclareLaunchArgument(
         'arm_type',
         default_value='piper',
-        description='Type of robotic arm.',
-        choices=['piper', 'nero', 'piper_x', 'piper_h', 'piper_l']
+        choices=['nero', 'piper', 'piper_h', 'piper_l', 'piper_x'],
+        description='Robotic arm type (e.g. nero, piper, piper_h, piper_l, piper_x).'
     )
 
     effector_type_arg = DeclareLaunchArgument(
         'effector_type',
         default_value='none',
-        description='End effector type.',
-        choices=['none', 'agx_gripper', 'revo2']
+        choices=['none', 'agx_gripper', 'revo2'],
+        description='End effector type (e.g. agx_gripper, revo2).'
+    )
+
+    revo2_type_arg = DeclareLaunchArgument(
+       'revo2_type',
+        default_value='left',
+        choices=['left', 'right'],
+        description='Revo2 end effector type (e.g. left, right).'
     )
 
     auto_enable_arg = DeclareLaunchArgument(
         'auto_enable',
-        default_value='True',
+        default_value='true',
+        choices=['true', 'false'],
         description='Automatically enable the AGX Arm node.'
     )
 
     installation_pos_arg = DeclareLaunchArgument(
         'installation_pos',
         default_value='horizontal',
-        description='Installation position of the arm.',
-        choices=['horizontal', 'left', 'right']
+        choices=['horizontal', 'left', 'right'],
+        description='Installation position of the arm (e.g. horizontal, left, right).'
     )
 
     speed_percent_arg = DeclareLaunchArgument(
@@ -74,8 +81,22 @@ def generate_launch_description():
     payload_arg = DeclareLaunchArgument(
         'payload',
         default_value='empty',
-        description='Payload type.',
-        choices=['empty', 'half', 'full']
+        choices=['empty', 'half', 'full'],
+        description='Payload type (e.g. empty, half, full).',
+    )
+
+    follow_arg = DeclareLaunchArgument(
+        'follow',
+        default_value='true',
+        choices=['true', 'false'],
+        description='Follow real arm state.',
+    )
+
+    control_arg = DeclareLaunchArgument(
+        'control',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Whether to publish control topics from the RViz-side joint state publisher.',
     )
 
     tcp_offset_arg = DeclareLaunchArgument(
@@ -95,17 +116,25 @@ def generate_launch_description():
         ),
         launch_arguments={
             'arm_type': LaunchConfiguration('arm_type'),
+            'effector_type': LaunchConfiguration('effector_type'),
+            'revo2_type': LaunchConfiguration('revo2_type'),
+            'pub_rate': LaunchConfiguration('pub_rate'),
+            'follow': LaunchConfiguration('follow'),
+            'tcp_offset': LaunchConfiguration('tcp_offset'),
+            'control': LaunchConfiguration('control'),
         }.items(),
     )
 
-    # node
-    agx_arm_node = Node(
-        package='agx_arm_ctrl',
-        executable='agx_arm_ctrl_single',
-        name='agx_arm_ctrl_single_node',
-        output='screen',
-        ros_arguments=['--log-level', LaunchConfiguration('log_level')],
-        parameters=[{
+    # agx_arm
+    agx_arm_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('agx_arm_ctrl'),
+                'launch',
+                'start_single_agx_arm.launch.py',
+            )
+        ),
+        launch_arguments={
             'can_port': LaunchConfiguration('can_port'),
             'pub_rate': LaunchConfiguration('pub_rate'),
             'auto_enable': LaunchConfiguration('auto_enable'),
@@ -116,33 +145,7 @@ def generate_launch_description():
             'effector_type': LaunchConfiguration('effector_type'),
             'payload': LaunchConfiguration('payload'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
-        }],
-        remappings=[
-            # feedback topics
-            ('/feedback/joint_states', '/feedback/joint_states'),
-            ('/feedback/tcp_pose', '/feedback/tcp_pose'),
-            ('/feedback/arm_status', '/feedback/arm_status'),
-            ('/feedback/arm_ctrl_states', '/feedback/arm_ctrl_states'),
-            ('/feedback/gripper_status', '/feedback/gripper_status'),
-            ('/feedback/hand_status', '/feedback/hand_status'),
-
-            # control topics
-            ('/control/joint_states', '/joint_states'),
-            ('/control/move_j', '/control/move_j'),
-            ('/control/move_p', '/control/move_p'),
-            ('/control/move_l', '/control/move_l'),
-            ('/control/move_c', '/control/move_c'),
-            ('/control/move_mit', '/control/move_mit'),
-            ('/control/move_js', '/control/move_js'),
-            ('/control/gripper', '/control/gripper'),
-            ('/control/hand', '/control/hand'),
-            ('/control/hand_position_time', '/control/hand_position_time'),
-
-            # services
-            ('/enable_agx_arm', '/enable_agx_arm'),
-            ('/move_home', '/move_home'),
-            ('/exit_teach_mode', '/exit_teach_mode'),
-        ]
+        }.items(),
     )
 
     return LaunchDescription([
@@ -151,6 +154,7 @@ def generate_launch_description():
         can_port_arg,
         arm_type_arg,
         effector_type_arg,
+        revo2_type_arg,
         auto_enable_arg,
         installation_pos_arg,
         speed_percent_arg,
@@ -158,9 +162,10 @@ def generate_launch_description():
         enable_timeout_arg,
         payload_arg,
         tcp_offset_arg,
+        follow_arg,
+        control_arg,
         # description
         description_launch,
-        # node
-        agx_arm_node,
+        # agx_arm
+        agx_arm_launch,
     ])
-

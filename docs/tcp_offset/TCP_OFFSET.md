@@ -1,5 +1,7 @@
 # TCP偏移设置
 
+[English](./TCP_OFFSET_EN.md)
+
 本文档详细说明 `tcp_offset` 参数的定义、单位及通过RViz查看法兰盘中心坐标系的操作步骤，帮助您精准配置工具中心点偏移。
 
 ## 一、tcp_offset 参数定义
@@ -14,50 +16,61 @@
 
 通过以下步骤可在RViz中直观查看机械臂法兰盘中心的坐标系，为TCP偏移配置提供参考。
 
-### 2.1 Piper 机械臂
+### 2.1 启动 RViz 可视化
 
-1. 打开终端窗口，执行以下命令启动RViz可视化：
+打开终端窗口，执行以下命令：
 
-    ```bash
-    cd ~/catkin_ws
-    source install/setup.bash
-    ros2 launch piper_description display_urdf.launch.py
-    ```
+```bash
+cd ~/agx_arm_ws
+source install/setup.bash
 
-2. 在 RViz 界面中操作：
+# Piper 机械臂
+ros2 launch agx_arm_description display.launch.py arm_type:=piper
 
-    - 步骤 1：选择正确的坐标系（参考截图）
+# Nero 机械臂
+ros2 launch agx_arm_description display.launch.py arm_type:=nero
 
-        ![piper_rviz_tcp_2](../../asserts/pictures/piper_rviz_tcp_2.png)
+# 其他臂型（piper_x、piper_l、piper_h）
+ros2 launch agx_arm_description display.launch.py arm_type:=piper_x
+```
 
-    - 步骤 2：展开左侧面板的`RobotModel`，打开`Links`选项
+带末端执行器：
 
-        ![piper_rviz_tcp_3](../../asserts/pictures/piper_rviz_tcp_3.png)
+```bash
+# Piper + 夹爪
+ros2 launch agx_arm_description display.launch.py arm_type:=piper effector_type:=agx_gripper
 
-    - 步骤 3：在`Links`中勾选需要查看的 link 以显示其坐标系，同时关闭其他无需显示的 link
+# Nero + 灵巧手
+ros2 launch agx_arm_description display.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
+```
 
-        ![piper_rviz_tcp_4](../../asserts/pictures/piper_rviz_tcp_4.png)
+### 2.2 查看坐标系
 
-### 2.2 Nero 机械臂
+在 RViz 界面中，TF 显示默认开启，可以直接看到所有坐标系（包括法兰盘 `link6`/`link7`）。
 
-1. 打开终端窗口，执行以下命令启动 RViz 可视化：
+也可以通过展开左侧面板的 `RobotModel` → `Links`，勾选需要查看的 link 以显示其坐标轴：
 
-    ```bash
-    cd ~/catkin_ws
-    source install/setup.bash
-    ros2 launch nero_description display_urdf.launch.py
-    ```
+**Piper 机械臂示例：**
 
-2. 在 RViz 界面中操作：
+![piper_rviz_tcp_1](../../asserts/pictures/piper_rviz_tcp_1.png)
+![piper_rviz_tcp_2](../../asserts/pictures/piper_rviz_tcp_2.png)
+![piper_rviz_tcp_3](../../asserts/pictures/piper_rviz_tcp_3.png)
 
-    - 步骤 1：选择正确的坐标系（参考截图）
+## 三、在 RViz 中预览 TCP 偏移
 
-        ![nero_rviz_tcp_1](../../asserts/pictures/nero_rviz_tcp_1.png)
+`display.launch.py` 支持 `tcp_offset` 参数，设置后 RViz 中会自动显示 `tcp_link` 坐标系：
 
-    - 步骤 2：展开左侧面板的`RobotModel`，打开`Links`选项
+```bash
+# 在 link6 前方 0.12m 处显示 tcp_link
+ros2 launch agx_arm_description display.launch.py arm_type:=piper effector_type:=agx_gripper tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
+```
 
-        ![nero_rviz_tcp_2](../../asserts/pictures/nero_rviz_tcp_2.png)
+参数格式为 `[x, y, z, rx, ry, rz]`，所有值均为浮点数，单位与[第一节](#一tcp_offset-参数定义)一致。
 
-    - 步骤 3：在`Links`中勾选需要查看的 link 以显示其坐标系，同时关闭其他无需显示的 link
+> **提示：** MoveIt 同样支持 `tcp_offset` 参数，设置后规划目标和交互标记会对齐到 TCP 位置：
+>
+> ```bash
+> ros2 launch agx_arm_moveit demo.launch.py arm_type:=piper effector_type:=agx_gripper tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
+> ```
 
-        ![nero_rviz_tcp_3](../../asserts/pictures/nero_rviz_tcp_3.png)
+![piper_rviz_tcp_4](../../asserts/pictures/piper_rviz_tcp_4.png)
