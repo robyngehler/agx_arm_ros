@@ -206,9 +206,10 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 ```
 
 > **注意：**
-> - `start_single_agx_arm_rviz.launch` 会订阅 `/feedback/joint_states` 话题；通过参数 `control` 可控制是否从 RViz 侧发布 `/control/joint_states`（默认 `control:=false`，不会从 RViz 发布控制话题）。
+> - `start_single_agx_arm_rviz.launch` 会订阅 `/feedback/joint_states` 话题；通过参数 `control` 可控制是否从 RViz 侧发布到 `control_topic`（默认 `control_topic:=/control/joint_states`，且默认 `control:=false`，不会从 RViz 发布控制话题）。
+> - `follow` 用于控制 RViz 是否跟随真实机械臂状态；设为 `true` 时，将订阅真实反馈并驱动模型显示。
 > - 若希望仅用于可视化跟随真实机械臂状态，推荐保持 `control:=false`；
-> - 若希望使用 RViz 自带的关节滑条控制 `/control/joint_states`，可显式设置 `control:=true`，此时可能会与 [控制示例](#控制示例) 中的控制指令产生冲突。
+> - 若希望使用 RViz 自带的关节滑条控制 `control_topic`（默认 `/control/joint_states`），可显式设置 `control:=true`，此时可能会与 [控制示例](#控制示例) 中的控制指令产生冲突。
 
 **MoveIt 一键启动（臂控 + MoveIt + RViz）：**
 
@@ -225,14 +226,14 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 | `can_port` | `can0` | CAN 端口 | - |
 | `arm_type` | `piper` | 机械臂型号 | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
 | `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2` |
-| `revo2_type` | `left` | Revo2 灵巧手类型 | `left`, `right` |
+| `namespace` | 空字符串 | 机械臂实例命名空间 | 任意合法 ROS 命名空间 |
 | `auto_enable` | `true` | 启动时自动使能 | `true`, `false` |
-| `installation_pos` | `horizontal` | 安装方向 (Piper 系列专用) | `horizontal`, `left`, `right` |
-| `payload` | `empty` | 负载配置 (暂时只对piper系列生效) | `full`, `half`, `empty` |
+| `fast_mode` | `false` | 启用快速模式（如果启用，`/control/joint_states` 内部将改用无平滑无插值的 `move_js` 关节控制接口控制机械臂） | `true`, `false` |
 | `speed_percent` | `100` | 运动速度 (%) | `0-100` |
 | `pub_rate` | `200` | 状态发布频率 (Hz) | - |
 | `enable_timeout` | `5.0` | 使能超时 (秒) | - |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | 工具中心(TCP)相对法兰盘中心的偏移 [x, y, z, rx, ry, rz] | - |
+| `gripper_default_effort` | `1.0` | 夹爪默认力（单位：N） | `>=0.0` |
 | `publish_gripper_joint` | `true` | 是否在 `/feedback/joint_states` 中发布 `gripper` 关节（夹爪开口宽度）。与 MoveIt 联用时设为 `false`，因 URDF 中仅有 `gripper_joint1`/`gripper_joint2` | `true`, `false` |
 | `log_level` | `info` | 日志级别 | `debug`, `info`, `warn`, `error`, `fatal` |
 
@@ -277,7 +278,8 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
 | `rvizconfig` | 内置配置 | 自定义 RViz 配置文件的绝对路径 |
 | `follow` | `false` | 是否跟随真实机械臂状态（订阅 `/feedback/joint_states`，并在 robot_state_publisher 中重映射 `/joint_states` 为 `feedback/joint_states`） |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度）。非零时自动发布 `tcp_link` 坐标系 |
-| `control` | `true` | 是否通过 joint_state_publisher（或 GUI 版本）发布控制话题：`true` 时发布到 `control/joint_states`；`false` 时仅用于跟随或显示，不发布控制话题。与 `follow:=true` 配合时，常用组合为 `follow:=true, control:=false`（只跟随真实机械臂，不从 RViz 发出控制） |
+| `control` | `true` | 是否通过 joint_state_publisher（或 GUI 版本）发布控制话题：`true` 时发布到 `control_topic`；`false` 时仅用于跟随或显示，不发布控制话题。与 `follow:=true` 配合时，常用组合为 `follow:=true, control:=false`（只跟随真实机械臂，不从 RViz 发出控制） |
+| `control_topic` | `/control/joint_states` | RViz 关节滑条输出（`joint_state_publisher_gui`）发布到的目标话题 |
 
 #### 典型应用组合示例（follow / control）
 
@@ -290,6 +292,8 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
     ```bash
     ros2 launch agx_arm_description display.launch.py arm_type:=piper follow:=false control:=true
     ```
+
+> 说明：若希望把 RViz 滑动条发布的关节目标重定向给阻抗控制器（例如 `agx_arm_impedance` 的关节阻抗 `control_type:=joint_impedance`），可在启动 `display.launch.py` 时设置 `control:=true` 且 `control_topic:=/impedance/target_joint`。
 
 - **场景 2：真机 + 仅控制不跟随**（从 RViz 发控制，但 RViz 不显示真实反馈）  
   - 是否需要真机：是  
@@ -309,7 +313,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
 
 - **场景 4：真机 + 控制 + 跟随**（从 RViz 发控制，并在 RViz 跟随真实反馈）  
   - 是否需要真机：是  
-  - 推荐配置：`follow:=true, control:=false`
+  - 推荐配置：`follow:=true, control:=true`
   - 示例：  
     ```bash
     ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=true
@@ -473,7 +477,13 @@ cd src/agx_arm_ros
     ros2 service call /move_home std_srvs/srv/Empty
     ```
 
-4. 退出示教模式（Piper 系列）
+4. 急停（保持当前位置）
+
+    ```bash
+    ros2 service call /emergency_stop std_srvs/srv/Empty
+    ```
+
+5. 退出示教模式（Piper 系列）
 
     ```bash
     ros2 service call /exit_teach_mode std_srvs/srv/Empty
@@ -856,6 +866,7 @@ ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
 |------|------|------|----------|
 | `/enable_agx_arm` | `std_srvs/SetBool` | 使能/失能机械臂 | 始终可用 |
 | `/move_home` | `std_srvs/Empty` | 回零位 | 始终可用 |
+| `/emergency_stop` | `std_srvs/Empty` | 急停（保持当前位置） | 始终可用 |
 | `/exit_teach_mode` | `std_srvs/Empty` | 退出示教模式 | Piper 系列 |
 
 ---

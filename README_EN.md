@@ -206,9 +206,10 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 ```
 
 > **Note:**
-> - `start_single_agx_arm_rviz.launch.py` subscribes to the `/feedback/joint_states` topic. The parameter `control` controls whether RViz-side joint_state_publisher publishes `/control/joint_states` (by default `control:=false`, so no control topics are published from RViz).
+> - `start_single_agx_arm_rviz.launch.py` subscribes to the `/feedback/joint_states` topic. The parameter `control` controls whether RViz-side joint_state_publisher publishes to `control_topic` (default `control_topic:=/control/joint_states`, and default `control:=false`, so no control topics are published from RViz).
+> - `follow` controls whether RViz follows the real arm state; when set to `true`, real feedback is subscribed to drive the model display.
 > - If you only want to visualize and follow the real arm state, it is recommended to keep `control:=false`.
-> - If you want to use RViz joint sliders to publish `/control/joint_states`, explicitly set `control:=true`. In this case, it may conflict with the control commands in [Control Examples](#control-examples).
+> - If you want to use RViz joint sliders to publish to `control_topic` (default `/control/joint_states`), explicitly set `control:=true`. In this case, it may conflict with the control commands in [Control Examples](#control-examples).
 
 **MoveIt One-Click Launch (Arm Control + MoveIt + RViz):**
 
@@ -225,14 +226,14 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 | `can_port` | `can0` | CAN port | - |
 | `arm_type` | `piper` | Arm model | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
 | `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2` |
-| `revo2_type` | `left` | Revo2 dexterous hand type | `left`, `right` |
+| `namespace` | empty string | Arm instance namespace | Any valid ROS namespace |
 | `auto_enable` | `true` | Auto enable on startup | `true`, `false` |
-| `installation_pos` | `horizontal` | Mount orientation (Piper series only) | `horizontal`, `left`, `right` |
-| `payload` | `empty` | Payload configuration (currently only effective for Piper series) | `full`, `half`, `empty` |
+| `fast_mode` | `false` | Enable fast mode (If enabled, `/control/joint_states` will internally switch to the unsmoothed and non-interpolated `move_js` joint control interface to command the robotic arm.) | `true`, `false` |
 | `speed_percent` | `100` | Motion speed (%) | `0-100` |
 | `pub_rate` | `200` | Status publish rate (Hz) | - |
 | `enable_timeout` | `5.0` | Enable timeout (seconds) | - |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | Tool Center Point (TCP) offset relative to the flange center [x, y, z, rx, ry, rz] | - |
+| `gripper_default_effort` | `1.0` | The default effort of the gripper (in N) | `>=0.0` |
 | `publish_gripper_joint` | `true` | Whether to publish the `gripper` joint (gripper opening width) in `/feedback/joint_states`. Set to `false` when used with MoveIt, as the URDF only defines `gripper_joint1`/`gripper_joint2` | `true`, `false` |
 | `log_level` | `info` | Log level | `debug`, `info`, `warn`, `error`, `fatal` |
 
@@ -257,7 +258,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
 2. **Relative path (via `custom_model`)**: Path relative to the `agx_arm_urdf/` directory, suitable for custom models
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py custom_model:=piper/urdf/piper_description.urdf
+    ros2 launch agx_arm_description display.launch.py custom_model:=piper/urdf/piper_description.urdf.xacro
     ```
 
 3. **Absolute path (via `custom_model`)**: Directly specify the absolute path to a URDF file, suitable for model files at any location
@@ -277,7 +278,8 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
 | `rvizconfig` | Built-in config | Absolute path to a custom RViz configuration file |
 | `follow` | `false` | Whether to follow the real arm state (subscribe to `/feedback/joint_states`, and remap `/joint_states` to `feedback/joint_states` in `robot_state_publisher`) |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP offset [x, y, z, rx, ry, rz] in meters/radians. When non-zero, a `tcp_link` TF frame is published automatically |
-| `control` | `true` | Whether to publish control topics via `joint_state_publisher` (or GUI version). When `true`, publishes to `/control/joint_states`; when `false`, only follows/displays without publishing control topics. A common real-arm combination is `follow:=true, control:=false` (follow real arm without sending control from RViz). |
+| `control` | `true` | Whether to publish control topics via `joint_state_publisher` (or GUI version). When `true`, publishes to `control_topic`; when `false`, only follows/displays without publishing control topics. A common real-arm combination is `follow:=true, control:=false` (follow real arm without sending control from RViz). |
+| `control_topic` | `/control/joint_states` | Target topic where `joint_state_publisher_gui` publishes joint slider outputs |
 
 #### Typical Usage Combinations (follow / control)
 
@@ -290,6 +292,8 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
     ```bash
     ros2 launch agx_arm_description display.launch.py arm_type:=piper follow:=false control:=true
     ```
+
+> Note: If you want to redirect RViz slider joint targets to an impedance controller (e.g. `agx_arm_impedance` joint impedance with `control_type:=joint_impedance`), start `display.launch.py` with `control:=true` and `control_topic:=/impedance/target_joint`.
 
 - **Scenario 2: Real arm + control only, no follow** (use RViz to send control, but RViz does not follow real feedback)  
   - Real arm required: Yes  
@@ -309,7 +313,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
 
 - **Scenario 4: Real arm + control + follow** (use RViz to send control and follow real feedback)  
   - Real arm required: Yes  
-  - Recommended configuration: `follow:=true, control:=false`
+  - Recommended configuration: `follow:=true, control:=true`
   - Example:  
     ```bash
     ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=true
@@ -469,7 +473,13 @@ cd src/agx_arm_ros
     ros2 service call /move_home std_srvs/srv/Empty
     ```
 
-4. Exit teach mode (Piper series)
+4. Emergency stop (hold current position)
+
+    ```bash
+    ros2 service call /emergency_stop std_srvs/srv/Empty
+    ```
+
+5. Exit teach mode (Piper series)
 
     ```bash
     ros2 service call /exit_teach_mode std_srvs/srv/Empty
@@ -852,6 +862,7 @@ Message type: `agx_arm_msgs/HandPositionTimeCmd`
 |---------|------|-------------|-----------|
 | `/enable_agx_arm` | `std_srvs/SetBool` | Enable/disable arm | Always available |
 | `/move_home` | `std_srvs/Empty` | Move to home position | Always available |
+| `/emergency_stop` | `std_srvs/Empty` | Emergency stop (hold current position) | Always available |
 | `/exit_teach_mode` | `std_srvs/Empty` | Exit teach mode | Piper series |
 
 ---

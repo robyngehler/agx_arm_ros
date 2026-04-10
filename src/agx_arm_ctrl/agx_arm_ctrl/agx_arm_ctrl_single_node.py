@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*-coding:utf8-*-
 import time
-import re
 import rclpy
 import math
 import threading
-from typing import Optional, Tuple
-from pyAgxArm import create_agx_arm_config, AgxArmFactory
+from typing import Optional
+from pyAgxArm import create_agx_arm_config, AgxArmFactory, ArmModel, PiperFW, NeroFW
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from builtin_interfaces.msg import Time
@@ -43,19 +42,10 @@ REVO2_HAND_JOINT_TO_FINGER_ATTR = {
     for suffix, attr, max_angle in REVO2_FINGER_CONFIG
 }
 
-MIN_SEAMLESS_VERSION = (1, 8, 5)  # S-V1.8-5
-
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyAgxArm.api.agx_arm_factory import PiperCanDefaultConfig
-
-class MITModeLimit:
-    P_DES_RANGE = (-12.5, 12.5)
-    V_DES_RANGE = (-45.0, 45.0)
-    KP_RANGE = (0.0, 500.0)
-    KD_RANGE = (-5.0, 5.0)
-    TORQUE_RANGE = (-8.0, 8.0)
 
 class AgxArmRosNode(Node):
 
@@ -72,9 +62,6 @@ class AgxArmRosNode(Node):
 
         ### effector
         self._init_effector()
-    
-        ### variables
-        self.enable_flag = False
 
         ### publishers
         self._setup_publishers()
@@ -94,39 +81,64 @@ class AgxArmRosNode(Node):
         self.declare_parameter("can_port", "can0")
         self.declare_parameter("arm_type", "piper")
         self.declare_parameter("auto_enable", True)
+        self.declare_parameter("fast_mode", False)
         self.declare_parameter("speed_percent", 100)
         self.declare_parameter("pub_rate", 200)
         self.declare_parameter("enable_timeout", 5.0)
-        self.declare_parameter("installation_pos", "horizontal")
-        self.declare_parameter("payload", "empty")
         self.declare_parameter("effector_type", "none")
         self.declare_parameter("tcp_offset", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.declare_parameter("gripper_default_effort", 1.0)
         self.declare_parameter("publish_gripper_joint", True)
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
         self.arm_type = self.get_parameter("arm_type").value
         self.auto_enable = self.get_parameter("auto_enable").value
+        self.fast_mode = self.get_parameter("fast_mode").value
         self.speed_percent = self.get_parameter("speed_percent").value
         self.pub_rate = self.get_parameter("pub_rate").value
         self.enable_timeout = self.get_parameter("enable_timeout").value
-        self.installation_pos = self.get_parameter("installation_pos").value
-        self.payload = self.get_parameter("payload").value
         self.effector_type = self.get_parameter("effector_type").value
         self.tcp_offset = self.get_parameter("tcp_offset").value
+        self.gripper_default_effort = self.get_parameter("gripper_default_effort").value
         self.publish_gripper_joint = self.get_parameter("publish_gripper_joint").value
+
+        if self.arm_type not in ArmModel.__dict__.values():
+            self.get_logger().error(
+                f"Unsupported arm_type '{self.arm_type}', expected one of {list(ArmModel.__dict__.values())}."
+            )
+            exit(1)
+
+        if self.gripper_default_effort < 0:
+            self.get_logger().warn(
+                f"gripper_default_effort should be greater than 0, but got {self.gripper_default_effort}. "
+                "Setting it to default value 1.0"
+            )
+            self.gripper_default_effort = 1.0
+
+        ### variables
+        self.is_piper = "piper" in self.arm_type
+        self.is_nero = "nero" in self.arm_type
+        self.is_switch_seamlessly = True
+        self.is_mit_mode = False
+        self.enable_flag = False
+        self.control_ready = False
+        self._control_ready_logged = False
+        self.arm_joint_names = list()
+        self.arm_joint_count = 0
 
     def _log_parameters(self):
         self.get_logger().info(f"can_port: {self.can_port}")
         self.get_logger().info(f"arm_type: {self.arm_type}")
         self.get_logger().info(f"auto_enable: {self.auto_enable}")
+        self.get_logger().info(f"fast_mode: {self.fast_mode}")
         self.get_logger().info(f"speed_percent: {self.speed_percent}")
         self.get_logger().info(f"pub_rate: {self.pub_rate}")
         self.get_logger().info(f"enable_timeout: {self.enable_timeout}")
-        self.get_logger().info(f"installation_pos: {self.installation_pos}")
-        self.get_logger().info(f"payload: {self.payload}")
         self.get_logger().info(f"effector_type: {self.effector_type}")
         self.get_logger().info(f"tcp_offset: {self.tcp_offset}")
+        self.get_logger().info(f"gripper_default_effort: {self.gripper_default_effort}")
+        self.get_logger().info(f"publish_gripper_joint: {self.publish_gripper_joint}")
 
     def _init_agx_arm(self):
         config: PiperCanDefaultConfig = create_agx_arm_config(
@@ -134,24 +146,50 @@ class AgxArmRosNode(Node):
         )
         self.agx_arm = AgxArmFactory.create_arm(config)
         self.agx_arm.connect()
-        self.is_piper = "piper" in self.arm_type
-        self.is_nero = "nero" in self.arm_type
+
         self.arm_joint_names = list(config["joint_limits"].keys())
         self.arm_joint_count = self.agx_arm.joint_nums
-        self.agx_arm.set_speed_percent(self.speed_percent)
-        self.agx_arm.set_tcp_offset(self.tcp_offset)
-        self.is_mit_mode = False
-        self.is_switch_seamlessly = True
-        if self.is_piper:
-            self.agx_arm.set_installation_pos(self.installation_pos)
-            self.agx_arm.set_payload(self.payload)
-            self.firmware = self.agx_arm.get_firmware()
+
+        if self.auto_enable:
+            if not self._enable_arm(True, self.enable_timeout):
+                self.get_logger().error("Failed to auto-enable the arm")
+
+            start_time = time.time()
+            while time.time() - start_time < self.enable_timeout:
+                self.firmware = self.agx_arm.get_firmware()
+                if self.firmware:
+                    break
+                time.sleep(0.005)
+            
             if self.firmware:
-                current_version = self._parse_firmware_version(self.firmware['software_version'])
-                if current_version < MIN_SEAMLESS_VERSION:
-                    self.is_switch_seamlessly = False
-        elif self.is_nero:
-            self.agx_arm.set_normal_mode()
+                current_version = self.firmware['software_version']
+                self.get_logger().info(f"firmware version: {current_version}")
+                firmeware_version = PiperFW.DEFAULT
+                if self.is_piper:
+                    if current_version < "S-V1.8-5":
+                        self.is_switch_seamlessly = False
+                    if current_version > "S-V1.8-2" and current_version < "S-V1.8-8":
+                        firmeware_version = PiperFW.V183
+                    elif current_version >= "S-V1.8-8":
+                        firmeware_version = PiperFW.V188
+                elif self.is_nero:
+                    if current_version >= "1.11":
+                        firmeware_version = NeroFW.V111
+                
+                if firmeware_version != PiperFW.DEFAULT:
+                    self.agx_arm.disconnect()
+                    config = create_agx_arm_config(
+                        robot=self.arm_type, comm="can", channel=self.can_port,
+                        firmeware_version=firmeware_version
+                    )
+                    self.agx_arm = AgxArmFactory.create_arm(config)
+                    self.agx_arm.connect()
+            else:
+                self.get_logger().error("Failed to get firmware version")
+                exit(1)
+
+            self.agx_arm.set_speed_percent(self.speed_percent)
+            self.agx_arm.set_tcp_offset(self.tcp_offset)
 
     def _init_effector(self):
         self.gripper: Optional[AgxGripperWrapper] = None
@@ -174,65 +212,66 @@ class AgxArmRosNode(Node):
 
     def _setup_publishers(self):
         self.joint_states_pub = self.create_publisher(
-            JointState, "/feedback/joint_states", 1
+            JointState, "feedback/joint_states", 1
         )
         # self.flange_pose_pub = self.create_publisher(
-        #     PoseStamped, "/feedback/flange_pose", 1
+        #     PoseStamped, "feedback/flange_pose", 1
         # )
         self.tcp_pose_pub = self.create_publisher(
-            PoseStamped, "/feedback/tcp_pose", 1
+            PoseStamped, "feedback/tcp_pose", 1
         )
         self.arm_status_pub = self.create_publisher(
-            AgxArmStatus, "/feedback/arm_status", 1
+            AgxArmStatus, "feedback/arm_status", 1
         )
         self.leader_joint_angles_pub = self.create_publisher(
-            JointState, "/feedback/leader_joint_angles", 1
+            JointState, "feedback/leader_joint_angles", 1
         )
         if self.gripper is not None:
             self.gripper_status_pub = self.create_publisher(
-                GripperStatus, "/feedback/gripper_status", 1
+                GripperStatus, "feedback/gripper_status", 1
             )
         if self.hand is not None:
             self.hand_status_pub = self.create_publisher(
-                HandStatus, "/feedback/hand_status", 1
+                HandStatus, "feedback/hand_status", 1
             )
 
     def _setup_subscribers(self):
         self.create_subscription(
-            JointState, "/control/joint_states", self._joint_states_callback, 1
+            JointState, "control/joint_states", self._joint_states_callback, 1
         )
         self.create_subscription(
-            JointState, "/control/move_j", self._move_j_callback, 1
+            JointState, "control/move_j", self._move_j_callback, 1
         )
         self.create_subscription(
-            PoseStamped, "/control/move_p", self._move_p_callback, 1
+            PoseStamped, "control/move_p", self._move_p_callback, 1
         )
         self.create_subscription(
-            PoseStamped, "/control/move_l", self._move_l_callback, 1
+            PoseStamped, "control/move_l", self._move_l_callback, 1
         )
         self.create_subscription(
-            PoseArray, "/control/move_c", self._move_c_callback, 1
+            PoseArray, "control/move_c", self._move_c_callback, 1
         )
         self.create_subscription(
-            JointState, "/control/move_js", self._move_js_callback, 1
+            JointState, "control/move_js", self._move_js_callback, 1
         )
         self.create_subscription(
-            MoveMITMsg, "/control/move_mit", self._move_mit_callback, 1
+            MoveMITMsg, "control/move_mit", self._move_mit_callback, 1
         )
         if self.hand is not None:
             self.create_subscription(
-                HandCmd, "/control/hand", self._hand_cmd_callback, 1
+                HandCmd, "control/hand", self._hand_cmd_callback, 1
             )
             self.create_subscription(
-                HandPositionTimeCmd, "/control/hand_position_time", 
+                HandPositionTimeCmd, "control/hand_position_time", 
                 self._hand_position_time_cmd_callback, 1
             )
 
     def _setup_services(self):
-        self.create_service(SetBool, "/enable_agx_arm", self._enable_callback)
-        self.create_service(Empty, "/move_home", self._move_home_callback)
+        self.create_service(SetBool, "enable_agx_arm", self._enable_callback)
+        self.create_service(Empty, "move_home", self._move_home_callback)
+        self.create_service(Empty, "emergency_stop", self._emergency_stop_callback)
         if not self.is_switch_seamlessly:
-            self.create_service(Empty, "/exit_teach_mode", self._exit_teach_mode_callback)
+            self.create_service(Empty, "exit_teach_mode", self._exit_teach_mode_callback)
 
     ### utility methods
     def _float_to_ros_time(self, timestamp: float) -> Time:
@@ -241,15 +280,6 @@ class AgxArmRosNode(Node):
         ros_time.sec = int(timestamp)
         ros_time.nanosec = int((timestamp - ros_time.sec) * 1e9)
         return ros_time
-
-    def _parse_firmware_version(self, version_str: str) -> Tuple[int, int, int]:
-        if not version_str:
-            return (0, 0, 0)
-        
-        match = re.match(r'S-V(\d+)\.(\d+)-(\d+)', version_str)
-        if match:
-            return tuple(int(x) for x in match.groups())
-        return (0, 0, 0)
 
     def _safe_get_value(self, array, index, default=0.0) -> float:
         if index >= len(array):
@@ -264,6 +294,10 @@ class AgxArmRosNode(Node):
         return True
 
     def _check_can_control(self) -> bool:
+        if not self.control_ready:
+            # Startup warm-up: ignore incoming control commands until a valid
+            # joint state stream is available.
+            return False
         if not self._check_arm_ready():
             self.get_logger().warn("Agx_arm is not connected, cannot control")
             return False
@@ -274,16 +308,6 @@ class AgxArmRosNode(Node):
             arm_status = self.agx_arm.get_arm_status()
             if arm_status is not None and arm_status.msg.ctrl_mode == self.agx_arm.ARM_STATUS.CtrlMode.TEACHING_MODE:
                 self.get_logger().warn("Agx_arm is in teach mode, cannot control")
-                return False
-        return True
-
-    def _validate_mit_params(self, params: dict, constraints: dict) -> bool:
-        for param_name, value in params.items():
-            min_val, max_val = constraints[param_name]
-            if not (min_val <= value < max_val):
-                self.get_logger().error(
-                    f"Invalid {param_name}: {value} (valid range: [{min_val}, {max_val}])"
-                )
                 return False
         return True
 
@@ -329,8 +353,6 @@ class AgxArmRosNode(Node):
                     f"Timeout waiting for arm to {action_name} after {timeout} seconds"
                 )
                 return False
-            if self.is_nero:
-                self.agx_arm.set_normal_mode()
             time.sleep(0.01)
         
         joints_status = self.agx_arm.get_joint_enable_status(255)
@@ -349,14 +371,15 @@ class AgxArmRosNode(Node):
     ### publisher thread
     def _publish_thread(self):
         rate = self.create_rate(self.pub_rate)
-        
-        if rclpy.ok() and self.auto_enable:
-            if not self._enable_arm(True, self.enable_timeout):
-                self.get_logger().error("Failed to auto-enable the arm")
 
         # publishing loop
         while rclpy.ok():
             if self.agx_arm.is_ok():
+                if not self.control_ready and self._check_arm_ready():
+                    self.control_ready = True
+                    if not self._control_ready_logged:
+                        self.get_logger().info("Agx_arm feedback is ready, control is now enabled")
+                        self._control_ready_logged = True
                 self._publish_joint_states()
                 self._publish_pose()
                 self._publish_arm_status()
@@ -549,8 +572,12 @@ class AgxArmRosNode(Node):
         }
         if arm_joints:
             joints = [arm_joints.get(name, 0) for name in self.arm_joint_names]
-            self.agx_arm.move_j(joints)
-            self.is_mit_mode = False
+            if self.fast_mode:
+                self.agx_arm.move_js(joints)
+                self.is_mit_mode = True
+            else:
+                self.agx_arm.move_j(joints)
+                self.is_mit_mode = False
 
     def _control_gripper_joint(self, joint_pos, joint_effort):
         if self.gripper is None:
@@ -574,7 +601,7 @@ class AgxArmRosNode(Node):
         joint_name, scale = matched
         width = abs(joint_pos[joint_name]) * scale
         # Use default force if effort is 0 or not specified
-        force = joint_effort.get(joint_name, 0.0) or 1.0
+        force = joint_effort.get(joint_name, self.gripper_default_effort) or self.gripper_default_effort
 
         try:
             self.gripper.move(width=width, force=force)
@@ -682,18 +709,9 @@ class AgxArmRosNode(Node):
             self.get_logger().error("MoveMITMsg arrays have inconsistent lengths")
             return
         
-        if not arrays[0]:  
+        if not arrays[0]:
             self.get_logger().warn("Received empty MoveMITMsg")
             return
-        
-        constraints = {
-            "joint_index": (1, self.arm_joint_count + 1),
-            "p_des": MITModeLimit.P_DES_RANGE,
-            "v_des": MITModeLimit.V_DES_RANGE,
-            "kp": MITModeLimit.KP_RANGE,
-            "kd": MITModeLimit.KD_RANGE,
-            "torque": MITModeLimit.TORQUE_RANGE,
-        }
         
         for i in range(len(msg.joint_index)):
             params = {
@@ -702,11 +720,8 @@ class AgxArmRosNode(Node):
                 "v_des": msg.v_des[i],
                 "kp": msg.kp[i],
                 "kd": msg.kd[i],
-                "torque": msg.torque[i],
+                "t_ff": msg.torque[i],
             }
-            
-            if not self._validate_mit_params(params, constraints):
-                return
             
             self.agx_arm.move_mit(**params)
         self.is_mit_mode = True
@@ -808,6 +823,33 @@ class AgxArmRosNode(Node):
                     self.get_logger().info("Agx_arm moved to home position successfully")
         except Exception as e:
             self.get_logger().error(f"Failed to move to home position: {str(e)}")
+        return response
+
+    def _emergency_stop_callback(self, request, response):
+        """Emergency stop: use is_switch_seamlessly flag to decide MIT vs move_j."""
+        try:
+            if not self._check_arm_ready():
+                self.get_logger().warn("Agx_arm is not connected, cannot perform emergency stop")
+                return response
+            if not self.enable_flag:
+                self.get_logger().warn("Agx_arm is not enabled, cannot perform emergency stop")
+                return response
+
+            js = self.agx_arm.get_joint_angles()
+            if js is None or js.hz <= 0:
+                self.get_logger().warn("No valid joint angles, cannot perform emergency stop")
+                return response
+
+            q = list(js.msg)
+            if not self.is_switch_seamlessly:
+                self.agx_arm.move_js(q)
+                self.is_mit_mode = True
+            else:
+                self.agx_arm.move_j(q)
+                self.is_mit_mode = False
+            self.get_logger().info(f"Emergency stop command sent to {self.arm_type}")
+        except Exception as e:
+            self.get_logger().error(f"Emergency stop failed: {e}")
         return response
 
     def _exit_teach_mode_callback(self, request, response):

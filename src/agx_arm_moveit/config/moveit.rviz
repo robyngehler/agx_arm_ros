@@ -15,6 +15,7 @@ Visualization Manager:
       Value: true
     - Class: moveit_rviz_plugin/MotionPlanning
       Name: MotionPlanning
+      Move Group Namespace: ""
       Planning Request:
         Interactive Marker Size: 0.1
       Planned Path:

@@ -17,6 +17,11 @@ def generate_launch_description():
         default_value='info',
         description='Logging level (debug, info, warn, error, fatal).'
     )
+    namespace_arg = DeclareLaunchArgument(
+        'namespace',
+        default_value='',
+        description='ROS namespace for this arm instance (e.g. arm1).'
+    )
 
     can_port_arg = DeclareLaunchArgument(
         'can_port',
@@ -52,11 +57,11 @@ def generate_launch_description():
         description='Automatically enable the AGX Arm node.'
     )
 
-    installation_pos_arg = DeclareLaunchArgument(
-        'installation_pos',
-        default_value='horizontal',
-        choices=['horizontal', 'left', 'right'],
-        description='Installation position of the arm (e.g. horizontal, left, right).'
+    fast_mode_arg = DeclareLaunchArgument(
+        'fast_mode',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Enable fast mode for the AGX Arm node.'
     )
 
     speed_percent_arg = DeclareLaunchArgument(
@@ -77,17 +82,16 @@ def generate_launch_description():
         description='Timeout in seconds for arm enable/disable operations.'
     )
 
-    payload_arg = DeclareLaunchArgument(
-        'payload',
-        default_value='empty',
-        choices=['empty', 'half', 'full'],
-        description='Payload type (e.g. empty, half, full).',
-    )
-
     tcp_offset_arg = DeclareLaunchArgument(
         'tcp_offset',
         default_value='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]',
         description='TCP offset in x, y, z, roll, pitch, yaw in meters/radians.'
+    )
+
+    gripper_default_effort_arg = DeclareLaunchArgument(
+        'gripper_default_effort',
+        default_value='1.0',
+        description='Default effort for gripper commands (>= 0.0).'
     )
 
     follow_arg = DeclareLaunchArgument(
@@ -108,16 +112,17 @@ def generate_launch_description():
         ),
         launch_arguments={
             'log_level': LaunchConfiguration('log_level'),
+            'namespace': LaunchConfiguration('namespace'),
             'can_port': LaunchConfiguration('can_port'),
             'pub_rate': LaunchConfiguration('pub_rate'),
             'auto_enable': LaunchConfiguration('auto_enable'),
+            'fast_mode': LaunchConfiguration('fast_mode'),
             'arm_type': LaunchConfiguration('arm_type'),
             'speed_percent': LaunchConfiguration('speed_percent'),
             'enable_timeout': LaunchConfiguration('enable_timeout'),
-            'installation_pos': LaunchConfiguration('installation_pos'),
             'effector_type': LaunchConfiguration('effector_type'),
-            'payload': LaunchConfiguration('payload'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
+            'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
             'publish_gripper_joint': 'false',
         }.items(),
     )
@@ -132,6 +137,7 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
+            'namespace': LaunchConfiguration('namespace'),
             'arm_type': LaunchConfiguration('arm_type'),
             'effector_type': LaunchConfiguration('effector_type'),
             'revo2_type': LaunchConfiguration('revo2_type'),
@@ -143,17 +149,18 @@ def generate_launch_description():
     return LaunchDescription([
         # arguments
         log_level_arg,
+        namespace_arg,
         can_port_arg,
         arm_type_arg,
         effector_type_arg,
         revo2_type_arg,
         auto_enable_arg,
-        installation_pos_arg,
+        fast_mode_arg,
         speed_percent_arg,
         pub_rate_arg,
         enable_timeout_arg,
-        payload_arg,
         tcp_offset_arg,
+        gripper_default_effort_arg,
         follow_arg,
         # launches
         agx_arm_launch,

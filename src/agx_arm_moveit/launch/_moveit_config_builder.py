@@ -12,6 +12,11 @@ ALL_REVO2_TYPES = ["left", "right"]
 def declare_common_args():
     return [
         DeclareLaunchArgument(
+            "namespace",
+            default_value="",
+            description="ROS namespace for this arm instance (e.g. arm1).",
+        ),
+        DeclareLaunchArgument(
             "arm_type", default_value="piper",
             choices=ALL_ARM_TYPES, description="Arm type.",
         ),
@@ -34,8 +39,8 @@ def declare_common_args():
             default_value="false",
             choices=["true", "false"],
             description="Follow real arm state. "
-            "true: move_group subscribes to /feedback/joint_states; "
-            "false: subscribes to /control/joint_states (mock hardware).",
+            "true: move_group subscribes to feedback/joint_states; "
+            "false: subscribes to control/joint_states (mock hardware).",
         ),
     ]
 

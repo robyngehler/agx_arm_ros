@@ -14,7 +14,7 @@ from _moveit_config_builder import build_moveit_config, declare_common_args
 def _launch(context):
     follow = LaunchConfiguration("follow").perform(context)
     joint_states_topic = (
-        "/feedback/joint_states" if follow == "true" else "/control/joint_states"
+        "feedback/joint_states" if follow == "true" else "control/joint_states"
     )
 
     moveit_config = build_moveit_config(context)
@@ -26,7 +26,7 @@ def _launch(context):
             respawn=True,
             output="screen",
             parameters=[moveit_config.robot_description],
-            remappings=[("/joint_states", joint_states_topic)],
+            remappings=[("joint_states", joint_states_topic)],
         )
     ]
 

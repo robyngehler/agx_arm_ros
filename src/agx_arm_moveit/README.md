@@ -120,11 +120,15 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 
 # Nero + 灵巧手
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=nero effector_type:=revo2 revo2_type:=left
+
+# Piper_X + 命名空间（多实例场景）
+ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper_x namespace:=piper_x
 ```
 
 > 该 launch 支持所有 `agx_arm_ctrl` 参数（如 `tcp_offset`、`speed_percent`、`auto_enable` 等），详见 [agx_arm_ctrl 启动参数](../../README.md#启动参数)。
 > - `follow` 默认为 `true`，MoveIt 自动订阅 `/feedback/joint_states` 跟随真实臂状态
 > - `publish_gripper_joint` 自动设为 `false`，不发布 `gripper`（夹爪宽度）关节，避免 URDF 中不存在该关节名导致的 MoveIt 告警
+> - 需要多机械臂并行时，可为该 launch 指定 `namespace`（例如 `namespace:=piper_x`）
 
 #### 方式二：分步启动
 
@@ -150,6 +154,7 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 re
 | `arm_type` | `piper` | 机械臂型号 | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
 | `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2` |
 | `revo2_type` | `left` | Revo2 灵巧手类型 | `left`, `right` |
+| `namespace` | 空字符串 | 当前 MoveIt/控制实例命名空间（多实例推荐设置） | 任意合法 ROS 命名空间 |
 | `follow` | `false` | 跟随真实机械臂状态（`true` 时 MoveIt 订阅 `/feedback/joint_states`；`false` 时订阅 `/control/joint_states`） | `true`, `false` |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度），非零时规划目标和交互标记移至 TCP 位置 | - |
 | `use_rviz` | `true` | 是否启动 RViz | `true`, `false` |

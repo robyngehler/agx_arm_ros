@@ -122,11 +122,15 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 
 # Nero + Dexterous hand
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=nero effector_type:=revo2 revo2_type:=left
+
+# Piper_X + namespace (multi-instance scenario)
+ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper_x namespace:=piper_x
 ```
 
 > This launch supports all `agx_arm_ctrl` parameters (e.g. `tcp_offset`, `speed_percent`, `auto_enable`, etc.). See [agx_arm_ctrl Launch Parameters](../../README_EN.md#launch-parameters) for details.
 > - `follow` defaults to `true`, so MoveIt automatically subscribes to `/feedback/joint_states` to track real arm state
 > - `publish_gripper_joint` is automatically set to `false`, suppressing the `gripper` (opening width) joint that does not exist in the URDF, preventing MoveIt warnings
+> - For multi-arm parallel use, you can set `namespace` for this launch (e.g. `namespace:=piper_x`)
 
 #### Option 2: Step-by-Step Launch
 
@@ -152,6 +156,7 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 re
 | `arm_type` | `piper` | Arm model | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
 | `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2` |
 | `revo2_type` | `left` | Revo2 dexterous hand type | `left`, `right` |
+| `namespace` | empty string | Namespace for the current MoveIt/control instance (recommended for multi-instance setups) | Any valid ROS namespace |
 | `follow` | `false` | Follow real arm state (`true`: MoveIt subscribes to `/feedback/joint_states`; `false`: subscribes to `/control/joint_states`) | `true`, `false` |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP offset [x, y, z, rx, ry, rz] in meters/radians. When non-zero, the planning target and interactive marker align with the TCP position | - |
 | `use_rviz` | `true` | Whether to launch RViz | `true`, `false` |

@@ -57,12 +57,14 @@ def _flange_link(arm_type):
 
 
 def resolve_model_path(context, *args, **kwargs):
+    namespace = LaunchConfiguration('namespace').perform(context)
     arm_type = LaunchConfiguration('arm_type').perform(context)
     effector_type = LaunchConfiguration('effector_type').perform(context)
     revo2_type = LaunchConfiguration('revo2_type').perform(context)
     custom_model = LaunchConfiguration('custom_model').perform(context)
     follow = LaunchConfiguration('follow').perform(context)
     control = LaunchConfiguration('control').perform(context)
+    control_topic = LaunchConfiguration('control_topic').perform(context)
     tcp_offset = ast.literal_eval(
         LaunchConfiguration('tcp_offset').perform(context)
     )
@@ -77,35 +79,43 @@ def resolve_model_path(context, *args, **kwargs):
 
     robot_description = ParameterValue(Command(['xacro ', model_path]), value_type=str)
 
+    # When follow=true, use feedback/joint_states as the state source; otherwise use control_topic.
+    state_joint_topic = 'feedback/joint_states' if follow == 'true' else str(control_topic)
+
     robot_state_publisher_node = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
+        namespace=namespace,
         parameters=[{'robot_description': robot_description}],
-        remappings=[('/joint_states', f'{"feedback" if follow == "true" else "control"}/joint_states')]
+        remappings=[('joint_states', state_joint_topic)]
     )
 
     joint_state_publisher_node = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
+        namespace=namespace,
         condition=UnlessCondition(LaunchConfiguration('gui')),
         parameters=[{'rate': LaunchConfiguration('pub_rate')}],
-        remappings=[('/joint_states', '/control/joint_states')]
+        remappings=[('joint_states', str(control_topic))]
     )
 
     joint_state_publisher_gui_node = Node(
         package='joint_state_publisher_gui',
         executable='joint_state_publisher_gui',
+        namespace=namespace,
         condition=IfCondition(LaunchConfiguration('gui')),
         parameters=[{'rate': LaunchConfiguration('pub_rate')}],
-        remappings=[('/joint_states', '/control/joint_states')]
+        remappings=[('joint_states', str(control_topic))]
     )
 
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
         name='rviz2',
+        namespace=namespace,
         output='screen',
         arguments=['-d', LaunchConfiguration('rvizconfig')],
+        remappings=[('/robot_description', 'robot_description')],
     )
 
     nodes = [
@@ -127,6 +137,7 @@ def resolve_model_path(context, *args, **kwargs):
             Node(
                 package='tf2_ros',
                 executable='static_transform_publisher',
+                namespace=namespace,
                 arguments=[
                     '--x', str(x), '--y', str(y), '--z', str(z),
                     '--roll', str(rx), '--pitch', str(ry), '--yaw', str(rz),
@@ -141,6 +152,11 @@ def generate_launch_description():
     urdf_tutorial_path = get_package_share_path('agx_arm_description')
     default_rviz_config_path = urdf_tutorial_path / 'rviz/display.rviz'
 
+    namespace_arg = DeclareLaunchArgument(
+        name='namespace',
+        default_value='',
+        description='ROS namespace for this arm instance (e.g. arm1).'
+    )
     arm_type_arg = DeclareLaunchArgument(
         name='arm_type',
         default_value='piper',
@@ -181,6 +197,11 @@ def generate_launch_description():
         choices=['true', 'false'],
         description='Flag to enable publishing control topics.',
     )
+    control_topic_arg = DeclareLaunchArgument(
+        name='control_topic',
+        default_value='control/joint_states',
+        description='Topic to publish joint slider targets (from joint_state_publisher_gui).',
+    )
     tcp_offset_arg = DeclareLaunchArgument(
         'tcp_offset',
         default_value='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]',
@@ -189,6 +210,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        namespace_arg,
         arm_type_arg,
         custom_model_arg,
         effector_type_arg,
@@ -198,6 +220,7 @@ def generate_launch_description():
         rviz_arg,
         follow_arg,
         control_arg,
+        control_topic_arg,
         tcp_offset_arg,
         OpaqueFunction(function=resolve_model_path),
     ])

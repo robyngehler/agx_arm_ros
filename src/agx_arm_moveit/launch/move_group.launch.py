@@ -18,7 +18,7 @@ from _moveit_config_builder import build_moveit_config, declare_common_args
 def _launch(context):
     moveit_config = build_moveit_config(context)
     follow = LaunchConfiguration("follow").perform(context) == "true"
-    joint_states_topic = "/feedback/joint_states" if follow else "/control/joint_states"
+    joint_states_topic = "feedback/joint_states" if follow else "control/joint_states"
 
     move_group_configuration = {
         "publish_robot_description_semantic": True,
@@ -49,7 +49,7 @@ def _launch(context):
         move_group_configuration,
     ]
 
-    remappings = [("/joint_states", joint_states_topic)]
+    remappings = [("joint_states", joint_states_topic)]
 
     return [
         Node(
