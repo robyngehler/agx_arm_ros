@@ -52,9 +52,9 @@ ros2 launch agx_arm_description display.launch.py arm_type:=nero effector_type:=
 
 **Piper 机械臂示例：**
 
-![piper_rviz_tcp_1](../../asserts/pictures/piper_rviz_tcp_1.png)
-![piper_rviz_tcp_2](../../asserts/pictures/piper_rviz_tcp_2.png)
-![piper_rviz_tcp_3](../../asserts/pictures/piper_rviz_tcp_3.png)
+![piper_rviz_tcp_1](../../assets/pictures/piper_rviz_tcp_1.png)
+![piper_rviz_tcp_2](../../assets/pictures/piper_rviz_tcp_2.png)
+![piper_rviz_tcp_3](../../assets/pictures/piper_rviz_tcp_3.png)
 
 ## 三、在 RViz 中预览 TCP 偏移
 
@@ -73,4 +73,4 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper effector_type:
 > ros2 launch agx_arm_moveit demo.launch.py arm_type:=piper effector_type:=agx_gripper tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
 > ```
 
-![piper_rviz_tcp_4](../../asserts/pictures/piper_rviz_tcp_4.png)
+![piper_rviz_tcp_4](../../assets/pictures/piper_rviz_tcp_4.png)

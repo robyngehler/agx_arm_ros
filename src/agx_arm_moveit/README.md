@@ -205,7 +205,7 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 re
 
 ### 3.4 RViz 中的操作
 
-![piper_moveit](./asserts/pictures/piper_moveit.png)
+![piper_moveit](./assets/pictures/piper_moveit.png)
 
 - 拖动机械臂末端的交互标记（6D 球）来设定目标位姿
 - 在左侧 **MotionPlanning → Planning** 面板中：

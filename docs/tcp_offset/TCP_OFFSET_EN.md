@@ -53,9 +53,9 @@ You can also expand `RobotModel` → `Links` in the left panel and check the lin
 
 **Piper arm example:**
 
-![piper_rviz_tcp_1](../../asserts/pictures/piper_rviz_tcp_1.png)
-![piper_rviz_tcp_2](../../asserts/pictures/piper_rviz_tcp_2.png)
-![piper_rviz_tcp_3](../../asserts/pictures/piper_rviz_tcp_3.png)
+![piper_rviz_tcp_1](../../assets/pictures/piper_rviz_tcp_1.png)
+![piper_rviz_tcp_2](../../assets/pictures/piper_rviz_tcp_2.png)
+![piper_rviz_tcp_3](../../assets/pictures/piper_rviz_tcp_3.png)
 
 ## 3. Preview TCP Offset in RViz
 
@@ -74,4 +74,4 @@ The parameter format is `[x, y, z, rx, ry, rz]`, all values must be floating-poi
 > ros2 launch agx_arm_moveit demo.launch.py arm_type:=piper effector_type:=agx_gripper tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
 > ```
 
-![piper_rviz_tcp_4](../../asserts/pictures/piper_rviz_tcp_4.png)
+![piper_rviz_tcp_4](../../assets/pictures/piper_rviz_tcp_4.png)

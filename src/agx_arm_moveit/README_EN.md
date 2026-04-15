@@ -207,7 +207,7 @@ Based on the `follow` parameter, below are common MoveIt usage patterns:
 
 ### 3.4 RViz Operations
 
-![piper_moveit](./asserts/pictures/piper_moveit.png)
+![piper_moveit](./assets/pictures/piper_moveit.png)
 
 - Drag the interactive marker (6D ball) at the arm's end-effector to set target poses
 - In the left **MotionPlanning → Planning** panel:
