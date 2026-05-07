@@ -18,6 +18,7 @@
 |TCP偏移设置|[tcp_offset](./docs/tcp_offset/TCP_OFFSET.md)|
 |URDF|[URDF](https://github.com/agilexrobotics/agx_arm_urdf)|
 |Moveit| [Moveit](./src/agx_arm_moveit/README.md) |
+|Nero MIT 软控制|[agx_arm_mit_controller](./src/agx_arm_mit_controller/README.md)|
 |Q&A|[Q&A](./docs/Q&A.md)|
 
 ---
@@ -216,6 +217,14 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper effector_type:=agx_gripper
 ```
+
+**Nero MIT 软轨迹控制（ROS 应用节点 + 臂控节点）：**
+
+```bash
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py can_port:=can0
+```
+
+该启动方式会复用 `agx_arm_ctrl` 作为硬件适配层，并额外启动一个面向应用的 MIT 控制节点。该节点订阅 `feedback/joint_states`，接收 `trajectory_msgs/JointTrajectory`，并持续发布 `control/move_mit`，便于后续扩展软轨迹回放、重力补偿和碰撞监测。
 
 > 该 launch 文件同时启动机械臂控制节点和 MoveIt2，自动将关节反馈 (`/feedback/joint_states`) 接入 MoveIt，无需手动分两个终端启动。支持所有 `agx_arm_ctrl` 的参数（如 `tcp_offset`、`speed_percent` 等），详见 [Moveit](./src/agx_arm_moveit/README.md)。
 
