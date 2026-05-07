@@ -136,6 +136,8 @@ def generate_launch_description():
 
             # services
             ('enable_agx_arm', 'enable_agx_arm'),
+            ('set_normal_mode', 'set_normal_mode'),
+            ('set_leader_mode', 'set_leader_mode'),
             ('move_home', 'move_home'),
             ('emergency_stop', 'emergency_stop'),
             ('exit_teach_mode', 'exit_teach_mode'),

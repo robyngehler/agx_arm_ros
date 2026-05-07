@@ -9,7 +9,7 @@ from pyAgxArm import create_agx_arm_config, AgxArmFactory, ArmModel, PiperFW, Ne
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from builtin_interfaces.msg import Time
-from std_srvs.srv import SetBool, Empty
+from std_srvs.srv import SetBool, Empty, Trigger
 from geometry_msgs.msg import Pose, PoseStamped, PoseArray
 from scipy.spatial.transform import Rotation as R
 
@@ -270,6 +270,9 @@ class AgxArmRosNode(Node):
         self.create_service(SetBool, "enable_agx_arm", self._enable_callback)
         self.create_service(Empty, "move_home", self._move_home_callback)
         self.create_service(Empty, "emergency_stop", self._emergency_stop_callback)
+        if self.is_nero:
+            self.create_service(Trigger, "set_normal_mode", self._set_normal_mode_callback)
+            self.create_service(Trigger, "set_leader_mode", self._set_leader_mode_callback)
         if not self.is_switch_seamlessly:
             self.create_service(Empty, "exit_teach_mode", self._exit_teach_mode_callback)
 
@@ -874,6 +877,60 @@ class AgxArmRosNode(Node):
                 self.get_logger().info("Agx_arm is not in teach mode")
         except Exception as e:
             self.get_logger().error(f"Failed to exit teach mode: {e}")
+        return response
+
+    def _set_normal_mode_callback(self, request, response):
+        del request
+        try:
+            if not self.is_nero:
+                response.success = False
+                response.message = "set_normal_mode is only supported for Nero"
+                return response
+            if not self._check_arm_ready():
+                response.success = False
+                response.message = "Agx_arm is not connected"
+                return response
+            if not self.enable_flag:
+                response.success = False
+                response.message = "Agx_arm is not enabled"
+                return response
+
+            self.agx_arm.set_normal_mode()
+            self.is_mit_mode = False
+            response.success = True
+            response.message = "Switched to normal mode"
+            self.get_logger().info(response.message)
+        except Exception as e:
+            response.success = False
+            response.message = f"Failed to switch to normal mode: {e}"
+            self.get_logger().error(response.message)
+        return response
+
+    def _set_leader_mode_callback(self, request, response):
+        del request
+        try:
+            if not self.is_nero:
+                response.success = False
+                response.message = "set_leader_mode is only supported for Nero"
+                return response
+            if not self._check_arm_ready():
+                response.success = False
+                response.message = "Agx_arm is not connected"
+                return response
+            if not self.enable_flag:
+                response.success = False
+                response.message = "Agx_arm is not enabled"
+                return response
+
+            self.agx_arm.set_leader_mode()
+            self.is_mit_mode = False
+            response.success = True
+            response.message = "Switched to leader mode"
+            self.get_logger().info(response.message)
+        except Exception as e:
+            response.success = False
+            response.message = f"Failed to switch to leader mode: {e}"
+            self.get_logger().error(response.message)
         return response
 
 
