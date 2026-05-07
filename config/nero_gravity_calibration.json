@@ -1,0 +1,31 @@
+{
+  "bias": [
+    0.0,
+    -0.262890813170106,
+    -0.055262949186232826,
+    0.25221471409553553,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "joint_names": [
+    "joint1",
+    "joint2",
+    "joint3",
+    "joint4",
+    "joint5",
+    "joint6",
+    "joint7"
+  ],
+  "note": "Least-squares scale and bias fit against measured motor torque feedback. Some joints were left uncalibrated because the input log did not excite them sufficiently.",
+  "scale": [
+    1.0,
+    1.2111045847273758,
+    0.7222737650862996,
+    0.7758864718108625,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "source_log": "/home/user/workspace/agx_arm_ros/logs/nero_gravity_dataset.csv"
+}

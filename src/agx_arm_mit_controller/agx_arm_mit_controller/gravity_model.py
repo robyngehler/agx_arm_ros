@@ -16,6 +16,7 @@ class GravityModel(Protocol):
     urdf_path: str
 
     def compute_gravity(self, joint_positions: list[float]) -> list[float]:
+        """Return actuator torque needed to compensate gravity at `joint_positions`."""
         ...
 
     def compute_flange_pose(self, joint_positions: list[float]) -> list[float]:
@@ -52,7 +53,10 @@ class PinocchioGravityModel:
         for index, value in enumerate(joint_positions):
             q[index] = value
         tau = self._pin.computeGeneralizedGravity(self._model, self._data, q)
-        return [float(tau[index]) for index in range(self.model_dofs)]
+        # Pinocchio returns the gravity term from the dynamics equation. The MIT
+        # controller and motor feedback use actuator torque sign, which is the
+        # opposite direction for static gravity compensation.
+        return [-float(tau[index]) for index in range(self.model_dofs)]
 
     def compute_flange_pose(self, joint_positions: list[float]) -> list[float]:
         if len(joint_positions) != self.model_dofs:

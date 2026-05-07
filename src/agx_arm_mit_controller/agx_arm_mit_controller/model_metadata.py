@@ -5,7 +5,24 @@ from typing import Any, Optional
 from xml.etree import ElementTree as ET
 
 
-def candidate_nero_urdf_paths() -> list[Path]:
+def _package_share_nero_urdf_paths() -> list[Path]:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+    except Exception:
+        return []
+
+    try:
+        share_dir = Path(get_package_share_directory("agx_arm_description"))
+    except Exception:
+        return []
+
+    return [
+        share_dir / "agx_arm_urdf" / "nero" / "urdf" / "nero_description.urdf",
+        share_dir / "urdf" / "nero_gripper_d435.urdf",
+    ]
+
+
+def _source_tree_nero_urdf_paths() -> list[Path]:
     src_root = Path(__file__).resolve().parents[2]
     return [
         src_root
@@ -21,6 +38,47 @@ def candidate_nero_urdf_paths() -> list[Path]:
         / "urdf"
         / "nero_gripper_d435.urdf",
     ]
+
+
+def _workspace_nero_urdf_paths() -> list[Path]:
+    candidates: list[Path] = []
+    search_roots = [Path.cwd(), *Path.cwd().parents]
+    seen: set[Path] = set()
+
+    for root in search_roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        candidates.extend(
+            [
+                root
+                / "src"
+                / "agx_arm_sim"
+                / "agx_arm_description"
+                / "agx_arm_urdf"
+                / "nero"
+                / "urdf"
+                / "nero_description.urdf",
+                root
+                / "src"
+                / "agx_arm_sim"
+                / "agx_arm_description"
+                / "urdf"
+                / "nero_gripper_d435.urdf",
+                root
+                / "src"
+                / "agx_arm_description"
+                / "agx_arm_urdf"
+                / "nero"
+                / "urdf"
+                / "nero_description.urdf",
+            ]
+        )
+    return candidates
+
+
+def candidate_nero_urdf_paths() -> list[Path]:
+    return _package_share_nero_urdf_paths() + _workspace_nero_urdf_paths() + _source_tree_nero_urdf_paths()
 
 
 def default_nero_urdf_path() -> Path:

@@ -57,6 +57,36 @@ ros2 run agx_arm_mit_controller agx_arm_execute_saved_trajectory -- ~/agx_arm_tr
 
 `agx_arm_fit_gravity_calibration` fits a simple per-joint scale-and-bias model from logged CSV data.
 
+Recommended gravity-calibration workflow:
+
+1. Put the robot in a static pose.
+2. Run a short capture:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_compare_gravity -- --can-port can_nero --duration 2.0 --rate 2.0 --csv-path logs/nero_gravity_dataset.csv
+```
+
+3. Move the robot by hand or with a normal motion command to a clearly different pose.
+4. Run another short capture and append it to the same CSV:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_compare_gravity -- --can-port can_nero --duration 2.0 --rate 2.0 --csv-path logs/nero_gravity_dataset.csv --append
+```
+
+5. Repeat for several distinct static poses, then fit one calibration JSON from the combined dataset:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_fit_gravity_calibration -- logs/nero_gravity_dataset.csv --output config/nero_gravity_calibration.json
+```
+
+You can also fit across several separate CSV files in one command:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_fit_gravity_calibration -- logs/pose_a.csv logs/pose_b.csv logs/pose_c.csv --output config/nero_gravity_calibration.json
+```
+
+`agx_arm_fit_gravity_calibration` does not move the robot and does not need live CAN access. It only reads CSV files.
+
 If Pinocchio is not installed yet, the compare and FK validation tools explain that clearly instead of failing mysteriously.
 
 ## Behavior

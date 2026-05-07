@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,31 @@ class CalibrationModel:
         }
 
 
+def _validate_numeric_vector(values: list[float], name: str) -> None:
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError(f"calibration model contains a non-finite {name} value")
+
+
+def validate_calibration_model(
+    model: CalibrationModel,
+    *,
+    max_abs_scale: float = 10.0,
+    max_abs_bias: float = 16.0,
+) -> CalibrationModel:
+    _validate_numeric_vector(model.scale, "scale")
+    _validate_numeric_vector(model.bias, "bias")
+
+    if any(abs(value) > max_abs_scale for value in model.scale):
+        raise ValueError(
+            f"calibration model scale exceeds safety bound of {max_abs_scale}; regenerate from a better log"
+        )
+    if any(abs(value) > max_abs_bias for value in model.bias):
+        raise ValueError(
+            f"calibration model bias exceeds safety bound of {max_abs_bias} N*m; regenerate from a better log"
+        )
+    return model
+
+
 def load_calibration_model(file_path: str | Path, expected_joint_names: list[str] | None = None) -> CalibrationModel:
     path = Path(file_path).expanduser().resolve()
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -50,7 +76,7 @@ def load_calibration_model(file_path: str | Path, expected_joint_names: list[str
         raise ValueError(
             f"calibration model joints mismatch: expected {expected_joint_names}, got {model.joint_names}"
         )
-    return model
+    return validate_calibration_model(model)
 
 
 def save_calibration_model(model: CalibrationModel, file_path: str | Path) -> Path:
