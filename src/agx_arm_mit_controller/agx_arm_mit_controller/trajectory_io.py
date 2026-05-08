@@ -134,7 +134,7 @@ def recorded_to_joint_trajectory(trajectory: RecordedTrajectory):
         ros_point = JointTrajectoryPoint()
         ros_point.positions = list(point.positions)
         ros_point.velocities = list(point.velocities)
-        ros_point.effort = list(point.efforts)
+        ros_point.effort = [0.0] * len(point.positions)
         ros_point.time_from_start = _duration_from_seconds(point.time_from_start)
         msg.points.append(ros_point)
     return msg

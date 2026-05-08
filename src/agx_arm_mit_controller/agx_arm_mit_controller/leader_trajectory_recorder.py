@@ -11,7 +11,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool, Trigger
 
-from .model_metadata import build_gravity_context, compute_flange_pose_from_mdh, summarize_efforts
+from .model_metadata import build_gravity_context, compute_flange_pose_from_mdh
 from .trajectory_io import (
     RecordedTrajectory,
     default_recorded_at,
@@ -34,9 +34,7 @@ class LeaderTrajectoryRecorderNode(Node):
     def __init__(self) -> None:
         super().__init__("leader_trajectory_recorder")
         self.leader_joint_state: Optional[JointState] = None
-        self.feedback_joint_state: Optional[JointState] = None
         self.create_subscription(JointState, "feedback/leader_joint_angles", self._leader_callback, 20)
-        self.create_subscription(JointState, "feedback/joint_states", self._joint_state_callback, 20)
         self.enable_client = self.create_client(SetBool, "enable_agx_arm")
         self.set_normal_mode_client = self.create_client(Trigger, "set_normal_mode")
         self.set_leader_mode_client = self.create_client(Trigger, "set_leader_mode")
@@ -44,14 +42,11 @@ class LeaderTrajectoryRecorderNode(Node):
     def _leader_callback(self, msg: JointState) -> None:
         self.leader_joint_state = msg
 
-    def _joint_state_callback(self, msg: JointState) -> None:
-        self.feedback_joint_state = msg
-
     def wait_for_topic_feedback(self, timeout_s: float) -> bool:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline and rclpy.ok():
             rclpy.spin_once(self, timeout_sec=0.1)
-            if self.leader_joint_state is not None and self.feedback_joint_state is not None:
+            if self.leader_joint_state is not None:
                 return True
         return False
 
@@ -76,6 +71,9 @@ class LeaderTrajectoryRecorderNode(Node):
         return response.success
 
     def call_trigger(self, client, label: str, timeout_s: float) -> bool:
+        if not client.wait_for_service(timeout_sec=timeout_s):
+            self.get_logger().error(f"Service {label} is not available")
+            return False
         future = client.call_async(Trigger.Request())
         rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_s)
         if not future.done() or future.result() is None:
@@ -86,25 +84,26 @@ class LeaderTrajectoryRecorderNode(Node):
             self.get_logger().error(f"{label} failed: {response.message}")
         return response.success
 
+    def ensure_normal_mode(self, timeout_s: float, retries: int = 3) -> bool:
+        for attempt in range(1, retries + 1):
+            if self.call_trigger(self.set_normal_mode_client, "set_normal_mode", timeout_s):
+                return True
+            if attempt < retries:
+                time.sleep(0.25)
+        return False
+
     def current_snapshot(self, time_from_start: float, joint_names: list[str]) -> Optional[RecorderSnapshot]:
-        if self.leader_joint_state is None or self.feedback_joint_state is None:
+        if self.leader_joint_state is None:
             return None
 
-        leader_map = {
+        leader_position_map = {
             name: float(value)
             for name, value in zip(self.leader_joint_state.name, self.leader_joint_state.position)
         }
-        effort_map = {
-            name: float(value)
-            for name, value in zip(
-                self.feedback_joint_state.name,
-                self.feedback_joint_state.effort or [0.0] * len(self.feedback_joint_state.name),
-            )
-        }
-        if any(joint_name not in leader_map for joint_name in joint_names):
+        if any(joint_name not in leader_position_map for joint_name in joint_names):
             return None
-        positions = [leader_map[joint_name] for joint_name in joint_names]
-        efforts = [effort_map.get(joint_name, 0.0) for joint_name in joint_names]
+        positions = [leader_position_map[joint_name] for joint_name in joint_names]
+        efforts = [0.0] * len(joint_names)
         flange_pose = compute_flange_pose_from_mdh(positions, robot="nero")
         return RecorderSnapshot(
             time_from_start=time_from_start,
@@ -200,7 +199,7 @@ def main() -> None:
         if not node.call_trigger(node.set_leader_mode_client, "set_leader_mode", args.service_timeout):
             raise RuntimeError("Failed to switch to leader mode")
         if not node.wait_for_topic_feedback(args.feedback_timeout):
-            raise RuntimeError("Did not receive feedback/leader_joint_angles and feedback/joint_states")
+            raise RuntimeError("Did not receive feedback/leader_joint_angles")
 
         print(
             "Leader mode is active. Move the arm by hand. Recording will stop automatically "
@@ -225,7 +224,6 @@ def main() -> None:
             file_path = output_dir / f"{save_name}_{time.strftime('%H%M%S')}.json"
 
         gravity_context = build_gravity_context(args.urdf_path or None)
-        effort_summary = summarize_efforts([point.efforts for point in trimmed_points], joint_names)
         trajectory = RecordedTrajectory(
             name=save_name,
             robot="nero",
@@ -235,20 +233,21 @@ def main() -> None:
             points=trimmed_points,
             metadata={
                 "recording_mode": "leader",
+                "position_source": "feedback/leader_joint_angles",
                 "movement_threshold_rad": args.movement_threshold,
                 "hold_timeout_s": args.hold_timeout,
                 "raw_sample_count": raw_sample_count,
                 "trimmed_sample_count": len(trimmed_points),
                 "last_motion_index": last_motion_index,
                 "gravity_context": gravity_context,
-                "effort_summary": effort_summary,
             },
         )
         saved_path = save_recorded_trajectory(trajectory, file_path)
         print(f"Saved trajectory to {saved_path}")
     finally:
         try:
-            node.call_trigger(node.set_normal_mode_client, "set_normal_mode", args.service_timeout)
+            if not node.ensure_normal_mode(args.service_timeout):
+                node.get_logger().warn("Recorder cleanup could not switch the robot back to normal mode")
         except Exception:
             pass
         node.destroy_node()

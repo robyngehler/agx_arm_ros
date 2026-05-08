@@ -12,10 +12,17 @@ os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 
 
 def generate_launch_description():
+    default_params_file = os.path.join(
+        get_package_share_directory("agx_arm_mit_controller"),
+        "config",
+        "nero_mit_controller_defaults.yaml",
+    )
+
     namespace_arg = DeclareLaunchArgument("namespace", default_value="")
-    can_port_arg = DeclareLaunchArgument("can_port", default_value="can0")
+    can_port_arg = DeclareLaunchArgument("can_port", default_value="can_nero")
     log_level_arg = DeclareLaunchArgument("log_level", default_value="info")
     control_rate_arg = DeclareLaunchArgument("control_rate_hz", default_value="100.0")
+    params_file_arg = DeclareLaunchArgument("params_file", default_value=default_params_file)
 
     driver_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -41,7 +48,10 @@ def generate_launch_description():
         namespace=LaunchConfiguration("namespace"),
         output="screen",
         ros_arguments=["--log-level", LaunchConfiguration("log_level")],
-        parameters=[{"control_rate_hz": LaunchConfiguration("control_rate_hz")}],
+        parameters=[
+            LaunchConfiguration("params_file"),
+            {"control_rate_hz": LaunchConfiguration("control_rate_hz")},
+        ],
     )
 
     return LaunchDescription(
@@ -50,6 +60,7 @@ def generate_launch_description():
             can_port_arg,
             log_level_arg,
             control_rate_arg,
+            params_file_arg,
             driver_launch,
             controller_node,
         ]

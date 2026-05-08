@@ -296,6 +296,9 @@ class AgxArmRosNode(Node):
             return False
         return True
 
+    def _check_arm_connected(self) -> bool:
+        return self.agx_arm is not None and self.agx_arm.is_ok()
+
     def _check_can_control(self) -> bool:
         if not self.control_ready:
             # Startup warm-up: ignore incoming control commands until a valid
@@ -886,7 +889,7 @@ class AgxArmRosNode(Node):
                 response.success = False
                 response.message = "set_normal_mode is only supported for Nero"
                 return response
-            if not self._check_arm_ready():
+            if not self._check_arm_connected():
                 response.success = False
                 response.message = "Agx_arm is not connected"
                 return response
@@ -913,7 +916,7 @@ class AgxArmRosNode(Node):
                 response.success = False
                 response.message = "set_leader_mode is only supported for Nero"
                 return response
-            if not self._check_arm_ready():
+            if not self._check_arm_connected():
                 response.success = False
                 response.message = "Agx_arm is not connected"
                 return response

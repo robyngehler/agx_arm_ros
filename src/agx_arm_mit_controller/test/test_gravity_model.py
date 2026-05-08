@@ -5,11 +5,11 @@ import pytest
 from agx_arm_mit_controller.gravity_model import GravityModelError, PinocchioGravityModel, create_gravity_model
 
 
-def test_create_gravity_model_without_backend_reports_clear_error():
+def test_create_gravity_model_rejects_unknown_backend():
     with pytest.raises(GravityModelError) as exc:
-        create_gravity_model("pinocchio")
+        create_gravity_model("not-a-backend")
 
-    assert "Pinocchio is not installed" in str(exc.value)
+    assert "Unsupported gravity backend" in str(exc.value)
 
 
 def test_pinocchio_gravity_model_returns_actuator_compensation_sign():

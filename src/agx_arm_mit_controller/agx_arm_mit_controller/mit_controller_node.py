@@ -15,11 +15,20 @@ from agx_arm_msgs.msg import MoveMITMsg
 
 from .feedforward_model import CalibrationModel, load_calibration_model
 from .gravity_model import GravityModel, GravityModelError, create_gravity_model
+from .model_metadata import default_nero_calibration_path
 from .trajectory_buffer import JointTrajectoryBuffer, SampledTrajectoryPoint
 
 
 def clamp(value: float, limit: float) -> float:
     return max(-limit, min(limit, value))
+
+
+def scale_gravity_feedforward(
+    gravity_torque: list[float],
+    gravity_scale: float,
+    gravity_feedforward_sign: float,
+) -> list[float]:
+    return [gravity_feedforward_sign * gravity_scale * value for value in gravity_torque]
 
 
 class NeroMitControllerNode(Node):
@@ -44,6 +53,7 @@ class NeroMitControllerNode(Node):
         self.declare_parameter("gravity_backend", "pinocchio")
         self.declare_parameter("gravity_urdf_path", "")
         self.declare_parameter("gravity_scale", 1.0)
+        self.declare_parameter("gravity_feedforward_sign", -1.0)
         self.declare_parameter("calibration_file", "")
 
         self.joint_names = list(self.get_parameter("joint_names").value)
@@ -61,6 +71,7 @@ class NeroMitControllerNode(Node):
         self.gravity_backend = str(self.get_parameter("gravity_backend").value)
         self.gravity_urdf_path = str(self.get_parameter("gravity_urdf_path").value)
         self.gravity_scale = float(self.get_parameter("gravity_scale").value)
+        self.gravity_feedforward_sign = float(self.get_parameter("gravity_feedforward_sign").value)
         self.calibration_file = str(self.get_parameter("calibration_file").value)
 
         if self.control_rate_hz <= 0.0:
@@ -94,9 +105,17 @@ class NeroMitControllerNode(Node):
         )
 
     def _init_feedforward_models(self) -> None:
+        calibration_path: Path | None = None
         if self.calibration_file:
-            self.calibration_model = load_calibration_model(self.calibration_file, self.joint_names)
-            self.get_logger().info(f"Loaded calibration model from {Path(self.calibration_file).expanduser()}")
+            calibration_path = Path(self.calibration_file).expanduser().resolve()
+        else:
+            auto_calibration_path = default_nero_calibration_path()
+            if auto_calibration_path.exists():
+                calibration_path = auto_calibration_path
+
+        if calibration_path is not None:
+            self.calibration_model = load_calibration_model(calibration_path, self.joint_names)
+            self.get_logger().info(f"Loaded calibration model from {calibration_path}")
         if self.gravity_compensation_enabled:
             try:
                 gravity_urdf_path = self.gravity_urdf_path or None
@@ -215,7 +234,11 @@ class NeroMitControllerNode(Node):
         gravity_torque = self.gravity_model.compute_gravity(
             [self.feedback_positions[joint_name] for joint_name in self.joint_names]
         )
-        scaled_torque = [self.gravity_scale * value for value in gravity_torque]
+        scaled_torque = scale_gravity_feedforward(
+            gravity_torque,
+            self.gravity_scale,
+            self.gravity_feedforward_sign,
+        )
         if self.calibration_model is not None:
             scaled_torque = self.calibration_model.apply(scaled_torque)
         return [scaled_torque[index] + float(reference.efforts[index]) for index in range(len(self.joint_names))]

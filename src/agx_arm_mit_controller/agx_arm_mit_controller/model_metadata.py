@@ -40,6 +40,14 @@ def _source_tree_nero_urdf_paths() -> list[Path]:
     ]
 
 
+def _source_tree_nero_calibration_paths() -> list[Path]:
+    workspace_root = Path(__file__).resolve().parents[3]
+    return [
+        workspace_root / "config" / "nero_gravity_calibration.json",
+        workspace_root / "src" / "agx_arm_mit_controller" / "config" / "nero_gravity_calibration.json",
+    ]
+
+
 def _workspace_nero_urdf_paths() -> list[Path]:
     candidates: list[Path] = []
     search_roots = [Path.cwd(), *Path.cwd().parents]
@@ -77,6 +85,24 @@ def _workspace_nero_urdf_paths() -> list[Path]:
     return candidates
 
 
+def _workspace_nero_calibration_paths() -> list[Path]:
+    candidates: list[Path] = []
+    search_roots = [Path.cwd(), *Path.cwd().parents]
+    seen: set[Path] = set()
+
+    for root in search_roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        candidates.extend(
+            [
+                root / "config" / "nero_gravity_calibration.json",
+                root / "src" / "agx_arm_mit_controller" / "config" / "nero_gravity_calibration.json",
+            ]
+        )
+    return candidates
+
+
 def candidate_nero_urdf_paths() -> list[Path]:
     return _package_share_nero_urdf_paths() + _workspace_nero_urdf_paths() + _source_tree_nero_urdf_paths()
 
@@ -86,6 +112,17 @@ def default_nero_urdf_path() -> Path:
         if candidate.exists():
             return candidate
     return candidate_nero_urdf_paths()[0]
+
+
+def candidate_nero_calibration_paths() -> list[Path]:
+    return _workspace_nero_calibration_paths() + _source_tree_nero_calibration_paths()
+
+
+def default_nero_calibration_path() -> Path:
+    for candidate in candidate_nero_calibration_paths():
+        if candidate.exists():
+            return candidate
+    return candidate_nero_calibration_paths()[0]
 
 
 def _parse_xyz(value: Optional[str]) -> list[float]:
@@ -184,33 +221,6 @@ def compute_flange_pose_from_mdh(joint_positions: list[float], robot: str = "ner
     except Exception:
         return None
     return [float(value) for value in pose]
-
-
-def summarize_efforts(effort_samples: list[list[float]], joint_names: list[str]) -> dict[str, Any]:
-    if not effort_samples:
-        return {"available": False}
-
-    max_abs = []
-    mean_abs = []
-    for joint_index, joint_name in enumerate(joint_names):
-        values = [sample[joint_index] for sample in effort_samples]
-        max_abs.append({"joint": joint_name, "value": max(abs(value) for value in values)})
-        mean_abs.append(
-            {
-                "joint": joint_name,
-                "value": sum(abs(value) for value in values) / max(1, len(values)),
-            }
-        )
-
-    return {
-        "available": True,
-        "note": (
-            "Effort samples were captured from feedback during leader mode. "
-            "Proposal notes indicate these values may be stale or not equal to physical external torque."
-        ),
-        "max_abs_effort": max_abs,
-        "mean_abs_effort": mean_abs,
-    }
 
 
 def build_gravity_context(urdf_path: Optional[str | Path] = None) -> dict[str, Any]:
