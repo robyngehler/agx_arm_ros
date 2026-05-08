@@ -9,6 +9,7 @@ This package stays ROS-centric:
 - it publishes `agx_arm_msgs/MoveMITMsg` back to `agx_arm_ctrl`,
 - it accepts standard `trajectory_msgs/JointTrajectory` commands.
 - it includes an interactive leader-mode recorder and a saved-trajectory executor.
+- it includes a dedicated MIT position-hold test tool.
 - it supports optional gravity feed-forward through a common-framework adapter and a simple calibration file.
 
 ## Interfaces
@@ -31,7 +32,7 @@ This package stays ROS-centric:
 - records `feedback/leader_joint_angles` until the arm stays still for a configurable hold time,
 - trims the trailing stationary section,
 - asks for a trajectory name,
-- saves a JSON file with trajectory points, effort observations, MDH flange poses, and URDF inertial metadata.
+- saves a JSON file with trajectory points, MDH flange poses, and URDF inertial metadata.
 
 Example:
 
@@ -43,11 +44,50 @@ ros2 run agx_arm_mit_controller agx_arm_record_leader_trajectory -- --output-dir
 
 `agx_arm_execute_saved_trajectory` loads a saved JSON recording and publishes it to the MIT controller as a `trajectory_msgs/JointTrajectory`.
 
+Trajectory efforts from the JSON are always ignored during playback. MIT feedforward comes from the running controller configuration, especially gravity compensation, not from hand-applied torques recorded in Leader Mode.
+
 Example:
 
 ```bash
 ros2 run agx_arm_mit_controller agx_arm_execute_saved_trajectory -- ~/agx_arm_trajectories/demo.json
 ```
+
+For a full end-to-end guide covering launch, recording, playback, and MIT gain experiments, see:
+
+- `docs/development/mit_trajectory_recording_and_playback.md`
+
+## Basic Position Hold Test
+
+`agx_arm_test_position_hold` isolates MIT hold behavior from trajectory playback.
+
+It:
+
+- switches the robot to Normal Mode,
+- enables MIT,
+- calls `mit_controller/hold_current`,
+- holds the captured pose for a fixed duration,
+- prints the active gravity-related controller parameters,
+- prints current and peak joint drift in radians.
+
+Example:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_test_position_hold -- --duration 8.0
+```
+
+Use this first when gravity compensation looks wrong. If the arm cannot hold a static pose here, the problem is in MIT hold or gravity feedforward, not in trajectory recording or playback.
+
+## Validated Gravity Setup
+
+The working gravity-enabled setup depends on these points:
+
+- MIT hold is validated first with `agx_arm_test_position_hold` before any trajectory playback.
+- Recorded trajectory efforts are not replayed.
+- The recorder uses `feedback/leader_joint_angles` because that stream reflects manual Leader Mode motion reliably.
+- Playback switches the robot back to Normal Mode before enabling MIT.
+- The launch file loads a controller YAML through `params_file`.
+- The default controller profile enables gravity compensation and auto-discovers the canonical Nero URDF plus `config/nero_gravity_calibration.json` when those paths are left empty.
+- The MIT command path applies `gravity_feedforward_sign=-1.0`, which is the sign that produced smooth hold behavior on hardware.
 
 ## Model Validation And Calibration
 

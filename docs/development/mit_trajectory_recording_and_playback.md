@@ -1,0 +1,190 @@
+# Nero MIT Gravity Hold And Trajectory Workflow
+
+## Goal
+
+This is the final workflow that produced smooth gravity-assisted MIT hold on Nero.
+
+Use it in this order:
+
+1. launch the MIT stack with a controller YAML,
+2. validate static hold with `agx_arm_test_position_hold`,
+3. only then record and replay trajectories.
+
+The important design choice is that the controller owns all feedforward during playback. Leader-mode recordings do not replay hand-applied torques.
+
+## Components
+
+- `start_nero_mit_controller.launch.py`: launches `agx_arm_ctrl` plus the MIT controller and loads a parameter YAML through `params_file`.
+- `agx_arm_test_position_hold`: captures the current pose, enables MIT hold, and reports drift.
+- `agx_arm_record_leader_trajectory`: records pose targets from `feedback/leader_joint_angles`.
+- `agx_arm_execute_saved_trajectory`: replays only positions and velocities from a saved JSON.
+
+## Final Working Setup
+
+These points are what actually mattered for the final stable behavior:
+
+1. Validate gravity with a static hold test before using trajectories.
+2. Do not replay torques recorded during Leader Mode.
+3. Record trajectory positions from `feedback/leader_joint_angles`, because that topic reliably reflects manual motion in Leader Mode.
+4. Switch back to Normal Mode before enabling MIT for playback.
+5. Load controller gains and gravity settings from a startup YAML via `params_file`.
+6. Leave `gravity_urdf_path` and `calibration_file` empty in the default Nero profiles to auto-discover the canonical URDF and `config/nero_gravity_calibration.json`.
+7. Use `gravity_feedforward_sign: -1.0` in the MIT command path.
+
+## Prerequisites
+
+- ROS 2 Humble is sourced.
+- The workspace is built.
+- The Nero arm is available on the expected CAN port.
+
+Typical shell setup:
+
+```bash
+cd ~/workspace/agx_arm_ros
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+```
+
+## Launch
+
+The default launch path already uses the packaged controller YAML:
+
+```bash
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py can_port:=can_nero
+```
+
+The default profile is `src/agx_arm_mit_controller/config/nero_mit_controller_defaults.yaml` and now enables gravity compensation by default.
+
+Key gravity fields in the default profile:
+
+```text
+gravity_compensation_enabled = true
+gravity_backend = pinocchio
+gravity_scale = 1.0
+gravity_feedforward_sign = -1.0
+gravity_urdf_path = ""          # auto-discover
+calibration_file = ""           # auto-discover
+```
+
+## Basic Position Hold Test
+
+Run this before any trajectory replay:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_test_position_hold -- --duration 8.0
+```
+
+What it does:
+
+1. queries the running MIT controller for gravity-related parameters,
+2. switches the robot to Normal Mode,
+3. waits for you to place the arm at the pose to test,
+4. enables MIT and calls `mit_controller/hold_current`,
+5. prints current and peak joint drift during the hold window.
+
+Interpretation:
+
+- If the arm sags or pushes the wrong way here, fix MIT hold or gravity compensation first.
+- If hold is smooth here, trajectory problems are downstream of the gravity setup.
+
+## Leader Recording
+
+Record a trajectory only after hold is working:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_record_leader_trajectory -- --output-dir ~/agx_arm_trajectories --auto-enable
+```
+
+What happens:
+
+1. the recorder enables the arm if requested,
+2. switches to Normal Mode,
+3. switches to Leader Mode,
+4. waits for `feedback/leader_joint_angles`,
+5. records positions until the arm stays still for `--hold-timeout`.
+
+Important note:
+
+- The saved JSON contains trajectory points, but playback does not use recorded efforts as torque feedforward.
+
+## Trajectory Replay
+
+Replay with the MIT controller still running:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_execute_saved_trajectory -- ~/agx_arm_trajectories/pick_demo.json
+```
+
+What happens:
+
+1. the executor loads the JSON trajectory,
+2. forces the robot back to Normal Mode,
+3. waits for fresh `feedback/joint_states`,
+4. enables MIT,
+5. publishes the trajectory several times.
+
+Replay behavior:
+
+- position and velocity targets come from the JSON,
+- effort feedforward from the JSON is discarded,
+- gravity feedforward comes from the running MIT controller configuration.
+
+## Parameter Profiles
+
+Useful packaged profiles:
+
+- `src/agx_arm_mit_controller/config/nero_mit_controller_defaults.yaml`
+- `src/agx_arm_mit_controller/config/mit_playback_soft.yaml`
+- `src/agx_arm_mit_controller/config/mit_playback_soft_gravity_template.yaml`
+
+Use a different profile by restarting the launch with `params_file:=...`.
+
+Example:
+
+```bash
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
+  can_port:=can_nero \
+  params_file:=$PWD/src/agx_arm_mit_controller/config/mit_playback_soft.yaml
+```
+
+The gravity template works with the standard repo layout as-is because URDF and calibration paths are auto-discovered when left empty. Only set explicit paths if you want to override the defaults.
+
+## Recovery And Inspection
+
+If you need to recover the robot mode manually:
+
+```bash
+ros2 service call /set_normal_mode std_srvs/srv/Trigger "{}"
+```
+
+Enable MIT manually:
+
+```bash
+ros2 service call /mit_controller/enable std_srvs/srv/SetBool "{data: true}"
+```
+
+Capture the current pose as the MIT hold target:
+
+```bash
+ros2 service call /mit_controller/hold_current std_srvs/srv/Empty "{}"
+```
+
+Inspect the reference state published by the controller:
+
+```bash
+ros2 topic echo /mit_controller/reference_joint_states
+```
+
+Inspect loaded MIT parameters:
+
+```bash
+ros2 param get /mit_controller gravity_compensation_enabled
+ros2 param get /mit_controller gravity_feedforward_sign
+ros2 param get /mit_controller calibration_file
+```
+
+## Current Limitations
+
+- MIT gains are still startup-time parameters; there is no live retuning path yet.
+- The hold and replay workflow depends on fresh `feedback/joint_states` from `agx_arm_ctrl`.
+- The static hold test is the authoritative gravity check; trajectory behavior still depends on the chosen gains and limits.
