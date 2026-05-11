@@ -57,8 +57,8 @@ The default profile is `src/agx_arm_mit_controller/config/nero_mit_controller_de
 
 Important detail:
 
-- the launch log prints the resolved `params_file`, and by default that path points at the packaged copy under `install/agx_arm_mit_controller/share/...`,
-- if you edit `src/agx_arm_mit_controller/config/*.yaml`, rebuild before relaunching so the installed copy is updated,
+- inside this colcon workspace, the launch now prefers the source YAML under `src/agx_arm_mit_controller/config/...` when that file exists,
+- outside a source workspace, it falls back to the packaged copy under `install/agx_arm_mit_controller/share/...`,
 - you can always bypass that packaged default by launching with an explicit `params_file:=...` override.
 
 Key gravity fields in the default profile:

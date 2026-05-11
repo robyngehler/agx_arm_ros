@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -11,12 +12,24 @@ from launch_ros.actions import Node
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 
 
+def _default_params_file() -> str:
+    package_share_dir = Path(get_package_share_directory("agx_arm_mit_controller")).resolve()
+    installed_params_file = package_share_dir / "config" / "nero_mit_controller_defaults.yaml"
+
+    # In a colcon workspace, prefer the source YAML so gain tweaks do not require a rebuild.
+    try:
+        workspace_root = package_share_dir.parents[3]
+    except IndexError:
+        return str(installed_params_file)
+
+    source_params_file = workspace_root / "src" / "agx_arm_mit_controller" / "config" / "nero_mit_controller_defaults.yaml"
+    if source_params_file.is_file():
+        return str(source_params_file)
+    return str(installed_params_file)
+
+
 def generate_launch_description():
-    default_params_file = os.path.join(
-        get_package_share_directory("agx_arm_mit_controller"),
-        "config",
-        "nero_mit_controller_defaults.yaml",
-    )
+    default_params_file = _default_params_file()
 
     namespace_arg = DeclareLaunchArgument("namespace", default_value="")
     can_port_arg = DeclareLaunchArgument("can_port", default_value="can_nero")
