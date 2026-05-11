@@ -1,0 +1,57 @@
+# Errors And Fixes
+
+## 2026-05-11
+
+### `rg` not installed in terminal
+
+- Symptom: `bash: rg: command not found`
+- Impact: fast terminal-side repository enumeration failed.
+- Fix: switched to workspace-native tools (`file_search`, `grep_search`, `list_dir`) plus standard git commands.
+
+### `src/agx_arm_sim/.gitmodules` not present
+
+- Symptom: a direct read of `src/agx_arm_sim/.gitmodules` failed.
+- Impact: the sim README references submodule management, but the nested file is not present in this checkout.
+- Fix: inspected the actual directory layout under `src/agx_arm_sim/` and used repo-level `git submodule status` instead.
+
+### Binary USD asset not returned by `file_search`
+
+- Symptom: glob search for `*.usd` returned no results even though a USD asset exists in `src/agx_arm_sim/agx_arm_description/urdf/USD/nero_gripper_d435/`.
+- Impact: Isaac asset discovery looked empty until verified manually.
+- Fix: used `list_dir` and a direct `read_file` on the known path to confirm `nero_gripper_d435.usd` plus companion configuration files.
+
+### Duplicate `agx_arm_description` packages in the same workspace
+
+- Symptom: `colcon list --base-paths src` reported both `src/agx_arm_description` and `src/agx_arm_sim/agx_arm_description` with the same package name.
+- Impact: package-share resolution and future builds would stay ambiguous while the root and sim trees coexisted as discoverable packages.
+- Fix: kept `src/agx_arm_sim/agx_arm_description` as the canonical package, added a sim-backed `launch/display_control.launch.py` for the current control/RViz workflow, moved the tracked `agx_arm_urdf` submodule into that package, and removed the legacy `src/agx_arm_description` tree.
+
+### Root and sim `display.launch.py` interfaces were not compatible
+
+- Symptom: `agx_arm_ctrl/launch/start_single_agx_arm_rviz.launch.py` passed arguments such as `namespace`, `effector_type`, `follow`, and `tcp_offset` that the sim package's `display.launch.py` does not accept.
+- Impact: simply switching package discovery to the sim description package would have broken the existing RViz/control launch path.
+- Fix: added `src/agx_arm_sim/agx_arm_description/launch/display_control.launch.py` with the required compatibility interface and repointed `agx_arm_ctrl` to use it.
+
+### Runtime validation is still partial
+
+- Symptom: Sprint 1 discovery still lacks real hardware motion validation and simulator execution coverage.
+- Impact: current confidence is based on package build/test/launch smoke checks, not on arm motion or Isaac scene execution.
+- Fix: a focused `colcon build` passed for `agx_arm_description`, `agx_arm_ctrl`, `agx_arm_moveit`, and `agx_arm_mit_controller`; `agx_arm_mit_controller` unit tests passed (`20 passed`); and both `agx_arm_description/display_control.launch.py` and `agx_arm_ctrl/start_single_agx_arm_rviz.launch.py` resolved successfully with `--show-args`.
+
+### OmniHand vendor SDK is documented for `x86_64`, but this host is `aarch64`
+
+- Symptom: `vendor/Omnihand-2025-SDK/README.md` documents Ubuntu 22.04 `x86_64`, while `uname -m` on this machine reports `aarch64`.
+- Impact: the vendor SDK can be vendored and inspected locally, but a supported local build/run result cannot be claimed yet on this host.
+- Fix: added the SDK as a git submodule for inspection and planning, but deferred build validation until Agibot's `aarch64` support is confirmed or an `x86_64` bring-up host is chosen.
+
+### `agx_arm_urdf` still acted like a submodule after the canonical-package cleanup
+
+- Symptom: even after the duplicate root package was removed, the canonical description package still depended on a tracked `agx_arm_urdf` git submodule and still carried Piper-family asset overhead.
+- Impact: the workspace still required external submodule state for description assets, and active launch/config/docs continued to advertise models no longer intended for the Nero-focused repo state.
+- Fix: detached `src/agx_arm_sim/agx_arm_description/agx_arm_urdf` from submodule management, pruned it to `nero/`, `revo2/`, and README/license files, and then updated the active launch/config/MoveIt surfaces to default to Nero only.
+
+### Removed submodule left stale local git config behind
+
+- Symptom: `git config --get-regexp '^submodule\.'` still returned `submodule.src/agx_arm_sim/agx_arm_description/agx_arm_urdf.*` after the submodule entry was removed from `.gitmodules`.
+- Impact: local repository metadata still suggested a submodule dependency that no longer exists in the working tree.
+- Fix: remove the stale local git config section with `git config --remove-section submodule.src/agx_arm_sim/agx_arm_description/agx_arm_urdf`.
