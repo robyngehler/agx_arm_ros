@@ -2,76 +2,63 @@
 
 [中文](./TCP_OFFSET.md)
 
-This document details the definition, units of the `tcp_offset` parameter, and the steps to view the flange center coordinate system via RViz, helping you accurately configure the Tool Center Point (TCP) offset.
+The active description and MoveIt surfaces in this workspace are now Nero-only, so this note documents TCP offset usage for Nero only.
 
-## 1. Definition of tcp_offset Parameter
+## 1. `tcp_offset` definition
 
-The 6 values of `tcp_offset` correspond to: `[x, y, z, rx, ry, rz]` in sequence. The meaning and unit of each dimension are as follows:
+The six values of `tcp_offset` are `[x, y, z, rx, ry, rz]`:
 
 | Dimension | Unit | Description |
 |-----------|------|-------------|
-| x/y/z | Meter (m) | **Spatial position offset** of the tool center relative to the flange center |
-| rx/ry/rz | Radian (rad) | **Attitude offset** of the tool center relative to the flange center |
+| `x/y/z` | meter (m) | Position offset from the flange center |
+| `rx/ry/rz` | radian (rad) | Orientation offset from the flange center |
 
-## 2. View Flange Center Coordinate System (RViz Visualization)
-
-Follow the steps below to visually check the flange center coordinate system of the robotic arm in RViz, which serves as a reference for TCP offset configuration.
-
-### 2.1 Launch RViz Visualization
-
-Open a terminal window and run:
+## 2. Inspect the Nero flange in RViz
 
 ```bash
 cd ~/agx_arm_ws
 source install/setup.bash
 
-# Piper arm
-ros2 launch agx_arm_description display.launch.py arm_type:=piper
-
-# Nero arm
-ros2 launch agx_arm_description display.launch.py arm_type:=nero
-
-# Other arm types (piper_x, piper_l, piper_h)
-ros2 launch agx_arm_description display.launch.py arm_type:=piper_x
+ros2 launch agx_arm_description display_control.launch.py arm_type:=nero
 ```
 
-With end-effector:
+With an end effector:
 
 ```bash
-# Piper + Gripper
-ros2 launch agx_arm_description display.launch.py arm_type:=piper effector_type:=agx_gripper
-
-# Nero + Dexterous hand
-ros2 launch agx_arm_description display.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
+ros2 launch agx_arm_description display_control.launch.py \
+	arm_type:=nero \
+	effector_type:=agx_gripper
 ```
 
-### 2.2 View Coordinate Frames
-
-In the RViz interface, TF display is enabled by default, allowing you to see all coordinate frames (including the flange `link6`/`link7`).
-
-You can also expand `RobotModel` → `Links` in the left panel and check the links you need to view their axes:
-
-**Piper arm example:**
-
-![piper_rviz_tcp_1](../../assets/pictures/piper_rviz_tcp_1.png)
-![piper_rviz_tcp_2](../../assets/pictures/piper_rviz_tcp_2.png)
-![piper_rviz_tcp_3](../../assets/pictures/piper_rviz_tcp_3.png)
-
-## 3. Preview TCP Offset in RViz
-
-`display.launch.py` supports the `tcp_offset` parameter. When set, a `tcp_link` coordinate frame is automatically displayed in RViz:
+Or:
 
 ```bash
-# Display tcp_link 0.12m in front of link6
-ros2 launch agx_arm_description display.launch.py arm_type:=piper effector_type:=agx_gripper tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_description display_control.launch.py \
+	arm_type:=nero \
+	effector_type:=revo2 \
+	revo2_type:=left
 ```
 
-The parameter format is `[x, y, z, rx, ry, rz]`, all values must be floating-point numbers, with units as defined in [Section 1](#1-definition-of-tcp_offset-parameter).
+Nero uses `link7` as the flange link. In RViz, enable TF or expand `RobotModel -> Links` to inspect `link7` and `tcp_link`.
 
-> **Tip:** MoveIt also supports the `tcp_offset` parameter. When set, the planning target and interactive marker align with the TCP position:
->
-> ```bash
-> ros2 launch agx_arm_moveit demo.launch.py arm_type:=piper effector_type:=agx_gripper tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
-> ```
+## 3. Preview TCP offset
 
-![piper_rviz_tcp_4](../../assets/pictures/piper_rviz_tcp_4.png)
+```bash
+ros2 launch agx_arm_description display_control.launch.py \
+	arm_type:=nero \
+	effector_type:=agx_gripper \
+	tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
+```
+
+This publishes `tcp_link` 0.12 m in front of `link7`.
+
+## 4. Use TCP offset in MoveIt
+
+```bash
+ros2 launch agx_arm_moveit demo.launch.py \
+	arm_type:=nero \
+	effector_type:=agx_gripper \
+	tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
+```
+
+With this set, the planning target and interactive marker align with `tcp_link`.

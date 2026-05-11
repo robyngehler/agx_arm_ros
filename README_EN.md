@@ -9,14 +9,14 @@
 
 ## Overview
 
-This driver package provides full ROS2 interface support for AgileX series robotic arms (Piper, Nero, etc.).
+This workspace is currently focused on the Nero stack and provides the matching ROS2 control, description, MoveIt2, and MIT soft-control surfaces.
 
 | Description | Documentation |
 |---|---|
 | SDK | [pyAgxArm](https://github.com/agilexrobotics/pyAgxArm) |
 | CAN module usage | [can_user](./docs/CAN_USER_EN.md) |
 | TCP Offset Configuration | [tcp_offset](./docs/tcp_offset/TCP_OFFSET_EN.md) |
-| URDF | [URDF](https://github.com/agilexrobotics/agx_arm_urdf) |
+| URDF | [agx_arm_description](./src/agx_arm_sim/agx_arm_description/README.md) |
 | Moveit| [Moveit](./src/agx_arm_moveit/README_EN.md) |
 | Q&A | [Q&A](./docs/Q&A.md) |
 
@@ -64,6 +64,8 @@ pip3 install .
     cd agx_arm_ros/
     git submodule update --remote --recursive
     ```
+
+    > The only remaining submodule is `vendor/Omnihand-2025-SDK`; Nero/Revo2 description assets are committed directly in this repository.
 
 ### 3. Install Dependencies
 
@@ -179,7 +181,7 @@ You can start the driver using a launch file or by running the node directly.
 > **Important: Read before launching**
 > The parameters in the following launch commands **must** be replaced according to your actual hardware configuration:
 > - **`can_port`**: The CAN port connected to the arm, e.g. `can0`.
-> - **`arm_type`**: The arm model, e.g. `piper`.
+> - **`arm_type`**: The arm model. In this workspace the active example is `nero`.
 > - **`effector_type`**: The end-effector type, e.g. `none` or `agx_gripper`.
 > - **`tcp_offset`**: Tool Center Point (TCP) offset relative to the flange center, e.g. [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] 
 >   - Note: All values of this parameter must be floating-point numbers; for TCP offset configuration examples, see [TCP Offset Guide](./docs/tcp_offset/TCP_OFFSET_EN.md).
@@ -190,19 +192,19 @@ You can start the driver using a launch file or by running the node directly.
 **Using launch file:**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can0 arm_type:=piper effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **Running node directly:**
 
 ```bash
-ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_type:=piper -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_type:=nero -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **Visualization Debug Launch:**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 > **Note:**
@@ -214,7 +216,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 **MoveIt One-Click Launch (Arm Control + MoveIt + RViz):**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper effector_type:=agx_gripper
+ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=nero effector_type:=agx_gripper
 ```
 
 > This launch file starts both the arm control node and MoveIt2 simultaneously, automatically connecting joint feedback (`/feedback/joint_states`) to MoveIt. No need to start two terminals separately. Supports all `agx_arm_ctrl` parameters (e.g. `tcp_offset`, `speed_percent`, etc.). See [Moveit](./src/agx_arm_moveit/README_EN.md) for details.
@@ -224,7 +226,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 | Parameter | Default | Description | Options |
 |-----------|---------|-------------|---------|
 | `can_port` | `can0` | CAN port | - |
-| `arm_type` | `piper` | Arm model | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
+| `arm_type` | `nero` | Arm model | `nero` |
 | `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2` |
 | `namespace` | empty string | Arm instance namespace | Any valid ROS namespace |
 | `auto_enable` | `true` | Auto enable on startup | `true`, `false` |
@@ -244,7 +246,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 ar
 Load the URDF model in RViz and adjust joints manually using the GUI sliders. No need to start the arm driver node:
 
 ```bash
-ros2 launch agx_arm_description display.launch.py arm_type:=piper
+ros2 launch agx_arm_description display.launch.py arm_type:=nero
 ```
 
 **The following three methods are supported to specify the model:**
@@ -252,13 +254,13 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
 1. **Preset model name (via `arm_type`)** (recommended): Use a built-in model name to automatically match the corresponding URDF file
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=piper
+    ros2 launch agx_arm_description display.launch.py arm_type:=nero
     ```
 
 2. **Relative path (via `custom_model`)**: Path relative to the `agx_arm_urdf/` directory, suitable for custom models
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py custom_model:=piper/urdf/piper_description.urdf.xacro
+    ros2 launch agx_arm_description display_control.launch.py custom_model:=nero/urdf/nero_description.urdf
     ```
 
 3. **Absolute path (via `custom_model`)**: Directly specify the absolute path to a URDF file, suitable for model files at any location
@@ -269,7 +271,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `arm_type` | `piper` | Arm model. Presets: `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
+| `arm_type` | `nero` | Arm model. Preset: `nero` |
 | `custom_model` | empty string | Optional custom model path. If relative, it is resolved under `agx_arm_urdf/`; if absolute, it can point to any URDF/xacro file. When set, `arm_type` and `effector_type` are ignored |
 | `effector_type` | `none` | End-effector type. Presets: `none`, `agx_gripper`, `revo2` |
 | `revo2_type` | `left` | Revo2 dexterous hand type. Presets: `left`, `right` |
@@ -290,7 +292,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
   - Recommended configuration: `follow:=false, control:=true`  
   - Example:  
     ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=piper follow:=false control:=true
+    ros2 launch agx_arm_description display_control.launch.py arm_type:=nero follow:=false control:=true
     ```
 
 > Note: If you want to redirect RViz slider joint targets to an impedance controller (e.g. `agx_arm_impedance` joint impedance with `control_type:=joint_impedance`), start `display.launch.py` with `control:=true` and `control_topic:=/impedance/target_joint`.
@@ -300,7 +302,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
   - Recommended configuration: `follow:=false, control:=true`  
   - Example:  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=false control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=false control:=true
     ```
 
 - **Scenario 3: Real arm + follow only, no control** (common: monitor state only, avoid RViz interfering with control)  
@@ -308,7 +310,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
   - Recommended configuration: `follow:=true, control:=false`  
   - Example:  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=false
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=false
     ```
 
 - **Scenario 4: Real arm + control + follow** (use RViz to send control and follow real feedback)  
@@ -316,7 +318,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
   - Recommended configuration: `follow:=true, control:=true`
   - Example:  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=true
     ```
 
 > **Tip:** In general, it is recommended to keep the **control channel unique**, i.e. only one component should be responsible for publishing `/control/*` topics (choose one among the `agx_arm_ctrl` node, MoveIt, or RViz `joint_state_publisher`) to avoid conflicts from multiple control sources.
@@ -332,36 +334,6 @@ cd ~/agx_arm_ws
 source install/setup.bash
 cd src/agx_arm_ros
 ```
-
-### Piper Arm
-
-1. Joint motion
-
-    ```bash
-    ros2 topic pub /control/move_j sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_move_j.yaml)" -1
-    ```
-
-2. Point-to-point motion
-
-    ```bash
-    ros2 topic pub /control/move_p geometry_msgs/msg/PoseStamped \
-      "$(cat test/piper/test_move_p.yaml)" -1
-    ```
-
-3. Linear motion
-
-    ```bash
-    ros2 topic pub /control/move_l geometry_msgs/msg/PoseStamped \
-      "$(cat test/piper/test_move_l.yaml)" -1
-    ```
-
-4. Circular motion (start → middle → end)
-
-    ```bash
-    ros2 topic pub /control/move_c geometry_msgs/msg/PoseArray \
-      "$(cat test/piper/test_move_c.yaml)" -1
-    ```
 
 ### Nero Arm
 
@@ -402,13 +374,6 @@ cd src/agx_arm_ros
       "$(cat test/gripper/test_gripper_joint_states.yaml)" -1
     ```
 
-2. Arm + Gripper combined control (via `/control/joint_states`)
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_arm_gripper_joint_states.yaml)" -1
-    ```
-
 ### Dexterous Hand
 
 1. Dexterous hand — Position mode (all fingers move to 10)
@@ -446,13 +411,6 @@ cd src/agx_arm_ros
       "$(cat test/hand/test_hand_joint_states.yaml)" -1
     ```
 
-6. Arm + Dexterous hand combined control (via `/control/joint_states`)
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_arm_hand_joint_states.yaml)" -1
-    ```
-
 ### Service Calls
 
 1. Enable arm
@@ -478,16 +436,6 @@ cd src/agx_arm_ros
     ```bash
     ros2 service call /emergency_stop std_srvs/srv/Empty
     ```
-
-5. Exit teach mode (Piper series)
-
-    ```bash
-    ros2 service call /exit_teach_mode std_srvs/srv/Empty
-    ```
-
-    > **⚠️ Important Safety Note:** 
-    > 1. After executing this command, the robotic arm will first perform a homing operation and then restart automatically; there is a risk of falling during this process. It is recommended to gently hold the robotic arm after homing to prevent damage from falling.
-    > 2. For Piper series robotic arms with firmware version 1.8.5 and above, the seamless mode switching feature is supported. There is no need to execute the above service command to exit teach mode, as the system will complete the mode switch automatically, avoiding the aforementioned fall risk.
 
 ### Status Subscription
 
@@ -863,7 +811,6 @@ Message type: `agx_arm_msgs/HandPositionTimeCmd`
 | `/enable_agx_arm` | `std_srvs/SetBool` | Enable/disable arm | Always available |
 | `/move_home` | `std_srvs/Empty` | Move to home position | Always available |
 | `/emergency_stop` | `std_srvs/Empty` | Emergency stop (hold current position) | Always available |
-| `/exit_teach_mode` | `std_srvs/Empty` | Exit teach mode | Piper series |
 
 ---
 

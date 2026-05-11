@@ -29,9 +29,9 @@ def generate_launch_description():
 
     arm_type_arg = DeclareLaunchArgument(
         'arm_type',
-        default_value='piper',
-        choices=['nero', 'piper', 'piper_h', 'piper_l', 'piper_x'],
-        description='Robotic arm type (e.g. nero, piper, piper_h, piper_l, piper_x).'
+        default_value='nero',
+        choices=['nero'],
+        description='Robotic arm type. Only nero is supported in this workspace.'
     )
 
     effector_type_arg = DeclareLaunchArgument(

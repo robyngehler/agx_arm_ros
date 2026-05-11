@@ -4,7 +4,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from moveit_configs_utils import MoveItConfigsBuilder
 
-ALL_ARM_TYPES = ["piper", "piper_x", "piper_l", "piper_h", "nero"]
+ALL_ARM_TYPES = ["nero"]
 ALL_EFFECTOR_TYPES = ["none", "agx_gripper", "revo2"]
 ALL_REVO2_TYPES = ["left", "right"]
 
@@ -17,7 +17,7 @@ def declare_common_args():
             description="ROS namespace for this arm instance (e.g. arm1).",
         ),
         DeclareLaunchArgument(
-            "arm_type", default_value="piper",
+            "arm_type", default_value="nero",
             choices=ALL_ARM_TYPES, description="Arm type.",
         ),
         DeclareLaunchArgument(

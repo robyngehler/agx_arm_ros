@@ -219,7 +219,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "arm_type",
-                default_value="piper",
+                default_value="nero",
                 choices=ALL_ARM_TYPES,
                 description="Arm type.",
             ),

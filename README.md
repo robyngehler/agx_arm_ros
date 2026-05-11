@@ -9,14 +9,14 @@
 
 ## 概述
 
-本驱动包为 AgileX 系列机械臂（Piper、Nero 等）提供完整的 ROS2 接口支持。
+当前工作区以 Nero 为主线，提供对应的 ROS2 控制、描述、MoveIt2 与 MIT 软控制接口。
 
 |说明 |文档|
 |---|---|
 |SDK|[pyAgxArm](https://github.com/agilexrobotics/pyAgxArm)|
 |官方CAN模块的使用|[can_user](./docs/CAN_USER.md)|
 |TCP偏移设置|[tcp_offset](./docs/tcp_offset/TCP_OFFSET.md)|
-|URDF|[URDF](https://github.com/agilexrobotics/agx_arm_urdf)|
+|URDF|[agx_arm_description](./src/agx_arm_sim/agx_arm_description/README.md)|
 |Moveit| [Moveit](./src/agx_arm_moveit/README.md) |
 |Nero MIT 软控制|[agx_arm_mit_controller](./src/agx_arm_mit_controller/README.md)|
 |Q&A|[Q&A](./docs/Q&A.md)|
@@ -65,6 +65,8 @@ pip3 install .
     cd agx_arm_ros/
     git submodule update --remote --recursive
     ```
+
+    > 当前仓库仅保留 `vendor/Omnihand-2025-SDK` 作为子模块；Nero/Revo2 描述资产已经直接提交在仓库内。
 
 ### 3. 安装依赖
 
@@ -180,7 +182,7 @@ bash can_activate.sh
 > **重要提示：启动前必读**
 > 以下启动命令中的参数**必须**根据您的实际硬件配置进行替换：
 > - **`can_port`**：机械臂连接的 CAN 端口，示例值 `can0`。
-> - **`arm_type`**：机械臂的型号，示例值 `piper`。
+> - **`arm_type`**：机械臂的型号，当前工作区示例值 `nero`。
 > - **`effector_type`**：末端执行器类型，示例值 `none` 或 `agx_gripper`。
 > - **`tcp_offset`**：工具中心（TCP）相对法兰盘中心的偏移量，示例值：[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 >   - 注意 ：`tcp_offset` 所有值均需为浮点数；关于 TCP 偏移实际配置示例，请参考 [TCP 设置详解](./docs/tcp_offset/TCP_OFFSET.md)。
@@ -191,19 +193,19 @@ bash can_activate.sh
 **使用 launch 文件启动：**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can0 arm_type:=piper effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **直接运行节点启动:**
 
 ```bash
-ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_type:=piper -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_type:=nero -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **可视化调试启动:**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 > **注意：**
@@ -215,7 +217,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 **MoveIt 一键启动（臂控 + MoveIt + RViz）：**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=piper effector_type:=agx_gripper
+ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=nero effector_type:=agx_gripper
 ```
 
 **Nero MIT 软轨迹控制（ROS 应用节点 + 臂控节点）：**
@@ -233,7 +235,7 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py can_port:
 | 参数 | 默认值 | 说明 | 可选值 |
 |------|--------|------|--------|
 | `can_port` | `can0` | CAN 端口 | - |
-| `arm_type` | `piper` | 机械臂型号 | `nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
+| `arm_type` | `nero` | 机械臂型号 | `nero` |
 | `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2` |
 | `namespace` | 空字符串 | 机械臂实例命名空间 | 任意合法 ROS 命名空间 |
 | `auto_enable` | `true` | 启动时自动使能 | `true`, `false` |
@@ -253,7 +255,7 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py can_port:
 在 RViz 中加载 URDF 模型并通过 GUI 滑条手动调试关节，可以不启动机械臂节点：
 
 ```bash
-ros2 launch agx_arm_description display.launch.py arm_type:=piper
+ros2 launch agx_arm_description display.launch.py arm_type:=nero
 ```
 
 **支持以下三种方式指定模型：**
@@ -261,24 +263,24 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
 1. **预设型号名称（通过 `arm_type` 指定）**（推荐）：直接使用内置型号名，自动匹配对应 URDF 文件
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=piper
+    ros2 launch agx_arm_description display.launch.py arm_type:=nero
     ```
 
 2. **相对路径（通过 `custom_model` 指定）**：相对于 `agx_arm_urdf/` 目录的路径，适用于自定义模型  
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py custom_model:=piper/urdf/piper_description.urdf
+    ros2 launch agx_arm_description display_control.launch.py custom_model:=nero/urdf/nero_description.urdf
     ```
 
 3. **绝对路径（通过 `custom_model` 指定）**：直接指定 URDF 文件的绝对路径，适用于任意位置的模型文件
 
     ```bash
-    ros2 launch agx_arm_description display.launch.py custom_model:=~/agx_arm_ws/src/agx_arm_ros/src/agx_arm_description/agx_arm_urdf/piper/urdf/piper_description.urdf
+    ros2 launch agx_arm_description display_control.launch.py custom_model:=~/agx_arm_ws/src/agx_arm_ros/src/agx_arm_sim/agx_arm_description/agx_arm_urdf/nero/urdf/nero_description.urdf
     ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `arm_type` | `piper` | 机械臂型号，预设值：`nero`, `piper`, `piper_h`, `piper_l`, `piper_x` |
+| `arm_type` | `nero` | 机械臂型号，预设值：`nero` |
 | `custom_model` | 空字符串 | 可选自定义模型路径；相对路径时相对于 `agx_arm_urdf/` 目录，绝对路径可指向任意 URDF/xacro 文件。若设置该参数，则 `arm_type` 和 `effector_type` 将被忽略 |
 | `effector_type` | `none` | 末端执行器类型，预设值：`none`, `agx_gripper`, `revo2` |
 | `revo2_type` | `left` | Revo2 灵巧手类型，预设值：`left`, `right` |
@@ -299,7 +301,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
   - 推荐配置：`follow:=false, control:=true`  
   - 示例：  
     ```bash
-    ros2 launch agx_arm_description display.launch.py arm_type:=piper follow:=false control:=true
+    ros2 launch agx_arm_description display_control.launch.py arm_type:=nero follow:=false control:=true
     ```
 
 > 说明：若希望把 RViz 滑动条发布的关节目标重定向给阻抗控制器（例如 `agx_arm_impedance` 的关节阻抗 `control_type:=joint_impedance`），可在启动 `display.launch.py` 时设置 `control:=true` 且 `control_topic:=/impedance/target_joint`。
@@ -309,7 +311,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
   - 推荐配置：`follow:=false, control:=true`  
   - 示例：  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=false control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=false control:=true
     ```
 
 - **场景 3：真机 + 仅跟随不控制**（常见：只看状态，不希望 RViz 干扰控制）  
@@ -317,7 +319,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
   - 推荐配置：`follow:=true, control:=false`  
   - 示例：  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=false
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=false
     ```
 
 - **场景 4：真机 + 控制 + 跟随**（从 RViz 发控制，并在 RViz 跟随真实反馈）  
@@ -325,7 +327,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=piper
   - 推荐配置：`follow:=true, control:=true`
   - 示例：  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=piper follow:=true control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=true
     ```
 
 > **提示：** 一般情况下，建议**控制通道保持唯一**，即只保留一个组件负责发布 `/control/*` 话题（如 `agx_arm_ctrl` 节点、MoveIt、或 RViz 中的 joint_state_publisher 三者选其一），以避免多源控制导致冲突。
@@ -341,36 +343,6 @@ cd ~/agx_arm_ws
 source install/setup.bash
 cd src/agx_arm_ros
 ```
-
-### Piper 机械臂
-
-1. 关节运动
-
-    ```bash
-    ros2 topic pub /control/move_j sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_move_j.yaml)" -1
-    ```
-
-2. 点到点运动
-
-    ```bash
-    ros2 topic pub /control/move_p geometry_msgs/msg/PoseStamped \
-      "$(cat test/piper/test_move_p.yaml)" -1
-    ```
-
-3. 直线运动
-
-    ```bash
-    ros2 topic pub /control/move_l geometry_msgs/msg/PoseStamped \
-      "$(cat test/piper/test_move_l.yaml)" -1
-    ```
-
-4. 圆弧运动（起点 → 中间点 → 终点）
-
-    ```bash
-    ros2 topic pub /control/move_c geometry_msgs/msg/PoseArray \
-      "$(cat test/piper/test_move_c.yaml)" -1
-    ```
 
 ### Nero 机械臂
 
@@ -409,13 +381,6 @@ cd src/agx_arm_ros
     ```bash
     ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
       "$(cat test/gripper/test_gripper_joint_states.yaml)" -1
-    ```
-
-2. 机械臂 + 夹爪联合控制（通过 `/control/joint_states`控制）
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_arm_gripper_joint_states.yaml)" -1
     ```
 
 > **注意：** 以上夹爪控制指令，需在 launch 文件或参数中设置 `effector_type=agx_gripper`。
@@ -457,13 +422,6 @@ cd src/agx_arm_ros
       "$(cat test/hand/test_hand_joint_states.yaml)" -1
     ```
 
-6. 机械臂 + 灵巧手联合控制（通过 `/control/joint_states`控制）
-
-    ```bash
-    ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
-      "$(cat test/piper/test_arm_hand_joint_states.yaml)" -1
-    ```
-
 > **注意：** 以上灵巧手控制指令，需在 launch 文件或参数中设置 `effector_type=revo2`。
 
 ### 服务调用
@@ -491,16 +449,6 @@ cd src/agx_arm_ros
     ```bash
     ros2 service call /emergency_stop std_srvs/srv/Empty
     ```
-
-5. 退出示教模式（Piper 系列）
-
-    ```bash
-    ros2 service call /exit_teach_mode std_srvs/srv/Empty
-    ```
-
-    > **⚠️ 重要安全提示:** 
-    > 1. 执行该指令后，机械臂会先执行回零位操作，随后自动重启；此过程中机械臂存在坠落风险，建议在回零位完成后用手轻扶机械臂，防止坠落损坏。
-    > 2. Piper 系列机器臂若固件版本为 1.8.5 及以上，已支持 模式无缝切换 功能，无需执行上述退出示教模式的服务指令，系统会自动完成模式切换，可规避上述坠落风险。
 
 ### 状态订阅
 
@@ -876,7 +824,6 @@ ros2 topic pub /control/joint_states sensor_msgs/msg/JointState \
 | `/enable_agx_arm` | `std_srvs/SetBool` | 使能/失能机械臂 | 始终可用 |
 | `/move_home` | `std_srvs/Empty` | 回零位 | 始终可用 |
 | `/emergency_stop` | `std_srvs/Empty` | 急停（保持当前位置） | 始终可用 |
-| `/exit_teach_mode` | `std_srvs/Empty` | 退出示教模式 | Piper 系列 |
 
 ---
 

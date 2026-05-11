@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="agx_arm">
-  <xacro:arg name="arm_type" default="piper" />
+  <xacro:arg name="arm_type" default="nero" />
   <xacro:arg name="effector_type" default="none" />
   <xacro:arg name="revo2_type" default="left" />
 
   <xacro:property name="arm_type" value="$(arg arm_type)" />
-  <xacro:property name="flange_link" value="${'link7' if arm_type == 'nero' else 'link6'}" />
+  <xacro:property name="flange_link" value="link7" />
 
   <!-- ======================== ARM GROUP ======================== -->
   <group name="arm">
