@@ -228,4 +228,5 @@ def main() -> None:
         except Exception:
             pass
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

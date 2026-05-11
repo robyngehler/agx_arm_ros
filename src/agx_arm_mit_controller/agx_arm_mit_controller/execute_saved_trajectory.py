@@ -93,4 +93,5 @@ def main() -> None:
         )
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

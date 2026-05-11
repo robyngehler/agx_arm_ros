@@ -11,7 +11,7 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory
 
-from agx_arm_msgs.msg import MoveMITMsg
+from agx_arm_msgs.msg import AgxArmStatus, MoveMITMsg
 
 from .feedforward_model import CalibrationModel, load_calibration_model
 from .gravity_model import GravityModel, GravityModelError, create_gravity_model
@@ -31,6 +31,9 @@ def scale_gravity_feedforward(
     return [gravity_feedforward_sign * gravity_scale * value for value in gravity_torque]
 
 
+CTRL_MODE_LINKAGE_TEACHING_INPUT_MODE = 0x06
+
+
 class NeroMitControllerNode(Node):
     def __init__(self) -> None:
         super().__init__("agx_arm_nero_mit_controller")
@@ -47,8 +50,8 @@ class NeroMitControllerNode(Node):
         self.declare_parameter("position_error_limit", [0.5] * 7)
         self.declare_parameter("velocity_limit", [2.0] * 7)
         self.declare_parameter("torque_limit", [8.0] * 7)
-        self.declare_parameter("kp", [1.0, 1.0, 1.0, 1.0, 0.8, 0.8, 0.5])
-        self.declare_parameter("kd", [0.2, 0.3, 0.2, 0.3, 0.12, 0.12, 0.08])
+        self.declare_parameter("kp", [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        self.declare_parameter("kd", [0.1, 0.1, 0.1, 0.1, 0.12, 0.12, 0.08])
         self.declare_parameter("gravity_compensation_enabled", False)
         self.declare_parameter("gravity_backend", "pinocchio")
         self.declare_parameter("gravity_urdf_path", "")
@@ -80,6 +83,8 @@ class NeroMitControllerNode(Node):
         self.enabled = False
         self.enable_time_monotonic = 0.0
         self.last_feedback_monotonic = 0.0
+        self.last_joint_feedback_monotonic = 0.0
+        self.last_leader_feedback_monotonic = 0.0
         self.feedback_positions: dict[str, float] = {}
         self.feedback_velocities: dict[str, float] = {}
         self.active_trajectory: Optional[JointTrajectoryBuffer] = None
@@ -88,12 +93,15 @@ class NeroMitControllerNode(Node):
         self.last_stale_feedback_log = 0.0
         self.gravity_model: Optional[GravityModel] = None
         self.calibration_model: Optional[CalibrationModel] = None
+        self.leader_mode_active = False
 
         self._init_feedforward_models()
 
         self.move_mit_pub = self.create_publisher(MoveMITMsg, "control/move_mit", 10)
         self.reference_pub = self.create_publisher(JointState, "~/reference_joint_states", 10)
         self.create_subscription(JointState, "feedback/joint_states", self._feedback_callback, 50)
+        self.create_subscription(JointState, "feedback/leader_joint_angles", self._leader_feedback_callback, 50)
+        self.create_subscription(AgxArmStatus, "feedback/arm_status", self._arm_status_callback, 20)
         self.create_subscription(JointTrajectory, "~/joint_trajectory", self._trajectory_callback, 10)
         self.create_service(SetBool, "~/enable", self._enable_callback)
         self.create_service(Empty, "~/hold_current", self._hold_current_callback)
@@ -103,6 +111,7 @@ class NeroMitControllerNode(Node):
         self.get_logger().info(
             f"MIT controller ready for joints {self.joint_names} at {self.control_rate_hz:.1f} Hz"
         )
+        self.get_logger().info(f"MIT gains loaded: kp={self.kp}, kd={self.kd}")
 
     def _init_feedforward_models(self) -> None:
         calibration_path: Path | None = None
@@ -136,7 +145,7 @@ class NeroMitControllerNode(Node):
             )
         return values
 
-    def _feedback_callback(self, msg: JointState) -> None:
+    def _joint_state_maps(self, msg: JointState) -> tuple[dict[str, float], dict[str, float]] | None:
         position_map = {name: float(value) for name, value in zip(msg.name, msg.position)}
         velocity_map = {
             name: float(value)
@@ -145,12 +154,62 @@ class NeroMitControllerNode(Node):
 
         missing = [joint for joint in self.joint_names if joint not in position_map]
         if missing:
-            self.get_logger().warn(f"feedback/joint_states missing joints {missing}")
-            return
+            return None
+        return position_map, velocity_map
 
+    def _set_feedback_state(self, position_map: dict[str, float], velocity_map: dict[str, float]) -> None:
         self.feedback_positions = {joint: position_map[joint] for joint in self.joint_names}
         self.feedback_velocities = {joint: velocity_map.get(joint, 0.0) for joint in self.joint_names}
         self.last_feedback_monotonic = time.monotonic()
+
+    def _has_fresh_joint_feedback(self) -> bool:
+        if self.last_joint_feedback_monotonic <= 0.0:
+            return False
+        return (time.monotonic() - self.last_joint_feedback_monotonic) <= self.feedback_timeout_s
+
+    def _has_fresh_leader_feedback(self) -> bool:
+        if self.last_leader_feedback_monotonic <= 0.0:
+            return False
+        return (time.monotonic() - self.last_leader_feedback_monotonic) <= self.feedback_timeout_s
+
+    def _should_use_leader_feedback(self) -> bool:
+        return self.leader_mode_active or (self._has_fresh_leader_feedback() and not self._has_fresh_joint_feedback())
+
+    def _feedback_callback(self, msg: JointState) -> None:
+        state_maps = self._joint_state_maps(msg)
+        if state_maps is None:
+            missing = [joint for joint in self.joint_names if joint not in msg.name]
+            self.get_logger().warn(f"feedback/joint_states missing joints {missing}")
+            return
+
+        position_map, velocity_map = state_maps
+        self.last_joint_feedback_monotonic = time.monotonic()
+        self._set_feedback_state(position_map, velocity_map)
+
+    def _leader_feedback_callback(self, msg: JointState) -> None:
+        state_maps = self._joint_state_maps(msg)
+        if state_maps is None:
+            return
+
+        self.last_leader_feedback_monotonic = time.monotonic()
+        if not self._should_use_leader_feedback():
+            return
+
+        position_map, velocity_map = state_maps
+        self._set_feedback_state(position_map, velocity_map)
+        if self.enabled and self.active_trajectory is None:
+            self.hold_reference = self._capture_current_reference()
+
+    def _arm_status_callback(self, msg: AgxArmStatus) -> None:
+        was_leader_mode_active = self.leader_mode_active
+        self.leader_mode_active = msg.ctrl_mode == CTRL_MODE_LINKAGE_TEACHING_INPUT_MODE
+
+        if self.leader_mode_active and not was_leader_mode_active and self.active_trajectory is not None:
+            self.active_trajectory = None
+            self.get_logger().warn("Cancelled active MIT trajectory because the robot entered leader mode")
+
+        if was_leader_mode_active and not self.leader_mode_active and self.enabled and self._has_fresh_feedback():
+            self.hold_reference = self._capture_current_reference()
 
     def _trajectory_callback(self, msg: JointTrajectory) -> None:
         try:
@@ -261,6 +320,9 @@ class NeroMitControllerNode(Node):
         if not self.enabled:
             return
 
+        if self._should_use_leader_feedback():
+            return
+
         if not self._has_fresh_feedback():
             now = time.monotonic()
             if now - self.last_stale_feedback_log > 1.0:
@@ -293,6 +355,7 @@ class NeroMitControllerNode(Node):
             desired_torque = clamp(float(feedforward[index]), self.torque_limit[index])
             position_error = desired_position - current_position
 
+            """
             if math.fabs(position_error) > self.position_error_limit[index]:
                 self.get_logger().warn(
                     f"Joint {joint_name} exceeded position error limit; switching that joint to hold"
@@ -300,7 +363,7 @@ class NeroMitControllerNode(Node):
                 desired_position = current_position
                 desired_velocity = 0.0
                 desired_torque = 0.0
-
+            """
             cmd.p_des.append(desired_position)
             cmd.v_des.append(desired_velocity)
             cmd.kp.append(self.kp[index] * gain_scale)
@@ -327,4 +390,5 @@ def main(args: Optional[list[str]] = None) -> None:
         rclpy.spin(node)
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

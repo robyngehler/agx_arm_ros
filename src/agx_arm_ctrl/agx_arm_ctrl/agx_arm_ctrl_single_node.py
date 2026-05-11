@@ -948,7 +948,8 @@ def main(args=None):
     except Exception as e:
         print(f"Error occurred: {e}")
     finally:
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
