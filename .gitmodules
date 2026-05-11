@@ -1,4 +1,4 @@
-[submodule "src/agx_arm_description/agx_arm_urdf"]
-	path = src/agx_arm_description/agx_arm_urdf
-	url = https://github.com/agilexrobotics/agx_arm_urdf.git
+[submodule "vendor/Omnihand-2025-SDK"]
+	path = vendor/Omnihand-2025-SDK
+	url = https://github.com/AgibotTech/Omnihand-2025-SDK.git
 	branch = main
