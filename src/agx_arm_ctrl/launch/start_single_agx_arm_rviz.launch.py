@@ -33,9 +33,9 @@ def generate_launch_description():
 
     arm_type_arg = DeclareLaunchArgument(
         'arm_type',
-        default_value='piper',
-        choices=['nero', 'piper', 'piper_h', 'piper_l', 'piper_x'],
-        description='Robotic arm type (e.g. nero, piper, piper_h, piper_l, piper_x).'
+        default_value='nero',
+        choices=['nero'],
+        description='Robotic arm type. Only nero is supported in this workspace.'
     )
 
     effector_type_arg = DeclareLaunchArgument(
@@ -110,13 +110,13 @@ def generate_launch_description():
         description='Default effort for gripper commands (>= 0.0).'
     )
 
-    # description:统一使用 agx_arm_description/launch/display.launch.py
+    # description: use the sim-backed compatibility launch from agx_arm_description
     description_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
                 get_package_share_directory('agx_arm_description'),
                 'launch',
-                'display.launch.py',
+                'display_control.launch.py',
             )
         ),
         launch_arguments={

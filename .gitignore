@@ -17,3 +17,5 @@ oculus_reader
 oculus_reader/oculus_reader
 **/__pycache__/
 .thumbs
+/ros2-copilot-template
+/agx_arm_sim

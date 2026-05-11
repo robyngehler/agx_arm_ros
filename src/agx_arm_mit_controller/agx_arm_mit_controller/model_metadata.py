@@ -73,13 +73,6 @@ def _workspace_nero_urdf_paths() -> list[Path]:
                 / "agx_arm_description"
                 / "urdf"
                 / "nero_gripper_d435.urdf",
-                root
-                / "src"
-                / "agx_arm_description"
-                / "agx_arm_urdf"
-                / "nero"
-                / "urdf"
-                / "nero_description.urdf",
             ]
         )
     return candidates
