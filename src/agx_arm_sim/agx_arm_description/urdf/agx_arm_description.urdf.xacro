@@ -8,7 +8,7 @@
   参数说明:
     arm_type          : nero（当前工作区活动配置）
                         默认: nero
-    end_effector      : none | gripper | revo2_left | revo2_right
+    end_effector      : none | gripper | revo2_left | revo2_right | omnihand_left | omnihand_right
                         默认: none
     revo2_side        : left | right
                         默认: right（兼容保留）
@@ -23,6 +23,7 @@
     xacro agx_arm_description.urdf.xacro arm_type:=nero end_effector:=gripper
     xacro agx_arm_description.urdf.xacro arm_type:=nero with_camera_stand:=true with_camera:=true
     xacro agx_arm_description.urdf.xacro arm_type:=nero end_effector:=revo2_right
+    xacro agx_arm_description.urdf.xacro arm_type:=nero end_effector:=omnihand_left
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="agx_arm">
 
@@ -246,6 +247,14 @@
 
     <xacro:if value="${ee == 'revo2_right'}">
       <xacro:include filename="${urdf_root}/nero/urdf/nero_with_right_revo2_description.xacro"/>
+    </xacro:if>
+
+    <xacro:if value="${ee == 'omnihand_left'}">
+      <xacro:include filename="${urdf_root}/nero/urdf/nero_with_left_omnihand_description.xacro"/>
+    </xacro:if>
+
+    <xacro:if value="${ee == 'omnihand_right'}">
+      <xacro:include filename="${urdf_root}/nero/urdf/nero_with_right_omnihand_description.xacro"/>
     </xacro:if>
     <xacro:if value="${ee == 'teach'}">
       <xacro:include filename="$(find agx_arm_description)/urdf/teach_pendant.urdf.xacro"/>

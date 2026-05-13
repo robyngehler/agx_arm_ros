@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
-  <xacro:macro name="agx_arm_ros2_control" params="name initial_positions_file arm_type effector_type revo2_type">
+  <xacro:macro name="agx_arm_ros2_control" params="name initial_positions_file arm_type effector_type revo2_type omnihand_type">
     <xacro:property name="initial_positions" value="${xacro.load_yaml(initial_positions_file)['initial_positions']}" />
 
     <ros2_control name="${name}" type="system">
@@ -93,6 +93,31 @@
         <joint name="right_middle_proximal_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_middle_proximal_joint']}</param></state_interface><state_interface name="velocity" /></joint>
         <joint name="right_ring_proximal_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_ring_proximal_joint']}</param></state_interface><state_interface name="velocity" /></joint>
         <joint name="right_pinky_proximal_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_pinky_proximal_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+      </xacro:if>
+
+      <xacro:if value="${effector_type == 'omnihand' and omnihand_type == 'left'}">
+        <joint name="left_thumb_roll_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_thumb_roll_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_thumb_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_thumb_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_thumb_mcp_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_thumb_mcp_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_index_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_index_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_index_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_index_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_middle_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_middle_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_ring_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_ring_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_ring_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_ring_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_pinky_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_pinky_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="left_pinky_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['left_pinky_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+      </xacro:if>
+      <xacro:if value="${effector_type == 'omnihand' and omnihand_type == 'right'}">
+        <joint name="right_thumb_roll_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_thumb_roll_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_thumb_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_thumb_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_thumb_mcp_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_thumb_mcp_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_index_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_index_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_index_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_index_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_middle_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_middle_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_ring_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_ring_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_ring_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_ring_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_pinky_abad_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_pinky_abad_joint']}</param></state_interface><state_interface name="velocity" /></joint>
+        <joint name="right_pinky_pip_joint"><command_interface name="position" /><state_interface name="position"><param name="initial_value">${initial_positions['right_pinky_pip_joint']}</param></state_interface><state_interface name="velocity" /></joint>
       </xacro:if>
     </ros2_control>
   </xacro:macro>

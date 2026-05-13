@@ -21,12 +21,15 @@ from moveit_configs_utils.launch_utils import DeclareBooleanLaunchArg
 from _moveit_config_builder import (
     ALL_ARM_TYPES,
     ALL_EFFECTOR_TYPES,
+    ALL_OMNIHAND_TYPES,
     ALL_REVO2_TYPES,
     build_moveit_config,
 )
 
 
-def _build_ros2_controllers_file(arm_type, effector_type, revo2_type, namespace):
+def _build_ros2_controllers_file(
+    arm_type, effector_type, revo2_type, omnihand_type, namespace
+):
     """Build ros2_controllers config and return path to a temporary YAML file."""
     arm_joints = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
     if arm_type == "nero":
@@ -90,6 +93,31 @@ def _build_ros2_controllers_file(arm_type, effector_type, revo2_type, namespace)
                 "state_interfaces": ["position", "velocity"],
             },
         }
+    elif effector_type == "omnihand":
+        side = omnihand_type
+        ctrl_name = f"{side}_omnihand_controller"
+        cm_controllers[ctrl_name] = {
+            "type": "joint_trajectory_controller/JointTrajectoryController",
+        }
+        config[cm_node]["ros__parameters"].update(cm_controllers)
+        config[(f"/{ns}/{ctrl_name}" if ns else f"/{ctrl_name}")] = {
+            "ros__parameters": {
+                "joints": [
+                    f"{side}_thumb_roll_joint",
+                    f"{side}_thumb_abad_joint",
+                    f"{side}_thumb_mcp_joint",
+                    f"{side}_index_abad_joint",
+                    f"{side}_index_pip_joint",
+                    f"{side}_middle_pip_joint",
+                    f"{side}_ring_abad_joint",
+                    f"{side}_ring_pip_joint",
+                    f"{side}_pinky_abad_joint",
+                    f"{side}_pinky_pip_joint",
+                ],
+                "command_interfaces": ["position"],
+                "state_interfaces": ["position", "velocity"],
+            },
+        }
 
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".yaml", prefix="ros2_controllers_", delete=False
@@ -125,6 +153,7 @@ def _build_moveit(context):
     arm_type = LaunchConfiguration("arm_type").perform(context)
     effector_type = LaunchConfiguration("effector_type").perform(context)
     revo2_type = LaunchConfiguration("revo2_type").perform(context)
+    omnihand_type = LaunchConfiguration("omnihand_type").perform(context)
     moveit_config = build_moveit_config(context)
     package_path = moveit_config.package_path
 
@@ -176,7 +205,7 @@ def _build_moveit(context):
     )
 
     ros2_controllers_yaml = _build_ros2_controllers_file(
-        arm_type, effector_type, revo2_type, namespace
+        arm_type, effector_type, revo2_type, omnihand_type, namespace
     )
     actions.append(
         Node(
@@ -234,6 +263,12 @@ def generate_launch_description():
                 default_value="left",
                 choices=ALL_REVO2_TYPES,
                 description="Revo2 side (used when effector_type is revo2).",
+            ),
+            DeclareLaunchArgument(
+                "omnihand_type",
+                default_value="left",
+                choices=ALL_OMNIHAND_TYPES,
+                description="OmniHand side (used when effector_type is omnihand).",
             ),
             DeclareLaunchArgument(
                 "tcp_offset",

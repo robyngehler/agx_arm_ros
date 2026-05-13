@@ -5,9 +5,11 @@
 ## 当前范围
 
 - 机械臂型号：`nero`
-- 末端执行器：`none`、`gripper`、`revo2_left`、`revo2_right`
+- 末端执行器：`none`、`gripper`、`revo2_left`、`revo2_right`、`omnihand_left`、`omnihand_right`
 - 控制兼容入口：`display_control.launch.py`（参数名与 `agx_arm_ctrl` / `agx_arm_moveit` 保持一致）
 - 附加资源：相机支架、RealSense D435 挂载逻辑、已确认的 USD 资产
+
+当前 OmniHand 仅开放仿真 / 可视化集成。硬件 ROS bridge、CAN 设备联调与真机验证仍保留为后续工作。
 
 ## 包结构
 
@@ -79,6 +81,14 @@ ros2 launch agx_arm_description display.launch.py \
     end_effector:=revo2_left
 ```
 
+Nero + 左手 OmniHand：
+
+```bash
+ros2 launch agx_arm_description display.launch.py \
+    arm_type:=nero \
+    end_effector:=omnihand_left
+```
+
 Nero + 夹爪 + 相机支架 + D435：
 
 ```bash
@@ -93,6 +103,8 @@ ros2 launch agx_arm_description display.launch.py \
 
 该入口与 `agx_arm_ctrl` / `agx_arm_moveit` 的参数名对齐，使用 `effector_type` 与 `revo2_type`。
 
+其中 `display.launch.py` 继续保留面向直接 Xacro 组合的 `end_effector` 参数；`display_control.launch.py` 则是与控制和 MoveIt 对齐的仓库级入口。OmniHand 在两者都可显示，但仿真和后续桥接工作优先以 `display_control.launch.py` / `agx_arm_moveit` 为准。
+
 ```bash
 ros2 launch agx_arm_description display_control.launch.py \
     arm_type:=nero \
@@ -106,6 +118,13 @@ ros2 launch agx_arm_description display_control.launch.py \
     revo2_type:=right
 ```
 
+```bash
+ros2 launch agx_arm_description display_control.launch.py \
+    arm_type:=nero \
+    effector_type:=omnihand \
+    omnihand_type:=left
+```
+
 ## 参数说明
 
 ### `display.launch.py`
@@ -113,7 +132,7 @@ ros2 launch agx_arm_description display_control.launch.py \
 | 参数 | 默认值 | 说明 | 可选值 |
 |------|--------|------|--------|
 | `arm_type` | `nero` | 机械臂型号 | `nero` |
-| `end_effector` | `none` | 末端执行器类型 | `none`, `gripper`, `revo2_left`, `revo2_right` |
+| `end_effector` | `none` | 末端执行器类型 | `none`, `gripper`, `revo2_left`, `revo2_right`, `omnihand_left`, `omnihand_right` |
 | `with_camera_stand` | `false` | 是否加载相机支架 | `true`, `false` |
 | `with_camera` | `false` | 是否加载 D435 | `true`, `false` |
 | `use_gui` | `true` | 是否启动关节滑条 GUI | `true`, `false` |
@@ -124,8 +143,9 @@ ros2 launch agx_arm_description display_control.launch.py \
 | 参数 | 默认值 | 说明 | 可选值 |
 |------|--------|------|--------|
 | `arm_type` | `nero` | 机械臂型号 | `nero` |
-| `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2` |
+| `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2`, `omnihand` |
 | `revo2_type` | `left` | Revo2 左右手 | `left`, `right` |
+| `omnihand_type` | `left` | OmniHand 左右手 | `left`, `right` |
 | `follow` | `false` | 是否跟随真实反馈 | `true`, `false` |
 | `control` | `true` | 是否发布控制话题 | `true`, `false` |
 | `control_topic` | `control/joint_states` | 关节滑条输出目标话题 | 任意合法 topic |

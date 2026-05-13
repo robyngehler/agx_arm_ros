@@ -19,6 +19,9 @@ launch 参数直接作为 xacro mappings 传入，由 xacro 解析后注入 robo
 
     # nero + 左手 revo2
     ros2 launch agx_arm_description display.launch.py arm_type:=nero end_effector:=revo2_left
+
+    # nero + 左手 OmniHand
+    ros2 launch agx_arm_description display.launch.py arm_type:=nero end_effector:=omnihand_left
 """
 
 import os
@@ -113,7 +116,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "end_effector",
             default_value="none",
-            choices=["none", "gripper", "revo2_left", "revo2_right"],
+            choices=["none", "gripper", "revo2_left", "revo2_right", "omnihand_left", "omnihand_right"],
             description="末端执行器类型",
         ),
         DeclareLaunchArgument(

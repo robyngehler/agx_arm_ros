@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="nero">
+  <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/omnihand/urdf/omnihand_right_hand.xacro"/>
+  <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/nero/urdf/nero_with_omnihand_flange_description.xacro"/>
+
+  <joint name="hand_base_joint" type="fixed">
+    <origin xyz="0.0 0.0 0.012" rpy="0 0 3.1415926"/>
+    <parent link="omnihand_flange"/>
+    <child link="right_base_link"/>
+    <axis xyz="0.0 0.0 0.0"/>
+    <limit lower="0.0" upper="0.0" effort="0.0" velocity="0.0"/>
+  </joint>
+</robot>

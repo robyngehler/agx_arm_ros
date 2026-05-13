@@ -3,9 +3,90 @@
   <xacro:arg name="arm_type" default="nero" />
   <xacro:arg name="effector_type" default="none" />
   <xacro:arg name="revo2_type" default="left" />
+  <xacro:arg name="omnihand_type" default="left" />
 
   <xacro:property name="arm_type" value="$(arg arm_type)" />
   <xacro:property name="flange_link" value="link7" />
+
+  <xacro:macro name="omnihand_group" params="side">
+    <group name="hand">
+      <joint name="${side}_thumb_roll_joint" />
+      <joint name="${side}_thumb_abad_joint" />
+      <joint name="${side}_thumb_mcp_joint" />
+      <joint name="${side}_index_abad_joint" />
+      <joint name="${side}_index_pip_joint" />
+      <joint name="${side}_middle_pip_joint" />
+      <joint name="${side}_ring_abad_joint" />
+      <joint name="${side}_ring_pip_joint" />
+      <joint name="${side}_pinky_abad_joint" />
+      <joint name="${side}_pinky_pip_joint" />
+    </group>
+    <end_effector name="${side}_omnihand_eef" parent_link="tcp_link" group="hand" parent_group="arm" />
+    <group_state name="hand_open" group="hand">
+      <joint name="${side}_thumb_roll_joint" value="0.0" />
+      <joint name="${side}_thumb_abad_joint" value="0.0" />
+      <joint name="${side}_thumb_mcp_joint" value="0.0" />
+      <joint name="${side}_index_abad_joint" value="0.0" />
+      <joint name="${side}_index_pip_joint" value="0.0" />
+      <joint name="${side}_middle_pip_joint" value="0.0" />
+      <joint name="${side}_ring_abad_joint" value="0.0" />
+      <joint name="${side}_ring_pip_joint" value="0.0" />
+      <joint name="${side}_pinky_abad_joint" value="0.0" />
+      <joint name="${side}_pinky_pip_joint" value="0.0" />
+    </group_state>
+    <group_state name="hand_half_close" group="hand">
+      <joint name="${side}_thumb_roll_joint" value="${-0.25 if side == 'left' else 0.25}" />
+      <joint name="${side}_thumb_abad_joint" value="${0.6 if side == 'left' else -0.6}" />
+      <joint name="${side}_thumb_mcp_joint" value="${-0.35 if side == 'left' else 0.35}" />
+      <joint name="${side}_index_abad_joint" value="${0.05 if side == 'left' else -0.05}" />
+      <joint name="${side}_index_pip_joint" value="0.7" />
+      <joint name="${side}_middle_pip_joint" value="0.7" />
+      <joint name="${side}_ring_abad_joint" value="${-0.05 if side == 'left' else 0.05}" />
+      <joint name="${side}_ring_pip_joint" value="0.7" />
+      <joint name="${side}_pinky_abad_joint" value="${-0.05 if side == 'left' else 0.05}" />
+      <joint name="${side}_pinky_pip_joint" value="0.7" />
+    </group_state>
+    <group_state name="hand_close" group="hand">
+      <joint name="${side}_thumb_roll_joint" value="${-0.45 if side == 'left' else 0.45}" />
+      <joint name="${side}_thumb_abad_joint" value="${1.0 if side == 'left' else -1.0}" />
+      <joint name="${side}_thumb_mcp_joint" value="${-0.6 if side == 'left' else 0.6}" />
+      <joint name="${side}_index_abad_joint" value="${0.1 if side == 'left' else -0.1}" />
+      <joint name="${side}_index_pip_joint" value="1.2" />
+      <joint name="${side}_middle_pip_joint" value="1.2" />
+      <joint name="${side}_ring_abad_joint" value="${-0.1 if side == 'left' else 0.1}" />
+      <joint name="${side}_ring_pip_joint" value="1.2" />
+      <joint name="${side}_pinky_abad_joint" value="${-0.1 if side == 'left' else 0.1}" />
+      <joint name="${side}_pinky_pip_joint" value="1.2" />
+    </group_state>
+    <passive_joint name="${side}_thumb_pip_joint" />
+    <passive_joint name="${side}_thumb_dip_joint" />
+    <passive_joint name="${side}_index_dip_joint" />
+    <passive_joint name="${side}_middle_dip_joint" />
+    <passive_joint name="${side}_ring_dip_joint" />
+    <passive_joint name="${side}_pinky_dip_joint" />
+    <disable_collisions link1="link7" link2="omnihand_flange" reason="Adjacent" />
+    <disable_collisions link1="link6" link2="omnihand_flange" reason="Never" />
+    <disable_collisions link1="omnihand_flange" link2="${side}_base_link" reason="Adjacent" />
+    <disable_collisions link1="omnihand_flange" link2="${side}_palm" reason="Adjacent" />
+    <disable_collisions link1="${side}_base_link" link2="${side}_palm" reason="Adjacent" />
+    <disable_collisions link1="${side}_palm" link2="${side}_thumb_roll" reason="Adjacent" />
+    <disable_collisions link1="${side}_palm" link2="${side}_index_abad" reason="Adjacent" />
+    <disable_collisions link1="${side}_palm" link2="${side}_middle_abad" reason="Adjacent" />
+    <disable_collisions link1="${side}_palm" link2="${side}_ring_abad" reason="Adjacent" />
+    <disable_collisions link1="${side}_palm" link2="${side}_pinky_abad" reason="Adjacent" />
+    <disable_collisions link1="${side}_thumb_roll" link2="${side}_thumb_abad" reason="Adjacent" />
+    <disable_collisions link1="${side}_thumb_abad" link2="${side}_thumb_mcp" reason="Adjacent" />
+    <disable_collisions link1="${side}_thumb_mcp" link2="${side}_thumb_pip" reason="Adjacent" />
+    <disable_collisions link1="${side}_thumb_pip" link2="${side}_thumb_dip" reason="Adjacent" />
+    <disable_collisions link1="${side}_index_abad" link2="${side}_index_pip" reason="Adjacent" />
+    <disable_collisions link1="${side}_index_pip" link2="${side}_index_dip" reason="Adjacent" />
+    <disable_collisions link1="${side}_middle_abad" link2="${side}_middle_pip" reason="Adjacent" />
+    <disable_collisions link1="${side}_middle_pip" link2="${side}_middle_dip" reason="Adjacent" />
+    <disable_collisions link1="${side}_ring_abad" link2="${side}_ring_pip" reason="Adjacent" />
+    <disable_collisions link1="${side}_ring_pip" link2="${side}_ring_dip" reason="Adjacent" />
+    <disable_collisions link1="${side}_pinky_abad" link2="${side}_pinky_pip" reason="Adjacent" />
+    <disable_collisions link1="${side}_pinky_pip" link2="${side}_pinky_dip" reason="Adjacent" />
+  </xacro:macro>
 
   <!-- ======================== ARM GROUP ======================== -->
   <group name="arm">
@@ -341,6 +422,14 @@
       <disable_collisions link1="flange_link" link2="right_base_link" reason="Adjacent" />
       <disable_collisions link1="flange_link" link2="link5" reason="Never" />
     </xacro:unless>
+  </xacro:if>
+
+  <!-- ======================== OMNIHAND GROUP ======================== -->
+  <xacro:if value="$(eval effector_type == 'omnihand' and omnihand_type == 'left')">
+    <xacro:omnihand_group side="left" />
+  </xacro:if>
+  <xacro:if value="$(eval effector_type == 'omnihand' and omnihand_type == 'right')">
+    <xacro:omnihand_group side="right" />
   </xacro:if>
 
   <!-- ======================== HOME STATE ======================== -->

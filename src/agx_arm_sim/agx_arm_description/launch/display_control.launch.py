@@ -31,6 +31,14 @@ ROBOT_WITH_REVO2_URDF_MAP = {
     for arm_type in ARM_TYPES
 }
 
+ROBOT_WITH_OMNIHAND_URDF_MAP = {
+    arm_type: {
+        side: f'{arm_type}/urdf/{arm_type}_with_{side}_omnihand_description.xacro'
+        for side in ('left', 'right')
+    }
+    for arm_type in ARM_TYPES
+}
+
 
 def _resolve_custom_model_path(pkg_path, custom_model):
     custom_path = pkg_path / 'agx_arm_urdf' / custom_model
@@ -40,11 +48,15 @@ def _resolve_custom_model_path(pkg_path, custom_model):
     return str(Path(custom_model).expanduser())
 
 
-def _resolve_builtin_model_path(arm_type, effector_type, revo2_type, pkg_path):
+def _resolve_builtin_model_path(
+    arm_type, effector_type, revo2_type, omnihand_type, pkg_path
+):
     if effector_type == 'agx_gripper':
         relative_path = ROBOT_WITH_GRIPPER_URDF_MAP[arm_type]
     elif effector_type == 'revo2':
         relative_path = ROBOT_WITH_REVO2_URDF_MAP[arm_type][revo2_type]
+    elif effector_type == 'omnihand':
+        relative_path = ROBOT_WITH_OMNIHAND_URDF_MAP[arm_type][omnihand_type]
     else:
         relative_path = ROBOT_URDF_MAP[arm_type]
     return str(pkg_path / 'agx_arm_urdf' / relative_path)
@@ -66,6 +78,7 @@ def resolve_model_path(context, *args, **kwargs):
     arm_type = LaunchConfiguration('arm_type').perform(context)
     effector_type = LaunchConfiguration('effector_type').perform(context)
     revo2_type = LaunchConfiguration('revo2_type').perform(context)
+    omnihand_type = LaunchConfiguration('omnihand_type').perform(context)
     custom_model = LaunchConfiguration('custom_model').perform(context)
     follow = LaunchConfiguration('follow').perform(context)
     control = LaunchConfiguration('control').perform(context)
@@ -79,7 +92,7 @@ def resolve_model_path(context, *args, **kwargs):
         model_path = _resolve_custom_model_path(pkg_path, custom_model)
     else:
         model_path = _resolve_builtin_model_path(
-            arm_type, effector_type, revo2_type, pkg_path
+            arm_type, effector_type, revo2_type, omnihand_type, pkg_path
         )
 
     robot_description = ParameterValue(Command(['xacro ', model_path]), value_type=str)
@@ -176,14 +189,20 @@ def generate_launch_description():
     effector_type_arg = DeclareLaunchArgument(
         name='effector_type',
         default_value='none',
-        choices=['none', 'agx_gripper', 'revo2'],
-        description='End effector type (e.g. agx_gripper, revo2).'
+        choices=['none', 'agx_gripper', 'revo2', 'omnihand'],
+        description='End effector type (e.g. agx_gripper, revo2, omnihand).'
     )
     revo2_type_arg = DeclareLaunchArgument(
        'revo2_type',
         default_value='left',
         choices=['left', 'right'],
         description='Revo2 end effector type (e.g. left, right).'
+    )
+    omnihand_type_arg = DeclareLaunchArgument(
+       'omnihand_type',
+        default_value='left',
+        choices=['left', 'right'],
+        description='OmniHand side (used when effector_type is omnihand).'
     )
     pub_rate_arg = DeclareLaunchArgument(
         'pub_rate',
@@ -230,6 +249,7 @@ def generate_launch_description():
         custom_model_arg,
         effector_type_arg,
         revo2_type_arg,
+        omnihand_type_arg,
         pub_rate_arg,
         gui_arg,
         rviz_arg,
