@@ -22,6 +22,7 @@ interface_notes:
 - the vendor README describes OmniHand 2025 as `10 active + 6 passive DOF` with `400+` tactile points
 - the vendor SDK documents CANFD with ZLG USBCANFD adapters as the primary supported transport
 - the current workspace runtime only supports `agx_gripper` and `revo2` in `src/agx_arm_ctrl`, `src/agx_arm_moveit`, and `src/agx_arm_sim/agx_arm_description`
+- the current agx_arm stack already switches planning, description, and fake-controller profiles by `effector_type`, so OmniHand can be introduced as another repo-owned effector profile without exposing vendor ROS topics as the public contract
 - `pyAgxArm` exposes end-effector drivers for `agx_gripper` and `revo2`, not OmniHand
 - the vendor ROS2 API doc exposes left/right topic families under `/agihand/omnihand/{left,right}/...`
 - current local hand messages are Revo2-specific and should not be reused as the OmniHand long-term interface
@@ -35,11 +36,12 @@ risks:
 recommended_next_action:
 - keep the vendor SDK vendored and validate isolated bring-up through the repo-owned Phase 1 smoke test plus the local socket-backed build path first
 - if the socket-backed runtime still returns incomplete/default data without a responsive hand, treat that as a live runtime blocker rather than a mere packaging blocker
-- implement a thin local adapter layer only after standalone device access is validated, then add a repo-owned ROS bridge above that adapter
-- normalize the vendor hand description assets into a local ROS package only after the direct control path and joint naming are stable
+- in parallel, define an agx_arm-native OmniHand simulation contract now: `effector_type:=omnihand`, `omnihand_type:=left|right`, normalized local joint names, repo-owned description assets, and MoveIt/mock-controller support
+- keep the OmniHand adapter below ROS; let a repo-owned ROS bridge expose the hand to the agx_arm stack and later switch between mock, direct-SDK, or optional vendor-ROS backends
+- use standard `sensor_msgs/JointState` plus `trajectory_msgs/JointTrajectory` and controller conventions for kinematics and motion, with new repo-owned messages only for OmniHand-specific diagnostics and tactile data
 open_questions:
 - Does Agibot support the current `aarch64` host for live hardware bring-up, or should first validated device access move to an `x86_64` machine?
-- Which repo-owned ROS interface should sit above the future adapter: pure `sensor_msgs/JointState` plus raw status topics, or a new custom message family?
+- Should the repo keep an optional vendor-ROS backend adapter as a fallback behind the repo-owned bridge, or target direct SDK access only for the first hardware backend?
 related_sprint: 1
 related_child_document: docs/development/sprint1/assets/omnihand_asset_validation.md
 

@@ -36,6 +36,25 @@ This plan intentionally defers direct overlay of the vendor ROS2 packages into `
 - The vendor ROS node is coupled to a transport and topic layout that is not yet validated on this `aarch64` host.
 - The vendor asset bundle still needs normalization before it can serve as a local description package.
 
+## Parallel Simulation-First Track
+
+Direct hardware validation and simulation integration do not need to be serialized completely.
+
+Work that can proceed now:
+
+- freeze an agx_arm-side public contract for OmniHand: `effector_type:=omnihand`, `omnihand_type:=left|right`, and normalized local joint names
+- normalize the vendor description assets into a repo-owned OmniHand slice under the canonical `agx_arm_description` package
+- extend `agx_arm_moveit` fake `ros2_control`, SRDF, and controller profiles so OmniHand can run in simulation without hardware
+- add a repo-owned ROS bridge that can sit above a mock backend first and a real backend later
+
+Work that should still wait for a validated live backend:
+
+- the final hardware backend choice between direct SDK access and any vendor-ROS fallback
+- device-specific fault handling, tactile interpretation, and timing guarantees
+- production command limits and calibration tied to a real unit
+
+See `docs/control/omnihand_ros_integration_options.md` for the detailed option analysis, diagrams, and recommended repo-owned ROS contract.
+
 ## Current Constraints
 
 - The vendor README documents Ubuntu 22.04 `x86_64`; this workspace host is `aarch64`.
@@ -141,7 +160,7 @@ Exit criteria:
 
 ## Phase 4: Description And MoveIt Integration
 
-Objective: integrate the hand into the planning and visualization stack only after the direct control path is stable.
+Objective: integrate the hand into the planning and visualization stack now for simulation, then harden the same assets for hardware-backed use once the direct control path is stable.
 
 Tasks:
 
