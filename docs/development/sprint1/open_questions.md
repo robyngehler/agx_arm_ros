@@ -1,13 +1,22 @@
-# Sprint 1 Open Questions
+# Sprint 1 Decisions And Open Questions
 
-These items are intentionally left open after the current Sprint 1 implementation pass.
+## Resolved Decisions
 
-## OmniHand Integration Strategy
+### OmniHand Integration Strategy
 
-- Should the first local integration pass wrap the vendor Python/C++ SDK with a thin local package?
-- Or should the repo selectively overlay the vendor ROS2 `node/` and `node_msg/` packages into `src/`?
+- The first local OmniHand integration pass will use isolated vendor-SDK bring-up plus a thin local wrapper.
+- The vendor ROS2 `node/` and `node_msg/` packages remain vendored for reference and should not be selectively overlaid into `src/` yet.
+- The first ROS-side integration should sit above the wrapper, not directly above the vendor node.
 
-## OmniHand Bring-Up Platform
+## Remaining Open Questions
 
-- Does Agibot support the current `aarch64` host for the vendored SDK?
-- If not, should the first validated bring-up move to an `x86_64` host while this repo keeps the SDK vendored for inspection only?
+### OmniHand Bring-Up Platform
+
+- The repo now has a local socket-backed `aarch64` build/import path for isolated probing.
+- Does Agibot support the current `aarch64` host for live hardware bring-up as well?
+- If not, should the first validated device-access pass move to an `x86_64` host while this repo keeps the SDK vendored for inspection and wrapper work?
+
+### OmniHand ROS Surface After Standalone Validation
+
+- Should the first repo-owned ROS layer be limited to `sensor_msgs/JointState` plus raw status topics?
+- Or is a new custom message family needed immediately for tactile data and richer diagnostics?

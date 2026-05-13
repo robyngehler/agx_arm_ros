@@ -9,7 +9,7 @@
     position_error_limit: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
     velocity_limit: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
     torque_limit: [8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0]
-    kp: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    kp: [2.0, 3.0, 2.0, 3.0, 2.0, 2.0, 2.0]
     kd: [0.1, 0.1, 0.1, 0.1, 0.12, 0.12, 0.08]
     gravity_compensation_enabled: true
     gravity_backend: pinocchio

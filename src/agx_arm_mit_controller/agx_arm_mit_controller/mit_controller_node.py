@@ -50,7 +50,7 @@ class NeroMitControllerNode(Node):
         self.declare_parameter("position_error_limit", [0.5] * 7)
         self.declare_parameter("velocity_limit", [2.0] * 7)
         self.declare_parameter("torque_limit", [8.0] * 7)
-        self.declare_parameter("kp", [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        self.declare_parameter("kp", [2.0, 3.0, 2.0, 3.0, 2.0, 2.0, 2.0])
         self.declare_parameter("kd", [0.1, 0.1, 0.1, 0.1, 0.12, 0.12, 0.08])
         self.declare_parameter("gravity_compensation_enabled", False)
         self.declare_parameter("gravity_backend", "pinocchio")

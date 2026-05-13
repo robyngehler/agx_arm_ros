@@ -1,5 +1,8 @@
 # OmniHand Asset Validation
 
+source_document: docs/development/sprint1/assets/omnihand_asset_validation.md
+promotion_date: 2026-05-12
+
 component: OmniHand Pro SDK, model, and integration surfaces
 repository_or_source: current workspace (`agx_arm_ros`, `pyAgxArm`, `vendor/Omnihand-2025-SDK`)
 inspection_date: 2026-05-13
@@ -41,7 +44,6 @@ open_questions:
 - Does Agibot support the current `aarch64` host for live hardware bring-up, or should first validated device access move to an `x86_64` machine?
 - Which repo-owned ROS interface should sit above the future adapter: pure `sensor_msgs/JointState` plus raw status topics, or a new custom message family?
 related_sprint: 1
-related_child_document: docs/development/sprint1/assets/omnihand_asset_validation.md
 
 ## Current Local Reference Points
 
