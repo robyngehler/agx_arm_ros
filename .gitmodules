@@ -1,4 +1,4 @@
 [submodule "vendor/Omnihand-2025-SDK"]
 	path = vendor/Omnihand-2025-SDK
-	url = https://github.com/AgibotTech/Omnihand-2025-SDK.git
+	url = https://github.com/robyngehler/Omnihand-2025-SDK.git
 	branch = main

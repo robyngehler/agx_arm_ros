@@ -84,7 +84,7 @@ See `docs/control/omnihand_ros_integration_options.md` for the detailed option a
 - `assets/urdf/xacro/finger.xacro` contains a stray literal `y` before one joint declaration.
 - Multiple asset files reference `package://omnihand_description/...`, but the vendor tree does not provide a matching ROS package.
 - The normalized repo-owned description assets avoid those vendor asset defects for the simulation path, but the vendor tree itself is still not a drop-in ROS description package.
-- The vendored submodule still points to upstream; the intended workspace fork target is `https://github.com/robyngehler/Omnihand-2025-SDK.git`, but that remote repo has not yet been created from this environment.
+- The vendored submodule now tracks the workspace fork `https://github.com/robyngehler/Omnihand-2025-SDK.git`; keep `https://github.com/AgibotTech/Omnihand-2025-SDK.git` as the canonical upstream for sync and review.
 
 ## Phase 0: Platform Gate
 

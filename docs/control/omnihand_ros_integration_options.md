@@ -27,7 +27,7 @@ What remains open:
 - the repo-owned ROS bridge above the backend,
 - OmniHand-specific status and tactile message definitions,
 - the first real hardware backend and device validation,
-- and creation of the workspace-owned GitHub fork for the vendored SDK patches.
+- and the ongoing maintenance policy for the workspace-owned GitHub fork that now carries the vendored SDK patches.
 
 ## Why This Can Start Now
 
@@ -369,9 +369,9 @@ Recommended policy:
 
 Current workspace status:
 
-- the vendored submodule still points to upstream in `.gitmodules`,
-- the intended fork target for this workspace is `https://github.com/robyngehler/Omnihand-2025-SDK.git`,
-- but that remote repository has not yet been created from this environment because no authenticated GitHub session or CLI is available here.
+- the vendored submodule now tracks the workspace fork in `.gitmodules`: `https://github.com/robyngehler/Omnihand-2025-SDK.git`,
+- the canonical upstream remains `https://github.com/AgibotTech/Omnihand-2025-SDK.git` and should stay available as an `upstream` remote for sync and review,
+- local portability and runtime-safety patches should continue to land in the workspace fork first and be proposed upstream selectively.
 
 ## Documentation And Sprint Placement
 
