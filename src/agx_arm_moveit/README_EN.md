@@ -16,7 +16,7 @@
 Current support:
 
 - Arm type: `nero`
-- End effectors: `none`, `agx_gripper`, `revo2`
+- End effectors: `none`, `agx_gripper`, `revo2`, `omnihand`
 - Planning groups: `arm`, `gripper`, `hand`
 - Kinematics plugin: KDL (`kdl_kinematics_plugin/KDLKinematicsPlugin`)
 
@@ -73,6 +73,12 @@ With Revo2 hand:
 ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
 ```
 
+With OmniHand:
+
+```bash
+ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=omnihand omnihand_type:=left
+```
+
 ### 2.2 Control the real arm
 
 One-click launch for control, MoveIt, and RViz:
@@ -93,6 +99,8 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
   effector_type:=revo2 \
   revo2_type:=left
 ```
+
+OmniHand is not wired into the real `agx_arm_ctrl` hardware bringup path yet. At this stage it is available only through the simulation and visualization surfaces in `agx_arm_moveit` and `display_control.launch.py`.
 
 Recommended split-launch flow with feedback tracking:
 
@@ -115,8 +123,9 @@ ros2 launch agx_arm_moveit demo.launch.py \
 | Parameter | Default | Description | Options |
 |-----------|---------|-------------|---------|
 | `arm_type` | `nero` | Arm model | `nero` |
-| `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2` |
+| `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2`, `omnihand` |
 | `revo2_type` | `left` | Revo2 hand side | `left`, `right` |
+| `omnihand_type` | `left` | OmniHand side | `left`, `right` |
 | `namespace` | empty string | Namespace for the MoveIt/control instance | Any valid ROS namespace |
 | `follow` | `false` | `true` subscribes to `/feedback/joint_states`; `false` subscribes to `/control/joint_states` | `true`, `false` |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP offset [x, y, z, rx, ry, rz] in meters/radians | - |
@@ -129,6 +138,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - `namespace` still works for multi-instance isolation, but each instance is expected to use the Nero asset tree.
 - `publish_gripper_joint` is handled automatically in the combined bringup path to avoid invalid-joint warnings.
 - The current workspace still uses KDL rather than TRAC-IK.
+- OmniHand currently covers only the MoveIt simulation, RViz, SRDF, and fake `ros2_control` path. Real hardware bringup is still open.
 
 ### 2.5 RViz operations
 
@@ -136,7 +146,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 
 - Drag the interactive marker at the arm tip to define a target pose.
 - Use the MotionPlanning panel to switch between `arm`, `gripper`, and `hand`.
-- Pick preset states such as `home`, `gripper_open`, or `hand_close` from Goal State.
+- Pick preset states such as `home`, `gripper_open`, `hand_half_close`, or `hand_close` from Goal State.
 
 ## 3. Troubleshooting
 

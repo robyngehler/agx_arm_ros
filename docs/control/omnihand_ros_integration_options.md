@@ -1,8 +1,10 @@
 # OmniHand ROS Integration Options
 
 last_updated: 2026-05-13
-status: PROPOSED
+status: DECIDED_IN_PROGRESS
 primary_goal: make OmniHand a valid `effector_type` in the agx_arm-centric simulation and MoveIt stack now, while keeping the live hardware backend swappable later
+selected_direction: OPTION2_PUBLIC_ARCHITECTURE_PLUS_OPTION3_EXECUTION
+implementation_status: FIRST_SIMULATION_SLICE_LANDED
 
 ## Decision Summary
 
@@ -10,6 +12,22 @@ primary_goal: make OmniHand a valid `effector_type` in the agx_arm-centric simul
 - Keep the OmniHand adapter below ROS.
 - Start description, MoveIt, SRDF, and mock-controller integration now; do not wait for real hardware.
 - Treat a bridge to vendor ROS topics as an optional backend implementation, not as the public repo contract.
+
+## Current Implementation Status
+
+The selected architecture is no longer only proposed. The first simulation-oriented slice is now implemented in the repo:
+
+- normalized left and right OmniHand assets now live under the canonical `agx_arm_description` package,
+- the public launch contract is frozen and implemented as `effector_type:=omnihand` plus `omnihand_type:=left|right`,
+- MoveIt, SRDF, initial positions, and fake `ros2_control` now include OmniHand controller profiles,
+- and the current left-hand smoke path launches successfully through `agx_arm_moveit` with mock hardware.
+
+What remains open:
+
+- the repo-owned ROS bridge above the backend,
+- OmniHand-specific status and tactile message definitions,
+- the first real hardware backend and device validation,
+- and creation of the workspace-owned GitHub fork for the vendored SDK patches.
 
 ## Why This Can Start Now
 
@@ -128,9 +146,11 @@ Cons:
 - Expands the backend test matrix.
 - Needs discipline to keep the backend interface narrow and stable.
 
-## Recommended Direction
+## Selected Direction
 
 Use Option 2 as the target architecture and Option 3 as the execution strategy.
+
+This is now the active repo direction. The current implementation already reflects the first simulation slice of that decision.
 
 That means:
 
@@ -347,6 +367,12 @@ Recommended policy:
 - document which patches are intended for upstream contribution and which are repo-local,
 - keep the agx_arm repo consuming that fork explicitly rather than relying on an untracked dirty submodule state.
 
+Current workspace status:
+
+- the vendored submodule still points to upstream in `.gitmodules`,
+- the intended fork target for this workspace is `https://github.com/robyngehler/Omnihand-2025-SDK.git`,
+- but that remote repository has not yet been created from this environment because no authenticated GitHub session or CLI is available here.
+
 ## Documentation And Sprint Placement
 
 ### Where To Document These Decisions
@@ -377,11 +403,13 @@ For the current local repo workflow:
     - clarify the launch-entry roles,
     - document the simulation-first direction.
 
-- already Sprint 2:
+- now completed or in progress under Sprint 2:
     - create the actual package and directory structure for OmniHand integration,
-    - decide the fork and submodule policy operationally,
     - normalize the vendor hand assets into the canonical description package,
-    - add `effector_type:=omnihand` and mock `ros2_control` support,
+    - add `effector_type:=omnihand` and mock `ros2_control` support.
+
+- still open under Sprint 2:
+    - decide the fork and submodule policy operationally by creating the actual GitHub fork,
     - add the mock backend and the first repo-owned ROS bridge skeleton.
 
 For the master roadmap in `docs/development/nero_physical_ai_roadmap_sprints_expanded.md`, the work spans several logical sprints:
@@ -405,12 +433,12 @@ So the short answer is:
 
 ## Simulation-First Execution Order
 
-1. Freeze local OmniHand joint names, side argument names, and wrist-to-palm frame conventions.
-2. Normalize the vendor description assets into the canonical `agx_arm_description` package.
-3. Add `effector_type:=omnihand` plus `omnihand_type:=left|right` to MoveIt, SRDF, and fake `ros2_control`.
-4. Add OmniHand controller profiles and group states so RViz and MoveIt work with no hardware.
-5. Add the repo-owned ROS bridge on top of a mock backend.
-6. Add the first real backend later and switch the bridge from mock to hardware.
+1. Freeze local OmniHand joint names, side argument names, and wrist-to-palm frame conventions. `done`
+2. Normalize the vendor description assets into the canonical `agx_arm_description` package. `done`
+3. Add `effector_type:=omnihand` plus `omnihand_type:=left|right` to MoveIt, SRDF, and fake `ros2_control`. `done`
+4. Add OmniHand controller profiles and group states so RViz and MoveIt work with no hardware. `done`
+5. Add the repo-owned ROS bridge on top of a mock backend. `open`
+6. Add the first real backend later and switch the bridge from mock to hardware. `open`
 
 ## Practical Recommendation For This Repo
 

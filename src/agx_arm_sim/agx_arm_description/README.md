@@ -20,6 +20,7 @@ agx_arm_description/
 │   ├── README.md
 │   ├── README_EN.md
 │   ├── nero/
+│   ├── omnihand/
 │   └── revo2/
 ├── launch/
 │   ├── display.launch.py

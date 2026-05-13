@@ -4,6 +4,7 @@ source_document: docs/development/sprint1/hand/omnihand_sdk_integration.md
 promotion_date: 2026-05-12
 status: IN_PROGRESS
 decision: WRAPPER_FIRST
+simulation_track_status: FIRST_SIMULATION_SLICE_MERGED
 
 ## Current Execution Status
 
@@ -22,6 +23,25 @@ decision: WRAPPER_FIRST
 	- the current probe still does not return a complete active-joint vector or validated device identity
 	- no safe command-response loop has been validated yet
 - Result: Phase 1 repo preparation and local build enablement are complete, but the runtime exit criteria remain blocked on actual device-path stability and hardware response
+
+## Current Simulation Slice
+
+The repo has already landed the first simulation-oriented OmniHand integration slice:
+
+- normalized left and right OmniHand meshes and xacros now live under `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/omnihand`
+- Nero attachment xacros now exist for left and right OmniHand variants
+- `display.launch.py` and `display_control.launch.py` now expose OmniHand visualization and control-compatible launch arguments
+- `agx_arm_moveit` now supports `effector_type:=omnihand` plus `omnihand_type:=left|right`
+- MoveIt fake `ros2_control`, controller YAML, SRDF groups, and initial positions now cover the 10 active OmniHand joints
+- the current validated smoke path is:
+  - `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
+
+What is still missing from the simulation-first track:
+
+- the repo-owned ROS bridge above the backend,
+- the first mock backend that feeds that bridge directly,
+- OmniHand-specific status and tactile messages,
+- and the actual workspace-owned fork of the vendor repository.
 
 ## Goal
 
@@ -63,6 +83,8 @@ See `docs/control/omnihand_ros_integration_options.md` for the detailed option a
 - `assets/urdf/omnihand_right.urdf` contains absolute local mesh paths.
 - `assets/urdf/xacro/finger.xacro` contains a stray literal `y` before one joint declaration.
 - Multiple asset files reference `package://omnihand_description/...`, but the vendor tree does not provide a matching ROS package.
+- The normalized repo-owned description assets avoid those vendor asset defects for the simulation path, but the vendor tree itself is still not a drop-in ROS description package.
+- The vendored submodule still points to upstream; the intended workspace fork target is `https://github.com/robyngehler/Omnihand-2025-SDK.git`, but that remote repo has not yet been created from this environment.
 
 ## Phase 0: Platform Gate
 
@@ -175,11 +197,17 @@ Exit criteria:
 - the description package can be rendered locally without vendor-specific path hacks
 - RViz and MoveIt consume the same normalized joint names and frames used by the adapter and ROS bridge
 
+Current state:
+
+- the normalized description package and MoveIt simulation slice are already in place
+- the remaining work in this phase is mostly bridge-facing hardening, documentation parity, and later hardware-backed reuse of the same joint/frame contract
+
 ## Deferred For Now
 
 - overlaying the vendor ROS2 `node/` and `node_msg/` packages into `src/`
 - treating the vendor URDF assets as a drop-in local description package
 - mapping OmniHand onto the existing Revo2-specific hand message contract
+- switching the submodule URL away from upstream before the actual fork remote exists
 
 ## Decision Checkpoint
 

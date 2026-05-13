@@ -16,7 +16,7 @@
 当前支持范围：
 
 - 臂型：`nero`
-- 末端执行器：`none`、`agx_gripper`、`revo2`
+- 末端执行器：`none`、`agx_gripper`、`revo2`、`omnihand`
 - 规划组：`arm`、`gripper`、`hand`
 - 运动学插件：KDL（`kdl_kinematics_plugin/KDLKinematicsPlugin`）
 
@@ -73,6 +73,12 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=agx_grip
 ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
 ```
 
+带 OmniHand 灵巧手：
+
+```bash
+ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=omnihand omnihand_type:=left
+```
+
 ### 2.2 控制真实机械臂
 
 一键启动控制节点、MoveIt 和 RViz：
@@ -93,6 +99,8 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
   effector_type:=revo2 \
   revo2_type:=left
 ```
+
+当前 OmniHand 还没有接入 `agx_arm_ctrl` 的真实硬件启动路径。现阶段仅支持 `agx_arm_moveit` / `display_control.launch.py` 下的仿真与可视化集成，不应把 `effector_type:=omnihand` 误解为真机后端已经打通。
 
 分步启动时，推荐使用 `follow:=true` 让 MoveIt 跟随真实反馈：
 
@@ -115,8 +123,9 @@ ros2 launch agx_arm_moveit demo.launch.py \
 | 参数 | 默认值 | 说明 | 可选值 |
 |------|--------|------|--------|
 | `arm_type` | `nero` | 机械臂型号 | `nero` |
-| `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2` |
+| `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2`, `omnihand` |
 | `revo2_type` | `left` | Revo2 灵巧手类型 | `left`, `right` |
+| `omnihand_type` | `left` | OmniHand 左右手类型 | `left`, `right` |
 | `namespace` | 空字符串 | 当前 MoveIt/控制实例命名空间 | 任意合法 ROS 命名空间 |
 | `follow` | `false` | `true` 时订阅 `/feedback/joint_states`，`false` 时订阅 `/control/joint_states` | `true`, `false` |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度） | - |
@@ -129,6 +138,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - `namespace` 仍可用于多实例隔离，但多个实例都应基于 Nero 资产树。
 - `publish_gripper_joint` 会在一键启动路径中自动处理，以避免 MoveIt 中出现无效关节告警。
 - 当前运动学仍是 KDL，尚未切换到 TRAC-IK。
+- OmniHand 当前只覆盖 MoveIt 仿真、RViz、SRDF 和 fake `ros2_control` 路径，尚未接入真实硬件控制启动链路。
 
 ### 2.5 RViz 操作
 
@@ -136,7 +146,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 
 - 拖动机械臂末端的交互标记来设定目标位姿。
 - 在左侧 MotionPlanning 面板中切换 `arm`、`gripper`、`hand` 规划组。
-- 在 Goal State 中选择 `home`、`gripper_open`、`hand_close` 等预设状态。
+- 在 Goal State 中选择 `home`、`gripper_open`、`hand_half_close`、`hand_close` 等预设状态。
 
 ## 3 常见问题
 
