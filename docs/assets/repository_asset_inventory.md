@@ -9,7 +9,7 @@ promotion_date: 2026-05-12
 | --- | --- | --- | --- |
 | Root ROS2 driver workspace | `agx_arm_ros` | CONFIRMED | Main workspace containing control, description, MoveIt, MIT, and message packages. |
 | Canonical description package | `src/agx_arm_sim/agx_arm_description` | CONFIRMED | Active ROS package for bundled Nero/Revo2 URDF/Xacro assets, camera-stand assets, and USD-adjacent content after Sprint 1 canonicalization. |
-| Active MoveIt package | `src/agx_arm_moveit` | CONFIRMED | Unified MoveIt package now restricted to Nero plus `none` / `agx_gripper` / `revo2`. |
+| Active MoveIt package | `src/agx_arm_moveit` | CONFIRMED | Unified MoveIt package now restricted to Nero plus `none` / `agx_gripper` / `revo2`, with repo-owned OmniHand simulation profiles also landed. |
 | MIT controller package | `src/agx_arm_mit_controller` | CONFIRMED | Trajectory playback, hold test, gravity model, calibration, recorder, and launch surfaces. |
 | Hardware bridge | `src/agx_arm_ctrl` | CONFIRMED | ROS2 control node and launch entry points used by the rest of the workspace. |
 | Removed root description path | `src/agx_arm_description` | REMOVED | Legacy duplicate package removed after canonicalizing the sim-backed package and bundling the Nero/Revo2 asset tree there. |
@@ -25,7 +25,7 @@ promotion_date: 2026-05-12
 | --- | --- | --- |
 | `agx_arm_ctrl` | Runtime bridge to AgileX arm control topics and launch entry points | Reuse as-is; it is the current ROS2 hardware/control surface. |
 | `agx_arm_mit_controller` | Current MIT, gravity, calibration, and trajectory replay workflow | Reuse directly; it already contains the controller-side model assumptions Sprint 1 needs to document. |
-| `agx_arm_moveit` | Unified MoveIt2 config for Nero, AgileX gripper, and Revo2 | Reuse directly; note that it is KDL-based today and not yet aligned to the roadmap's future `nero_arm` / TRAC-IK naming. |
+| `agx_arm_moveit` | Unified MoveIt2 config for Nero, AgileX gripper, Revo2, and the repo-owned OmniHand simulation path | Reuse directly; note that it is KDL-based today and not yet aligned to the roadmap's future `nero_arm` / TRAC-IK naming. |
 | `agx_arm_msgs` | Custom message layer used by the controller stack | Reuse directly. |
 | `agx_arm_sim` | Simulation/tooling tree that now owns the canonical `agx_arm_description` package | Reuse directly for bundled Nero/Revo2 description assets, the control-compatible RViz launch, camera-stand assets, and the currently confirmed USD surface. |
 

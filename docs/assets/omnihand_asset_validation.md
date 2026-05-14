@@ -27,7 +27,7 @@ missing_artifacts:
 interface_notes:
 - the vendor README describes OmniHand 2025 as `10 active + 6 passive DOF` with `400+` tactile points
 - the vendor SDK documents CANFD with ZLG USBCANFD adapters as the primary supported transport
-- the current workspace runtime only supports `agx_gripper` and `revo2` in `src/agx_arm_ctrl`, `src/agx_arm_moveit`, and `src/agx_arm_sim/agx_arm_description`
+- the current real runtime path only supports `agx_gripper` and `revo2` in `src/agx_arm_ctrl`; `src/agx_arm_moveit` and `src/agx_arm_sim/agx_arm_description` already expose the repo-owned OmniHand simulation contract
 - the current agx_arm stack already switches planning, description, and fake-controller profiles by `effector_type`, so OmniHand can be introduced as another repo-owned effector profile without exposing vendor ROS topics as the public contract
 - the local launch and naming contract is now frozen for the simulation slice: `effector_type:=omnihand`, `omnihand_type:=left|right`, and normalized `left_*` / `right_*` joint names
 - `pyAgxArm` exposes end-effector drivers for `agx_gripper` and `revo2`, not OmniHand

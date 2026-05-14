@@ -22,7 +22,7 @@ missing_artifacts:
 - TRAC-IK configuration; current MoveIt config uses KDL
 - explicit mounting-orientation and payload variants beyond current Nero + gripper/Revo2 surfaces
 interface_notes:
-- `src/agx_arm_moveit` now exposes only `arm_type:=nero` with `effector_type:=none|agx_gripper|revo2`
+- `src/agx_arm_moveit` now exposes `arm_type:=nero` with `effector_type:=none|agx_gripper|revo2|omnihand`; the OmniHand branch currently covers the simulation, RViz, SRDF, and fake `ros2_control` path
 - `src/agx_arm_ctrl` and `src/agx_arm_sim/agx_arm_description/launch/display_control.launch.py` now default to `arm_type:=nero` and no longer advertise Piper-family choices
 - `src/agx_arm_moveit/config/kinematics.yaml` uses `kdl_kinematics_plugin/KDLKinematicsPlugin`
 - `src/agx_arm_moveit/config/agx_arm.srdf.xacro` uses the generic planning group name `arm` and Nero-specific flange semantics based on `link7`

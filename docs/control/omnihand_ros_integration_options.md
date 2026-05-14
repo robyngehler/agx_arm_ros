@@ -409,7 +409,7 @@ For the current local repo workflow:
     - add `effector_type:=omnihand` and mock `ros2_control` support.
 
 - still open under Sprint 2:
-    - decide the fork and submodule policy operationally by creating the actual GitHub fork,
+    - formalize the upstream-sync, patch-submission, and submodule workflow around the existing GitHub fork,
     - add the mock backend and the first repo-owned ROS bridge skeleton.
 
 For the master roadmap in `docs/development/nero_physical_ai_roadmap_sprints_expanded.md`, the work spans several logical sprints:

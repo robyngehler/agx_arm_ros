@@ -16,7 +16,7 @@ The system consists of the following main components:
 
 - **Manipulator:** AgileX Nero arm
 - **End effector:** AgiBot OmniHand Pro dexterous gripper
-- **Mobile/static base:** Custom AGV/base platform with CAD model available
+- **Mobile/static base:** Custom AGV/base platform, with CAD/model assets currently assumed external and not yet imported into this workspace
 - **Low-level controller:** MIT-style controller, currently functional for the Nero arm
 - **Edge compute:** NVIDIA Jetson AGX Orin
 - **Future edge compute option:** NVIDIA Jetson Thor-class platform
@@ -231,6 +231,15 @@ Recover
 
 ## 5. Sprint Roadmap
 
+### Current Local Sequencing Note
+
+The current local repo execution order no longer matches the first-draft split of the early sprints.
+
+- Sprint 1 is treated as complete for asset audit, source-of-truth ownership, and repo-baseline decisions, aside from hardware-gated checks and AGV assets that are still external to the workspace.
+- Sprint 2 now focuses on the common environment merge: package structure baseline, OmniHand adapter boundary, normalized description assets, and the shared ROS/MoveIt semantics already being used locally.
+- Sprint 3 now focuses on validating and hardening the existing Nero planning and control baseline, adding missing IK or planning pieces only where they are not already available.
+- Sprint 4 now focuses on the first Nero plus OmniHand baseline on top of the shared adapter boundary and common ROS semantics from Sprint 2.
+
 ## Sprint 1: Asset Audit and Model Baseline
 
 ### Objective
@@ -261,103 +270,104 @@ Establish a reliable source of truth for Nero, OmniHand Pro, and AGV/base assets
 
 ---
 
-## Sprint 2: Nero Standalone Planning and Control Baseline
+## Sprint 2: Common Environment and Package Structure Merge
 
 ### Objective
 
-Create a reliable arm-only planning and control pipeline for the Nero arm.
+Consolidate the common environment, package structure, and OmniHand integration contract that later Nero-only and Nero-plus-hand work will share.
 
 ### Scope
 
-- Load Nero URDF/Xacro into MoveIt 2.
-- Generate SRDF and self-collision matrix.
-- Configure `nero_arm` planning group.
-- Configure TRAC-IK as the primary IK solver.
-- Configure OMPL through MoveIt 2 as the initial global planner.
-- Export planned trajectories as `trajectory_msgs/JointTrajectory`.
-- Connect generated trajectories to the MIT-controller bridge.
-- Use Pinocchio for model sanity checks, FK validation, and gravity/payload audit support.
-- Use Ruckig as optional trajectory smoothing or fallback generation layer.
+- Freeze the repo-owned public ROS contract for OmniHand around shared arguments, joint naming, namespaces, and frame semantics.
+- Keep the OmniHand adapter below ROS and define the repo-owned bridge boundary above it.
+- Reuse and document the canonical package surfaces already active in the workspace: description, MoveIt, MIT controller, control bridge, and vendored SDK.
+- Normalize the OmniHand description assets and the landed MoveIt/mock-controller integration into the common workspace structure.
+- Define package naming, configuration layout, generated-vs-source policy, and fork/submodule workflow for the shared environment.
+- Add the remaining common-environment hooks still needed by later phases: repo-owned bridge skeleton, mock-backend hook, and OmniHand diagnostics/tactile message plan.
+- Ensure one developer or agent can locate source models, generated assets, configs, logs, and ownership boundaries without rediscovery.
 
 ### Expected Outputs
 
-- MoveIt 2 configuration package for `nero_arm`
-- Functional TRAC-IK pose solving for the Nero arm
-- Functional OMPL-based pose-to-pose planning
-- MIT-compatible joint trajectory execution path
-- Debug scripts for FK, IK, and trajectory validation
+- Documented common package structure and naming baseline
+- Frozen OmniHand simulation/control contract for shared ROS semantics
+- Normalized OmniHand description and MoveIt simulation slice under canonical packages
+- Repo-owned OmniHand bridge/backend interface plan, plus first implementation skeleton where practical
+- Documented generated-vs-source and fork/submodule policy
+
+### Follow-up Documents
+
+- Repository structure document
+- Package naming and generated-vs-source policy documents
+- OmniHand ROS integration contract document
+- OmniHand wrapper and bridge implementation document
+
+---
+
+## Sprint 3: Nero Planning and Control Baseline Hardening
+
+### Objective
+
+Validate and harden the existing Nero arm planning and control baseline, adding only the IK, planning, and interface pieces that are still missing.
+
+### Scope
+
+- Audit the current Nero arm-only MoveIt, OMPL, and MIT-controller path before adding new stack pieces.
+- Confirm the existing `trajectory_msgs/JointTrajectory` to MIT-controller execution path, including joint ordering, timing, and units.
+- Verify whether the current KDL and OMPL baseline already covers representative Nero planning tasks.
+- Introduce or validate TRAC-IK only where it materially improves the current baseline.
+- Resolve remaining gaps between the desired roadmap semantics and the current code paths, especially `arm` versus `nero_arm` and `link7`/`tcp_link` versus `nero_tool0`.
+- Use Pinocchio for model sanity checks and FK validation, and use Ruckig as optional smoothing or comparison tooling where it adds value.
+- Capture the remaining IK, planning, collision, and execution gaps that still block a reliable Nero standalone baseline.
+
+### Expected Outputs
+
+- Validated Nero standalone planning and control baseline using the existing workspace packages
+- Confirmed `JointTrajectory` execution path into the MIT controller
+- Documented gap analysis for TRAC-IK, OMPL, naming, collision semantics, and execution safety
+- Representative pose-planning checklist and debug scripts for the Nero arm
+- Clear list of missing pieces that still need implementation rather than rediscovery
 
 ### Follow-up Documents
 
 - MoveIt 2 Nero setup document
-- TRAC-IK configuration document
-- MIT trajectory interface document
+- TRAC-IK configuration document, if still needed after audit
+- MIT trajectory interface and execution policy documents
 - Pinocchio/Ruckig debug-layer document
 
 ---
 
-## Sprint 3: OmniHand Pro Bring-Up
+## Sprint 4: Nero Plus OmniHand Common Baseline
 
 ### Objective
 
-Bring up the OmniHand Pro independently from the arm and define its control, sensing, and model integration interfaces.
+Build the first Nero plus OmniHand baseline on top of the shared adapter boundary and common ROS semantics established in Sprint 2.
 
 ### Scope
 
-- Install and validate the OmniHand Pro SDK.
-- Define motor-index-to-joint-name mapping.
-- Establish basic open, close, and preshape commands.
-- Expose hand control through ROS 2.
-- Expose tactile and status data through ROS 2.
-- Define hand model levels:
-  - rigid payload approximation,
-  - simplified collision model,
-  - articulated URDF/USD model,
-  - later dexterous manipulation model.
-- Request or validate manufacturer-provided URDF, CAD, or kinematic model assets.
-
-### Expected Outputs
-
-- `omnihand_driver_ros2`
-- `omnihand_joint_mapping.yaml`
-- `omnihand_preshape_library.yaml`
-- `omnihand_payload.yaml`
-- Simplified OmniHand collision model
-
-### Follow-up Documents
-
-- OmniHand SDK integration document
-- OmniHand ROS 2 driver document
-- OmniHand tactile logging document
-- OmniHand model simplification document
-
----
-
-## Sprint 4: Nero with Hand as Tool and Payload
-
-### Objective
-
-Integrate the OmniHand Pro into the Nero model as a physically meaningful tool and payload without requiring full finger-level dexterous planning.
-
-### Scope
-
+- Reuse the repo-owned OmniHand adapter boundary and common ROS naming from Sprint 2.
+- Bring the first repo-owned ROS bridge and common hand status/diagnostic interfaces into the combined stack as far as hardware access allows.
 - Add `wrist_adapter_link` and `omnihand_palm_link` to the Nero tool chain.
+- Add and validate `grasp_frame` on the shared hand contract.
 - Represent the OmniHand as a static payload attached to `nero_tool0`.
+- Keep full finger-level dexterous planning out of the primary arm IK chain during this baseline phase.
 - Define correct hand mass, center of mass, and inertia approximation.
 - Update gravity and payload configuration for the MIT controller.
 - Add simplified hand collision geometry to MoveIt 2.
+- Reuse the landed OmniHand MoveIt profiles as the planning base for the combined baseline.
 - Validate reachability and collision behavior with the attached hand envelope.
 
 ### Expected Outputs
 
 - `nero_with_omnihand_static` model variant
-- Updated MoveIt 2 configuration for arm planning with attached hand geometry
+- First repo-owned OmniHand bridge/common message surface aligned with agx_arm semantics
+- Updated MoveIt 2 configuration for arm planning with attached hand geometry and the shared hand contract
 - Updated MIT payload configuration
 - Validated `grasp_frame` definition
 
 ### Follow-up Documents
 
 - Tool payload integration document
+- OmniHand bridge and diagnostics document
 - Wrist adapter modeling document
 - Hand collision-envelope document
 - MIT payload/gravity compensation document
@@ -970,11 +980,11 @@ docs/
 The immediate technical priorities are:
 
 1. Confirm and validate the Nero asset pipeline.
-2. Establish MoveIt 2 + TRAC-IK as the primary arm-level IK and planning baseline.
-3. Connect MoveIt-generated joint trajectories to the MIT controller.
-4. Bring up the OmniHand Pro independently and define its ROS 2 interface.
-5. Model the OmniHand first as a static tool and payload.
-6. Integrate the AGV/base as a static mounting and collision environment.
+2. Consolidate the common package structure, OmniHand adapter boundary, and shared ROS semantics used across planning and control.
+3. Validate and harden the current Nero MoveIt plus MIT planning/control baseline, adding missing IK or planning pieces only where needed.
+4. Bring up the repo-owned OmniHand bridge and common hand status or diagnostic interfaces above the adapter.
+5. Model the OmniHand first as a static tool and payload on top of that shared contract.
+6. Integrate the AGV/base as a static mounting and collision environment once the external assets are available locally.
 7. Validate combined collision behavior before introducing complex learned policies.
 8. Build deterministic skills before training adaptive skills.
 9. Use simulation and replay workflows before real hardware trials.

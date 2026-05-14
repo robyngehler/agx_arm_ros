@@ -436,11 +436,23 @@ Proceed once the team can answer:
 
 ---
 
-# Sprint 2: Repository and Package Structure Baseline
+## Early Local Repo Mapping
+
+The detailed sprint decomposition below remains useful for traceability, but the current local repo sequence now executes the early work as merged packages:
+
+- Local Sprint 2 equals the detailed Sprint 2 package-structure work plus the already-landed OmniHand description, MoveIt, and simulation-contract slice.
+- Local Sprint 3 equals the detailed Sprint 3, Sprint 4, Sprint 5, and Sprint 6 work, treated as one Nero planning and control hardening phase.
+- Local Sprint 4 equals the detailed Sprint 7 and Sprint 8 work, treated as the first Nero plus OmniHand baseline on top of the shared adapter boundary.
+
+This keeps the detailed sections below useful without forcing the repo-level sprint sequence to pretend the work happened in the original first-draft order.
+
+---
+
+# Sprint 2: Common Environment and Package Structure Baseline
 
 ## Objective
 
-Create the local project structure that allows independent agents and developers to work without stepping on each other’s toes.
+Create the local common environment that allows independent agents and developers to work without stepping on each other’s toes while sharing one OmniHand and Nero integration contract.
 
 ## Fixed Scope
 
@@ -451,6 +463,9 @@ Create the local project structure that allows independent agents and developers
 - Define model-variant generation locations.
 - Define experiment output locations.
 - Define a convention for generated files versus source files.
+- Freeze the repo-owned OmniHand public contract for shared arguments, joint naming, and frame semantics.
+- Land or document the normalized OmniHand description and MoveIt simulation slice inside that shared structure.
+- Keep the OmniHand adapter below ROS and define the bridge boundary that later hardware backends must satisfy.
 
 ## Recommended Package Names
 
@@ -512,6 +527,7 @@ docs/project/local_agent_workflow.md
 - A clear place for each model, config, script, document, and experiment.
 - A policy for generated assets.
 - A policy for upstream repository integration.
+- One shared OmniHand and Nero environment contract that later runtime work can reuse.
 
 ## Decision Gate
 
@@ -526,6 +542,8 @@ Proceed once a new developer or local agent can locate:
 - documentation,
 - experiments.
 
+The local repo should also already expose the agreed OmniHand simulation contract through the canonical description and MoveIt packages before this sprint is considered closed.
+
 ---
 
 # Sprint 3: Nero Standalone Model Validation
@@ -533,6 +551,8 @@ Proceed once a new developer or local agent can locate:
 ## Objective
 
 Validate the Nero arm as a standalone robot model for planning, simulation, and controller-side model reasoning.
+
+In the merged local repo sequence, this section is treated as the first detailed sub-phase of local Sprint 3, which continues through the MoveIt, IK, and MIT-controller sections below.
 
 ## Fixed Scope
 
@@ -594,6 +614,8 @@ Proceed once `nero_standalone` can be loaded and inspected in at least:
 ## Objective
 
 Establish MoveIt 2 with TRAC-IK as the primary early-stage arm-level IK and motion planning baseline.
+
+In the merged local repo sequence, this section is not a separate repo sprint. It is part of the same local Sprint 3 planning/control hardening package as Sprint 3 and Sprint 5.
 
 ## Fixed Scope
 
@@ -661,6 +683,8 @@ low_pregrasp_pose
 
 Connect the planning baseline to the existing MIT controller while preserving model-based control assumptions and execution safety.
 
+In the merged local repo sequence, this section closes local Sprint 3 rather than standing alone as a separate early sprint.
+
 ## Fixed Scope
 
 - Define the `JointTrajectoryCommand` interface.
@@ -717,6 +741,8 @@ Proceed once a MoveIt-generated trajectory can be executed in a controlled mode 
 ## Objective
 
 Add a lightweight model-audit and fallback trajectory layer that complements MoveIt 2 without becoming the primary planning stack.
+
+In the merged local repo sequence, this section is still part of local Sprint 3 rather than a separate early sprint.
 
 ## Fixed Scope
 

@@ -41,7 +41,7 @@ What is still missing from the simulation-first track:
 - the repo-owned ROS bridge above the backend,
 - the first mock backend that feeds that bridge directly,
 - OmniHand-specific status and tactile messages,
-- and the actual workspace-owned fork of the vendor repository.
+- and the documented upstream-sync and patch workflow around the workspace-owned fork of the vendor repository.
 
 ## Goal
 
