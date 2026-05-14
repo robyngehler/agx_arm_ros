@@ -4,7 +4,7 @@ source_document: docs/development/sprint1/hand/omnihand_sdk_integration.md
 promotion_date: 2026-05-12
 status: IN_PROGRESS
 decision: WRAPPER_FIRST
-simulation_track_status: FIRST_SIMULATION_SLICE_MERGED
+simulation_track_status: INITIAL_BRIDGE_SKELETON_LANDED
 
 ## Current Execution Status
 
@@ -33,15 +33,18 @@ The repo has already landed the first simulation-oriented OmniHand integration s
 - `display.launch.py` and `display_control.launch.py` now expose OmniHand visualization and control-compatible launch arguments
 - `agx_arm_moveit` now supports `effector_type:=omnihand` plus `omnihand_type:=left|right`
 - MoveIt fake `ros2_control`, controller YAML, SRDF groups, and initial positions now cover the 10 active OmniHand joints
+- repo-owned `agx_arm_msgs/OmniHandStatus` and `OmniHandTactileRaw` messages now exist
+- a first repo-owned `omnihand_bridge` mock backend and launch surface now exist in `src/agx_arm_ctrl`
+- Sprint 2 workspace-policy docs now exist under `docs/project`
 - the current validated smoke path is:
   - `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
 
 What is still missing from the simulation-first track:
 
-- the repo-owned ROS bridge above the backend,
-- the first mock backend that feeds that bridge directly,
-- OmniHand-specific status and tactile messages,
-- and the documented upstream-sync and patch workflow around the workspace-owned fork of the vendor repository.
+- aggregation of hand state into the shared `feedback/joint_states` path,
+- integration of the bridge into higher-level shared launch surfaces,
+- the first non-mock hardware backend,
+- and continued upstream-sync and patch discipline around the workspace-owned fork of the vendor repository.
 
 ## Goal
 

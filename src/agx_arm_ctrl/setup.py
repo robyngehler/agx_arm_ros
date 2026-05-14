@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'agx_arm_ctrl_single = agx_arm_ctrl.agx_arm_ctrl_single_node:main',
+            'omnihand_bridge = agx_arm_ctrl.omnihand_bridge_node:main',
         ],
     },
 )
