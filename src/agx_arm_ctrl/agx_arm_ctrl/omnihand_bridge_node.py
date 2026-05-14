@@ -78,6 +78,22 @@ class MockOmniHandBackend:
     def get_joint_names(self) -> list[str]:
         return list(self.joint_names)
 
+    def apply_joint_targets(self, target_map: dict[str, float], control_mode: str) -> int:
+        matched_joint_count = 0
+        for index, joint_name in enumerate(self.joint_names):
+            if joint_name in target_map:
+                self.positions[index] = float(target_map[joint_name])
+                matched_joint_count += 1
+
+        if matched_joint_count == 0:
+            raise ValueError("received command with no recognized OmniHand joints")
+
+        self.control_mode = control_mode
+        self.status_text = (
+            f"applied mock {control_mode} command with {matched_joint_count} commanded joints"
+        )
+        return matched_joint_count
+
     def apply_trajectory(self, msg: JointTrajectory) -> None:
         if not msg.points:
             raise ValueError("received JointTrajectory with no points")
@@ -87,12 +103,7 @@ class MockOmniHandBackend:
             raise ValueError("joint_names and final point positions length mismatch")
 
         target_map = dict(zip(msg.joint_names, final_point.positions, strict=True))
-        for index, joint_name in enumerate(self.joint_names):
-            if joint_name in target_map:
-                self.positions[index] = float(target_map[joint_name])
-
-        self.control_mode = "joint_trajectory"
-        self.status_text = f"applied mock trajectory with {len(msg.joint_names)} commanded joints"
+        self.apply_joint_targets(target_map, "joint_trajectory")
 
     def stop(self) -> None:
         self.control_mode = "stopped"
@@ -135,11 +146,15 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("backend_type", "mock")
         self.declare_parameter("pub_rate", 50.0)
         self.declare_parameter("tactile_sample_count", 32)
+        self.declare_parameter("joint_states_command_topic", "control/joint_states")
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
         self.backend_type = str(self.get_parameter("backend_type").value)
         self.pub_rate = float(self.get_parameter("pub_rate").value)
         self.tactile_sample_count = int(self.get_parameter("tactile_sample_count").value)
+        self.joint_states_command_topic = str(
+            self.get_parameter("joint_states_command_topic").value
+        )
 
         if self.hand_side not in ("left", "right"):
             raise ValueError("omnihand_type must be 'left' or 'right'")
@@ -167,6 +182,12 @@ class OmniHandBridgeNode(Node):
         )
 
         self.create_subscription(
+            JointState,
+            self.joint_states_command_topic,
+            self._joint_states_command_callback,
+            10,
+        )
+        self.create_subscription(
             JointTrajectory,
             "control/omnihand/joint_trajectory",
             self._joint_trajectory_callback,
@@ -178,8 +199,28 @@ class OmniHandBridgeNode(Node):
         self.create_timer(timer_period, self._publish_feedback)
 
         self.get_logger().info(
-            f"OmniHand bridge started with hand_side={self.hand_side}, backend_type={self.backend_type}"
+            "OmniHand bridge started with "
+            f"hand_side={self.hand_side}, backend_type={self.backend_type}, "
+            f"joint_states_command_topic={self.joint_states_command_topic}"
         )
+
+    def _joint_states_command_callback(self, msg: JointState) -> None:
+        if not msg.position:
+            return
+
+        target_map = {
+            joint_name: float(msg.position[index])
+            for index, joint_name in enumerate(msg.name)
+            if index < len(msg.position)
+        }
+        if not target_map:
+            return
+
+        try:
+            self.backend.apply_joint_targets(target_map, "joint_state")
+        except ValueError:
+            # Shared control/joint_states frequently contains arm-only updates.
+            return
 
     def _joint_trajectory_callback(self, msg: JointTrajectory) -> None:
         try:

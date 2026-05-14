@@ -4,7 +4,7 @@ source_document: docs/development/sprint1/hand/omnihand_sdk_integration.md
 promotion_date: 2026-05-12
 status: IN_PROGRESS
 decision: WRAPPER_FIRST
-simulation_track_status: INITIAL_BRIDGE_SKELETON_LANDED
+simulation_track_status: SHARED_COMMAND_SURFACE_LANDED
 
 ## Current Execution Status
 
@@ -35,8 +35,11 @@ The repo has already landed the first simulation-oriented OmniHand integration s
 - MoveIt fake `ros2_control`, controller YAML, SRDF groups, and initial positions now cover the 10 active OmniHand joints
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `OmniHandTactileRaw` messages now exist
 - a first repo-owned `omnihand_bridge` mock backend and launch surface now exist in `src/agx_arm_ctrl`
+- the bridge now consumes the shared `control/joint_states` surface used by the rest of `agx_arm_ctrl`
+- `control/omnihand/joint_trajectory` remains as a bridge-specific compatibility input
 - `agx_arm_ctrl` can now merge bridge joint state into combined `feedback/joint_states` when `effector_type:=omnihand`
 - the shared `start_single_agx_arm*` launch wrappers now pass OmniHand bridge arguments through to the runtime layer
+- the bridge remains in `src/agx_arm_ctrl` as the active Sprint 2 package boundary
 - Sprint 2 workspace-policy docs now exist under `docs/project`
 - the current validated smoke path is:
   - `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
@@ -44,7 +47,7 @@ The repo has already landed the first simulation-oriented OmniHand integration s
 What is still missing from the simulation-first track:
 
 - the first non-mock hardware backend,
-- a non-mock command and action surface for the hand bridge,
+- a non-mock command and action surface for the hand bridge that can eventually supersede the current shared JointState plus compatibility trajectory inputs,
 - and continued upstream-sync and patch discipline around the workspace-owned fork of the vendor repository.
 
 ## Goal
@@ -174,6 +177,12 @@ Tasks:
 - publish raw status and diagnostics topics for device health and errors
 - publish tactile data through a dedicated raw topic or message family after the adapter surface is stable
 - define command topics or actions that match the OmniHand joint model instead of forcing the current six-channel Revo2 schema
+
+Current landed surface:
+
+- shared command input via `control/joint_states`
+- bridge-specific compatibility input via `control/omnihand/joint_trajectory`
+- bridge-local safe stop via `control/omnihand/stop`
 
 Constraints:
 

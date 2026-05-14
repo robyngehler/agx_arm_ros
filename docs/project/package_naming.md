@@ -32,7 +32,7 @@ Use the roadmap package names as logical roles, not as an instruction to rename 
 | `nero_description` | `src/agx_arm_sim/agx_arm_description` | Treat as a logical alias only. Do not rename the package now. |
 | `nero_moveit_config` | `src/agx_arm_moveit` | Treat as a logical alias only. Do not rename the package now. |
 | `nero_control_bridge` | split across `src/agx_arm_ctrl` and `src/agx_arm_mit_controller` | Preserve the current split until a real consolidation need is proven. |
-| `omnihand_driver_ros2` | not yet finalized | Use for the logical bridge role; an actual split-out package remains optional during Sprint 2. |
+| `omnihand_driver_ros2` | logical future bridge role only | Keep the actual OmniHand bridge in `src/agx_arm_ctrl` during Sprint 2; a split-out package remains optional later. |
 | `omnihand_description` | repo-owned OmniHand assets inside `agx_arm_description` | Keep assets in the canonical description package for now. |
 
 ## When To Create A New Package
@@ -44,12 +44,19 @@ Create a new package only when at least one of these becomes true:
 3. it would otherwise force unrelated rebuilds or package coupling,
 4. the repo would be clearer with a dedicated installable surface than with another internal module.
 
+Current Sprint 2 decision:
+
+- do not split the OmniHand bridge out of `agx_arm_ctrl` yet
+- revisit that only after the non-mock backend proves a separate package boundary is useful
+
 ## Preferred Naming For New Sprint 2 Surfaces
 
 If a new package is needed during Sprint 2, prefer these names:
 
 - `omnihand_driver_ros2` for a dedicated repo-owned ROS bridge package
 - `omnihand_backend` only for a non-ROS internal library or module, not for the public ROS contract
+
+These are reserved future names, not current required package creations.
 
 Avoid creating packages whose only purpose is to mirror vendor naming.
 
@@ -58,6 +65,7 @@ Avoid creating packages whose only purpose is to mirror vendor naming.
 - do not create a second discoverable description package for OmniHand alone
 - do not create `nero_moveit_config` as a duplicate of `agx_arm_moveit`
 - do not create a second message package just for OmniHand while `agx_arm_msgs` already exists
+- do not create `omnihand_driver_ros2` during Sprint 2 only to match roadmap wording
 - do not rename existing packages purely to match roadmap wording
 
 ## Message Naming

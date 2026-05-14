@@ -4,7 +4,7 @@ last_updated: 2026-05-14
 status: DECIDED_IN_PROGRESS
 primary_goal: make OmniHand a valid `effector_type` in the agx_arm-centric simulation and MoveIt stack now, while keeping the live hardware backend swappable later
 selected_direction: OPTION2_PUBLIC_ARCHITECTURE_PLUS_OPTION3_EXECUTION
-implementation_status: INITIAL_BRIDGE_SKELETON_LANDED
+implementation_status: SHARED_COMMAND_SURFACE_LANDED
 
 ## Decision Summary
 
@@ -22,16 +22,19 @@ The selected architecture is no longer only proposed. The first simulation-orien
 - MoveIt, SRDF, initial positions, and fake `ros2_control` now include OmniHand controller profiles,
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `OmniHandTactileRaw` messages now exist,
 - a first repo-owned `omnihand_bridge` mock backend and launch surface now exist under `agx_arm_ctrl`,
+- the bridge now accepts the shared `control/joint_states` surface used by the rest of `agx_arm_ctrl`,
+- `control/omnihand/joint_trajectory` remains available as a bridge-specific compatibility path,
 - `agx_arm_ctrl` can now aggregate bridge joint state into combined `feedback/joint_states` when `effector_type:=omnihand`,
 - the shared `start_single_agx_arm*` launch wrappers now pass `omnihand_type` through and can optionally start the bridge,
+- the bridge stays in `agx_arm_ctrl` as the Sprint 2 runtime integration point,
 - Sprint 2 workspace-policy docs now exist under `docs/project`,
 - and the current left-hand smoke path launches successfully through `agx_arm_moveit` with mock hardware.
 
 What remains open:
 
 - the first real hardware backend and device validation,
-- a non-mock hand command and action surface aligned with the bridge instead of the current mock-only trajectory stub,
-- and deciding whether the bridge remains inside `agx_arm_ctrl` or later moves to a dedicated package once the non-mock backend is stable.
+- a non-mock hand command and action surface that can replace the current shared JointState plus compatibility trajectory path where needed,
+- and later reassessing package boundaries only if the non-mock backend proves `agx_arm_ctrl` is no longer the right home.
 
 ## Why This Can Start Now
 
@@ -244,11 +247,12 @@ The backend maps those local names to the vendor-declared active-joint order alr
 
 | Surface | Type | Purpose | Recommendation |
 | --- | --- | --- | --- |
+| `control/joint_states` | `sensor_msgs/JointState` | Shared arm plus end-effector command surface used by the current agx_arm runtime | keep as the preferred shared arm-plus-OmniHand command path |
 | `feedback/joint_states` | `sensor_msgs/JointState` | Combined arm plus hand state used by MoveIt follow mode | keep as the canonical combined state |
 | `feedback/omnihand/joint_states` | `sensor_msgs/JointState` | Hand-only state for debugging and direct consumers | add |
 | `feedback/omnihand/status` | new `agx_arm_msgs/OmniHandStatus` | Device state, temperatures, currents, control mode, fault bits | add |
 | `feedback/omnihand/tactile_raw` | new `agx_arm_msgs/OmniHandTactileRaw` | Raw tactile payloads without premature abstraction | add |
-| `control/omnihand/joint_trajectory` | `trajectory_msgs/JointTrajectory` | Initial repo-owned hand command path | add first |
+| `control/omnihand/joint_trajectory` | `trajectory_msgs/JointTrajectory` | Bridge-specific compatibility path for hand-only or controller-oriented publishers | keep supported, but not as the only public command path |
 | `control/omnihand/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | Optional later controller or action surface for tighter MoveIt integration | add later if needed |
 | `control/omnihand/stop` | `std_srvs/Trigger` or `std_srvs/Empty` | Safe stop or cancel hand motion | add |
 | `control/omnihand/set_control_mode` | repo-owned service only if required | Explicit mode switching when the backend truly needs it | keep optional |

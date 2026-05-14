@@ -18,6 +18,8 @@ Treat these as source assets that should be edited deliberately and reviewed as 
 - runtime launch files and nodes under `src/agx_arm_ctrl`
 - MIT-controller code and curated configs under `src/agx_arm_mit_controller`
 - ROS message definitions under `src/agx_arm_msgs/msg`
+- Copilot-native repo guidance under `.github/` and `AGENTS.md`
+- reusable local tool surfaces under `tools/`
 - curated calibration/config data such as `config/nero_gravity_calibration.json`
 - promoted stable docs under `docs/assets`, `docs/control`, `docs/project`, and the main roadmap files
 - vendored third-party source tracked intentionally under `vendor/`

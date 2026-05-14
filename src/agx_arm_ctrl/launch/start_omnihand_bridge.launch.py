@@ -31,6 +31,11 @@ def generate_launch_description():
         default_value="50.0",
         description="Feedback publish rate in Hz.",
     )
+    joint_states_command_topic_arg = DeclareLaunchArgument(
+        "joint_states_command_topic",
+        default_value="control/joint_states",
+        description="Shared JointState command topic consumed by the OmniHand bridge.",
+    )
     tactile_sample_count_arg = DeclareLaunchArgument(
         "tactile_sample_count",
         default_value="32",
@@ -48,6 +53,7 @@ def generate_launch_description():
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "backend_type": LaunchConfiguration("backend_type"),
             "pub_rate": LaunchConfiguration("pub_rate"),
+            "joint_states_command_topic": LaunchConfiguration("joint_states_command_topic"),
             "tactile_sample_count": LaunchConfiguration("tactile_sample_count"),
         }],
     )
@@ -58,6 +64,7 @@ def generate_launch_description():
         omnihand_type_arg,
         backend_type_arg,
         pub_rate_arg,
+        joint_states_command_topic_arg,
         tactile_sample_count_arg,
         omnihand_bridge,
     ])

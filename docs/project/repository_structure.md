@@ -29,6 +29,7 @@ It is intentionally based on the repo as it exists today, not on a future rename
 | Stable integration/control docs | `docs/control` | OmniHand integration decisions, MIT model notes, and runtime plans |
 | Roadmap and working notes | `docs/development` | Sprint logs, working sets, and long-form roadmap text |
 | Sprint 2 policy docs | `docs/project` | Workspace structure, naming, and workflow policy |
+| Copilot-native guidance | `.github` plus `AGENTS.md` | Repo-local Copilot instructions, skills, agents, and the durable engineering contract |
 
 The future `docs/planning`, `docs/simulation`, `docs/hand`, and related trees are still valid targets, but they should be created when there is stable content to promote into them.
 
@@ -39,6 +40,8 @@ Treat these directories as source-managed:
 - `src/`
 - `vendor/`
 - `docs/`
+- `.github/`
+- `tools/`
 - `config/`
 - `scripts/`
 - `pyAgxArm/`
@@ -54,7 +57,7 @@ Treat these directories as generated or runtime-managed:
 
 1. Do not reintroduce a duplicate `agx_arm_description` package or a second URDF source of truth.
 2. Do not split off a new MoveIt package during Sprint 2 unless the current package becomes unmaintainable.
-3. Keep the OmniHand adapter below ROS and keep the public ROS bridge repo-owned.
+3. Keep the OmniHand adapter below ROS and keep the public ROS bridge repo-owned inside `src/agx_arm_ctrl` during Sprint 2.
 4. Add hand-specific runtime surfaces in a way that preserves the current Nero arm runtime path.
 5. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
 
@@ -63,4 +66,5 @@ Treat these directories as generated or runtime-managed:
 - `docs/project/package_naming.md`
 - `docs/project/generated_vs_source_assets.md`
 - `docs/project/local_agent_workflow.md`
+- `AGENTS.md` and the Copilot-native `.github/` guidance mirrors
 - repo-owned OmniHand bridge skeleton and message extensions aligned with the package boundaries above
