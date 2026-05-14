@@ -22,14 +22,15 @@ The selected architecture is no longer only proposed. The first simulation-orien
 - MoveIt, SRDF, initial positions, and fake `ros2_control` now include OmniHand controller profiles,
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `OmniHandTactileRaw` messages now exist,
 - a first repo-owned `omnihand_bridge` mock backend and launch surface now exist under `agx_arm_ctrl`,
+- `agx_arm_ctrl` can now aggregate bridge joint state into combined `feedback/joint_states` when `effector_type:=omnihand`,
+- the shared `start_single_agx_arm*` launch wrappers now pass `omnihand_type` through and can optionally start the bridge,
 - Sprint 2 workspace-policy docs now exist under `docs/project`,
 - and the current left-hand smoke path launches successfully through `agx_arm_moveit` with mock hardware.
 
 What remains open:
 
-- integrating the bridge outputs into the combined `feedback/joint_states` path used by follow-mode consumers,
-- wiring the bridge into higher-level shared launch flows once the interface settles,
 - the first real hardware backend and device validation,
+- a non-mock hand command and action surface aligned with the bridge instead of the current mock-only trajectory stub,
 - and deciding whether the bridge remains inside `agx_arm_ctrl` or later moves to a dedicated package once the non-mock backend is stable.
 
 ## Why This Can Start Now
@@ -411,11 +412,14 @@ For the current local repo workflow:
     - normalize the vendor hand assets into the canonical description package,
     - add `effector_type:=omnihand` and mock `ros2_control` support,
     - add the first repo-owned OmniHand messages and mock-backed bridge skeleton,
+    - aggregate bridge joint state into the shared `feedback/joint_states` path through `agx_arm_ctrl`,
+    - extend the shared `start_single_agx_arm*` launch wrappers with OmniHand bridge arguments,
     - document repository structure, naming, generated-vs-source policy, and local workflow under `docs/project`.
 
 - still open under Sprint 2:
-    - integrate the bridge with combined joint-state aggregation and shared launch surfaces,
-    - decide whether the initial bridge remains inside `agx_arm_ctrl` or is split into a dedicated package once the real backend exists.
+    - replace the mock backend with the first real backend path,
+    - decide whether the initial bridge remains inside `agx_arm_ctrl` or is split into a dedicated package once the real backend exists,
+    - align the bridge command surface with the longer-term controller or action model once the non-mock backend is available.
 
 For the master roadmap in `docs/development/nero_physical_ai_roadmap_sprints_expanded.md`, the work spans several logical sprints:
 

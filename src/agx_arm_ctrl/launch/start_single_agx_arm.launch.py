@@ -1,7 +1,11 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PythonExpression
+from ament_index_python.packages import get_package_share_directory
 import os
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
@@ -37,8 +41,28 @@ def generate_launch_description():
     effector_type_arg = DeclareLaunchArgument(
         'effector_type',
         default_value='none',
-        choices=['none', 'agx_gripper', 'revo2'],
-        description='End effector type (e.g. agx_gripper, revo2).'
+        choices=['none', 'agx_gripper', 'revo2', 'omnihand'],
+        description='End effector type (e.g. agx_gripper, revo2, omnihand).'
+    )
+
+    omnihand_type_arg = DeclareLaunchArgument(
+        'omnihand_type',
+        default_value='left',
+        choices=['left', 'right'],
+        description='OmniHand type (e.g. left, right).'
+    )
+
+    launch_omnihand_bridge_arg = DeclareLaunchArgument(
+        'launch_omnihand_bridge',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Launch the repo-owned OmniHand bridge when effector_type is omnihand.'
+    )
+
+    omnihand_backend_type_arg = DeclareLaunchArgument(
+        'omnihand_backend_type',
+        default_value='mock',
+        description='Backend type for the repo-owned OmniHand bridge.'
     )
 
     auto_enable_arg = DeclareLaunchArgument(
@@ -144,6 +168,29 @@ def generate_launch_description():
         ],
     )
 
+    omnihand_bridge_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('agx_arm_ctrl'),
+                'launch',
+                'start_omnihand_bridge.launch.py',
+            )
+        ),
+        launch_arguments={
+            'log_level': LaunchConfiguration('log_level'),
+            'namespace': LaunchConfiguration('namespace'),
+            'omnihand_type': LaunchConfiguration('omnihand_type'),
+            'backend_type': LaunchConfiguration('omnihand_backend_type'),
+            'pub_rate': LaunchConfiguration('pub_rate'),
+        }.items(),
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('effector_type'), "' == 'omnihand' and '",
+                LaunchConfiguration('launch_omnihand_bridge'), "' == 'true'",
+            ])
+        ),
+    )
+
     return LaunchDescription([
         # arguments
         log_level_arg,
@@ -151,6 +198,9 @@ def generate_launch_description():
         can_port_arg,
         arm_type_arg,
         effector_type_arg,
+        omnihand_type_arg,
+        launch_omnihand_bridge_arg,
+        omnihand_backend_type_arg,
         auto_enable_arg,
         fast_mode_arg,
         speed_percent_arg,
@@ -161,4 +211,5 @@ def generate_launch_description():
         publish_gripper_joint_arg,
         # node
         agx_arm_node,
+        omnihand_bridge_launch,
     ])

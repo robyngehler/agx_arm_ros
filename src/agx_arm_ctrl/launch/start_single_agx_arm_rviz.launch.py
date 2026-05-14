@@ -41,8 +41,8 @@ def generate_launch_description():
     effector_type_arg = DeclareLaunchArgument(
         'effector_type',
         default_value='none',
-        choices=['none', 'agx_gripper', 'revo2'],
-        description='End effector type (e.g. agx_gripper, revo2).'
+        choices=['none', 'agx_gripper', 'revo2', 'omnihand'],
+        description='End effector type (e.g. agx_gripper, revo2, omnihand).'
     )
 
     revo2_type_arg = DeclareLaunchArgument(
@@ -50,6 +50,26 @@ def generate_launch_description():
         default_value='left',
         choices=['left', 'right'],
         description='Revo2 end effector type (e.g. left, right).'
+    )
+
+    omnihand_type_arg = DeclareLaunchArgument(
+        'omnihand_type',
+        default_value='left',
+        choices=['left', 'right'],
+        description='OmniHand type (e.g. left, right).'
+    )
+
+    launch_omnihand_bridge_arg = DeclareLaunchArgument(
+        'launch_omnihand_bridge',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Launch the repo-owned OmniHand bridge when effector_type is omnihand.'
+    )
+
+    omnihand_backend_type_arg = DeclareLaunchArgument(
+        'omnihand_backend_type',
+        default_value='mock',
+        description='Backend type for the repo-owned OmniHand bridge.'
     )
 
     auto_enable_arg = DeclareLaunchArgument(
@@ -124,6 +144,7 @@ def generate_launch_description():
             'arm_type': LaunchConfiguration('arm_type'),
             'effector_type': LaunchConfiguration('effector_type'),
             'revo2_type': LaunchConfiguration('revo2_type'),
+            'omnihand_type': LaunchConfiguration('omnihand_type'),
             'pub_rate': LaunchConfiguration('pub_rate'),
             'follow': LaunchConfiguration('follow'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
@@ -150,6 +171,9 @@ def generate_launch_description():
             'speed_percent': LaunchConfiguration('speed_percent'),
             'enable_timeout': LaunchConfiguration('enable_timeout'),
             'effector_type': LaunchConfiguration('effector_type'),
+            'omnihand_type': LaunchConfiguration('omnihand_type'),
+            'launch_omnihand_bridge': LaunchConfiguration('launch_omnihand_bridge'),
+            'omnihand_backend_type': LaunchConfiguration('omnihand_backend_type'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
         }.items(),
@@ -163,6 +187,9 @@ def generate_launch_description():
         arm_type_arg,
         effector_type_arg,
         revo2_type_arg,
+        omnihand_type_arg,
+        launch_omnihand_bridge_arg,
+        omnihand_backend_type_arg,
         auto_enable_arg,
         fast_mode_arg,
         speed_percent_arg,

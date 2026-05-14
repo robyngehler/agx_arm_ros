@@ -89,6 +89,7 @@ class AgxArmRosNode(Node):
         self.declare_parameter("tcp_offset", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("gripper_default_effort", 1.0)
         self.declare_parameter("publish_gripper_joint", True)
+        self.declare_parameter("omnihand_joint_states_topic", "feedback/omnihand/joint_states")
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
@@ -102,6 +103,7 @@ class AgxArmRosNode(Node):
         self.tcp_offset = self.get_parameter("tcp_offset").value
         self.gripper_default_effort = self.get_parameter("gripper_default_effort").value
         self.publish_gripper_joint = self.get_parameter("publish_gripper_joint").value
+        self.omnihand_joint_states_topic = self.get_parameter("omnihand_joint_states_topic").value
 
         if self.arm_type not in ArmModel.__dict__.values():
             self.get_logger().error(
@@ -139,6 +141,7 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"tcp_offset: {self.tcp_offset}")
         self.get_logger().info(f"gripper_default_effort: {self.gripper_default_effort}")
         self.get_logger().info(f"publish_gripper_joint: {self.publish_gripper_joint}")
+        self.get_logger().info(f"omnihand_joint_states_topic: {self.omnihand_joint_states_topic}")
 
     def _init_agx_arm(self):
         config: PiperCanDefaultConfig = create_agx_arm_config(
@@ -194,6 +197,7 @@ class AgxArmRosNode(Node):
     def _init_effector(self):
         self.gripper: Optional[AgxGripperWrapper] = None
         self.hand: Optional[Revo2Wrapper] = None
+        self.omnihand_joint_state: Optional[JointState] = None
 
         if self.effector_type == "agx_gripper":
             self.gripper = AgxGripperWrapper(self.agx_arm)
@@ -257,6 +261,13 @@ class AgxArmRosNode(Node):
         self.create_subscription(
             MoveMITMsg, "control/move_mit", self._move_mit_callback, 1
         )
+        if self.effector_type == "omnihand":
+            self.create_subscription(
+                JointState,
+                self.omnihand_joint_states_topic,
+                self._omnihand_joint_states_callback,
+                1,
+            )
         if self.hand is not None:
             self.create_subscription(
                 HandCmd, "control/hand", self._hand_cmd_callback, 1
@@ -430,6 +441,27 @@ class AgxArmRosNode(Node):
         
         return result
 
+    def _get_omnihand_joint_data(self):
+        if self.omnihand_joint_state is None:
+            return []
+
+        positions = list(self.omnihand_joint_state.position)
+        velocities = list(self.omnihand_joint_state.velocity)
+        efforts = list(self.omnihand_joint_state.effort)
+        result = []
+
+        for index, joint_name in enumerate(self.omnihand_joint_state.name):
+            result.append(
+                (
+                    joint_name,
+                    self._safe_get_value(positions, index),
+                    self._safe_get_value(velocities, index),
+                    self._safe_get_value(efforts, index),
+                )
+            )
+
+        return result
+
     def _publish_joint_states(self):
         joint_states = self.agx_arm.get_joint_angles()
         if joint_states is None or joint_states.hz <= 0:
@@ -457,6 +489,8 @@ class AgxArmRosNode(Node):
         joints_data.extend(self._get_gripper_joint_data())
         # hand
         joints_data.extend(self._get_hand_joint_data())
+        # omnihand bridge
+        joints_data.extend(self._get_omnihand_joint_data())
         if joints_data:
             msg.name, msg.position, msg.velocity, msg.effort =map(list, zip(*joints_data))
             self.joint_states_pub.publish(msg)
@@ -652,6 +686,9 @@ class AgxArmRosNode(Node):
         self._control_arm_joints(joint_pos)
         self._control_gripper_joint(joint_pos, joint_effort)
         self._control_hand_joints(joint_pos)
+
+    def _omnihand_joint_states_callback(self, msg: JointState):
+        self.omnihand_joint_state = msg
 
     def _move_j_callback(self, msg: JointState):
         if not self._check_can_control():
