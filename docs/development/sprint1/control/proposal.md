@@ -2,7 +2,7 @@
 
 Status: historical design proposal kept for early MIT-controller exploration.
 
-Use `docs/development/mit_trajectory_recording_and_playback.md` for the validated workflow and `docs/development/nero_physical_ai_progress.md` for current overall status.
+Use `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md` for the validated workflow and `docs/development/nero_physical_ai_progress.md` for current overall status.
 
 ## Goal
 

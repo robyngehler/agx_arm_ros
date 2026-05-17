@@ -1,18 +1,21 @@
-# Nero MIT Gravity Hold And Trajectory Workflow
+# Nero MIT Gravity Hold, Trajectory Workflow, And Wakeword Demo Tooling
 
-Status: targeted workflow note for the Nero MIT controller path.
+Status: targeted Sprint 2 workflow note for the current Nero MIT controller path and the adjacent wakeword demo tooling.
+
+This note documents an adjacent workflow that is not a direct Physical AI roadmap gate by itself, but it is a useful integration slice for later TTS-driven and interaction-driven demos.
 
 Use `docs/development/nero_physical_ai_roadmap.md` and `docs/development/nero_physical_ai_progress.md` for cross-sprint coordination.
 
 ## Goal
 
-This is the final workflow that produced smooth gravity-assisted MIT hold on Nero.
+This is the final workflow that produced smooth gravity-assisted MIT hold on Nero and the current wakeword-triggered teach-and-playback demo flow.
 
 Use it in this order:
 
 1. launch the MIT stack with a controller YAML,
 2. validate static hold with `agx_arm_test_position_hold`,
-3. only then record and replay trajectories.
+3. only then record and replay trajectories,
+4. then add wakeword-triggered playback on top of the validated controller path.
 
 The important design choice is that the controller owns all feedforward during playback. Leader-mode recordings do not replay hand-applied torques.
 
@@ -23,6 +26,7 @@ The important design choice is that the controller owns all feedforward during p
 - `agx_arm_record_leader_trajectory`: records pose targets from `feedback/leader_joint_angles`.
 - `agx_arm_execute_saved_trajectory`: replays only positions and velocities from a saved JSON.
 - `agx_arm_wakeword_motion_manager`: keeps a long-lived `idle` / `record` / `playback` state machine alive and exposes a trigger service for wakeword playback.
+- `wakeword-benchmark/scripts/trigger_service_oww.py`: external wakeword listener that can call the motion-manager trigger service directly.
 
 ## Final Working Setup
 
@@ -35,12 +39,14 @@ These points are what actually mattered for the final stable behavior:
 5. Load controller gains and gravity settings from a startup YAML via `params_file`.
 6. Leave `gravity_urdf_path` and `calibration_file` empty in the default Nero profiles to auto-discover the canonical URDF and `config/nero_gravity_calibration.json`.
 7. Use `gravity_feedforward_sign: -1.0` in the MIT command path.
+8. Keep the wakeword detector outside `agx_arm_ros` and let the ROS-side motion semantics stay inside `agx_arm_mit_controller`.
 
 ## Prerequisites
 
 - ROS 2 Humble is sourced.
 - The workspace is built.
 - The Nero arm is available on the expected CAN port.
+- The separate `wakeword-benchmark` workspace folder exists when you want to run the external listener.
 
 Typical shell setup:
 
@@ -168,6 +174,8 @@ The default trigger service is:
 ros2 service call /agx_arm_motion_manager/trigger_motion std_srvs/srv/Trigger "{}"
 ```
 
+That service now reports whether the trigger request was accepted. The actual playback is executed immediately afterward from the manager loop, not directly inside the service callback.
+
 Useful keys while the manager is running:
 
 - `i`: idle / Leader Mode
@@ -182,17 +190,19 @@ Useful keys while the manager is running:
 - `g`: refresh MIT `hold_current`
 - `c`: cancel the active MIT trajectory in playback mode
 
-The wakeword listener can now call that service directly instead of printing a shell string:
+The wakeword listener lives outside this repo and can call that service directly:
 
 ```bash
-python3 wakeword-benchmark/scripts/trigger_service_oww.py \
-  --model wakeword-benchmark/models/openwakeword/de_170526/mille_mani.tflite \
+python3 ../wakeword-benchmark/scripts/trigger_service_oww.py \
+  --model ../wakeword-benchmark/models/openwakeword/de_170526/mille_mani.tflite \
   --framework tflite \
   --threshold 0.6 \
   --consecutive-hits 2 \
   --cooldown 3.0 \
   --ros-trigger-service /agx_arm_motion_manager/trigger_motion
 ```
+
+If you use the external listener without `--ros-trigger-service`, its `--action` fallback now executes without a shell by default. Only enable `--action-shell` when shell features are explicitly needed.
 
 That keeps wakeword detection outside the ROS package while moving all controller-state logic, teach/playback semantics, and trajectory-library handling into `agx_arm_mit_controller`.
 
@@ -257,3 +267,4 @@ ros2 param get /mit_controller calibration_file
 - MIT gains are still startup-time parameters; there is no live retuning path yet.
 - The hold and replay workflow depends on fresh `feedback/joint_states` from `agx_arm_ctrl`.
 - The static hold test is the authoritative gravity check; trajectory behavior still depends on the chosen gains and limits.
+- The wakeword listener is still an external demo utility and has not yet been promoted into a stable repo-local runtime surface.

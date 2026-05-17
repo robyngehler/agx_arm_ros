@@ -81,9 +81,9 @@ Do not use this Sprint 1 folder as the cross-sprint source of truth.
 ## Inputs Used For This Pass
 
 - `README.md`
-- `docs/development/mit_trajectory_recording_and_playback.md`
-- `docs/development/proposal.md`
-- `docs/development/proposal_urdf_gravity_compensation.md`
+- `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`
+- `docs/development/sprint1/control/proposal.md`
+- `docs/development/sprint1/control/proposal_urdf_gravity_compensation.md`
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/README.md`
 - `src/agx_arm_moveit/README.md`
 - `src/agx_arm_moveit/config/kinematics.yaml`

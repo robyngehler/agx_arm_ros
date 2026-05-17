@@ -9,7 +9,7 @@ inspection_date: 2026-05-11
 status: CONFIRMED
 found_artifacts:
 - controller package `src/agx_arm_mit_controller`
-- validated workflow doc `docs/development/mit_trajectory_recording_and_playback.md`
+- validated workflow doc `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`
 - default params file `src/agx_arm_mit_controller/config/nero_mit_controller_defaults.yaml`
 - launch file `src/agx_arm_mit_controller/launch/start_nero_mit_controller.launch.py`
 - model discovery logic in `src/agx_arm_mit_controller/agx_arm_mit_controller/model_metadata.py`

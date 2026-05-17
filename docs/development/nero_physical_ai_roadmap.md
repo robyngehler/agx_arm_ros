@@ -247,6 +247,10 @@ The current local repo execution order no longer matches the first-draft split o
 - Sprint 3 now focuses on validating and hardening the existing Nero planning and control baseline, adding missing IK or planning pieces only where they are not already available.
 - Sprint 4 now focuses on the first Nero plus OmniHand baseline on top of the shared adapter boundary and common ROS semantics from Sprint 2.
 
+### Adjacent Demo Tooling Note
+
+The current workspace also contains a wakeword-triggered motion-demo slice around `agx_arm_wakeword_motion_manager` and the external `wakeword-benchmark` listener. This is not a direct roadmap gate by itself, but it is a useful integration path for later TTS-driven and interaction-driven demos. Keep the detailed workflow note in `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`.
+
 ## Sprint 1: Asset Audit and Model Baseline
 
 ### Objective

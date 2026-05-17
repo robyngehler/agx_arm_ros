@@ -60,6 +60,7 @@ Use the top-level development docs like this:
 - keep the launch, runtime, file-composition, and config-dataflow diagrams aligned with the real code paths
 - keep only three cross-sprint coordination docs at the top of `docs/development/`
 - put discovery, checklist, error/fix, and niche implementation details into sprint folders
+- keep the wakeword-triggered demo and recording/playback helper documented as adjacent tooling in `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`; it supports later interaction work but is not a roadmap gate by itself
 
 ## Cross-Sprint Blockers
 
