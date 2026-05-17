@@ -17,6 +17,7 @@ This repository is intentionally organized so Copilot can load only the guidance
 ## Choose Instructions When
 
 - the task is mainly about repository conventions, package boundaries, naming, workflow, or runtime contracts
+- the task is about ROS2 topics, services, actions, messages, launch surfaces, runtime validation, or value capture
 - you need concise rules for OmniHand bridge behavior, docs promotion, or source-versus-generated assets
 - the task changes launch surfaces, messages, or package placement and you need the current repo policy first
 
@@ -29,6 +30,7 @@ This repository is intentionally organized so Copilot can load only the guidance
 
 - package placement and current package roles: `repository-structure.instruction.md`
 - naming and package-split rules: `package-naming.instruction.md`
+- ROS2-native development and value capture: `ros2-development.instruction.md`
 - generated-versus-source decisions: `generated-vs-source-assets.instruction.md`
 - local change order and promotion workflow: `local-agent-workflow.instruction.md`
 - OmniHand runtime contract and bridge surface: `omnihand-bridge.instruction.md`

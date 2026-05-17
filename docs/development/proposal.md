@@ -1,5 +1,9 @@
 # Nero MIT Soft Trajectory Controller Proposal
 
+Status: historical design proposal kept for early MIT-controller exploration.
+
+Use `docs/development/mit_trajectory_recording_and_playback.md` for the validated workflow and `docs/development/nero_physical_ai_progress.md` for current overall status.
+
 ## Goal
 
 Build a custom MIT-based joint impedance controller for AgileX Nero that can follow trajectories smoothly and compliantly, with reduced collision severity compared to stiff position control.

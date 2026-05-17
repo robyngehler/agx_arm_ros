@@ -1,5 +1,9 @@
 # Proposal: URDF-Based Gravity Compensation for Nero MIT Soft Trajectory Control
 
+Status: historical gravity-model proposal kept for design context.
+
+Use `docs/development/mit_trajectory_recording_and_playback.md` for the validated workflow and `docs/development/nero_physical_ai_progress.md` for current overall status.
+
 ## Objective
 
 Build a model-assisted MIT controller for the AgileX Nero arm that enables smooth, compliant trajectory following with reduced collision severity and lower apparent stiffness.

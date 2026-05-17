@@ -21,7 +21,7 @@ Treat these as source assets that should be edited deliberately and reviewed as 
 - Copilot-native repo guidance under `.github/` and `AGENTS.md`
 - reusable local tool surfaces under `tools/`
 - curated calibration/config data such as `config/nero_gravity_calibration.json`
-- promoted stable docs under `docs/assets`, `docs/control`, `docs/project`, and the main roadmap files
+- promoted stable docs under `docs/assets`, `docs/control`, `docs/project`, and the fixed coordination docs in `docs/development`
 - vendored third-party source tracked intentionally under `vendor/`
 
 ## Generated Or Runtime Assets
@@ -60,7 +60,8 @@ Do not patch unpacked build outputs when the real change belongs in the workspac
 
 Use this split for documentation:
 
-- working logs, experiments, and sprint notes in `docs/development/`
+- roadmap, progress, and component routing in the fixed top-level `docs/development/` docs
+- working logs, experiments, and sprint notes in `docs/development/sprintN/`
 - promoted stable state and policy docs in the top-level `docs/` tree
 
 Once a Sprint 2 decision is settled, prefer promotion into a stable top-level document over leaving the canonical answer buried in a sprint note.

@@ -9,6 +9,7 @@ This package stays ROS-centric:
 - it publishes `agx_arm_msgs/MoveMITMsg` back to `agx_arm_ctrl`,
 - it accepts standard `trajectory_msgs/JointTrajectory` commands.
 - it includes an interactive leader-mode recorder and a saved-trajectory executor.
+- it includes an interactive wakeword motion manager for stateful teach-and-trigger workflows.
 - it includes a dedicated MIT position-hold test tool.
 - it supports optional gravity feed-forward through a common-framework adapter and a simple calibration file.
 
@@ -51,6 +52,54 @@ Example:
 ```bash
 ros2 run agx_arm_mit_controller agx_arm_execute_saved_trajectory -- ~/agx_arm_trajectories/demo.json
 ```
+
+## Wakeword Motion Manager
+
+`agx_arm_wakeword_motion_manager` keeps a long-lived `idle` / `record` / `playback` state machine alive for teach-and-trigger workflows.
+
+Ongoing work: the wakeword-oriented application layer is still under active development and should be treated as evolving workflow tooling rather than a frozen repo contract.
+
+It:
+
+- uses Leader Mode as the idle state,
+- records multiple wakeword variants into a trajectory library,
+- can delete or reselect saved variants with keyboard shortcuts,
+- switches into MIT hold for compliant playback,
+- exposes `~/trigger_motion` as a `std_srvs/Trigger` service for external wakeword listeners.
+
+Example:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_wakeword_motion_manager -- --auto-enable-arm --start-mode idle
+```
+
+Important startup detail:
+
+- the motion manager does not launch `agx_arm_ctrl` or the MIT controller for you,
+- start the control stack first, for example with `ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py ...`,
+- in `idle` and `record` it only needs the Nero mode services such as `set_normal_mode` and `set_leader_mode`,
+- in `playback` it additionally needs `mit_controller/enable` and `mit_controller/hold_current`,
+- by default it now waits for the services needed by the selected `--start-mode`; use `--startup-timeout` if you want it to fail fast instead.
+
+Then point the wakeword listener at the manager service:
+
+```bash
+python3 wakeword-benchmark/scripts/trigger_service_oww.py \
+  --model wakeword-benchmark/models/openwakeword/de_170526/mille_mani.tflite \
+  --framework tflite \
+  --ros-trigger-service /agx_arm_motion_manager/trigger_motion
+```
+
+Keyboard summary:
+
+- `i` idle leader mode
+- `r` record mode
+- `p` playback mode
+- `n` record a new sample in record mode
+- `x` delete the selected sample in record mode
+- `f` fire the selected or random sample in playback mode
+- `m` toggle deterministic versus random playback selection
+- `g` refresh MIT `hold_current`
 
 For a full end-to-end guide covering launch, recording, playback, and MIT gain experiments, see:
 

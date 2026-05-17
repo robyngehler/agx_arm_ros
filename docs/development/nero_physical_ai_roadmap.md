@@ -8,6 +8,13 @@ The roadmap focuses on the integration of the Nero arm, the OmniHand Pro dextero
 
 The roadmap is dependency-based rather than calendar-based. Sprints describe logical work packages and integration maturity levels, not fixed durations.
 
+Use this file as the canonical roadmap only.
+
+Companion coordination docs:
+
+- `docs/development/nero_physical_ai_progress.md`: current overall progress, active sprint focus, and cross-sprint blockers
+- `docs/development/component_implementation_map.md`: system components, canonical code locations, and where sprint-level details live
+
 ---
 
 ## 2. System Context
@@ -284,6 +291,7 @@ Consolidate the common environment, package structure, and OmniHand integration 
 - Normalize the OmniHand description assets and the landed MoveIt/mock-controller integration into the common workspace structure.
 - Define package naming, configuration layout, generated-vs-source policy, and fork/submodule workflow for the shared environment.
 - Add the remaining common-environment hooks still needed by later phases: repo-owned bridge skeleton, mock-backend hook, and OmniHand diagnostics/tactile message plan.
+- Capture visual interaction docs for the ROS graph, launch flow, file composition, and config dataflow so the shared environment can be understood without rediscovery.
 - Ensure one developer or agent can locate source models, generated assets, configs, logs, and ownership boundaries without rediscovery.
 
 ### Expected Outputs
@@ -293,11 +301,13 @@ Consolidate the common environment, package structure, and OmniHand integration 
 - Normalized OmniHand description and MoveIt simulation slice under canonical packages
 - Repo-owned OmniHand bridge/backend interface plan, plus first implementation skeleton where practical
 - Documented generated-vs-source and fork/submodule policy
+- Stable interaction diagrams for runtime nodes, launch flow, file composition, and config dataflow
 
 ### Follow-up Documents
 
 - Repository structure document
 - Package naming and generated-vs-source policy documents
+- Repo interaction diagrams document
 - OmniHand ROS integration contract document
 - OmniHand wrapper and bridge implementation document
 
@@ -874,104 +884,46 @@ Hardware procurement should be tied to functional needs:
 
 ---
 
-## 7. Repository and Package Naming
+## 7. Repository Alignment
 
-Recommended package naming:
+This roadmap does not define the current Sprint 2 package names or public ROS2 contract by itself.
 
-```text
-nero_description
-nero_moveit_config
-nero_bringup
-nero_control_bridge
-nero_isaac_sim
-nero_isaac_lab
-nero_skill_library
-nero_data_tools
-nero_hil_tools
-omnihand_description
-omnihand_driver_ros2
-omnihand_skills
-agv_base_description
-agv_base_bringup
-physical_ai_experiments
-```
+Treat roadmap role names as architectural aliases only. The stable repo decisions live in:
 
-Recommended configuration directories:
-
-```text
-config/robot_models
-config/planning
-config/controllers
-config/payloads
-config/sensors
-config/calibration
-config/skills
-config/datasets
-config/experiments
-```
-
-Recommended model-variant naming:
-
-```text
-model_variant: nero_standalone
-model_variant: nero_with_dummy_payload
-model_variant: nero_with_omnihand_static
-model_variant: nero_with_omnihand_articulated
-model_variant: nero_on_static_agv
-model_variant: nero_omnihand_on_static_agv
-model_variant: nero_omnihand_on_mobile_agv
-```
+- `docs/project/repository_structure.md`
+- `docs/project/package_naming.md`
+- `docs/project/ros2_development_practices.md`
+- `docs/control/omnihand_ros_integration_options.md`
+- `docs/control/omnihand_wrapper_integration_plan.md`
 
 ---
 
-## 8. Documentation Structure
+## 8. Documentation Workflow
 
-This master roadmap should be supported by dedicated sub-documents.
+The development docs now follow a fixed two-tier model.
 
-Recommended documentation tree:
+### 8.1 Fixed Coordination Docs
 
-```text
-docs/
-  roadmap/
-    nero_physical_ai_roadmap.md
-  assets/
-    nero_asset_validation.md
-    omnihand_asset_validation.md
-    agv_cad_simplification.md
-  planning/
-    moveit2_setup.md
-    trac_ik_configuration.md
-    planning_scene_validation.md
-    collision_matrix_validation.md
-  control/
-    mit_controller_interface.md
-    payload_and_gravity_model.md
-    trajectory_execution_policy.md
-  simulation/
-    isaac_sim_asset_import.md
-    usd_articulation_validation.md
-    ros2_bridge_simulation.md
-  hand/
-    omnihand_sdk_integration.md
-    omnihand_tactile_logging.md
-    omnihand_preshape_library.md
-  skills/
-    skill_schema.md
-    scripted_skill_library.md
-    diffusion_skill_policy.md
-  learning/
-    isaac_lab_tasks.md
-    grasp_model_evaluation.md
-    vla_policy_evaluation.md
-  data/
-    logging_schema.md
-    demonstration_dataset.md
-    synthetic_data_workflow.md
-  hardware/
-    hardware_procurement_plan.md
-    sensor_setup.md
-    compute_platforms.md
-```
+Keep exactly one top-level document for each cross-sprint concern:
+
+- `docs/development/nero_physical_ai_roadmap.md`: roadmap, phases, and sprint intent
+- `docs/development/nero_physical_ai_progress.md`: overall progress monitoring and active-priority tracking
+- `docs/development/component_implementation_map.md`: component ownership, canonical code paths, and document routing
+
+### 8.2 Sprint Working Folders
+
+Keep sprint-local discovery, checklists, implementation details, and issue logs inside `docs/development/sprintN/`.
+
+Each sprint folder should own at least:
+
+- `README.md`
+- `checklist.md`
+- `errors_and_fixes.md`
+- `open_questions.md`
+
+Add optional subfolders such as `assets/`, `control/`, `hand/`, `planning/`, or `simulation/` only when the sprint needs them.
+
+Promote stable outputs into `docs/assets/`, `docs/control/`, or `docs/project/` when they become canonical. Keep `.github/` as the concise agent-facing mirror of those stable docs rather than a competing documentation tree.
 
 ---
 

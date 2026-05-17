@@ -425,7 +425,7 @@ For the current local repo workflow:
     - decide whether the initial bridge remains inside `agx_arm_ctrl` or is split into a dedicated package once the real backend exists,
     - align the bridge command surface with the longer-term controller or action model once the non-mock backend is available.
 
-For the master roadmap in `docs/development/nero_physical_ai_roadmap_sprints_expanded.md`, the work spans several logical sprints:
+For the canonical roadmap and progress pair in `docs/development/nero_physical_ai_roadmap.md` and `docs/development/nero_physical_ai_progress.md`, the work spans several logical sprints:
 
 - roadmap Sprint 1:
     - discovery and decision capture

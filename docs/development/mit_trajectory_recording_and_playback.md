@@ -1,5 +1,9 @@
 # Nero MIT Gravity Hold And Trajectory Workflow
 
+Status: targeted workflow note for the Nero MIT controller path.
+
+Use `docs/development/nero_physical_ai_roadmap.md` and `docs/development/nero_physical_ai_progress.md` for cross-sprint coordination.
+
 ## Goal
 
 This is the final workflow that produced smooth gravity-assisted MIT hold on Nero.
@@ -18,6 +22,7 @@ The important design choice is that the controller owns all feedforward during p
 - `agx_arm_test_position_hold`: captures the current pose, enables MIT hold, and reports drift.
 - `agx_arm_record_leader_trajectory`: records pose targets from `feedback/leader_joint_angles`.
 - `agx_arm_execute_saved_trajectory`: replays only positions and velocities from a saved JSON.
+- `agx_arm_wakeword_motion_manager`: keeps a long-lived `idle` / `record` / `playback` state machine alive and exposes a trigger service for wakeword playback.
 
 ## Final Working Setup
 
@@ -134,6 +139,62 @@ Replay behavior:
 - position and velocity targets come from the JSON,
 - effort feedforward from the JSON is discarded,
 - gravity feedforward comes from the running MIT controller configuration.
+
+## Wakeword-Triggered Teach And Playback
+
+Use this when you want to teach 5 to 6 wakeword motions once and then trigger them from an external listener:
+
+```bash
+ros2 run agx_arm_mit_controller agx_arm_wakeword_motion_manager -- --auto-enable-arm --start-mode idle
+```
+
+Startup behavior:
+
+- the manager does not launch the driver or the MIT controller itself,
+- start the control stack first and then start the manager,
+- with `--start-mode idle` or `--start-mode record` it waits for `set_normal_mode` and `set_leader_mode`,
+- with `--start-mode playback` it also waits for `mit_controller/enable` and `mit_controller/hold_current`,
+- `--startup-timeout 0` is the default and waits indefinitely; set a positive value only if you want an explicit timeout.
+
+The manager keeps one process alive with three states:
+
+1. `idle`: switches the robot into Leader Mode and keeps MIT disabled.
+2. `record`: stays in Leader Mode for teaching, can record new samples, delete old samples, and temporarily switch to MIT `hold_current`.
+3. `playback`: switches back to Normal Mode, enables MIT, captures a compliant hold target, and waits for trigger requests.
+
+The default trigger service is:
+
+```bash
+ros2 service call /agx_arm_motion_manager/trigger_motion std_srvs/srv/Trigger "{}"
+```
+
+Useful keys while the manager is running:
+
+- `i`: idle / Leader Mode
+- `r`: record mode
+- `p`: playback mode
+- `n`: record a new sample immediately in record mode
+- `x`: delete the selected sample in record mode
+- `[` and `]`: move across saved samples
+- `1` through `9`: jump to a sample slot directly
+- `m`: toggle deterministic versus random sample selection
+- `f`: fire the selected or random sample immediately in playback mode
+- `g`: refresh MIT `hold_current`
+- `c`: cancel the active MIT trajectory in playback mode
+
+The wakeword listener can now call that service directly instead of printing a shell string:
+
+```bash
+python3 wakeword-benchmark/scripts/trigger_service_oww.py \
+  --model wakeword-benchmark/models/openwakeword/de_170526/mille_mani.tflite \
+  --framework tflite \
+  --threshold 0.6 \
+  --consecutive-hits 2 \
+  --cooldown 3.0 \
+  --ros-trigger-service /agx_arm_motion_manager/trigger_motion
+```
+
+That keeps wakeword detection outside the ROS package while moving all controller-state logic, teach/playback semantics, and trajectory-library handling into `agx_arm_mit_controller`.
 
 ## Parameter Profiles
 

@@ -15,6 +15,7 @@ Before changing package structure or OmniHand integration surfaces, read these d
 
 - `AGENTS.md`
 - `.github/copilot-instructions.md`
+- `docs/project/ros2_development_practices.md`
 - `docs/assets/repository_asset_inventory.md`
 - `docs/assets/nero_asset_validation.md`
 - `docs/assets/omnihand_asset_validation.md`
@@ -59,6 +60,8 @@ Sprint 2 workflow for vendor changes:
 ## Promotion Workflow
 
 Use `docs/development/` for working logs and in-progress notes.
+
+Keep only the roadmap, progress monitor, and component map at the top of `docs/development/`. Put sprint-local discovery, checklist, error/fix, and niche implementation notes under `docs/development/sprintN/`.
 
 Promote stable outputs to the top-level docs tree when they become the canonical answer. Sprint 2 policy and structure decisions should live under `docs/project/` once settled.
 

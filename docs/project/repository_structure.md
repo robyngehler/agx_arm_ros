@@ -27,7 +27,7 @@ It is intentionally based on the repo as it exists today, not on a future rename
 | --- | --- | --- |
 | Stable factual inventories | `docs/assets` | Promoted asset and repository state documents |
 | Stable integration/control docs | `docs/control` | OmniHand integration decisions, MIT model notes, and runtime plans |
-| Roadmap and working notes | `docs/development` | Sprint logs, working sets, and long-form roadmap text |
+| Development coordination and working notes | `docs/development` | Fixed roadmap, progress, and component-routing docs plus sprint logs and working sets |
 | Sprint 2 policy docs | `docs/project` | Workspace structure, naming, and workflow policy |
 | Copilot-native guidance | `.github` plus `AGENTS.md` | Repo-local Copilot instructions, skills, agents, and the durable engineering contract |
 
@@ -66,5 +66,7 @@ Treat these directories as generated or runtime-managed:
 - `docs/project/package_naming.md`
 - `docs/project/generated_vs_source_assets.md`
 - `docs/project/local_agent_workflow.md`
+- `docs/project/ros2_development_practices.md`
+- `docs/project/repo_interaction_diagrams.md`
 - `AGENTS.md` and the Copilot-native `.github/` guidance mirrors
 - repo-owned OmniHand bridge skeleton and message extensions aligned with the package boundaries above

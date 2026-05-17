@@ -14,7 +14,7 @@ found_artifacts:
 - launch file `src/agx_arm_mit_controller/launch/start_nero_mit_controller.launch.py`
 - model discovery logic in `src/agx_arm_mit_controller/agx_arm_mit_controller/model_metadata.py`
 - gravity backend wrapper in `src/agx_arm_mit_controller/agx_arm_mit_controller/gravity_model.py`
-- recorder, playback, position-hold, compare-gravity, and calibration tools
+- recorder, playback, wakeword motion-manager, position-hold, compare-gravity, and calibration tools
 - tests covering model metadata, gravity model creation, trajectory buffer/io, and feedforward calibration
 missing_artifacts:
 - explicit payload model extension for OmniHand and AGV-mounted variants
@@ -31,6 +31,8 @@ interface_notes:
   - service: `~/enable`
   - service: `~/hold_current`
   - service: `~/cancel_trajectory`
+- the package now also includes a long-lived motion-manager node that exposes `~/trigger_motion` for external wakeword-triggered playback over a curated trajectory library
+- the wakeword-oriented motion-manager is ongoing application work and should not yet be treated as a frozen Sprint 2 runtime contract
 - default gravity behavior is Pinocchio-based with `gravity_feedforward_sign: -1.0`
 - when `gravity_urdf_path` and `calibration_file` are empty, the controller auto-discovers the canonical Nero URDF and `config/nero_gravity_calibration.json`
 - the launch file now prefers the source YAML in a colcon workspace so parameter tuning does not require a rebuild

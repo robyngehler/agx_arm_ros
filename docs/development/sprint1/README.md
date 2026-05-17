@@ -27,6 +27,14 @@ Current working location during implementation:
 - `docs/development/sprint1/checklist.md`
 - `docs/development/sprint1/errors_and_fixes.md`
 
+Program-level coordination now lives in:
+
+- `docs/development/nero_physical_ai_roadmap.md`
+- `docs/development/nero_physical_ai_progress.md`
+- `docs/development/component_implementation_map.md`
+
+Do not use this Sprint 1 folder as the cross-sprint source of truth.
+
 ## Current Snapshot
 
 | Area | Status | Summary |
