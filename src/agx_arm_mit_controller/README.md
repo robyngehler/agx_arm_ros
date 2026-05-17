@@ -67,6 +67,8 @@ It:
 - switches into MIT hold for compliant playback,
 - exposes `~/trigger_motion` as a `std_srvs/Trigger` service for external wakeword listeners.
 
+The trigger service acknowledges accepted requests immediately and the manager then executes the queued playback from its main loop. That avoids re-entering ROS service calls from inside the trigger callback itself.
+
 Example:
 
 ```bash
@@ -84,11 +86,13 @@ Important startup detail:
 Then point the wakeword listener at the manager service:
 
 ```bash
-python3 wakeword-benchmark/scripts/trigger_service_oww.py \
-  --model wakeword-benchmark/models/openwakeword/de_170526/mille_mani.tflite \
+python3 ../wakeword-benchmark/scripts/trigger_service_oww.py \
+  --model ../wakeword-benchmark/models/openwakeword/de_170526/mille_mani.tflite \
   --framework tflite \
   --ros-trigger-service /agx_arm_motion_manager/trigger_motion
 ```
+
+The external listener runs outside this repo. Its `--action` fallback now executes without a shell by default; only use `--action-shell` when shell features are genuinely required.
 
 Keyboard summary:
 
@@ -103,7 +107,7 @@ Keyboard summary:
 
 For a full end-to-end guide covering launch, recording, playback, and MIT gain experiments, see:
 
-- `docs/development/mit_trajectory_recording_and_playback.md`
+- `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`
 
 ## Basic Position Hold Test
 

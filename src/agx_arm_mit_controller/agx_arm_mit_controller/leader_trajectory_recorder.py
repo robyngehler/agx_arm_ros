@@ -4,7 +4,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import rclpy
 from rclpy.node import Node
@@ -127,19 +127,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _record_trajectory(node: LeaderTrajectoryRecorderNode, args: argparse.Namespace) -> tuple[list[RecorderSnapshot], int]:
+def record_trajectory(
+    node: LeaderTrajectoryRecorderNode,
+    *,
+    sample_rate: float,
+    hold_timeout: float,
+    movement_threshold: float,
+    wait_for_enter: bool = True,
+) -> tuple[list[RecorderSnapshot], int]:
     joint_names = list(node.leader_joint_state.name) if node.leader_joint_state is not None else []
     if not joint_names:
         raise RuntimeError("leader_joint_angles does not contain joint names")
 
-    print("Press Enter to start recording once the arm is in leader mode.")
-    input()
+    if wait_for_enter:
+        print("Press Enter to start recording once the arm is in leader mode.")
+        input()
 
     samples: list[RecorderSnapshot] = []
     last_motion_time = time.monotonic()
     motion_started = False
     recording_start = time.monotonic()
-    period = 1.0 / args.sample_rate
+    period = 1.0 / sample_rate
 
     while rclpy.ok():
         loop_start = time.monotonic()
@@ -153,12 +161,12 @@ def _record_trajectory(node: LeaderTrajectoryRecorderNode, args: argparse.Namesp
                 abs(current - previous)
                 for current, previous in zip(snapshot.positions, samples[-1].positions)
             ]
-            if max(deltas, default=0.0) >= args.movement_threshold:
+            if max(deltas, default=0.0) >= movement_threshold:
                 motion_started = True
                 last_motion_time = loop_start
 
         samples.append(snapshot)
-        if motion_started and (loop_start - last_motion_time) >= args.hold_timeout:
+        if motion_started and (loop_start - last_motion_time) >= hold_timeout:
             break
 
         sleep_time = max(0.0, period - (time.monotonic() - loop_start))
@@ -174,8 +182,52 @@ def _record_trajectory(node: LeaderTrajectoryRecorderNode, args: argparse.Namesp
         efforts=[sample.efforts for sample in samples],
         flange_poses=[sample.flange_pose for sample in samples],
     )
-    _, last_motion_index = trim_trailing_stationary_points(provisional_points, args.movement_threshold)
+    _, last_motion_index = trim_trailing_stationary_points(provisional_points, movement_threshold)
     return samples[: last_motion_index + 1], len(samples)
+
+
+def build_recorded_trajectory(
+    *,
+    name: str,
+    joint_names: list[str],
+    sample_rate: float,
+    hold_timeout: float,
+    movement_threshold: float,
+    samples: list[RecorderSnapshot],
+    raw_sample_count: int,
+    urdf_path: str | None = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> RecordedTrajectory:
+    points = with_finite_difference_velocities(
+        times=[sample.time_from_start for sample in samples],
+        positions=[sample.positions for sample in samples],
+        efforts=[sample.efforts for sample in samples],
+        flange_poses=[sample.flange_pose for sample in samples],
+    )
+    trimmed_points, last_motion_index = trim_trailing_stationary_points(points, movement_threshold)
+
+    payload_metadata: dict[str, Any] = {
+        "recording_mode": "leader",
+        "position_source": "feedback/leader_joint_angles",
+        "movement_threshold_rad": movement_threshold,
+        "hold_timeout_s": hold_timeout,
+        "raw_sample_count": raw_sample_count,
+        "trimmed_sample_count": len(trimmed_points),
+        "last_motion_index": last_motion_index,
+        "gravity_context": build_gravity_context(urdf_path or None),
+    }
+    if metadata:
+        payload_metadata.update(metadata)
+
+    return RecordedTrajectory(
+        name=name,
+        robot="nero",
+        joint_names=joint_names,
+        sample_rate_hz=sample_rate,
+        recorded_at=default_recorded_at(),
+        points=trimmed_points,
+        metadata=payload_metadata,
+    )
 
 
 def main() -> None:
@@ -205,15 +257,13 @@ def main() -> None:
             "Leader mode is active. Move the arm by hand. Recording will stop automatically "
             f"after {args.hold_timeout:.1f}s without detected motion."
         )
-        samples, raw_sample_count = _record_trajectory(node, args)
-        joint_names = list(node.leader_joint_state.name)
-        points = with_finite_difference_velocities(
-            times=[sample.time_from_start for sample in samples],
-            positions=[sample.positions for sample in samples],
-            efforts=[sample.efforts for sample in samples],
-            flange_poses=[sample.flange_pose for sample in samples],
+        samples, raw_sample_count = record_trajectory(
+            node,
+            sample_rate=args.sample_rate,
+            hold_timeout=args.hold_timeout,
+            movement_threshold=args.movement_threshold,
         )
-        trimmed_points, last_motion_index = trim_trailing_stationary_points(points, args.movement_threshold)
+        joint_names = list(node.leader_joint_state.name)
 
         default_name = sanitize_trajectory_name(time.strftime("nero_leader_%Y%m%d_%H%M%S"))
         requested_name = args.name.strip() or input(f"Trajectory name [{default_name}]: ").strip() or default_name
@@ -223,24 +273,15 @@ def main() -> None:
         if file_path.exists():
             file_path = output_dir / f"{save_name}_{time.strftime('%H%M%S')}.json"
 
-        gravity_context = build_gravity_context(args.urdf_path or None)
-        trajectory = RecordedTrajectory(
+        trajectory = build_recorded_trajectory(
             name=save_name,
-            robot="nero",
             joint_names=joint_names,
-            sample_rate_hz=args.sample_rate,
-            recorded_at=default_recorded_at(),
-            points=trimmed_points,
-            metadata={
-                "recording_mode": "leader",
-                "position_source": "feedback/leader_joint_angles",
-                "movement_threshold_rad": args.movement_threshold,
-                "hold_timeout_s": args.hold_timeout,
-                "raw_sample_count": raw_sample_count,
-                "trimmed_sample_count": len(trimmed_points),
-                "last_motion_index": last_motion_index,
-                "gravity_context": gravity_context,
-            },
+            sample_rate=args.sample_rate,
+            hold_timeout=args.hold_timeout,
+            movement_threshold=args.movement_threshold,
+            samples=samples,
+            raw_sample_count=raw_sample_count,
+            urdf_path=args.urdf_path or None,
         )
         saved_path = save_recorded_trajectory(trajectory, file_path)
         print(f"Saved trajectory to {saved_path}")

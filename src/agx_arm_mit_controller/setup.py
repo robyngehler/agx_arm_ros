@@ -32,6 +32,7 @@ setup(
             "agx_arm_mit_controller = agx_arm_mit_controller.mit_controller_node:main",
             "agx_arm_record_leader_trajectory = agx_arm_mit_controller.leader_trajectory_recorder:main",
             "agx_arm_execute_saved_trajectory = agx_arm_mit_controller.execute_saved_trajectory:main",
+            "agx_arm_wakeword_motion_manager = agx_arm_mit_controller.wakeword_motion_manager:main",
             "agx_arm_test_position_hold = agx_arm_mit_controller.test_position_hold:main",
             "agx_arm_validate_urdf_mdh = agx_arm_mit_controller.validate_urdf_mdh:main",
             "agx_arm_compare_gravity = agx_arm_mit_controller.compare_gravity:main",

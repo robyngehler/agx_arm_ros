@@ -828,7 +828,16 @@ class AgxArmRosNode(Node):
     ### service callbacks
     def _enable_callback(self, request, response):
         try:
-            if not self._check_arm_ready():
+            if request.data and self.enable_flag:
+                response.success = True
+                response.message = "Agx_arm already enabled"
+                return response
+            if not request.data and not self.enable_flag:
+                response.success = True
+                response.message = "Agx_arm already disabled"
+                return response
+
+            if not self._check_arm_connected():
                 response.success = False
                 response.message = "Agx_arm is not connected"
                 self.get_logger().warn("Agx_arm is not connected, cannot set enable state")
