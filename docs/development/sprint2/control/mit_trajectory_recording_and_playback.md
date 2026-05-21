@@ -199,7 +199,18 @@ python3 ../wakeword-benchmark/scripts/trigger_service_oww.py \
   --threshold 0.6 \
   --consecutive-hits 2 \
   --cooldown 3.0 \
-  --ros-trigger-service /agx_arm_motion_manager/trigger_motion
+  --ros-trigger-service /agx_arm_motion_manager/trigger_motion \
+  --device 24
+```
+
+Find the device number with:
+
+```bash
+cd ~/workspace/wakeword-benchmark
+.venv-oww/bin/python - <<'PY'
+import sounddevice as sd
+print(sd.query_devices())
+PY
 ```
 
 If you use the external listener without `--ros-trigger-service`, its `--action` fallback now executes without a shell by default. Only enable `--action-shell` when shell features are explicitly needed.

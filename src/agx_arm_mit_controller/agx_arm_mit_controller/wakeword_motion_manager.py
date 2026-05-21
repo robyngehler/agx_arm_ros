@@ -27,6 +27,11 @@ class ManagerState(str, Enum):
     PLAYBACK = "playback"
 
 
+TRANSIENT_MODE_STARTUP_MESSAGES = {
+    "Agx_arm is not connected",
+}
+
+
 class TerminalKeyReader:
     def __init__(self, enabled: bool) -> None:
         self.enabled = enabled and sys.stdin.isatty()
@@ -109,7 +114,7 @@ class WakewordMotionManagerNode(SavedTrajectoryExecutorNode):
     def missing_service_labels(self, state: ManagerState) -> list[str]:
         missing: list[str] = []
         for label, client in self._required_service_clients(state):
-            if not client.wait_for_service(timeout_sec=0.0):
+            if not client.wait_for_service(timeout_sec=0.1):
                 missing.append(label)
         return missing
 
@@ -148,6 +153,9 @@ class WakewordMotionManagerNode(SavedTrajectoryExecutorNode):
         return False
 
     def call_enable_arm(self, enabled: bool, timeout_s: float) -> tuple[bool, str]:
+        if not self.enable_arm_client.wait_for_service(timeout_sec=timeout_s):
+            return False, "Service enable_agx_arm is not available"
+
         request = SetBool.Request()
         request.data = enabled
         future = self.enable_arm_client.call_async(request)
@@ -159,31 +167,55 @@ class WakewordMotionManagerNode(SavedTrajectoryExecutorNode):
             self.arm_enable_verified = enabled
         return bool(response.success), response.message
 
+    def _retry_deadline(self, timeout_s: float) -> float:
+        return time.monotonic() + max(timeout_s, 0.1)
+
+    def _sleep_before_retry(self, deadline: float, retry_interval_s: float = 0.25) -> bool:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return False
+        time.sleep(min(retry_interval_s, remaining))
+        return True
+
     def call_mode_trigger_with_auto_enable(self, client, label: str, timeout_s: float) -> tuple[bool, str]:
-        success, message = self.call_trigger_client(client, label, timeout_s)
-        if success:
-            self.arm_enable_verified = True
-            return True, message
+        deadline = self._retry_deadline(timeout_s)
+        last_message = ""
 
-        if message != "Agx_arm is not enabled" or not self.args.auto_enable_arm:
-            return False, message
+        while rclpy.ok():
+            remaining = max(0.1, deadline - time.monotonic())
+            success, message = self.call_trigger_client(client, label, remaining)
+            if success:
+                self.arm_enable_verified = True
+                return True, message
 
-        self.arm_enable_verified = False
-        enable_success, enable_message = self.call_enable_arm(True, timeout_s)
-        if not enable_success:
-            return False, enable_message or message
+            last_message = message
+            if message == "Agx_arm is not enabled" and self.args.auto_enable_arm:
+                self.arm_enable_verified = False
+                enable_success, enable_message = self.call_enable_arm(True, remaining)
+                if enable_success:
+                    continue
+                last_message = enable_message or message
 
-        success, message = self.call_trigger_client(client, label, timeout_s)
-        if success:
-            self.arm_enable_verified = True
-        return success, message
+            if last_message not in TRANSIENT_MODE_STARTUP_MESSAGES:
+                return False, last_message
 
-    def call_set_normal_mode(self, timeout_s: float) -> bool:
-        success, _ = self.call_mode_trigger_with_auto_enable(
+            self.get_logger().warn(
+                f"{label} is waiting for arm readiness: {last_message}"
+            )
+            if not self._sleep_before_retry(deadline):
+                return False, last_message
+
+        return False, last_message or f"Interrupted while calling {label}"
+
+    def call_set_normal_mode_with_detail(self, timeout_s: float) -> tuple[bool, str]:
+        return self.call_mode_trigger_with_auto_enable(
             self.set_normal_mode_client,
             "set_normal_mode",
             timeout_s,
         )
+
+    def call_set_normal_mode(self, timeout_s: float) -> bool:
+        success, _ = self.call_set_normal_mode_with_detail(timeout_s)
         return success
 
     def call_set_leader_mode(self, timeout_s: float) -> tuple[bool, str]:
@@ -305,8 +337,10 @@ class WakewordMotionManagerNode(SavedTrajectoryExecutorNode):
 
     def enter_idle_mode(self) -> None:
         self.disable_mit(required=False)
-        if not self.call_set_normal_mode(self.args.service_timeout):
-            raise RuntimeError("Failed to switch robot to normal mode before entering idle")
+        success, message = self.call_set_normal_mode_with_detail(self.args.service_timeout)
+        if not success:
+            detail = f": {message}" if message else ""
+            raise RuntimeError(f"Failed to switch robot to normal mode before entering idle{detail}")
         success, message = self.call_set_leader_mode(self.args.service_timeout)
         if not success:
             detail = f": {message}" if message else ""
@@ -319,8 +353,10 @@ class WakewordMotionManagerNode(SavedTrajectoryExecutorNode):
 
     def enter_record_mode(self) -> None:
         self.disable_mit(required=False)
-        if not self.call_set_normal_mode(self.args.service_timeout):
-            raise RuntimeError("Failed to switch robot to normal mode before entering record mode")
+        success, message = self.call_set_normal_mode_with_detail(self.args.service_timeout)
+        if not success:
+            detail = f": {message}" if message else ""
+            raise RuntimeError(f"Failed to switch robot to normal mode before entering record mode{detail}")
         success, message = self.call_set_leader_mode(self.args.service_timeout)
         if not success:
             detail = f": {message}" if message else ""
@@ -332,8 +368,10 @@ class WakewordMotionManagerNode(SavedTrajectoryExecutorNode):
         self.print_status()
 
     def enter_playback_mode(self) -> None:
-        if not self.call_set_normal_mode(self.args.service_timeout):
-            raise RuntimeError("Failed to switch robot to normal mode before entering playback mode")
+        success, message = self.call_set_normal_mode_with_detail(self.args.service_timeout)
+        if not success:
+            detail = f": {message}" if message else ""
+            raise RuntimeError(f"Failed to switch robot to normal mode before entering playback mode{detail}")
         if not self.wait_for_fresh_joint_state(self.args.feedback_timeout):
             raise RuntimeError("Did not receive fresh feedback/joint_states in playback mode")
         success, message = self.call_enable_mit(True, self.args.service_timeout)
