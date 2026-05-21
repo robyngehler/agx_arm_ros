@@ -28,4 +28,6 @@ Sprint 2 is still active. The shared ROS2 contract, package baseline, and the fi
 - [ ] Validate the shared arm-plus-hand runtime contract against real device behavior.
 - [ ] Decide whether `control/omnihand/joint_trajectory` remains compatibility-only or should evolve into a longer-term action or controller surface.
 - [ ] Confirm whether the bridge still belongs in `agx_arm_ctrl` once the first real backend is proven.
-- [ ] Capture the handoff boundary from Sprint 2 into Sprint 3 without reopening package-placement decisions.
+- [x] Capture the handoff boundary from Sprint 2 into Sprint 3 without reopening package-placement decisions.
+
+The remaining unchecked Sprint 2 items are now all runtime or real-backend validation items around OmniHand.

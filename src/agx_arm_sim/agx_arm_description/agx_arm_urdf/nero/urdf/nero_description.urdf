@@ -210,4 +210,10 @@
         <axis xyz="0 0 1"/>
         <limit lower="-1.5707963" upper="1.5707963" effort="100" velocity="5"/>
     </joint>
+    <link name="nero_tool0"/>
+    <joint name="nero_tool0_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <parent link="link7"/>
+        <child link="nero_tool0"/>
+    </joint>
 </robot>

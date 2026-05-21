@@ -217,7 +217,7 @@ If the vendor ROS node later becomes necessary, it should be wrapped as a backen
 | Hand side arg | `revo2_type:=left|right` | add `omnihand_type:=left|right` |
 | Description include | gripper/Revo2-specific xacros | add `nero_with_left_omnihand_description.xacro` and `nero_with_right_omnihand_description.xacro` |
 | Fake ros2_control | arm plus hand joints | add a 10-active-joint OmniHand controller profile |
-| SRDF groups | `arm`, `gripper`, `hand` | keep `hand`, but define OmniHand-specific joint set and states |
+| SRDF groups | `nero_arm`, `gripper`, `hand` | keep `hand`, but define OmniHand-specific joint set and states |
 
 ### Local Joint Naming Contract
 

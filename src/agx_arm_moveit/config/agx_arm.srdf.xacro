@@ -21,7 +21,7 @@
       <joint name="${side}_pinky_abad_joint" />
       <joint name="${side}_pinky_pip_joint" />
     </group>
-    <end_effector name="${side}_omnihand_eef" parent_link="tcp_link" group="hand" parent_group="arm" />
+    <end_effector name="${side}_omnihand_eef" parent_link="tcp_link" group="hand" parent_group="nero_arm" />
     <group_state name="hand_open" group="hand">
       <joint name="${side}_thumb_roll_joint" value="0.0" />
       <joint name="${side}_thumb_abad_joint" value="0.0" />
@@ -88,8 +88,8 @@
     <disable_collisions link1="${side}_pinky_pip" link2="${side}_pinky_dip" reason="Adjacent" />
   </xacro:macro>
 
-  <!-- ======================== ARM GROUP ======================== -->
-  <group name="arm">
+  <!-- ======================== ARM GROUPS ======================== -->
+  <group name="nero_arm">
     <chain base_link="base_link" tip_link="tcp_link" />
   </group>
 
@@ -102,7 +102,7 @@
       <joint name="gripper_joint1" />
       <joint name="gripper_joint2" />
     </group>
-    <end_effector name="gripper_eef" parent_link="tcp_link" group="gripper" parent_group="arm" />
+    <end_effector name="gripper_eef" parent_link="tcp_link" group="gripper" parent_group="nero_arm" />
     <group_state name="gripper_open" group="gripper">
       <joint name="gripper_joint1" value="0.05" />
       <joint name="gripper_joint2" value="-0.05" />
@@ -154,7 +154,7 @@
       <link name="left_pinky_proximal_link" />
       <link name="left_pinky_distal_link" />
     </group>
-    <end_effector name="left_hand_eef" parent_link="tcp_link" group="hand" parent_group="arm" />
+    <end_effector name="left_hand_eef" parent_link="tcp_link" group="hand" parent_group="nero_arm" />
     <group_state name="hand_open" group="hand">
       <joint name="left_thumb_metacarpal_joint" value="0.0" />
       <joint name="left_thumb_proximal_joint" value="0.1" />
@@ -300,7 +300,7 @@
       <link name="right_pinky_proximal_link" />
       <link name="right_pinky_distal_link" />
     </group>
-    <end_effector name="right_hand_eef" parent_link="tcp_link" group="hand" parent_group="arm" />
+    <end_effector name="right_hand_eef" parent_link="tcp_link" group="hand" parent_group="nero_arm" />
     <group_state name="hand_open" group="hand">
       <joint name="right_thumb_metacarpal_joint" value="0.0" />
       <joint name="right_thumb_proximal_joint" value="0.1" />
@@ -433,18 +433,8 @@
   </xacro:if>
 
   <!-- ======================== HOME STATE ======================== -->
-  <xacro:unless value="$(eval arm_type == 'nero')">
-    <group_state name="home" group="arm">
-      <joint name="joint1" value="0" />
-      <joint name="joint2" value="0" />
-      <joint name="joint3" value="0" />
-      <joint name="joint4" value="0" />
-      <joint name="joint5" value="0" />
-      <joint name="joint6" value="0" />
-    </group_state>
-  </xacro:unless>
   <xacro:if value="$(eval arm_type == 'nero')">
-    <group_state name="home" group="arm">
+    <group_state name="home" group="nero_arm">
       <joint name="joint1" value="0" />
       <joint name="joint2" value="0" />
       <joint name="joint3" value="0" />
@@ -486,13 +476,5 @@
     <disable_collisions link1="link4" link2="link7" reason="Never" />
     <disable_collisions link1="link5" link2="link7" reason="Never" />
     <disable_collisions link1="link6" link2="link7" reason="Adjacent" />
-    <xacro:if value="$(eval effector_type == 'none')">
-      <disable_collisions link1="base_link" link2="end_effector" reason="Never" />
-      <disable_collisions link1="end_effector" link2="link1" reason="Never" />
-      <disable_collisions link1="end_effector" link2="link2" reason="Never" />
-      <disable_collisions link1="end_effector" link2="link3" reason="Never" />
-      <disable_collisions link1="end_effector" link2="link4" reason="Never" />
-      <disable_collisions link1="end_effector" link2="link7" reason="Adjacent" />
-    </xacro:if>
   </xacro:if>
 </robot>

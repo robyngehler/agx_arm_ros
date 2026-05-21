@@ -17,8 +17,8 @@ Current support:
 
 - Arm type: `nero`
 - End effectors: `none`, `agx_gripper`, `revo2`, `omnihand`
-- Planning groups: `arm`, `gripper`, `hand`
-- Kinematics plugin: KDL (`kdl_kinematics_plugin/KDLKinematicsPlugin`)
+- Planning groups: `nero_arm`, `gripper`, `hand`
+- Kinematics plugin: TRAC-IK (`trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin`)
 
 ## 1. Installation
 
@@ -36,8 +36,16 @@ sudo apt-get install -y \
     ros-$ROS_DISTRO-joint-trajectory-controller \
     ros-$ROS_DISTRO-joint-state-* \
     ros-$ROS_DISTRO-gripper-controllers \
-    ros-$ROS_DISTRO-trajectory-msgs
+  ros-$ROS_DISTRO-trajectory-msgs
 ```
+
+If `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` is available in your apt metadata, install it as well:
+
+```bash
+sudo apt-get install -y ros-$ROS_DISTRO-trac-ik-kinematics-plugin
+```
+
+On ROS 2 Humble / Jetson, `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` may be absent from the configured apt metadata. In that case, build TRAC-IK in a separate overlay and source it before this workspace. A reproducible reference is documented in [TRAC-IK Humble / Jetson repro](../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md).
 
 If your locale is not English, set:
 
@@ -52,8 +60,12 @@ source ~/.bashrc
 
 ```bash
 cd ~/agx_arm_ws
+source /opt/ros/$ROS_DISTRO/setup.bash
+if [ -f ~/workspace/trac_ik_ws/install/setup.bash ]; then source ~/workspace/trac_ik_ws/install/setup.bash; fi
 source install/setup.bash
 ```
+
+If you installed TRAC-IK from a distro package instead of a source overlay, the conditional line simply does nothing.
 
 No end effector:
 
@@ -137,15 +149,18 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - The active launch surface no longer exposes Piper-family options.
 - `namespace` still works for multi-instance isolation, but each instance is expected to use the Nero asset tree.
 - `publish_gripper_joint` is handled automatically in the combined bringup path to avoid invalid-joint warnings.
-- The current workspace still uses KDL rather than TRAC-IK.
+- The current MoveIt baseline expects TRAC-IK. If the distro package is unavailable on Humble / Jetson, use the documented source-build overlay and source `/opt/ros/$ROS_DISTRO/setup.bash`, `~/workspace/trac_ik_ws/install/setup.bash`, then this workspace's `install/setup.bash`.
+- `nero_tool0` now comes from the canonical Nero description package, while `tcp_link` remains the TCP and interactive planning target frame.
+- Simulation-only MoveIt validation across `none`, `agx_gripper`, `revo2`, and `omnihand` profiles is a valid hardening path before real-arm collision-checked execution.
 - OmniHand currently covers only the MoveIt simulation, RViz, SRDF, and fake `ros2_control` path. Real hardware bringup is still open.
+- A 2026-05-21 validation pass confirmed six-profile startup readiness with the external TRAC-IK overlay and a successful live `/compute_ik` call on `nero_arm`; the remaining known runtime issue is a Humble/aarch64 `move_group` shutdown crash after SIGINT.
 
 ### 2.5 RViz operations
 
 ![piper_moveit](./assets/pictures/piper_moveit.png)
 
 - Drag the interactive marker at the arm tip to define a target pose.
-- Use the MotionPlanning panel to switch between `arm`, `gripper`, and `hand`.
+- Use the MotionPlanning panel to switch between `nero_arm`, `gripper`, and `hand`.
 - Pick preset states such as `home`, `gripper_open`, `hand_half_close`, or `hand_close` from Goal State.
 
 ## 3. Troubleshooting

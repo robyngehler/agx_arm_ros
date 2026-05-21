@@ -35,11 +35,12 @@ interface_notes:
 - the wakeword-oriented motion-manager is ongoing application work and should not yet be treated as a frozen Sprint 2 runtime contract
 - default gravity behavior is Pinocchio-based with `gravity_feedforward_sign: -1.0`
 - when `gravity_urdf_path` and `calibration_file` are empty, the controller auto-discovers the canonical Nero URDF and `config/nero_gravity_calibration.json`
+- the gravity model now prefers the canonical `nero_tool0` frame and falls back to legacy flange names for existing assets
 - the launch file now prefers the source YAML in a colcon workspace so parameter tuning does not require a rebuild
 risks:
 - the ignored root legacy description tree can still drift away from the canonical sim-backed package if both copies are edited
 - controller-side model assumptions currently match standalone Nero better than future OmniHand or AGV-mounted variants
-- current frame/tool naming in code is not yet aligned with the roadmap's future canonical naming
+- controller-side use of the canonical `nero_tool0` path is now aligned in code, but the end-to-end real-arm validation of that naming is still pending
 recommended_next_action:
 - keep controller URDF discovery aligned with the sim-backed canonical `agx_arm_description` package
 - add a future-facing extension point for payload and mounting-pose metadata before Sprint 5, 8, and 9 work begins

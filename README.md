@@ -135,6 +135,14 @@ bash ./agx_arm_install_deps.sh
         ros-$ROS_DISTRO-trajectory-msgs
     ```
 
+    若 apt 元数据里存在 `ros-$ROS_DISTRO-trac-ik-kinematics-plugin`，请额外安装：
+
+    ```bash
+    sudo apt-get install -y ros-$ROS_DISTRO-trac-ik-kinematics-plugin
+    ```
+
+    在 ROS 2 Humble / Jetson 环境下，该 TRAC-IK apt 包可能不存在。此时请参考 [TRAC-IK Humble / Jetson 复现实录](./docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md)，在独立 overlay 中源码构建并先于 `agx_arm_ros` source。
+
     若系统语言区域设置不为英文区域，须设置为英文区域
 
     ```bash

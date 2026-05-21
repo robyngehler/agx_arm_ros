@@ -183,7 +183,9 @@ Notes:
 
 - The MoveIt path builds its own `robot_description` and `robot_description_semantic` through `agx_arm_moveit/config/*.xacro`.
 - The RViz compatibility path resolves directly into the canonical `agx_arm_description` asset tree.
-- `tcp_offset` becomes a fixed `tcp_link` joint in the MoveIt URDF path and becomes an optional `static_transform_publisher` in the RViz compatibility path when the offset is nonzero.
+- `tcp_offset` becomes a fixed `tcp_link` joint off `nero_tool0` in the MoveIt URDF path.
+- In the built-in Nero RViz compatibility path, `display_control.launch.py` now always publishes the `nero_tool0` to `tcp_link` transform, including the zero-offset case.
+- If `custom_model` is used in RViz, the custom asset owns its own TCP/flange frames and `display_control.launch.py` does not inject a Nero-specific `tcp_link` transform.
 
 ## 4. Config And Definition Dataflow
 

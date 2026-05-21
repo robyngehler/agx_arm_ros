@@ -39,7 +39,7 @@ ros2 launch agx_arm_description display_control.launch.py \
 	revo2_type:=left
 ```
 
-Nero uses `link7` as the flange link. In RViz, enable TF or expand `RobotModel -> Links` to inspect `link7` and `tcp_link`.
+Nero still uses `link7` as the physical flange link in the imported model. The planning-facing flange alias is `nero_tool0`, and `tcp_link` is the TCP frame derived from it. In RViz, enable TF or expand `RobotModel -> Links` to inspect `link7`, `nero_tool0`, and `tcp_link`.
 
 ## 3. Preview TCP offset
 
@@ -50,7 +50,7 @@ ros2 launch agx_arm_description display_control.launch.py \
 	tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
 ```
 
-This publishes `tcp_link` 0.12 m in front of `link7`.
+This publishes `tcp_link` 0.12 m in front of `nero_tool0` while keeping `link7` as the physical flange source frame.
 
 ## 4. Use TCP offset in MoveIt
 
@@ -61,4 +61,4 @@ ros2 launch agx_arm_moveit demo.launch.py \
 	tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
 ```
 
-With this set, the planning target and interactive marker align with `tcp_link`.
+With this set, the planning target and interactive marker align with `tcp_link`, while `nero_tool0` remains the Nero flange alias.

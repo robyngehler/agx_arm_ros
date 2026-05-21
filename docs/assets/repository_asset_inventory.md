@@ -25,7 +25,7 @@ promotion_date: 2026-05-12
 | --- | --- | --- |
 | `agx_arm_ctrl` | Runtime bridge to AgileX arm control topics and launch entry points | Reuse as-is; it is the current ROS2 hardware/control surface. |
 | `agx_arm_mit_controller` | Current MIT, gravity, calibration, and trajectory replay workflow | Reuse directly; it already contains the controller-side model assumptions Sprint 1 needs to document. |
-| `agx_arm_moveit` | Unified MoveIt2 config for Nero, AgileX gripper, Revo2, and the repo-owned OmniHand simulation path | Reuse directly; note that it is KDL-based today and not yet aligned to the roadmap's future `nero_arm` / TRAC-IK naming. |
+| `agx_arm_moveit` | Unified MoveIt2 config for Nero, AgileX gripper, Revo2, and the repo-owned OmniHand simulation path | Reuse directly; `nero_arm` is the active planning group, the current baseline expects TRAC-IK, and `tcp_link` remains distinct from the canonical `nero_tool0` flange alias. |
 | `agx_arm_msgs` | Custom message layer used by the controller stack | Reuse directly. |
 | `agx_arm_sim` | Simulation/tooling tree that now owns the canonical `agx_arm_description` package | Reuse directly for bundled Nero/Revo2 description assets, the control-compatible RViz launch, camera-stand assets, and the currently confirmed USD surface. |
 
@@ -68,7 +68,7 @@ This is usable now and aligned with the Sprint 1 canonical package decision.
 ## Reuse Instead Of Rewrite
 
 - Reuse `src/agx_arm_sim/agx_arm_description` as the canonical ROS package for URDF/Xacro, meshes, the bundled Nero/Revo2 asset tree, compatibility launch files, and the confirmed local USD surface.
-- Reuse `src/agx_arm_moveit` as the current planning baseline, even though later sprints will likely rename groups and change kinematics plugins.
+- Reuse `src/agx_arm_moveit` as the current planning baseline; it now carries the roadmap-facing `nero_arm` / `nero_tool0` semantics in a monolithic active surface plus a TRAC-IK-based MoveIt configuration.
 - Reuse `src/agx_arm_mit_controller` for gravity, trajectory replay, recorder, and calibration workflows.
 - Reuse `pyAgxArm` for SDK access, firmware selection, MDH comparison, and effector examples.
 - Do not start OmniHand or AGV implementation from scratch inside this repo until the missing upstream/vendor artifacts are actually available.

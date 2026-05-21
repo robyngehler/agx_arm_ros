@@ -134,6 +134,14 @@ Or install manually by executing the following commands in order:
         ros-$ROS_DISTRO-trajectory-msgs
     ```
 
+    If `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` is available in your apt metadata, install it as well:
+
+    ```bash
+    sudo apt-get install -y ros-$ROS_DISTRO-trac-ik-kinematics-plugin
+    ```
+
+    On ROS 2 Humble / Jetson, the TRAC-IK apt package may be missing. In that case, build TRAC-IK in a separate overlay and source it before `agx_arm_ros`; see [TRAC-IK Humble / Jetson repro](./docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md).
+
     If the system locale is not set to English, it must be set to English locale:
 
     ```bash

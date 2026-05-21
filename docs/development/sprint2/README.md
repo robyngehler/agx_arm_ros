@@ -47,7 +47,7 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 - Sprint 2 is still on course as the common environment and contract-hardening phase.
 - The repo already has the package-boundary baseline, OmniHand mock bridge skeleton, and simulation-first MoveIt integration expected in this phase.
 - The remaining Sprint 2 work is now less about repo discovery and more about runtime hardening, first real backend integration, and validating the hand contract against live behavior.
-- Sprint 3 should still wait until Sprint 2 stops moving the shared ROS2 contract and launch surfaces.
+- Sprint 3 can now start on arm-only MoveIt/MIT validation slices that do not reopen the shared ROS2 contract, launch ownership, or package-placement decisions.
 
 ## Document Map
 

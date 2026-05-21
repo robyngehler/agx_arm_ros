@@ -239,6 +239,12 @@
     <axis xyz="0 0 1"/>
     <limit effort="100" lower="-1.5707963" upper="1.5707963" velocity="5"/>
   </joint>
+  <link name="nero_tool0"/>
+  <joint name="nero_tool0_joint" type="fixed">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="link7"/>
+    <child link="nero_tool0"/>
+  </joint>
   <link name="gripper_flange">
     <inertial>
       <origin rpy="0 0 0" xyz="0.0 0.0 -0.00032"/>

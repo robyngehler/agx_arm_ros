@@ -67,7 +67,7 @@ class PinocchioGravityModel:
         self._pin.forwardKinematics(self._model, self._data, q)
         self._pin.updateFramePlacements(self._model, self._data)
 
-        frame_candidates = ["link7", "gripper_flange", "tool0", "flange"]
+        frame_candidates = ["nero_tool0", "link7", "gripper_flange", "tool0", "flange"]
         for frame_name in frame_candidates:
             if self._model.existFrame(frame_name):
                 frame_id = self._model.getFrameId(frame_name)

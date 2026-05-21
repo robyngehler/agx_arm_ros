@@ -63,7 +63,7 @@ def _resolve_builtin_model_path(
 
 
 def _flange_link(_arm_type):
-    return 'link7'
+    return 'nero_tool0'
 
 
 def _default_rviz_config_path(pkg_path):
@@ -147,7 +147,7 @@ def resolve_model_path(context, *args, **kwargs):
             *nodes,
         ]
 
-    if any(value != 0.0 for value in tcp_offset):
+    if not custom_model:
         flange = _flange_link(arm_type)
         x, y, z, rx, ry, rz = tcp_offset
         nodes.append(

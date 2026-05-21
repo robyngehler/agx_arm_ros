@@ -9,7 +9,7 @@
   <xacro:arg name="tcp_offset_rpy" default="0 0 0" />
 
   <xacro:property name="arm_type" value="$(arg arm_type)" />
-  <xacro:property name="flange_link" value="link7" />
+  <xacro:property name="flange_link" value="nero_tool0" />
 
   <xacro:if value="$(eval effector_type == 'agx_gripper')">
     <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/$(arg arm_type)/urdf/$(arg arm_type)_with_gripper_description.xacro" />
@@ -33,7 +33,7 @@
     <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/$(arg arm_type)/urdf/$(arg arm_type)_description.urdf" />
   </xacro:if>
 
-  <!-- TCP link: fixed offset from flange for MoveIt planning target -->
+  <!-- TCP link: fixed offset from the canonical Nero flange alias for MoveIt planning targets. -->
   <link name="tcp_link" />
   <joint name="tcp_joint" type="fixed">
     <parent link="${flange_link}" />

@@ -39,7 +39,7 @@ ros2 launch agx_arm_description display_control.launch.py \
 	revo2_type:=left
 ```
 
-Nero 的末端法兰是 `link7`。在 RViz 中启用 TF 或展开 `RobotModel -> Links` 即可查看 `link7` 与 `tcp_link`。
+导入的 Nero 模型仍以 `link7` 作为物理法兰链接；规划侧额外提供 `nero_tool0` 作为法兰别名，`tcp_link` 则表示由其派生出的 TCP。可在 RViz 中启用 TF 或展开 `RobotModel -> Links` 查看 `link7`、`nero_tool0` 与 `tcp_link`。
 
 ## 3. 预览 TCP 偏移
 
@@ -50,7 +50,7 @@ ros2 launch agx_arm_description display_control.launch.py \
 	tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
 ```
 
-上例会在 `link7` 前方 0.12 m 处发布 `tcp_link`。
+上例会在 `nero_tool0` 前方 0.12 m 处发布 `tcp_link`，同时保留 `link7` 作为物理法兰源坐标系。
 
 ## 4. 在 MoveIt 中使用 TCP 偏移
 
@@ -61,4 +61,4 @@ ros2 launch agx_arm_moveit demo.launch.py \
 	tcp_offset:='[0.0, 0.0, 0.12, 0.0, 0.0, 0.0]'
 ```
 
-设置后，规划目标和交互标记会对齐到 `tcp_link`。
+设置后，规划目标和交互标记会对齐到 `tcp_link`，而 `nero_tool0` 继续作为 Nero 法兰别名使用。
