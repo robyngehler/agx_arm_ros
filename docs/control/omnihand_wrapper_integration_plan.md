@@ -17,6 +17,7 @@ simulation_track_status: SHARED_COMMAND_SURFACE_LANDED
 	- the unpacked Python package refresh now succeeds even when `python -m build` is unavailable locally
 	- the built Python package imports successfully on this host
 	- the repo smoke test can probe that built package directly
+	- the repo-local SDK baseline is now fixed to a SocketCAN build on `aarch64`, with ZLG userspace treated as opt-in only when a native `aarch64` SDK exists
 - The remaining Phase 1 blocker is the live runtime/device layer:
 	- the isolated probe reaches CAN request traffic
 	- failed request traffic now yields a clean `runtime_probe_incomplete` result instead of a process crash
@@ -82,11 +83,13 @@ Work that should still wait for a validated live backend:
 
 See `docs/control/omnihand_ros_integration_options.md` for the detailed option analysis, diagrams, and recommended repo-owned ROS contract.
 
+The current `aarch64` local SDK policy and adapter matrix live in `docs/control/omnihand_vendor_sdk_aarch64.md`.
+
 ## Current Constraints
 
 - The vendor README documents Ubuntu 22.04 `x86_64`; this workspace host is `aarch64`.
 - The vendored userspace CAN bundle under `thirdParty/` is `usbcanfd_libusb_x64_1.0.10_250328`.
-- the stock ZLG-oriented Python packaging path copies that x64 userspace library into the Python package build; the local socket-backed path bypasses it
+- the repo-local `aarch64` build now treats SocketCAN as the default backend and no longer uses the bundled x64 userspace package by default
 - `assets/urdf/omnihand_right.urdf` contains absolute local mesh paths.
 - `assets/urdf/xacro/finger.xacro` contains a stray literal `y` before one joint declaration.
 - Multiple asset files reference `package://omnihand_description/...`, but the vendor tree does not provide a matching ROS package.
@@ -95,17 +98,18 @@ See `docs/control/omnihand_ros_integration_options.md` for the detailed option a
 
 ## Phase 0: Platform Gate
 
-Objective: determine whether isolated bring-up should happen on this host or move first to `x86_64`.
+Objective: fix the local SDK baseline on this host without mixing the upstream x86_64 path into the Jetson workflow.
 
 Tasks:
 
-- confirm whether Agibot provides an `aarch64`-compatible userspace CAN library or build path
-- if not, declare `aarch64` blocked for first runtime validation and move the first execution pass to an `x86_64` machine
-- keep the SDK vendored in this repo for inspection either way
+- keep `aarch64` as the target runtime for local bring-up
+- treat SocketCAN as the repo-local baseline on Jetson
+- use the ZLG userspace backend only when a native `aarch64` SDK is explicitly supplied
+- keep the adapter and backend decision record current in `docs/control/omnihand_vendor_sdk_aarch64.md`
 
 Exit criteria:
 
-- one documented answer for `aarch64`: supported here, or blocked and deferred to `x86_64`
+- one documented local `aarch64` SDK baseline exists and no longer relies on bundled x86_64-only userspace artifacts by default
 
 ## Phase 1: Isolated SDK Bring-Up
 
