@@ -174,6 +174,12 @@ cd ~/agx_arm_ws/src/agx_arm_ros/scripts
 bash can_activate.sh
 ```
 
+Example for Jetson AGX Orin with Nero on usb-can:
+```bash
+bash can_activate.sh can_nero 1000000 "1-4.2:1.0"
+```
+
+
 ### Launch Driver
 
 You can start the driver using a launch file or by running the node directly.

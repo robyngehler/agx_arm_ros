@@ -23,6 +23,8 @@ Sprint 2 is still active. The shared ROS2 contract, package baseline, and the fi
 
 - [ ] Validate the runtime graph from a live running launch in this environment rather than only from file inspection.
 - [ ] Land the first non-mock OmniHand backend behind the repo-owned bridge.
+- [x] Prove whether the currently attached OmniHand USB adapter exposes a real Linux CAN FD path on this host, then capture the result in Sprint 2 notes before attempting ROS2 bridge work.
+- [ ] Run the first isolated OmniHand SDK smoke test against a verified CAN FD interface on the current host, then capture the result in Sprint 2 notes before attempting ROS2 bridge work.
 - [ ] Validate the shared arm-plus-hand runtime contract against real device behavior.
 - [ ] Decide whether `control/omnihand/joint_trajectory` remains compatibility-only or should evolve into a longer-term action or controller surface.
 - [ ] Confirm whether the bridge still belongs in `agx_arm_ctrl` once the first real backend is proven.

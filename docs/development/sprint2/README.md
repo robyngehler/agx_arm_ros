@@ -29,6 +29,7 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 
 - `docs/development/sprint2/checklist.md`
 - `docs/development/sprint2/errors_and_fixes.md`
+- `docs/development/sprint2/omnihand_canfd_driver_investigation.md`
 - `docs/development/sprint2/open_questions.md`
 
 ## Current Snapshot
@@ -52,6 +53,7 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 
 - `checklist.md`: Sprint 2 task list and completion state.
 - `errors_and_fixes.md`: issues encountered while making the Sprint 2 baseline understandable and reusable.
+- `omnihand_canfd_driver_investigation.md`: verified Jetson-side findings and install paths for real OmniHand CAN FD bring-up.
 - `open_questions.md`: unresolved runtime and contract questions that still affect Sprint 2 exit criteria.
 
 ## Inputs Used For This Pass
