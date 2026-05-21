@@ -142,7 +142,7 @@ class OmniHandBridgeNode(Node):
     def __init__(self) -> None:
         super().__init__("omnihand_bridge_node")
 
-        self.declare_parameter("omnihand_type", "left")
+        self.declare_parameter("omnihand_type", "right")
         self.declare_parameter("backend_type", "mock")
         self.declare_parameter("pub_rate", 50.0)
         self.declare_parameter("tactile_sample_count", 32)
