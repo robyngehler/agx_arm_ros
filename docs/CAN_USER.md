@@ -39,8 +39,11 @@ python3 scripts/prepare_can_interfaces.py --roles nero
 - 同时准备机械臂与 OmniHand：`python3 scripts/prepare_can_interfaces.py --roles nero,omnihand`
 - 显式绑定某个 USB 口：`python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface 3-1.4:1.0`
 - 显式绑定当前 Linux 接口名：`python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface can0`
+- 在不改动仓库默认配置的前提下试验 OmniHand CAN FD 参数：`python3 scripts/prepare_can_interfaces.py --roles omnihand --dry-run --omnihand-can-interface can_omnihand --omnihand-bitrate 1000000 --omnihand-dbitrate 2000000 --omnihand-sample-point 0.75 --omnihand-dsample-point 0.75`
 
 若需修改默认目标名、波特率、CAN FD 数据波特率或预绑定的 USB 口，请编辑 `config/can_interface_roles.json`。
+
+如需做 Jetson `mttcan` 这类 bring-up 试验，可直接使用按角色覆盖的 `--<role>-bitrate`、`--<role>-dbitrate`、`--<role>-sample-point`、`--<role>-dsample-point` 参数。脚本仍会根据 `ip -details link show` 校验结果，若内核量化后的参数与请求值不一致会直接报错，避免把试验值误写成仓库基线。
 
 如果执行脚本时出现 `ip: command not found`，请安装 `ip` 指令，一般是 `sudo apt-get install iproute2`。
 

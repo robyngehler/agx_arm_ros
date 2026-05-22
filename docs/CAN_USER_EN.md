@@ -39,8 +39,11 @@ Common examples:
 - Prepare the arm and OmniHand together: `python3 scripts/prepare_can_interfaces.py --roles nero,omnihand`
 - Pin a role to a USB bus-info: `python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface 3-1.4:1.0`
 - Pin a role to the current Linux interface name: `python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface can0`
+- Try an OmniHand CAN FD candidate without changing the repo baseline: `python3 scripts/prepare_can_interfaces.py --roles omnihand --dry-run --omnihand-can-interface can_omnihand --omnihand-bitrate 1000000 --omnihand-dbitrate 2000000 --omnihand-sample-point 0.75 --omnihand-dsample-point 0.75`
 
 Edit `config/can_interface_roles.json` if you want to change the default target names, bitrates, CAN FD data bitrate, or pre-bound USB bus-info values.
+
+Role-specific `--<role>-bitrate`, `--<role>-dbitrate`, `--<role>-sample-point`, and `--<role>-dsample-point` overrides are intended for bring-up experiments such as Jetson `mttcan` CAN FD tuning. The script still verifies the applied settings against `ip -details link show`, so a quantized or rejected rate will fail fast instead of silently changing the repo baseline.
 
 If you see `ip: command not found` when executing the script, install the `ip` command, typically with:
 

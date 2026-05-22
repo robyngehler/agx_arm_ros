@@ -58,6 +58,21 @@ Runtime selector:
 export OMNIHAND_SOCKETCAN_IFACE=can_omnihand
 ```
 
+The repo-local SocketCAN backend now enables CAN FD bit-rate switching on transmit so that the SocketCAN path matches the vendor ZLG backend's CAN FD send semantics more closely.
+
+For Jetson `mttcan` bring-up, prefer per-role overrides through the repo-owned preparation script instead of editing the repo baseline while testing candidate timings:
+
+```bash
+python3 scripts/prepare_can_interfaces.py --roles omnihand \
+    --omnihand-can-interface can_omnihand \
+    --omnihand-bitrate 1000000 \
+    --omnihand-dbitrate 2000000 \
+    --omnihand-sample-point 0.75 \
+    --omnihand-dsample-point 0.75
+```
+
+If `ip -details link show` reports a different `dbitrate` than requested, treat that as a transport mismatch and keep debugging below ROS.
+
 ### ZLG userspace backend
 
 This is not the default local backend on Jetson.
