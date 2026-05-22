@@ -1,6 +1,6 @@
 import csv
 
-from agx_arm_mit_controller.fit_gravity_calibration import _fit_joint_calibration, _fit_scale_and_bias, _load_csv_rows
+from agx_arm_mit_tools.fit_gravity_calibration import _fit_joint_calibration, _fit_scale_and_bias, _load_csv_rows
 
 
 def test_fit_scale_and_bias_matches_linear_relation():

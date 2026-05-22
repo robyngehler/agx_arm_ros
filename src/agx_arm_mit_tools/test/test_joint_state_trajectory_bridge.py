@@ -1,6 +1,6 @@
 from sensor_msgs.msg import JointState
 
-from agx_arm_mit_controller.joint_state_trajectory_bridge import (
+from agx_arm_mit_tools.joint_state_trajectory_bridge import (
     build_single_point_trajectory,
     select_target_positions,
 )
