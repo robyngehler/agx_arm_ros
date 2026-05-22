@@ -19,3 +19,12 @@
     gravity_feedforward_sign: -1.0
     # Leave empty to auto-discover config/nero_gravity_calibration.json.
     calibration_file: ""
+    action_name: arm_controller/follow_joint_trajectory
+    action_feedback_rate_hz: 20.0
+    start_state_tolerance: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+    goal_position_tolerance: [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    goal_velocity_tolerance: [0.20, 0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
+    goal_time_tolerance_s: 0.5
+    allow_joint_reordering: false
+    reject_new_goal_while_executing: true
+    enable_debug_joint_trajectory_topic: false

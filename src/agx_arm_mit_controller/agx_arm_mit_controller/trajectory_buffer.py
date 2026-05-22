@@ -39,12 +39,34 @@ class JointTrajectoryBuffer:
         cls,
         expected_joint_names: Sequence[str],
         msg: object,
+        *,
+        allow_joint_reordering: bool = False,
     ) -> "JointTrajectoryBuffer":
         joint_names = tuple(getattr(msg, "joint_names", []))
-        if joint_names != tuple(expected_joint_names):
-            raise ValueError(
-                f"joint_names mismatch, expected {list(expected_joint_names)}, got {list(joint_names)}"
-            )
+        expected = tuple(expected_joint_names)
+        if joint_names == expected:
+            reorder_indices = tuple(range(len(expected)))
+        else:
+            if not allow_joint_reordering:
+                raise ValueError(
+                    f"joint_names mismatch, expected {list(expected_joint_names)}, got {list(joint_names)}"
+                )
+
+            if len(joint_names) != len(expected):
+                raise ValueError(
+                    f"joint_names mismatch, expected {list(expected_joint_names)}, got {list(joint_names)}"
+                )
+            if len(set(joint_names)) != len(joint_names):
+                raise ValueError("trajectory joint_names contains duplicates")
+
+            joint_index_map = {name: index for index, name in enumerate(joint_names)}
+            missing_joints = [joint for joint in expected if joint not in joint_index_map]
+            unknown_joints = [joint for joint in joint_names if joint not in expected]
+            if missing_joints or unknown_joints:
+                raise ValueError(
+                    f"joint_names mismatch, expected {list(expected_joint_names)}, got {list(joint_names)}"
+                )
+            reorder_indices = tuple(joint_index_map[joint] for joint in expected)
 
         parsed_points: list[_TrajectoryPoint] = []
         last_time = -1.0
@@ -57,16 +79,25 @@ class JointTrajectoryBuffer:
                 raise ValueError("trajectory point times must be strictly increasing")
             last_time = time_from_start
 
-            positions = tuple(float(value) for value in getattr(point, "positions", []))
+            positions_raw = tuple(float(value) for value in getattr(point, "positions", []))
             velocities_raw = tuple(float(value) for value in getattr(point, "velocities", []))
             efforts_raw = tuple(float(value) for value in getattr(point, "effort", []))
 
-            if len(positions) != width:
+            if len(positions_raw) != width:
                 raise ValueError(
-                    f"point {index} positions length mismatch, expected {width}, got {len(positions)}"
+                    f"point {index} positions length mismatch, expected {width}, got {len(positions_raw)}"
                 )
-            velocities = velocities_raw if velocities_raw else (0.0,) * width
-            efforts = efforts_raw if efforts_raw else (0.0,) * width
+            positions = tuple(positions_raw[reorder_index] for reorder_index in reorder_indices)
+            velocities = (
+                tuple(velocities_raw[reorder_index] for reorder_index in reorder_indices)
+                if velocities_raw
+                else (0.0,) * width
+            )
+            efforts = (
+                tuple(efforts_raw[reorder_index] for reorder_index in reorder_indices)
+                if efforts_raw
+                else (0.0,) * width
+            )
 
             if len(velocities) != width:
                 raise ValueError(
@@ -86,7 +117,7 @@ class JointTrajectoryBuffer:
                 )
             )
 
-        return cls(joint_names=joint_names, points=parsed_points)
+        return cls(joint_names=expected, points=parsed_points)
 
     @property
     def duration(self) -> float:
@@ -95,6 +126,15 @@ class JointTrajectoryBuffer:
     @property
     def final_point(self) -> SampledTrajectoryPoint:
         point = self._points[-1]
+        return SampledTrajectoryPoint(
+            positions=point.positions,
+            velocities=point.velocities,
+            efforts=point.efforts,
+        )
+
+    @property
+    def initial_point(self) -> SampledTrajectoryPoint:
+        point = self._points[0]
         return SampledTrajectoryPoint(
             positions=point.positions,
             velocities=point.velocities,

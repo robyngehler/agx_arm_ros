@@ -41,3 +41,20 @@ def test_joint_trajectory_buffer_rejects_name_mismatch():
         assert "joint_names mismatch" in str(exc)
     else:
         raise AssertionError("Expected ValueError for joint_names mismatch")
+
+
+def test_joint_trajectory_buffer_reorders_joint_names_when_enabled():
+    msg = SimpleNamespace(
+        joint_names=["joint2", "joint1"],
+        points=[make_point(1, [1.0, 2.0], [0.1, 0.2], [0.3, 0.4])],
+    )
+
+    buffer = JointTrajectoryBuffer.from_ros_message(
+        ["joint1", "joint2"],
+        msg,
+        allow_joint_reordering=True,
+    )
+
+    assert buffer.initial_point.positions == (2.0, 1.0)
+    assert buffer.initial_point.velocities == (0.2, 0.1)
+    assert buffer.initial_point.efforts == (0.4, 0.3)
