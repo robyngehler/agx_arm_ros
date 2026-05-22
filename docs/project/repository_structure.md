@@ -16,7 +16,9 @@ It is intentionally based on the repo as it exists today, not on a future rename
 | Canonical robot description | `src/agx_arm_sim/agx_arm_description` | Source of truth for Nero, Revo2, and repo-owned OmniHand description assets | Reuse directly; do not introduce a second discoverable description package. |
 | MoveIt baseline | `src/agx_arm_moveit` | Current Nero MoveIt configuration, fake `ros2_control`, RViz, and OmniHand simulation profile | Reuse directly; do not fork a second MoveIt package during Sprint 2. |
 | Runtime arm bridge | `src/agx_arm_ctrl` | Real arm ROS node, launch surfaces, and control-facing integration points | Reuse directly for runtime integration; add OmniHand bridge work without breaking the current arm path. |
-| MIT controller path | `src/agx_arm_mit_controller` | JointTrajectory-to-MIT execution, gravity model, replay, and validation tools | Reuse directly; keep controller semantics stable while Sprint 2 standardizes interfaces around it. |
+| MIT controller runtime | `src/agx_arm_mit_controller` | Integrated `FollowJointTrajectory` execution, MIT command generation, shared trajectory/gravity libraries, and curated controller configs | Reuse directly; keep production controller semantics stable while Sprint 2 standardizes interfaces around it. |
+| MIT demos | `src/agx_arm_mit_demos` | Interactive leader recording, saved-trajectory playback, and wakeword teach-and-trigger workflows | Keep app-layer demo entry points here instead of the controller runtime package. |
+| MIT tools | `src/agx_arm_mit_tools` | Debug bridges, hold validation, gravity comparison/calibration, and other non-production helpers | Keep bridge/debug/calibration entry points here so runtime ownership stays narrow. |
 | Custom ROS messages | `src/agx_arm_msgs` | Repo-owned message layer for controller and future OmniHand-specific diagnostics | Extend here for OmniHand-specific status and tactile messages. |
 | Vendored OmniHand SDK | `vendor/Omnihand-2025-SDK` | Third-party SDK, vendor ROS examples, and upstream asset source | Keep vendored; treat as upstream input, not as the public repo contract. |
 | Python reference workspace | `pyAgxArm` | Nero SDK, MDH tooling, and end-effector driver examples | Reuse as reference or backend support, not as the canonical ROS integration surface. |
@@ -59,7 +61,9 @@ Treat these directories as generated or runtime-managed:
 2. Do not split off a new MoveIt package during Sprint 2 unless the current package becomes unmaintainable.
 3. Keep the OmniHand adapter below ROS and keep the public ROS bridge repo-owned inside `src/agx_arm_ctrl` during Sprint 2.
 4. Add hand-specific runtime surfaces in a way that preserves the current Nero arm runtime path.
-5. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
+5. Keep the integrated MIT action server and `/control/move_mit` ownership in `src/agx_arm_mit_controller`.
+6. Put demo applications and workflow tooling under `src/agx_arm_mit_demos` or `src/agx_arm_mit_tools` rather than widening the controller runtime package.
+7. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
 
 ## Immediate Sprint 2 Deliverables Anchored To This Structure
 

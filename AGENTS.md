@@ -24,6 +24,9 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - Keep `src/agx_arm_sim/agx_arm_description` as the single discoverable description package.
 - Keep `src/agx_arm_moveit` as the current MoveIt baseline during Sprint 2.
 - Keep runtime arm and hand integration in `src/agx_arm_ctrl` during Sprint 2.
+- Keep production MIT control ownership in `src/agx_arm_mit_controller`.
+- Keep MIT demo and workflow apps in `src/agx_arm_mit_demos` instead of the controller runtime package.
+- Keep MIT debug bridges, hold checks, and calibration helpers in `src/agx_arm_mit_tools`.
 - Keep the OmniHand bridge in `src/agx_arm_ctrl` for now; only revisit a package split after a non-mock backend proves a separate boundary is useful.
 - Extend `src/agx_arm_msgs` for repo-owned OmniHand messages instead of creating a second message package.
 - Treat `vendor/Omnihand-2025-SDK` as upstream input, not as the public ROS contract.

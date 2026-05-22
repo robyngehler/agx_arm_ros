@@ -39,7 +39,7 @@ These points are what actually mattered for the final stable behavior:
 5. Load controller gains and gravity settings from a startup YAML via `params_file`.
 6. Leave `gravity_urdf_path` and `calibration_file` empty in the default Nero profiles to auto-discover the canonical URDF and `config/nero_gravity_calibration.json`.
 7. Use `gravity_feedforward_sign: -1.0` in the MIT command path.
-8. Keep the wakeword detector outside `agx_arm_ros` and let the ROS-side motion semantics stay inside `agx_arm_mit_controller`.
+8. Keep the wakeword detector outside `agx_arm_ros` and let the ROS-side motion semantics stay inside the MIT demo package instead of the controller runtime package.
 
 ## Prerequisites
 
@@ -88,7 +88,7 @@ calibration_file = ""           # auto-discover
 Run this before any trajectory replay:
 
 ```bash
-ros2 run agx_arm_mit_controller agx_arm_test_position_hold -- --duration 8.0
+ros2 run agx_arm_mit_tools agx_arm_test_position_hold -- --duration 8.0
 ```
 
 What it does:
@@ -109,7 +109,7 @@ Interpretation:
 Record a trajectory only after hold is working:
 
 ```bash
-ros2 run agx_arm_mit_controller agx_arm_record_leader_trajectory -- --output-dir ~/agx_arm_trajectories --auto-enable
+ros2 run agx_arm_mit_demos agx_arm_record_leader_trajectory -- --output-dir ~/agx_arm_trajectories --auto-enable
 ```
 
 What happens:
@@ -129,7 +129,7 @@ Important note:
 Replay with the MIT controller still running:
 
 ```bash
-ros2 run agx_arm_mit_controller agx_arm_execute_saved_trajectory -- ~/agx_arm_trajectories/pick_demo.json
+ros2 run agx_arm_mit_demos agx_arm_execute_saved_trajectory -- ~/agx_arm_trajectories/pick_demo.json
 ```
 
 What happens:
@@ -151,7 +151,7 @@ Replay behavior:
 Use this when you want to teach 5 to 6 wakeword motions once and then trigger them from an external listener:
 
 ```bash
-ros2 run agx_arm_mit_controller agx_arm_wakeword_motion_manager -- --auto-enable-arm --start-mode idle
+ros2 run agx_arm_mit_demos agx_arm_wakeword_motion_manager -- --auto-enable-arm --start-mode idle
 ```
 
 Startup behavior:
@@ -215,7 +215,7 @@ PY
 
 If you use the external listener without `--ros-trigger-service`, its `--action` fallback now executes without a shell by default. Only enable `--action-shell` when shell features are explicitly needed.
 
-That keeps wakeword detection outside the ROS package while moving all controller-state logic, teach/playback semantics, and trajectory-library handling into `agx_arm_mit_controller`.
+That keeps wakeword detection outside the ROS package while moving the teach/playback application layer into `agx_arm_mit_demos` and keeping the runtime controller itself narrow.
 
 ## Parameter Profiles
 
