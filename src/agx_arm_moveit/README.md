@@ -101,7 +101,18 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero load_simple_obstacles:=
 
 ### 2.2 控制真实机械臂
 
-一键启动控制节点、MoveIt 和 RViz：
+推荐使用新的公共组件启动面来走原生 MIT 执行路径：
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+  can_port:=can_nero \
+  arm_type:=nero \
+  effector_type:=agx_gripper \
+  load_simple_obstacles:=true
+```
+
+兼容旧的一键启动名称：
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
@@ -111,7 +122,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
   load_simple_obstacles:=true
 ```
 
-该一键启动路径默认 `use_mit_controller:=true`，因此 MoveIt 的 `arm_controller/follow_joint_trajectory` 会由 `agx_arm_mit_follow_joint_trajectory` 桥接到 `mit_controller/joint_trajectory`，而不是使用 fake `ros2_control` 轨迹执行器。若需退回旧路径，可显式设置 `use_mit_controller:=false`。
+该一键启动路径默认 `use_mit_controller:=true`，因此 MoveIt 的 `arm_controller/follow_joint_trajectory` 会直接连接到 `mit_controller` 暴露的集成 action server，由 MIT 控制器负责轨迹采样、容差检查和 `/control/move_mit` 发布，而不是使用 fake `ros2_control` 或独立桥接节点。若需退回旧路径，可显式设置 `use_mit_controller:=false`。
 
 带 Revo2 的一键启动示例：
 
@@ -144,6 +155,8 @@ ros2 launch agx_arm_moveit demo.launch.py \
   load_simple_obstacles:=true
 ```
 
+当 `use_mit_controller:=true` 时，`demo.launch.py` 不再启动旧的桥接执行路径，而是要求 MIT 控制器已经提供 `arm_controller/follow_joint_trajectory`。
+
 ### 2.3 启动参数
 
 | 参数 | 默认值 | 说明 | 可选值 |
@@ -155,7 +168,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 | `namespace` | 空字符串 | 当前 MoveIt/控制实例命名空间 | 任意合法 ROS 命名空间 |
 | `follow` | `false` | `true` 时订阅 `/feedback/joint_states`，推荐用于真机 / MIT 路径；`false` 时订阅 `/control/joint_states` | `true`, `false` |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度） | - |
-| `use_mit_controller` | `false` | `true` 时跳过 fake `ros2_control`，启动 `agx_arm_mit_follow_joint_trajectory` 并通过 MIT 软轨迹执行 | `true`, `false` |
+| `use_mit_controller` | `false` | `true` 时跳过 fake `ros2_control`，加载 `moveit_controllers_mit.yaml`，并要求 `mit_controller` 提供 `arm_controller/follow_joint_trajectory` | `true`, `false` |
 | `use_rviz` | `true` | 是否启动 RViz | `true`, `false` |
 | `db` | `false` | 是否启动 MoveIt warehouse 数据库 | `true`, `false` |
 | `load_simple_obstacles` | `false` | 是否加载仓库内置的基础障碍物集合 | `true`, `false` |
@@ -167,6 +180,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - `namespace` 仍可用于多实例隔离，但多个实例都应基于 Nero 资产树。
 - `publish_gripper_joint` 会在一键启动路径中自动处理，以避免 MoveIt 中出现无效关节告警。
 - `start_single_agx_arm_moveit.launch.py` 与 `start_single_agx_arm_rviz.launch.py` 默认都会走 MIT 软轨迹路径；`demo.launch.py` 仍保留 `use_mit_controller:=false` 作为纯仿真默认值。
+- `start_agx_arm_components.launch.py` 提供新的公共 agx_arm_ctrl 组件启动面，包含 `manual_vendor`、`debug_soft_target`、`moveit_mit` 三种模式。
 - 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 - `nero_tool0` 现在由 Nero 规范描述包直接提供，`tcp_link` 继续作为 TCP 与交互式规划目标参考帧。
 - `config/simple_obstacles.json` 只提供早期规划验证的保守基线；进入真机执行前仍应根据现场工装与工作空间自行调整。

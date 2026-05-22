@@ -220,9 +220,10 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 
 > **注意：**
 > - `start_single_agx_arm_rviz.launch.py` 默认 `use_mit_controller:=true`，因此 RViz 控制路径会优先走 MIT 软轨迹，而不是直接写 `/control/joint_states`。
-> - 当 `control:=true` 且 `use_mit_controller:=true` 时，RViz 关节滑条会发布到 `mit_controller/soft_target_joint_states`，再由 `agx_arm_mit_joint_state_bridge` 转成短段 `trajectory_msgs/JointTrajectory` 并送入 MIT 控制器。
+> - 当 `control:=true` 且 `use_mit_controller:=true` 时，RViz 关节滑条会发布到 `mit_controller/soft_target_joint_states`，再由 `agx_arm_mit_joint_state_bridge` 转成发往 `mit_controller` 的调试短段 `trajectory_msgs/JointTrajectory`。
 > - `mit_joint_target_duration_s` 用于调节每个滑条目标的软轨迹时长；若要退回原始 `/control/joint_states` 路径，可显式设置 `use_mit_controller:=false`。
 > - `follow:=true` 时，模型会订阅真实反馈并驱动显示；若只做状态跟随展示，推荐保持 `control:=false`。
+> - MIT 调试 topic 仅在 `control:=true` 时开启，且滑条桥接节点不再自动使能 MIT；在拖动滑条前请先显式使能 `mit_controller`。
 
 **MoveIt 一键启动（臂控 + MoveIt + RViz）：**
 
@@ -234,7 +235,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
     load_simple_obstacles:=true
 ```
 
-该启动方式默认 `use_mit_controller:=true`：会先启动 `start_nero_mit_controller.launch.py`，再让 MoveIt 通过 `arm_controller/follow_joint_trajectory` 把规划轨迹桥接到 `mit_controller/joint_trajectory`。`load_simple_obstacles:=true` 会通过 `src/agx_arm_moveit/scripts/apply_simple_obstacles.py` 将 [simple_obstacles.json](./src/agx_arm_moveit/config/simple_obstacles.json) 中的基础障碍物注入规划场景；如需替换障碍物集合，可传入 `simple_obstacles_config:=/abs/path/to/file.json`。若要退回旧的直接执行路径，可显式设置 `use_mit_controller:=false`。
+该启动方式默认 `use_mit_controller:=true`：会先启动 `start_nero_mit_controller.launch.py`，再让 MoveIt 通过 `arm_controller/follow_joint_trajectory` 直接调用 `mit_controller` 上的集成 MIT action server。`load_simple_obstacles:=true` 会通过 `src/agx_arm_moveit/scripts/apply_simple_obstacles.py` 将 [simple_obstacles.json](./src/agx_arm_moveit/config/simple_obstacles.json) 中的基础障碍物注入规划场景；如需替换障碍物集合，可传入 `simple_obstacles_config:=/abs/path/to/file.json`。若要退回旧的直接执行路径，可显式设置 `use_mit_controller:=false`。
 
 MIT 侧控制频率与参数文件可继续通过 `mit_control_rate_hz` 和 `mit_params_file` 调整。
 
@@ -248,9 +249,9 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
     tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
-该启动方式会复用 `agx_arm_ctrl` 作为硬件适配层，并额外启动一个面向应用的 MIT 控制节点。它现在除了 `can_port` 外，也直接暴露 `arm_type`、`effector_type`、`omnihand_type`、`launch_omnihand_bridge`、`omnihand_backend_type`、`auto_enable`、`fast_mode`、`speed_percent`、`pub_rate`、`enable_timeout`、`tcp_offset`、`gripper_default_effort`、`publish_gripper_joint` 等底层运行参数，同时额外提供 `control_rate_hz` 与 `params_file` 用于 MIT 回路配置。
+该启动方式会复用 `agx_arm_ctrl` 作为硬件适配层，并额外启动一个面向应用的 MIT 控制节点。它现在除了 `can_port` 外，也直接暴露 `arm_type`、`effector_type`、`omnihand_type`、`launch_omnihand_bridge`、`omnihand_backend_type`、`auto_enable`、`fast_mode`、`speed_percent`、`pub_rate`、`enable_timeout`、`tcp_offset`、`gripper_default_effort`、`publish_gripper_joint` 等底层运行参数，同时额外提供 `control_rate_hz`、`params_file`、`log_level`，以及用于 RViz 软目标调试的显式 `enable_debug_joint_trajectory_topic` 开关。
 
-该节点订阅 `feedback/joint_states`，接收 `trajectory_msgs/JointTrajectory`，并持续发布 `control/move_mit`，便于后续扩展软轨迹回放、重力补偿和碰撞监测。
+该节点订阅 `feedback/joint_states`，对外提供 `arm_controller/follow_joint_trajectory` 给 MoveIt 使用，并持续发布 `control/move_mit`。仅当显式开启调试输入时，它才接收调试用的 `~/joint_trajectory` topic，便于后续扩展软轨迹回放、重力补偿和碰撞监测。
 
 > 若需要同时启动机械臂控制节点、MoveIt2 和 RViz，请使用上面的 `start_single_agx_arm_moveit.launch.py`；它会自动接入关节反馈，并默认复用 MIT 软轨迹执行路径。详见 [Moveit](./src/agx_arm_moveit/README.md)。
 

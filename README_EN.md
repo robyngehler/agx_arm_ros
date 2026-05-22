@@ -221,9 +221,10 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 
 > **Note:**
 > - `start_single_agx_arm_rviz.launch.py` now defaults to `use_mit_controller:=true`, so the RViz control path prefers MIT soft trajectories instead of writing directly to `/control/joint_states`.
-> - When `control:=true` and `use_mit_controller:=true`, RViz joint sliders publish to `mit_controller/soft_target_joint_states`, and `agx_arm_mit_joint_state_bridge` turns those targets into short `trajectory_msgs/JointTrajectory` segments for the MIT controller.
+> - When `control:=true` and `use_mit_controller:=true`, RViz joint sliders publish to `mit_controller/soft_target_joint_states`, and `agx_arm_mit_joint_state_bridge` turns those targets into short debug `trajectory_msgs/JointTrajectory` segments for `mit_controller`.
 > - Use `mit_joint_target_duration_s` to tune the soft segment duration per slider update. Set `use_mit_controller:=false` if you intentionally want the legacy `/control/joint_states` path.
 > - `follow:=true` keeps the display synchronized with real feedback. If you only want state-follow visualization, keep `control:=false`.
+> - The MIT debug topic is enabled only while `control:=true`, and the slider bridge no longer auto-enables MIT. Enable `mit_controller` explicitly before driving sliders.
 
 **MoveIt One-Click Launch (Arm Control + MoveIt + RViz):**
 
@@ -235,7 +236,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
     load_simple_obstacles:=true
 ```
 
-> This launch file now defaults to `use_mit_controller:=true`: it starts `start_nero_mit_controller.launch.py` and routes MoveIt execution through `arm_controller/follow_joint_trajectory` into `mit_controller/joint_trajectory`. `load_simple_obstacles:=true` seeds the planning scene from [simple_obstacles.json](./src/agx_arm_moveit/config/simple_obstacles.json) via `src/agx_arm_moveit/scripts/apply_simple_obstacles.py`; use `simple_obstacles_config:=/abs/path/to/file.json` to replace that baseline. Set `use_mit_controller:=false` only if you explicitly want the legacy direct execution path.
+> This launch file now defaults to `use_mit_controller:=true`: it starts `start_nero_mit_controller.launch.py` and routes MoveIt execution through `arm_controller/follow_joint_trajectory` into the integrated MIT action server on `mit_controller`. `load_simple_obstacles:=true` seeds the planning scene from [simple_obstacles.json](./src/agx_arm_moveit/config/simple_obstacles.json) via `src/agx_arm_moveit/scripts/apply_simple_obstacles.py`; use `simple_obstacles_config:=/abs/path/to/file.json` to replace that baseline. Set `use_mit_controller:=false` only if you explicitly want the legacy direct execution path.
 
 Tune the MIT side with `mit_control_rate_hz` and `mit_params_file` as needed.
 
@@ -249,9 +250,9 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
     tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
-This launch reuses `agx_arm_ctrl` as the hardware adapter and starts the MIT application node on top. In addition to `can_port`, it now forwards the main `agx_arm_ctrl` runtime parameters directly: `arm_type`, `effector_type`, `omnihand_type`, `launch_omnihand_bridge`, `omnihand_backend_type`, `auto_enable`, `fast_mode`, `speed_percent`, `pub_rate`, `enable_timeout`, `tcp_offset`, `gripper_default_effort`, and `publish_gripper_joint`. It also exposes MIT-specific `control_rate_hz`, `params_file`, and `log_level`.
+This launch reuses `agx_arm_ctrl` as the hardware adapter and starts the MIT application node on top. In addition to `can_port`, it now forwards the main `agx_arm_ctrl` runtime parameters directly: `arm_type`, `effector_type`, `omnihand_type`, `launch_omnihand_bridge`, `omnihand_backend_type`, `auto_enable`, `fast_mode`, `speed_percent`, `pub_rate`, `enable_timeout`, `tcp_offset`, `gripper_default_effort`, and `publish_gripper_joint`. It also exposes MIT-specific `control_rate_hz`, `params_file`, `log_level`, and the opt-in `enable_debug_joint_trajectory_topic` guard for RViz soft-target debugging.
 
-The MIT node subscribes to `feedback/joint_states`, accepts `trajectory_msgs/JointTrajectory`, and publishes `control/move_mit` continuously so higher-level ROS applications can use a soft trajectory surface for playback, gravity feedforward, and collision-aware control extensions.
+The MIT node subscribes to `feedback/joint_states`, serves `arm_controller/follow_joint_trajectory` for MoveIt, publishes `control/move_mit` continuously, and only accepts the debug `~/joint_trajectory` topic when that input is explicitly enabled.
 
 ### Launch Parameters
 

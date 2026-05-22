@@ -36,7 +36,7 @@ sudo apt-get install -y \
     ros-$ROS_DISTRO-joint-trajectory-controller \
     ros-$ROS_DISTRO-joint-state-* \
     ros-$ROS_DISTRO-gripper-controllers \
-  ros-$ROS_DISTRO-trajectory-msgs
+    ros-$ROS_DISTRO-trajectory-msgs
 ```
 
 If `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` is available in your apt metadata, install it as well:
@@ -101,7 +101,18 @@ This calls `scripts/apply_simple_obstacles.py` and seeds the planning scene from
 
 ### 2.2 Control the real arm
 
-One-click launch for control, MoveIt, and RViz:
+Recommended common bringup for native MIT execution:
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+  can_port:=can_nero \
+  arm_type:=nero \
+  effector_type:=agx_gripper \
+  load_simple_obstacles:=true
+```
+
+Compatibility wrapper with the older combined launch name:
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
@@ -111,7 +122,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
   load_simple_obstacles:=true
 ```
 
-This combined bringup now defaults to `use_mit_controller:=true`, so MoveIt's `arm_controller/follow_joint_trajectory` execution is bridged by `agx_arm_mit_follow_joint_trajectory` into `mit_controller/joint_trajectory` instead of the fake `ros2_control` executor. Set `use_mit_controller:=false` only if you intentionally want the legacy path.
+This combined bringup now defaults to `use_mit_controller:=true`, so MoveIt sends `arm_controller/follow_joint_trajectory` goals directly to the integrated action server exposed by `mit_controller`. The fake `ros2_control` executor is skipped and the MIT controller owns trajectory sampling, tolerance checks, and `/control/move_mit` publishing. Set `use_mit_controller:=false` only if you intentionally want the legacy fake-controller path.
 
 Revo2 example:
 
@@ -144,6 +155,8 @@ ros2 launch agx_arm_moveit demo.launch.py \
   load_simple_obstacles:=true
 ```
 
+When `use_mit_controller:=true`, `demo.launch.py` no longer starts the legacy bridge path. It expects the MIT controller to already provide `arm_controller/follow_joint_trajectory`.
+
 ### 2.3 Launch parameters
 
 | Parameter | Default | Description | Options |
@@ -155,7 +168,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 | `namespace` | empty string | Namespace for the MoveIt/control instance | Any valid ROS namespace |
 | `follow` | `false` | `true` subscribes to `/feedback/joint_states` and is recommended for real-arm / MIT flows; `false` subscribes to `/control/joint_states` | `true`, `false` |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP offset [x, y, z, rx, ry, rz] in meters/radians | - |
-| `use_mit_controller` | `false` | When `true`, skip fake `ros2_control`, start `agx_arm_mit_follow_joint_trajectory`, and execute through the MIT soft-trajectory path | `true`, `false` |
+| `use_mit_controller` | `false` | When `true`, skip fake `ros2_control`, load `moveit_controllers_mit.yaml`, and expect `mit_controller` to provide `arm_controller/follow_joint_trajectory` | `true`, `false` |
 | `use_rviz` | `true` | Launch RViz | `true`, `false` |
 | `db` | `false` | Launch MoveIt warehouse database | `true`, `false` |
 | `load_simple_obstacles` | `false` | Load the repo-owned baseline obstacle set into the planning scene | `true`, `false` |
@@ -167,6 +180,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - `namespace` still works for multi-instance isolation, but each instance is expected to use the Nero asset tree.
 - `publish_gripper_joint` is handled automatically in the combined bringup path to avoid invalid-joint warnings.
 - `start_single_agx_arm_moveit.launch.py` and `start_single_agx_arm_rviz.launch.py` now default to the MIT soft-trajectory route. `demo.launch.py` still keeps `use_mit_controller:=false` as the simulation-first default.
+- `start_agx_arm_components.launch.py` provides the new common agx_arm_ctrl bringup surface with `manual_vendor`, `debug_soft_target`, and `moveit_mit` modes.
 - The current MoveIt baseline expects TRAC-IK. If the distro package is unavailable on Humble / Jetson, use the documented source-build overlay and source `/opt/ros/$ROS_DISTRO/setup.bash`, `~/workspace/trac_ik_ws/install/setup.bash`, then this workspace's `install/setup.bash`.
 - `nero_tool0` now comes from the canonical Nero description package, while `tcp_link` remains the TCP and interactive planning target frame.
 - `config/simple_obstacles.json` is only a conservative baseline for early planning checks. Adjust it to match the real fixture and workspace before executing on hardware.

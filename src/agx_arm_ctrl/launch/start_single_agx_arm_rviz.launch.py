@@ -238,16 +238,18 @@ def generate_launch_description():
             'control_rate_hz': LaunchConfiguration('mit_control_rate_hz'),
             'params_file': LaunchConfiguration('mit_params_file'),
             'log_level': LaunchConfiguration('log_level'),
+            'enable_debug_joint_trajectory_topic': LaunchConfiguration('control'),
         }.items(),
         condition=IfCondition(LaunchConfiguration('use_mit_controller')),
     )
 
     mit_joint_state_bridge = Node(
-        package='agx_arm_mit_controller',
+        package='agx_arm_mit_tools',
         executable='agx_arm_mit_joint_state_bridge',
         namespace=LaunchConfiguration('namespace'),
         parameters=[{
             'segment_duration_s': LaunchConfiguration('mit_joint_target_duration_s'),
+            'auto_enable': False,
         }],
         condition=IfCondition(
             PythonExpression([

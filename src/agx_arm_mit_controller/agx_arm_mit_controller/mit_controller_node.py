@@ -1,22 +1,29 @@
 from __future__ import annotations
 
 import math
+from enum import Enum
 from pathlib import Path
+import threading
 import time
 from typing import Optional
 
 import rclpy
+from control_msgs.action import FollowJointTrajectory
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
-from trajectory_msgs.msg import JointTrajectory
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.msg import AgxArmStatus, MoveMITMsg
 
 from .feedforward_model import CalibrationModel, load_calibration_model
 from .gravity_model import GravityModel, GravityModelError, create_gravity_model
 from .model_metadata import default_nero_calibration_path
-from .trajectory_buffer import JointTrajectoryBuffer, SampledTrajectoryPoint
+from .trajectory_buffer import JointTrajectoryBuffer, SampledTrajectoryPoint, duration_to_seconds
 
 
 def clamp(value: float, limit: float) -> float:
@@ -34,9 +41,24 @@ def scale_gravity_feedforward(
 CTRL_MODE_LINKAGE_TEACHING_INPUT_MODE = 0x06
 
 
+class ExecutionState(str, Enum):
+    DISABLED = "DISABLED"
+    IDLE_HOLD = "IDLE_HOLD"
+    ARMING = "ARMING"
+    EXECUTING_TRAJECTORY = "EXECUTING_TRAJECTORY"
+    CANCELING_TO_HOLD = "CANCELING_TO_HOLD"
+    HOLDING_FINAL_POINT = "HOLDING_FINAL_POINT"
+    LEADER_MODE = "LEADER_MODE"
+    STALE_FEEDBACK = "STALE_FEEDBACK"
+    FAULTED = "FAULTED"
+
+
 class NeroMitControllerNode(Node):
     def __init__(self) -> None:
-        super().__init__("agx_arm_nero_mit_controller")
+        super().__init__("mit_controller")
+
+        self.callback_group = ReentrantCallbackGroup()
+        self.state_lock = threading.RLock()
 
         self.declare_parameter(
             "joint_names",
@@ -58,6 +80,15 @@ class NeroMitControllerNode(Node):
         self.declare_parameter("gravity_scale", 1.0)
         self.declare_parameter("gravity_feedforward_sign", -1.0)
         self.declare_parameter("calibration_file", "")
+        self.declare_parameter("action_name", "arm_controller/follow_joint_trajectory")
+        self.declare_parameter("action_feedback_rate_hz", 20.0)
+        self.declare_parameter("start_state_tolerance", [0.10] * 7)
+        self.declare_parameter("goal_position_tolerance", [0.05] * 7)
+        self.declare_parameter("goal_velocity_tolerance", [0.20] * 7)
+        self.declare_parameter("goal_time_tolerance_s", 0.5)
+        self.declare_parameter("allow_joint_reordering", False)
+        self.declare_parameter("reject_new_goal_while_executing", True)
+        self.declare_parameter("enable_debug_joint_trajectory_topic", False)
 
         self.joint_names = list(self.get_parameter("joint_names").value)
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
@@ -76,9 +107,24 @@ class NeroMitControllerNode(Node):
         self.gravity_scale = float(self.get_parameter("gravity_scale").value)
         self.gravity_feedforward_sign = float(self.get_parameter("gravity_feedforward_sign").value)
         self.calibration_file = str(self.get_parameter("calibration_file").value)
+        self.action_name = str(self.get_parameter("action_name").value)
+        self.action_feedback_rate_hz = float(self.get_parameter("action_feedback_rate_hz").value)
+        self.start_state_tolerance = self._load_float_array("start_state_tolerance")
+        self.goal_position_tolerance = self._load_float_array("goal_position_tolerance")
+        self.goal_velocity_tolerance = self._load_float_array("goal_velocity_tolerance")
+        self.goal_time_tolerance_s = float(self.get_parameter("goal_time_tolerance_s").value)
+        self.allow_joint_reordering = bool(self.get_parameter("allow_joint_reordering").value)
+        self.reject_new_goal_while_executing = bool(
+            self.get_parameter("reject_new_goal_while_executing").value
+        )
+        self.enable_debug_joint_trajectory_topic = bool(
+            self.get_parameter("enable_debug_joint_trajectory_topic").value
+        )
 
         if self.control_rate_hz <= 0.0:
             raise ValueError("control_rate_hz must be > 0")
+        if self.action_feedback_rate_hz <= 0.0:
+            raise ValueError("action_feedback_rate_hz must be > 0")
 
         self.enabled = False
         self.enable_time_monotonic = 0.0
@@ -94,24 +140,83 @@ class NeroMitControllerNode(Node):
         self.gravity_model: Optional[GravityModel] = None
         self.calibration_model: Optional[CalibrationModel] = None
         self.leader_mode_active = False
+        self.arm_fault_active = False
+        self.arm_fault_message = ""
+        self.execution_state = ExecutionState.DISABLED
+        self.holding_final_point = False
+        self.active_goal_handle = None
+        self.external_cancel_requested = False
+        self.action_feedback_period_s = 1.0 / self.action_feedback_rate_hz
 
         self._init_feedforward_models()
 
         self.move_mit_pub = self.create_publisher(MoveMITMsg, "control/move_mit", 10)
         self.reference_pub = self.create_publisher(JointState, "~/reference_joint_states", 10)
-        self.create_subscription(JointState, "feedback/joint_states", self._feedback_callback, 50)
-        self.create_subscription(JointState, "feedback/leader_joint_angles", self._leader_feedback_callback, 50)
-        self.create_subscription(AgxArmStatus, "feedback/arm_status", self._arm_status_callback, 20)
-        self.create_subscription(JointTrajectory, "~/joint_trajectory", self._trajectory_callback, 10)
-        self.create_service(SetBool, "~/enable", self._enable_callback)
-        self.create_service(Empty, "~/hold_current", self._hold_current_callback)
-        self.create_service(Empty, "~/cancel_trajectory", self._cancel_trajectory_callback)
+        self.execution_state_pub = self.create_publisher(String, "~/execution_state", 10)
+        self.create_subscription(
+            JointState,
+            "feedback/joint_states",
+            self._feedback_callback,
+            50,
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
+            JointState,
+            "feedback/leader_joint_angles",
+            self._leader_feedback_callback,
+            50,
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
+            AgxArmStatus,
+            "feedback/arm_status",
+            self._arm_status_callback,
+            20,
+            callback_group=self.callback_group,
+        )
+        if self.enable_debug_joint_trajectory_topic:
+            self.create_subscription(
+                JointTrajectory,
+                "~/joint_trajectory",
+                self._trajectory_callback,
+                10,
+                callback_group=self.callback_group,
+            )
+        self.create_service(SetBool, "~/enable", self._enable_callback, callback_group=self.callback_group)
+        self.create_service(Empty, "~/hold_current", self._hold_current_callback, callback_group=self.callback_group)
+        self.create_service(
+            Empty,
+            "~/cancel_trajectory",
+            self._cancel_trajectory_callback,
+            callback_group=self.callback_group,
+        )
+        self.action_server = ActionServer(
+            self,
+            FollowJointTrajectory,
+            self.action_name,
+            execute_callback=self._execute_follow_joint_trajectory,
+            goal_callback=self._goal_callback,
+            cancel_callback=self._cancel_callback,
+            callback_group=self.callback_group,
+        )
 
-        self.timer = self.create_timer(1.0 / self.control_rate_hz, self._control_loop)
+        self.timer = self.create_timer(
+            1.0 / self.control_rate_hz,
+            self._control_loop,
+            callback_group=self.callback_group,
+        )
+        self._publish_execution_state(force=True)
         self.get_logger().info(
             f"MIT controller ready for joints {self.joint_names} at {self.control_rate_hz:.1f} Hz"
         )
         self.get_logger().info(f"MIT gains loaded: kp={self.kp}, kd={self.kd}")
+        self.get_logger().info(
+            f"FollowJointTrajectory action available on '{self.action_name}'"
+        )
+        if self.enable_debug_joint_trajectory_topic:
+            self.get_logger().warn(
+                "Debug ~/joint_trajectory input is enabled; keep it disabled during production MoveIt execution"
+            )
 
     def _init_feedforward_models(self) -> None:
         calibration_path: Path | None = None
@@ -162,6 +267,20 @@ class NeroMitControllerNode(Node):
         self.feedback_velocities = {joint: velocity_map.get(joint, 0.0) for joint in self.joint_names}
         self.last_feedback_monotonic = time.monotonic()
 
+    def _publish_execution_state(self, *, force: bool = False) -> None:
+        if not force and self.execution_state == self.execution_state:
+            pass
+
+        msg = String()
+        msg.data = self.execution_state.value
+        self.execution_state_pub.publish(msg)
+
+    def _set_execution_state(self, state: ExecutionState, *, force: bool = False) -> None:
+        if not force and self.execution_state == state:
+            return
+        self.execution_state = state
+        self._publish_execution_state(force=True)
+
     def _has_fresh_joint_feedback(self) -> bool:
         if self.last_joint_feedback_monotonic <= 0.0:
             return False
@@ -176,85 +295,134 @@ class NeroMitControllerNode(Node):
         return self.leader_mode_active or (self._has_fresh_leader_feedback() and not self._has_fresh_joint_feedback())
 
     def _feedback_callback(self, msg: JointState) -> None:
-        state_maps = self._joint_state_maps(msg)
-        if state_maps is None:
-            missing = [joint for joint in self.joint_names if joint not in msg.name]
-            self.get_logger().warn(f"feedback/joint_states missing joints {missing}")
-            return
+        with self.state_lock:
+            state_maps = self._joint_state_maps(msg)
+            if state_maps is None:
+                missing = [joint for joint in self.joint_names if joint not in msg.name]
+                self.get_logger().warn(f"feedback/joint_states missing joints {missing}")
+                return
 
-        position_map, velocity_map = state_maps
-        self.last_joint_feedback_monotonic = time.monotonic()
-        self._set_feedback_state(position_map, velocity_map)
+            position_map, velocity_map = state_maps
+            self.last_joint_feedback_monotonic = time.monotonic()
+            self._set_feedback_state(position_map, velocity_map)
 
     def _leader_feedback_callback(self, msg: JointState) -> None:
-        state_maps = self._joint_state_maps(msg)
-        if state_maps is None:
-            return
+        with self.state_lock:
+            state_maps = self._joint_state_maps(msg)
+            if state_maps is None:
+                return
 
-        self.last_leader_feedback_monotonic = time.monotonic()
-        if not self._should_use_leader_feedback():
-            return
+            self.last_leader_feedback_monotonic = time.monotonic()
+            if not self._should_use_leader_feedback():
+                return
 
-        position_map, velocity_map = state_maps
-        self._set_feedback_state(position_map, velocity_map)
-        if self.enabled and self.active_trajectory is None:
-            self.hold_reference = self._capture_current_reference()
+            position_map, velocity_map = state_maps
+            self._set_feedback_state(position_map, velocity_map)
+            if self.enabled and self.active_trajectory is None:
+                self.hold_reference = self._capture_current_reference()
+                self.holding_final_point = False
 
     def _arm_status_callback(self, msg: AgxArmStatus) -> None:
-        was_leader_mode_active = self.leader_mode_active
-        self.leader_mode_active = msg.ctrl_mode == CTRL_MODE_LINKAGE_TEACHING_INPUT_MODE
+        with self.state_lock:
+            was_leader_mode_active = self.leader_mode_active
+            self.leader_mode_active = msg.ctrl_mode == CTRL_MODE_LINKAGE_TEACHING_INPUT_MODE
 
-        if self.leader_mode_active and not was_leader_mode_active and self.active_trajectory is not None:
-            self.active_trajectory = None
-            self.get_logger().warn("Cancelled active MIT trajectory because the robot entered leader mode")
+            was_fault_active = self.arm_fault_active
+            self.arm_fault_active = int(msg.err_status) != 0
+            self.arm_fault_message = (
+                f"Arm status fault err_status={int(msg.err_status)}"
+                if self.arm_fault_active
+                else ""
+            )
 
-        if was_leader_mode_active and not self.leader_mode_active and self.enabled and self._has_fresh_feedback():
-            self.hold_reference = self._capture_current_reference()
+            if self.leader_mode_active and not was_leader_mode_active and self.active_trajectory is not None:
+                self.active_trajectory = None
+                self.external_cancel_requested = True
+                self.holding_final_point = False
+                self.set_execution_state_safe(ExecutionState.LEADER_MODE)
+                self.get_logger().warn(
+                    "Cancelled active MIT trajectory because the robot entered leader mode"
+                )
+
+            if self.arm_fault_active and not was_fault_active:
+                self.active_trajectory = None
+                if self._has_fresh_feedback():
+                    self.hold_reference = self._capture_current_reference()
+                self.holding_final_point = False
+                self.get_logger().error(self.arm_fault_message)
+                self.set_execution_state_safe(ExecutionState.FAULTED)
+
+            if was_leader_mode_active and not self.leader_mode_active and self.enabled and self._has_fresh_feedback():
+                self.hold_reference = self._capture_current_reference()
+                self.holding_final_point = False
+
+            if was_fault_active and not self.arm_fault_active and self.enabled and self._has_fresh_feedback():
+                self.hold_reference = self._capture_current_reference()
+                self.holding_final_point = False
+
+    def set_execution_state_safe(self, state: ExecutionState) -> None:
+        self._set_execution_state(state)
 
     def _trajectory_callback(self, msg: JointTrajectory) -> None:
-        try:
-            buffer = JointTrajectoryBuffer.from_ros_message(self.joint_names, msg)
-        except ValueError as exc:
-            self.get_logger().error(f"Rejected JointTrajectory: {exc}")
-            return
+        with self.state_lock:
+            if self.active_goal_handle is not None:
+                self.get_logger().warn(
+                    "Ignoring debug JointTrajectory because a FollowJointTrajectory goal is active"
+                )
+                return
 
-        self.active_trajectory = buffer
-        self.trajectory_start_monotonic = time.monotonic()
-        self.hold_reference = None
-        if self.auto_enable_on_trajectory and not self.enabled:
-            self._set_enabled(True)
-        self.get_logger().info(
-            f"Accepted trajectory with {len(msg.points)} points and {buffer.duration:.3f}s duration"
-        )
+            if not self.enabled:
+                self.get_logger().warn(
+                    "Rejecting debug JointTrajectory while MIT is disabled; enable mit_controller explicitly first"
+                )
+                return
+
+            buffer, _, detail = self._validate_trajectory_goal(msg)
+            if buffer is None:
+                self.get_logger().error(f"Rejected debug JointTrajectory: {detail}")
+                return
+
+            self._activate_trajectory(buffer)
+            self.get_logger().info(
+                f"Accepted debug trajectory with {len(msg.points)} points and {buffer.duration:.3f}s duration"
+            )
 
     def _enable_callback(self, request: SetBool.Request, response: SetBool.Response) -> SetBool.Response:
-        if request.data and not self._has_fresh_feedback():
-            response.success = False
-            response.message = "Cannot enable without fresh feedback/joint_states"
-            return response
+        with self.state_lock:
+            if request.data and not self._has_fresh_feedback():
+                response.success = False
+                response.message = "Cannot enable without fresh feedback/joint_states"
+                return response
 
-        self._set_enabled(request.data)
-        response.success = True
-        response.message = "enabled" if request.data else "disabled"
-        return response
+            self._set_enabled(request.data)
+            response.success = True
+            response.message = "enabled" if request.data else "disabled"
+            return response
 
     def _hold_current_callback(self, request: Empty.Request, response: Empty.Response) -> Empty.Response:
         del request
-        if not self._has_fresh_feedback():
-            self.get_logger().warn("Ignoring hold_current request without fresh feedback")
+        with self.state_lock:
+            if not self._has_fresh_feedback():
+                self.get_logger().warn("Ignoring hold_current request without fresh feedback")
+                return response
+            self.active_trajectory = None
+            self.hold_reference = self._capture_current_reference()
+            self.holding_final_point = False
+            self._set_execution_state(ExecutionState.IDLE_HOLD)
+            self.get_logger().info("Captured current joint state as MIT hold target")
             return response
-        self.active_trajectory = None
-        self.hold_reference = self._capture_current_reference()
-        self.get_logger().info("Captured current joint state as MIT hold target")
-        return response
 
     def _cancel_trajectory_callback(self, request: Empty.Request, response: Empty.Response) -> Empty.Response:
         del request
-        self.active_trajectory = None
-        if self._has_fresh_feedback():
-            self.hold_reference = self._capture_current_reference()
-        self.get_logger().info("Cancelled active MIT trajectory")
-        return response
+        with self.state_lock:
+            self.external_cancel_requested = True
+            self.active_trajectory = None
+            if self._has_fresh_feedback():
+                self.hold_reference = self._capture_current_reference()
+            self.holding_final_point = False
+            self._set_execution_state(ExecutionState.CANCELING_TO_HOLD)
+            self.get_logger().info("Cancelled active MIT trajectory")
+            return response
 
     def _set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
@@ -262,10 +430,22 @@ class NeroMitControllerNode(Node):
         if enabled:
             if self._has_fresh_feedback():
                 self.hold_reference = self._capture_current_reference()
+                self.holding_final_point = False
+            if self.leader_mode_active:
+                self._set_execution_state(ExecutionState.LEADER_MODE)
+            elif self.arm_fault_active:
+                self._set_execution_state(ExecutionState.FAULTED)
+            elif self.gain_ramp_time_s > 0.0:
+                self._set_execution_state(ExecutionState.ARMING)
+            else:
+                self._set_execution_state(ExecutionState.IDLE_HOLD)
             self.get_logger().info("MIT controller enabled")
         else:
             self.active_trajectory = None
             self.hold_reference = None
+            self.holding_final_point = False
+            self.external_cancel_requested = True
+            self._set_execution_state(ExecutionState.DISABLED)
             self.get_logger().info("MIT controller disabled")
 
     def _has_fresh_feedback(self) -> bool:
@@ -279,6 +459,349 @@ class NeroMitControllerNode(Node):
             velocities=(0.0,) * len(self.joint_names),
             efforts=(0.0,) * len(self.joint_names),
         )
+
+    def _activate_trajectory(self, buffer: JointTrajectoryBuffer) -> None:
+        if self.auto_enable_on_trajectory and not self.enabled:
+            self._set_enabled(True)
+        self.active_trajectory = buffer
+        self.trajectory_start_monotonic = time.monotonic()
+        self.hold_reference = None
+        self.holding_final_point = False
+        self.external_cancel_requested = False
+        self._set_execution_state(ExecutionState.EXECUTING_TRAJECTORY)
+
+    def _trajectory_buffer_from_message(self, msg: JointTrajectory) -> JointTrajectoryBuffer:
+        return JointTrajectoryBuffer.from_ros_message(
+            self.joint_names,
+            msg,
+            allow_joint_reordering=self.allow_joint_reordering,
+        )
+
+    def _validation_error_code(self, message: str) -> int:
+        if "joint_names" in message:
+            return FollowJointTrajectory.Result.INVALID_JOINTS
+        return FollowJointTrajectory.Result.INVALID_GOAL
+
+    def _position_errors(self, desired: SampledTrajectoryPoint) -> list[float]:
+        return [
+            float(desired.positions[index]) - self.feedback_positions.get(joint_name, 0.0)
+            for index, joint_name in enumerate(self.joint_names)
+        ]
+
+    def _velocity_errors(self, desired: SampledTrajectoryPoint) -> list[float]:
+        return [
+            float(desired.velocities[index]) - self.feedback_velocities.get(joint_name, 0.0)
+            for index, joint_name in enumerate(self.joint_names)
+        ]
+
+    def _validate_start_state(self, buffer: JointTrajectoryBuffer) -> str:
+        errors = self._position_errors(buffer.initial_point)
+        violations = [
+            (self.joint_names[index], errors[index], self.start_state_tolerance[index])
+            for index in range(len(self.joint_names))
+            if math.fabs(errors[index]) > self.start_state_tolerance[index]
+        ]
+        if not violations:
+            return ""
+
+        joint_name, error_value, tolerance = max(violations, key=lambda item: math.fabs(item[1]))
+        return (
+            f"Start state mismatch on {joint_name}: {error_value:.3f} rad exceeds "
+            f"tolerance {tolerance:.3f} rad"
+        )
+
+    def _validate_trajectory_goal(
+        self,
+        trajectory: JointTrajectory,
+    ) -> tuple[Optional[JointTrajectoryBuffer], int, str]:
+        if not self._has_fresh_feedback():
+            return (
+                None,
+                FollowJointTrajectory.Result.INVALID_GOAL,
+                "Cannot accept trajectory without fresh feedback/joint_states",
+            )
+        if self.leader_mode_active:
+            return (
+                None,
+                FollowJointTrajectory.Result.INVALID_GOAL,
+                "Cannot accept trajectory while leader mode is active",
+            )
+        if self.arm_fault_active:
+            return (
+                None,
+                FollowJointTrajectory.Result.INVALID_GOAL,
+                self.arm_fault_message or "Cannot accept trajectory while an arm fault is active",
+            )
+        if self.active_goal_handle is not None:
+            if self.reject_new_goal_while_executing:
+                return (
+                    None,
+                    FollowJointTrajectory.Result.INVALID_GOAL,
+                    "Another FollowJointTrajectory goal is already executing",
+                )
+            return (
+                None,
+                FollowJointTrajectory.Result.INVALID_GOAL,
+                "Goal preemption is not implemented yet; keep reject_new_goal_while_executing enabled",
+            )
+
+        try:
+            buffer = self._trajectory_buffer_from_message(trajectory)
+        except ValueError as exc:
+            detail = str(exc)
+            return None, self._validation_error_code(detail), detail
+
+        detail = self._validate_start_state(buffer)
+        if detail:
+            return None, FollowJointTrajectory.Result.INVALID_GOAL, detail
+
+        return buffer, FollowJointTrajectory.Result.SUCCESSFUL, ""
+
+    def _actual_point(self) -> JointTrajectoryPoint:
+        point = JointTrajectoryPoint()
+        point.positions = [self.feedback_positions.get(joint, 0.0) for joint in self.joint_names]
+        point.velocities = [self.feedback_velocities.get(joint, 0.0) for joint in self.joint_names]
+        point.effort = [0.0] * len(self.joint_names)
+        return point
+
+    def _point_from_sample(self, sample: SampledTrajectoryPoint) -> JointTrajectoryPoint:
+        point = JointTrajectoryPoint()
+        point.positions = list(sample.positions)
+        point.velocities = list(sample.velocities)
+        point.effort = list(sample.efforts)
+        return point
+
+    def _error_point(self, desired: SampledTrajectoryPoint) -> JointTrajectoryPoint:
+        point = JointTrajectoryPoint()
+        point.positions = self._position_errors(desired)
+        point.velocities = self._velocity_errors(desired)
+        point.effort = [0.0] * len(self.joint_names)
+        return point
+
+    def _goal_tolerances_from_request(
+        self,
+        goal_request: FollowJointTrajectory.Goal,
+    ) -> tuple[list[float], list[float], float]:
+        position_tolerance = list(self.goal_position_tolerance)
+        velocity_tolerance = list(self.goal_velocity_tolerance)
+        tolerance_by_name = {tolerance.name: tolerance for tolerance in goal_request.goal_tolerance if tolerance.name}
+
+        for index, joint_name in enumerate(self.joint_names):
+            tolerance = tolerance_by_name.get(joint_name)
+            if tolerance is None:
+                continue
+            if float(tolerance.position) > 0.0:
+                position_tolerance[index] = float(tolerance.position)
+            if float(tolerance.velocity) > 0.0:
+                velocity_tolerance[index] = float(tolerance.velocity)
+
+        goal_time_tolerance = duration_to_seconds(goal_request.goal_time_tolerance)
+        if goal_time_tolerance <= 0.0:
+            goal_time_tolerance = self.goal_time_tolerance_s
+
+        return position_tolerance, velocity_tolerance, goal_time_tolerance
+
+    def _goal_within_tolerance(
+        self,
+        desired: SampledTrajectoryPoint,
+        position_tolerance: list[float],
+        velocity_tolerance: list[float],
+    ) -> tuple[bool, str]:
+        position_errors = self._position_errors(desired)
+        velocity_errors = self._velocity_errors(desired)
+
+        for index, joint_name in enumerate(self.joint_names):
+            if math.fabs(position_errors[index]) > position_tolerance[index]:
+                return (
+                    False,
+                    f"Goal position tolerance violated on {joint_name}: {position_errors[index]:.3f} > {position_tolerance[index]:.3f}",
+                )
+            if math.fabs(velocity_errors[index]) > velocity_tolerance[index]:
+                return (
+                    False,
+                    f"Goal velocity tolerance violated on {joint_name}: {velocity_errors[index]:.3f} > {velocity_tolerance[index]:.3f}",
+                )
+
+        return True, ""
+
+    def _position_error_limit_violation(self, desired: SampledTrajectoryPoint) -> str:
+        errors = self._position_errors(desired)
+        for index, joint_name in enumerate(self.joint_names):
+            if math.fabs(errors[index]) > self.position_error_limit[index]:
+                return (
+                    f"Position error limit exceeded on {joint_name}: {errors[index]:.3f} > {self.position_error_limit[index]:.3f}"
+                )
+        return ""
+
+    def _success_result(self) -> FollowJointTrajectory.Result:
+        result = FollowJointTrajectory.Result()
+        result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+        return result
+
+    def _failed_result(self, code: int, message: str) -> FollowJointTrajectory.Result:
+        result = FollowJointTrajectory.Result()
+        result.error_code = code
+        result.error_string = message
+        return result
+
+    def _goal_callback(self, goal_request: FollowJointTrajectory.Goal):
+        with self.state_lock:
+            _, _, detail = self._validate_trajectory_goal(goal_request.trajectory)
+        if detail:
+            self.get_logger().error(f"Rejected FollowJointTrajectory goal: {detail}")
+            return GoalResponse.REJECT
+        return GoalResponse.ACCEPT
+
+    def _cancel_callback(self, goal_handle):
+        del goal_handle
+        return CancelResponse.ACCEPT
+
+    def _execute_follow_joint_trajectory(self, goal_handle):
+        with self.state_lock:
+            buffer, error_code, detail = self._validate_trajectory_goal(goal_handle.request.trajectory)
+            if buffer is None:
+                goal_handle.abort()
+                return self._failed_result(error_code, detail)
+
+            self.active_goal_handle = goal_handle
+            self._activate_trajectory(buffer)
+            start_time = self.trajectory_start_monotonic
+
+        self.get_logger().info(
+            f"Accepted FollowJointTrajectory goal with {len(goal_handle.request.trajectory.points)} points and {buffer.duration:.3f}s duration"
+        )
+
+        position_tolerance, velocity_tolerance, goal_time_tolerance = self._goal_tolerances_from_request(
+            goal_handle.request
+        )
+        next_feedback_time = 0.0
+
+        try:
+            while rclpy.ok():
+                if goal_handle.is_cancel_requested:
+                    with self.state_lock:
+                        self.active_trajectory = None
+                        if self._has_fresh_feedback():
+                            self.hold_reference = self._capture_current_reference()
+                        self.holding_final_point = False
+                        self.active_goal_handle = None
+                        self._set_execution_state(ExecutionState.CANCELING_TO_HOLD)
+                    goal_handle.canceled()
+                    return self._failed_result(
+                        FollowJointTrajectory.Result.INVALID_GOAL,
+                        "Goal canceled",
+                    )
+
+                with self.state_lock:
+                    if self.external_cancel_requested:
+                        self.external_cancel_requested = False
+                        self.active_goal_handle = None
+                        self._set_execution_state(ExecutionState.CANCELING_TO_HOLD)
+                        goal_handle.canceled()
+                        return self._failed_result(
+                            FollowJointTrajectory.Result.INVALID_GOAL,
+                            "Goal canceled by external MIT cancel request",
+                        )
+
+                    if not self.enabled:
+                        self.active_goal_handle = None
+                        goal_handle.abort()
+                        return self._failed_result(
+                            FollowJointTrajectory.Result.INVALID_GOAL,
+                            "MIT controller was disabled while executing the goal",
+                        )
+
+                    if self.leader_mode_active:
+                        self.active_goal_handle = None
+                        goal_handle.abort()
+                        return self._failed_result(
+                            FollowJointTrajectory.Result.INVALID_GOAL,
+                            "Robot entered leader mode while executing the goal",
+                        )
+
+                    if self.arm_fault_active:
+                        self.active_goal_handle = None
+                        goal_handle.abort()
+                        return self._failed_result(
+                            FollowJointTrajectory.Result.INVALID_GOAL,
+                            self.arm_fault_message or "Arm fault while executing the goal",
+                        )
+
+                    if not self._has_fresh_feedback():
+                        self.active_goal_handle = None
+                        goal_handle.abort()
+                        return self._failed_result(
+                            FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED,
+                            "Feedback became stale while executing the goal",
+                        )
+
+                    elapsed = time.monotonic() - start_time
+                    desired = buffer.sample(elapsed)
+                    position_limit_detail = self._position_error_limit_violation(desired)
+                    if position_limit_detail:
+                        self.active_trajectory = None
+                        if self._has_fresh_feedback():
+                            self.hold_reference = self._capture_current_reference()
+                        self.holding_final_point = False
+                        self.active_goal_handle = None
+                        self._set_execution_state(ExecutionState.CANCELING_TO_HOLD)
+                        goal_handle.abort()
+                        return self._failed_result(
+                            FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED,
+                            position_limit_detail,
+                        )
+
+                    now = time.monotonic()
+                    if now >= next_feedback_time:
+                        feedback = FollowJointTrajectory.Feedback()
+                        feedback.joint_names = list(self.joint_names)
+                        feedback.desired = self._point_from_sample(desired)
+                        feedback.actual = self._actual_point()
+                        feedback.error = self._error_point(desired)
+                        goal_handle.publish_feedback(feedback)
+                        next_feedback_time = now + self.action_feedback_period_s
+
+                    if elapsed >= buffer.duration:
+                        within_tolerance, detail = self._goal_within_tolerance(
+                            buffer.final_point,
+                            position_tolerance,
+                            velocity_tolerance,
+                        )
+                        if within_tolerance:
+                            self.active_goal_handle = None
+                            if self.hold_final_point:
+                                self.hold_reference = buffer.final_point
+                                self.holding_final_point = True
+                            else:
+                                self.hold_reference = self._capture_current_reference()
+                                self.holding_final_point = False
+                            self.active_trajectory = None
+                            self._set_execution_state(
+                                ExecutionState.HOLDING_FINAL_POINT
+                                if self.holding_final_point
+                                else ExecutionState.IDLE_HOLD
+                            )
+                            goal_handle.succeed()
+                            return self._success_result()
+
+                        if elapsed >= buffer.duration + goal_time_tolerance:
+                            self.active_trajectory = None
+                            if self._has_fresh_feedback():
+                                self.hold_reference = self._capture_current_reference()
+                            self.holding_final_point = False
+                            self.active_goal_handle = None
+                            self._set_execution_state(ExecutionState.CANCELING_TO_HOLD)
+                            goal_handle.abort()
+                            return self._failed_result(
+                                FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED,
+                                detail,
+                            )
+
+                time.sleep(min(0.02, self.action_feedback_period_s))
+        finally:
+            with self.state_lock:
+                if self.active_goal_handle is goal_handle:
+                    self.active_goal_handle = None
 
     def _gain_scale(self) -> float:
         if self.gain_ramp_time_s <= 0.0:
@@ -310,68 +833,87 @@ class NeroMitControllerNode(Node):
             if elapsed >= self.active_trajectory.duration:
                 if self.hold_final_point:
                     self.hold_reference = sampled
+                    self.holding_final_point = True
                 self.active_trajectory = None
             return sampled
         if self.hold_reference is None and self._has_fresh_feedback():
             self.hold_reference = self._capture_current_reference()
+            self.holding_final_point = False
         return self.hold_reference
 
     def _control_loop(self) -> None:
-        if not self.enabled:
-            return
+        with self.state_lock:
+            if not self.enabled:
+                self._set_execution_state(ExecutionState.DISABLED)
+                return
 
-        if self._should_use_leader_feedback():
-            return
+            if self.leader_mode_active or self._should_use_leader_feedback():
+                self._set_execution_state(ExecutionState.LEADER_MODE)
+                return
 
-        if not self._has_fresh_feedback():
-            now = time.monotonic()
-            if now - self.last_stale_feedback_log > 1.0:
-                self.get_logger().warn("Paused MIT command publishing because feedback is stale")
-                self.last_stale_feedback_log = now
-            return
+            if self.arm_fault_active:
+                self._set_execution_state(ExecutionState.FAULTED)
+                return
 
-        # get reference hold or trajectory pose
-        reference = self._reference_from_state()
-        if reference is None:
-            return
+            if not self._has_fresh_feedback():
+                now = time.monotonic()
+                if now - self.last_stale_feedback_log > 1.0:
+                    self.get_logger().warn("Paused MIT command publishing because feedback is stale")
+                    self.last_stale_feedback_log = now
+                self._set_execution_state(ExecutionState.STALE_FEEDBACK)
+                return
 
-        # scale gain if control was recently enabled to provide a smooth ramp-up of the controller effort
-        gain_scale = self._gain_scale()
-        feedforward = self._compute_feedforward(reference)
+            # get reference hold or trajectory pose
+            reference = self._reference_from_state()
+            if reference is None:
+                return
 
-        cmd = MoveMITMsg()
-        cmd.joint_index = list(range(1, len(self.joint_names) + 1))
-        cmd.p_des = []
-        cmd.v_des = []
-        cmd.kp = []
-        cmd.kd = []
-        cmd.torque = []
+            # scale gain if control was recently enabled to provide a smooth ramp-up of the controller effort
+            gain_scale = self._gain_scale()
+            feedforward = self._compute_feedforward(reference)
 
-        for index, joint_name in enumerate(self.joint_names):
-            # set to hold or trajectory pose
-            current_position = self.feedback_positions[joint_name]
-            desired_position = float(reference.positions[index])
-            desired_velocity = clamp(float(reference.velocities[index]), self.velocity_limit[index])
-            desired_torque = clamp(float(feedforward[index]), self.torque_limit[index])
-            position_error = desired_position - current_position
+            cmd = MoveMITMsg()
+            cmd.joint_index = list(range(1, len(self.joint_names) + 1))
+            cmd.p_des = []
+            cmd.v_des = []
+            cmd.kp = []
+            cmd.kd = []
+            cmd.torque = []
 
-            """
-            if math.fabs(position_error) > self.position_error_limit[index]:
-                self.get_logger().warn(
-                    f"Joint {joint_name} exceeded position error limit; switching that joint to hold"
-                )
-                desired_position = current_position
-                desired_velocity = 0.0
-                desired_torque = 0.0
-            """
-            cmd.p_des.append(desired_position)
-            cmd.v_des.append(desired_velocity)
-            cmd.kp.append(self.kp[index] * gain_scale)
-            cmd.kd.append(self.kd[index] * gain_scale)
-            cmd.torque.append(desired_torque)
+            for index, joint_name in enumerate(self.joint_names):
+                # set to hold or trajectory pose
+                current_position = self.feedback_positions[joint_name]
+                desired_position = float(reference.positions[index])
+                desired_velocity = clamp(float(reference.velocities[index]), self.velocity_limit[index])
+                desired_torque = clamp(float(feedforward[index]), self.torque_limit[index])
+                position_error = desired_position - current_position
 
-        self.move_mit_pub.publish(cmd)
-        self._publish_reference(reference)
+                """
+                if math.fabs(position_error) > self.position_error_limit[index]:
+                    self.get_logger().warn(
+                        f"Joint {joint_name} exceeded position error limit; switching that joint to hold"
+                    )
+                    desired_position = current_position
+                    desired_velocity = 0.0
+                    desired_torque = 0.0
+                """
+                cmd.p_des.append(desired_position)
+                cmd.v_des.append(desired_velocity)
+                cmd.kp.append(self.kp[index] * gain_scale)
+                cmd.kd.append(self.kd[index] * gain_scale)
+                cmd.torque.append(desired_torque)
+
+            if self.active_trajectory is not None:
+                self._set_execution_state(ExecutionState.EXECUTING_TRAJECTORY)
+            elif self.holding_final_point and self.hold_reference is not None:
+                self._set_execution_state(ExecutionState.HOLDING_FINAL_POINT)
+            elif gain_scale < 1.0:
+                self._set_execution_state(ExecutionState.ARMING)
+            else:
+                self._set_execution_state(ExecutionState.IDLE_HOLD)
+
+            self.move_mit_pub.publish(cmd)
+            self._publish_reference(reference)
 
     def _publish_reference(self, reference: SampledTrajectoryPoint) -> None:
         msg = JointState()
@@ -386,9 +928,12 @@ class NeroMitControllerNode(Node):
 def main(args: Optional[list[str]] = None) -> None:
     rclpy.init(args=args)
     node = NeroMitControllerNode()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     finally:
+        executor.remove_node(node)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

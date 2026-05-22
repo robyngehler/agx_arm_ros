@@ -4,6 +4,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -78,7 +79,7 @@ def generate_launch_description():
     )
     fast_mode_arg = DeclareLaunchArgument(
         "fast_mode",
-        default_value="true",
+        default_value="false",
         description="Forward fast-mode control to agx_arm_ctrl.",
     )
     speed_percent_arg = DeclareLaunchArgument(
@@ -121,6 +122,16 @@ def generate_launch_description():
         default_value=default_params_file,
         description="MIT controller parameter YAML file.",
     )
+    launch_driver_arg = DeclareLaunchArgument(
+        "launch_driver",
+        default_value="true",
+        description="Launch agx_arm_ctrl alongside the MIT controller.",
+    )
+    enable_debug_joint_trajectory_topic_arg = DeclareLaunchArgument(
+        "enable_debug_joint_trajectory_topic",
+        default_value="false",
+        description="Enable the debug ~/joint_trajectory input on the MIT controller.",
+    )
 
     driver_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -148,6 +159,7 @@ def generate_launch_description():
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
             "publish_gripper_joint": LaunchConfiguration("publish_gripper_joint"),
         }.items(),
+        condition=IfCondition(LaunchConfiguration("launch_driver")),
     )
 
     controller_node = Node(
@@ -159,7 +171,12 @@ def generate_launch_description():
         ros_arguments=["--log-level", LaunchConfiguration("log_level")],
         parameters=[
             LaunchConfiguration("params_file"),
-            {"control_rate_hz": LaunchConfiguration("control_rate_hz")},
+            {
+                "control_rate_hz": LaunchConfiguration("control_rate_hz"),
+                "enable_debug_joint_trajectory_topic": LaunchConfiguration(
+                    "enable_debug_joint_trajectory_topic"
+                ),
+            },
         ],
     )
 
@@ -183,6 +200,8 @@ def generate_launch_description():
             publish_gripper_joint_arg,
             control_rate_arg,
             params_file_arg,
+            launch_driver_arg,
+            enable_debug_joint_trajectory_topic_arg,
             LogInfo(msg=["MIT controller params_file: ", LaunchConfiguration("params_file")]),
             driver_launch,
             controller_node,

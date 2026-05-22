@@ -11,6 +11,7 @@ from launch.actions import (
     ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
+    LogInfo,
     OpaqueFunction,
 )
 from launch.conditions import IfCondition
@@ -233,14 +234,11 @@ def _build_moveit(context):
     )
 
     actions.append(
-        Node(
-            package="agx_arm_mit_controller",
-            executable="agx_arm_mit_follow_joint_trajectory",
-            parameters=[
-                {
-                    "feedback_topic": "feedback/joint_states",
-                }
-            ],
+        LogInfo(
+            msg=(
+                "MoveIt MIT mode expects mit_controller to already provide "
+                "arm_controller/follow_joint_trajectory."
+            ),
             condition=IfCondition(use_mit_controller),
         )
     )
