@@ -68,11 +68,17 @@ def build_moveit_config(context):
     effector_type = LaunchConfiguration("effector_type").perform(context)
     revo2_type = LaunchConfiguration("revo2_type").perform(context)
     omnihand_type = LaunchConfiguration("omnihand_type").perform(context)
+    use_mit_controller = context.launch_configurations.get("use_mit_controller", "false") == "true"
     tcp_offset = ast.literal_eval(
         LaunchConfiguration("tcp_offset").perform(context)
     )
 
     profile = _select_profile(effector_type, revo2_type, omnihand_type)
+    trajectory_execution_config = (
+        "config/moveit_controllers_mit.yaml"
+        if use_mit_controller
+        else f"config/moveit_controllers_{profile}.yaml"
+    )
     urdf_mappings = {
         "arm_type": arm_type,
         "effector_type": effector_type,
@@ -97,7 +103,7 @@ def build_moveit_config(context):
         .robot_description_kinematics(file_path="config/kinematics.yaml")
         .joint_limits(file_path="config/joint_limits.yaml")
         .sensors_3d(file_path="config/sensors_3d.yaml")
-        .trajectory_execution(file_path=f"config/moveit_controllers_{profile}.yaml")
+        .trajectory_execution(file_path=trajectory_execution_config)
         .to_moveit_configs()
     )
 
