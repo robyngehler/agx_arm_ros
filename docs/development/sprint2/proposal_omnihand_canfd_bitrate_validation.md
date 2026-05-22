@@ -68,6 +68,23 @@ Additional validation on the current Jetson host now shows:
 - the repo-local SocketCAN backend has been aligned with the vendor ZLG backend by enabling CAN FD bit-rate switching on transmit,
 - but `demo_get_hardware_info.py` still times out, `candump` on `can_omnihand` stays silent, and `ip -details -statistics link show can_omnihand` remains at `TX packets 0` with accumulated `bus-errors` and automatic restarts.
 
+### Additional timing candidates tested after this proposal
+
+The following candidate data-phase bitrates were applied successfully on the native Jetson `mttcan` interface and re-tested with the SDK smoke test:
+
+| Requested dbitrate | Reported interface state | SDK result | Bus observation |
+|---|---|---|---|
+| `3846153` | `dbitrate 3846153 dsample-point 0.692` | timeout | `TX packets 0`, `candump` silent, error counters rise |
+| `2000000` | `dbitrate 2000000 dsample-point 0.720` | timeout | `TX packets 0`, `candump` silent, error counters rise |
+| `2500000` | `dbitrate 2500000 dsample-point 0.750` | timeout | `TX packets 0`, `candump` silent, error counters rise |
+| `1000000` | `dbitrate 1000000 dsample-point 0.720` | timeout | `TX packets 0`, `candump` silent, error counters rise |
+
+This narrows the current Jetson-native failure further:
+
+- the link does not start working merely by moving to a Jetson-friendly CAN FD data bitrate,
+- the transport remains stuck before any successful SDK-visible exchange,
+- and the next likely discriminator is not another arbitrary `dbitrate`, but a transport-path change or a hardware-side confirmation of the hand's expected CAN FD timing.
+
 Interpretation:
 
 - missing CAN FD bit-rate switching in the SocketCAN path was not the only blocker,
@@ -223,6 +240,8 @@ Candidate values that are more compatible with the Jetson `50 MHz` CAN clock inc
 1000000 / 2000000
 1000000 / 1000000
 ```
+
+Current empirical result on this host: all four of these pairings still fail the SDK hardware-info smoke test.
 
 Example for `2 Mbit/s` data phase:
 
