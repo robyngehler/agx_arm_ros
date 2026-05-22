@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument, IncludeLaunchDescription,
 )
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 import os
@@ -121,6 +122,42 @@ def generate_launch_description():
         description='Follow real arm state.',
     )
 
+    use_mit_controller_arg = DeclareLaunchArgument(
+        'use_mit_controller',
+        default_value='true',
+        choices=['true', 'false'],
+        description='Route arm trajectory execution through the custom MIT controller.',
+    )
+
+    mit_control_rate_arg = DeclareLaunchArgument(
+        'mit_control_rate_hz',
+        default_value='100.0',
+        description='MIT controller update rate when use_mit_controller is true.',
+    )
+
+    mit_params_file_arg = DeclareLaunchArgument(
+        'mit_params_file',
+        default_value='',
+        description='Optional MIT controller params file override when use_mit_controller is true.',
+    )
+
+    load_simple_obstacles_arg = DeclareLaunchArgument(
+        'load_simple_obstacles',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Seed the MoveIt planning scene with the repo-owned simple obstacle set.',
+    )
+
+    simple_obstacles_config_arg = DeclareLaunchArgument(
+        'simple_obstacles_config',
+        default_value=os.path.join(
+            get_package_share_directory('agx_arm_moveit'),
+            'config',
+            'simple_obstacles.json',
+        ),
+        description='Path to the JSON file with simple planning-scene obstacles.',
+    )
+
     # ── agx_arm_ctrl ─────────────────────────────────────────────────
     agx_arm_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -148,6 +185,38 @@ def generate_launch_description():
             'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
             'publish_gripper_joint': 'false',
         }.items(),
+        condition=UnlessCondition(LaunchConfiguration('use_mit_controller')),
+    )
+
+    mit_arm_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('agx_arm_mit_controller'),
+                'launch',
+                'start_nero_mit_controller.launch.py',
+            )
+        ),
+        launch_arguments={
+            'namespace': LaunchConfiguration('namespace'),
+            'can_port': LaunchConfiguration('can_port'),
+            'arm_type': LaunchConfiguration('arm_type'),
+            'effector_type': LaunchConfiguration('effector_type'),
+            'omnihand_type': LaunchConfiguration('omnihand_type'),
+            'launch_omnihand_bridge': LaunchConfiguration('launch_omnihand_bridge'),
+            'omnihand_backend_type': LaunchConfiguration('omnihand_backend_type'),
+            'auto_enable': LaunchConfiguration('auto_enable'),
+            'fast_mode': LaunchConfiguration('fast_mode'),
+            'speed_percent': LaunchConfiguration('speed_percent'),
+            'pub_rate': LaunchConfiguration('pub_rate'),
+            'enable_timeout': LaunchConfiguration('enable_timeout'),
+            'tcp_offset': LaunchConfiguration('tcp_offset'),
+            'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
+            'publish_gripper_joint': 'false',
+            'control_rate_hz': LaunchConfiguration('mit_control_rate_hz'),
+            'params_file': LaunchConfiguration('mit_params_file'),
+            'log_level': LaunchConfiguration('log_level'),
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('use_mit_controller')),
     )
 
     # ── agx_arm_moveit ───────────────────────────────────────────────
@@ -167,6 +236,9 @@ def generate_launch_description():
             'omnihand_type': LaunchConfiguration('omnihand_type'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'follow': LaunchConfiguration('follow'),
+            'use_mit_controller': LaunchConfiguration('use_mit_controller'),
+            'load_simple_obstacles': LaunchConfiguration('load_simple_obstacles'),
+            'simple_obstacles_config': LaunchConfiguration('simple_obstacles_config'),
         }.items(),
     )
 
@@ -189,7 +261,13 @@ def generate_launch_description():
         tcp_offset_arg,
         gripper_default_effort_arg,
         follow_arg,
+        use_mit_controller_arg,
+        mit_control_rate_arg,
+        mit_params_file_arg,
+        load_simple_obstacles_arg,
+        simple_obstacles_config_arg,
         # launches
         agx_arm_launch,
+        mit_arm_launch,
         moveit_launch,
     ])

@@ -14,10 +14,13 @@
   <exec_depend>moveit_ros_visualization</exec_depend>
   <exec_depend>moveit_ros_warehouse</exec_depend>
   <exec_depend>moveit_ros_perception</exec_depend>
+  <exec_depend>moveit_msgs</exec_depend>
   <exec_depend>moveit_simple_controller_manager</exec_depend>
   <exec_depend>moveit_planners</exec_depend>
   <exec_depend>moveit_kinematics</exec_depend>
   <exec_depend>trac_ik_kinematics_plugin</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>joint_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher_gui</exec_depend>
   <exec_depend>controller_manager</exec_depend>
@@ -25,11 +28,13 @@
   <exec_depend>rviz2</exec_depend>
   <exec_depend>rviz_common</exec_depend>
   <exec_depend>rviz_default_plugins</exec_depend>
+  <exec_depend>shape_msgs</exec_depend>
   <exec_depend>warehouse_ros_mongo</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>topic_tools</exec_depend>
   <exec_depend>agx_arm_description</exec_depend>
+  <exec_depend>agx_arm_mit_controller</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

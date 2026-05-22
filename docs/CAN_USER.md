@@ -12,16 +12,39 @@ sudo apt update && sudo apt install can-utils ethtool
 
 这两个工具用于配置 CAN 模块
 
-当电脑仅连接单个 CAN 模块时，可通过以下步骤**快速完成激活**：
+## 0 推荐工作流：`prepare_can_interfaces.py`
 
-打开一个终端窗口，依次执行以下命令：
+推荐优先使用仓库内的角色化准备脚本：`scripts/prepare_can_interfaces.py`。
+
+该脚本会读取 `config/can_interface_roles.json` 中的角色配置，并自动完成以下操作：
+
+- 枚举当前 Linux CAN 接口和 USB `bus-info`
+- 按角色解析目标接口（当前默认角色包含 `nero`、`effector`、`omnihand`）
+- 配置 classic CAN / CAN FD 波特率
+- 按配置重命名接口，例如 `can_nero`、`can_effector`、`can_omnihand`
+- 设置 `restart-ms` 与 `txqueuelen`
+
+建议在仓库根目录执行：
 
 ```bash
-cd ~/agx_arm_ws/src/agx_arm_ros/scripts 
-bash can_activate.sh
+cd ~/agx_arm_ws/src/agx_arm_ros
+python3 scripts/prepare_can_interfaces.py --list
+python3 scripts/prepare_can_interfaces.py --roles nero --dry-run
+python3 scripts/prepare_can_interfaces.py --roles nero
 ```
 
-如果执行bash脚本出现`ip: command not found`，请安装ip指令，一般是`sudo apt-get install iproute2`
+常见用法：
+
+- 单独准备机械臂：`python3 scripts/prepare_can_interfaces.py --roles nero`
+- 同时准备机械臂与 OmniHand：`python3 scripts/prepare_can_interfaces.py --roles nero,omnihand`
+- 显式绑定某个 USB 口：`python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface 3-1.4:1.0`
+- 显式绑定当前 Linux 接口名：`python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface can0`
+
+若需修改默认目标名、波特率、CAN FD 数据波特率或预绑定的 USB 口，请编辑 `config/can_interface_roles.json`。
+
+如果执行脚本时出现 `ip: command not found`，请安装 `ip` 指令，一般是 `sudo apt-get install iproute2`。
+
+以下章节继续保留旧的 `can_activate.sh` / `can_muti_activate.sh` 手工流程，便于兼容既有使用方式。
 
 ## 1 寻找can模块
 

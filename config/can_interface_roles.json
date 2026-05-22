@@ -1,0 +1,32 @@
+{
+  "roles": {
+    "nero": {
+      "description": "Nero arm classic CAN adapter",
+      "target_name": "can_nero",
+      "mode": "can",
+      "bitrate": 1000000,
+      "restart_ms": 100,
+      "tx_queue_len": 128,
+      "usb_bus_info": ""
+    },
+    "effector": {
+      "description": "Generic effector classic CAN adapter",
+      "target_name": "can_effector",
+      "mode": "can",
+      "bitrate": 1000000,
+      "restart_ms": 100,
+      "tx_queue_len": 128,
+      "usb_bus_info": ""
+    },
+    "omnihand": {
+      "description": "OmniHand CAN FD adapter",
+      "target_name": "can_omnihand",
+      "mode": "canfd",
+      "bitrate": 1000000,
+      "dbitrate": 4000000,
+      "restart_ms": 100,
+      "tx_queue_len": 256,
+      "usb_bus_info": ""
+    }
+  }
+}

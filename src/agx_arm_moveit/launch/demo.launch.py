@@ -8,11 +8,13 @@ import yaml
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    ExecuteProcess,
     GroupAction,
     IncludeLaunchDescription,
     OpaqueFunction,
 )
 from launch.conditions import IfCondition
+from launch.conditions import UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, PushRosNamespace, SetRemap
@@ -154,6 +156,7 @@ def _build_moveit(context):
     effector_type = LaunchConfiguration("effector_type").perform(context)
     revo2_type = LaunchConfiguration("revo2_type").perform(context)
     omnihand_type = LaunchConfiguration("omnihand_type").perform(context)
+    use_mit_controller = LaunchConfiguration("use_mit_controller")
     moveit_config = build_moveit_config(context)
     package_path = moveit_config.package_path
 
@@ -216,6 +219,7 @@ def _build_moveit(context):
                 ros2_controllers_yaml,
             ],
             remappings=[("joint_states", "control/joint_states")],
+            condition=UnlessCondition(use_mit_controller),
         )
     )
 
@@ -223,7 +227,36 @@ def _build_moveit(context):
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 str(package_path / "launch/spawn_controllers.launch.py")
-            )
+            ),
+            condition=UnlessCondition(use_mit_controller),
+        )
+    )
+
+    actions.append(
+        Node(
+            package="agx_arm_mit_controller",
+            executable="agx_arm_mit_follow_joint_trajectory",
+            parameters=[
+                {
+                    "feedback_topic": "feedback/joint_states",
+                }
+            ],
+            condition=IfCondition(use_mit_controller),
+        )
+    )
+
+    actions.append(
+        ExecuteProcess(
+            cmd=[
+                "python3",
+                str(package_path / "scripts" / "apply_simple_obstacles.py"),
+                "--config",
+                LaunchConfiguration("simple_obstacles_config"),
+                "--namespace",
+                namespace,
+            ],
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("load_simple_obstacles")),
         )
     )
 
@@ -294,6 +327,13 @@ def generate_launch_description():
                 description="By default, we are not in debug mode",
             ),
             DeclareBooleanLaunchArg("use_rviz", default_value=True),
+            DeclareBooleanLaunchArg("use_mit_controller", default_value=False),
+            DeclareBooleanLaunchArg("load_simple_obstacles", default_value=False),
+            DeclareLaunchArgument(
+                "simple_obstacles_config",
+                default_value=str(Path(__file__).resolve().parents[1] / "config" / "simple_obstacles.json"),
+                description="Path to the JSON file with simple planning-scene obstacles.",
+            ),
             OpaqueFunction(function=_build_moveit),
         ]
     )

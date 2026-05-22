@@ -3,7 +3,9 @@ from launch_ros.actions import Node
 from launch.actions import (
     DeclareLaunchArgument, IncludeLaunchDescription,
 )
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -130,6 +132,31 @@ def generate_launch_description():
         description='Default effort for gripper commands (>= 0.0).'
     )
 
+    use_mit_controller_arg = DeclareLaunchArgument(
+        'use_mit_controller',
+        default_value='true',
+        choices=['true', 'false'],
+        description='Route RViz control-topic commands through the custom MIT controller.',
+    )
+
+    mit_control_rate_arg = DeclareLaunchArgument(
+        'mit_control_rate_hz',
+        default_value='100.0',
+        description='MIT controller update rate when use_mit_controller is true.',
+    )
+
+    mit_params_file_arg = DeclareLaunchArgument(
+        'mit_params_file',
+        default_value='',
+        description='Optional MIT controller params file override when use_mit_controller is true.',
+    )
+
+    mit_joint_target_duration_arg = DeclareLaunchArgument(
+        'mit_joint_target_duration_s',
+        default_value='0.75',
+        description='Duration in seconds for RViz joint-slider soft MIT targets.',
+    )
+
     # description: use the sim-backed compatibility launch from agx_arm_description
     description_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -149,6 +176,11 @@ def generate_launch_description():
             'follow': LaunchConfiguration('follow'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'control': LaunchConfiguration('control'),
+            'control_topic': PythonExpression([
+                "'mit_controller/soft_target_joint_states' if '",
+                LaunchConfiguration('use_mit_controller'),
+                "' == 'true' else 'control/joint_states'",
+            ]),
         }.items(),
     )
 
@@ -177,6 +209,55 @@ def generate_launch_description():
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
         }.items(),
+        condition=UnlessCondition(LaunchConfiguration('use_mit_controller')),
+    )
+
+    mit_arm_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('agx_arm_mit_controller'),
+                'launch',
+                'start_nero_mit_controller.launch.py',
+            )
+        ),
+        launch_arguments={
+            'namespace': LaunchConfiguration('namespace'),
+            'can_port': LaunchConfiguration('can_port'),
+            'arm_type': LaunchConfiguration('arm_type'),
+            'effector_type': LaunchConfiguration('effector_type'),
+            'omnihand_type': LaunchConfiguration('omnihand_type'),
+            'launch_omnihand_bridge': LaunchConfiguration('launch_omnihand_bridge'),
+            'omnihand_backend_type': LaunchConfiguration('omnihand_backend_type'),
+            'auto_enable': LaunchConfiguration('auto_enable'),
+            'fast_mode': LaunchConfiguration('fast_mode'),
+            'speed_percent': LaunchConfiguration('speed_percent'),
+            'pub_rate': LaunchConfiguration('pub_rate'),
+            'enable_timeout': LaunchConfiguration('enable_timeout'),
+            'tcp_offset': LaunchConfiguration('tcp_offset'),
+            'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
+            'control_rate_hz': LaunchConfiguration('mit_control_rate_hz'),
+            'params_file': LaunchConfiguration('mit_params_file'),
+            'log_level': LaunchConfiguration('log_level'),
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('use_mit_controller')),
+    )
+
+    mit_joint_state_bridge = Node(
+        package='agx_arm_mit_controller',
+        executable='agx_arm_mit_joint_state_bridge',
+        namespace=LaunchConfiguration('namespace'),
+        parameters=[{
+            'segment_duration_s': LaunchConfiguration('mit_joint_target_duration_s'),
+        }],
+        condition=IfCondition(
+            PythonExpression([
+                "'",
+                LaunchConfiguration('use_mit_controller'),
+                "' == 'true' and '",
+                LaunchConfiguration('control'),
+                "' == 'true'",
+            ])
+        ),
     )
 
     return LaunchDescription([
@@ -199,8 +280,14 @@ def generate_launch_description():
         gripper_default_effort_arg,
         follow_arg,
         control_arg,
+        use_mit_controller_arg,
+        mit_control_rate_arg,
+        mit_params_file_arg,
+        mit_joint_target_duration_arg,
         # description
         description_launch,
         # agx_arm
         agx_arm_launch,
+        mit_arm_launch,
+        mit_joint_state_bridge,
     ])

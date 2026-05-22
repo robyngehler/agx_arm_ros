@@ -30,6 +30,8 @@ setup(
     entry_points={
         "console_scripts": [
             "agx_arm_mit_controller = agx_arm_mit_controller.mit_controller_node:main",
+            "agx_arm_mit_follow_joint_trajectory = agx_arm_mit_controller.follow_joint_trajectory_action:main",
+            "agx_arm_mit_joint_state_bridge = agx_arm_mit_controller.joint_state_trajectory_bridge:main",
             "agx_arm_record_leader_trajectory = agx_arm_mit_controller.leader_trajectory_recorder:main",
             "agx_arm_execute_saved_trajectory = agx_arm_mit_controller.execute_saved_trajectory:main",
             "agx_arm_wakeword_motion_manager = agx_arm_mit_controller.wakeword_motion_manager:main",

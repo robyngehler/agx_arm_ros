@@ -91,22 +91,33 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 re
 ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=omnihand omnihand_type:=left
 ```
 
+加载仓库内置的简易障碍物基线：
+
+```bash
+ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero load_simple_obstacles:=true
+```
+
+该选项会调用 `scripts/apply_simple_obstacles.py`，将 `config/simple_obstacles.json` 中的基础障碍物集合注入 MoveIt 规划场景。若需替换障碍物集合，可传入 `simple_obstacles_config:=/abs/path/to/file.json`。
+
 ### 2.2 控制真实机械臂
 
 一键启动控制节点、MoveIt 和 RViz：
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-  can_port:=can0 \
+  can_port:=can_nero \
   arm_type:=nero \
-  effector_type:=agx_gripper
+  effector_type:=agx_gripper \
+  load_simple_obstacles:=true
 ```
+
+该一键启动路径默认 `use_mit_controller:=true`，因此 MoveIt 的 `arm_controller/follow_joint_trajectory` 会由 `agx_arm_mit_follow_joint_trajectory` 桥接到 `mit_controller/joint_trajectory`，而不是使用 fake `ros2_control` 轨迹执行器。若需退回旧路径，可显式设置 `use_mit_controller:=false`。
 
 带 Revo2 的一键启动示例：
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-  can_port:=can0 \
+  can_port:=can_nero \
   arm_type:=nero \
   effector_type:=revo2 \
   revo2_type:=left
@@ -114,20 +125,23 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
 
 当前 OmniHand 还没有接入 `agx_arm_ctrl` 的真实硬件启动路径。现阶段仅支持 `agx_arm_moveit` / `display_control.launch.py` 下的仿真与可视化集成，不应把 `effector_type:=omnihand` 误解为真机后端已经打通。
 
-分步启动时，推荐使用 `follow:=true` 让 MoveIt 跟随真实反馈：
+若采用分步启动并保留 MIT 软轨迹路径，推荐使用以下方式让 MoveIt 跟随真实反馈并通过 MIT 执行轨迹：
 
 ```bash
 # 终端 1
-ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py \
-  can_port:=can0 \
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
+  can_port:=can_nero \
   arm_type:=nero \
-  effector_type:=agx_gripper
+  effector_type:=agx_gripper \
+  publish_gripper_joint:=false
 
 # 终端 2
 ros2 launch agx_arm_moveit demo.launch.py \
   arm_type:=nero \
   effector_type:=agx_gripper \
-  follow:=true
+  follow:=true \
+  use_mit_controller:=true \
+  load_simple_obstacles:=true
 ```
 
 ### 2.3 启动参数
@@ -139,18 +153,23 @@ ros2 launch agx_arm_moveit demo.launch.py \
 | `revo2_type` | `left` | Revo2 灵巧手类型 | `left`, `right` |
 | `omnihand_type` | `left` | OmniHand 左右手类型 | `left`, `right` |
 | `namespace` | 空字符串 | 当前 MoveIt/控制实例命名空间 | 任意合法 ROS 命名空间 |
-| `follow` | `false` | `true` 时订阅 `/feedback/joint_states`，`false` 时订阅 `/control/joint_states` | `true`, `false` |
+| `follow` | `false` | `true` 时订阅 `/feedback/joint_states`，推荐用于真机 / MIT 路径；`false` 时订阅 `/control/joint_states` | `true`, `false` |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度） | - |
+| `use_mit_controller` | `false` | `true` 时跳过 fake `ros2_control`，启动 `agx_arm_mit_follow_joint_trajectory` 并通过 MIT 软轨迹执行 | `true`, `false` |
 | `use_rviz` | `true` | 是否启动 RViz | `true`, `false` |
 | `db` | `false` | 是否启动 MoveIt warehouse 数据库 | `true`, `false` |
+| `load_simple_obstacles` | `false` | 是否加载仓库内置的基础障碍物集合 | `true`, `false` |
+| `simple_obstacles_config` | `config/simple_obstacles.json` | 规划场景障碍物 JSON 配置文件路径 | 任意可读 JSON 路径 |
 
 ### 2.4 当前约束
 
 - 当前活动配置只覆盖 Nero，不再暴露 Piper 系列启动选项。
 - `namespace` 仍可用于多实例隔离，但多个实例都应基于 Nero 资产树。
 - `publish_gripper_joint` 会在一键启动路径中自动处理，以避免 MoveIt 中出现无效关节告警。
+- `start_single_agx_arm_moveit.launch.py` 与 `start_single_agx_arm_rviz.launch.py` 默认都会走 MIT 软轨迹路径；`demo.launch.py` 仍保留 `use_mit_controller:=false` 作为纯仿真默认值。
 - 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 - `nero_tool0` 现在由 Nero 规范描述包直接提供，`tcp_link` 继续作为 TCP 与交互式规划目标参考帧。
+- `config/simple_obstacles.json` 只提供早期规划验证的保守基线；进入真机执行前仍应根据现场工装与工作空间自行调整。
 - 对 `none`、`agx_gripper`、`revo2`、`omnihand` 各配置做纯仿真 MoveIt 集成验证，是进入真机碰撞检查执行前的有效路径。
 - OmniHand 当前只覆盖 MoveIt 仿真、RViz、SRDF 和 fake `ros2_control` 路径，尚未接入真实硬件控制启动链路。
 

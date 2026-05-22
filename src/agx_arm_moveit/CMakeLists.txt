@@ -6,3 +6,4 @@ find_package(ament_cmake REQUIRED)
 ament_package()
 
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS scripts/apply_simple_obstacles.py DESTINATION share/${PROJECT_NAME}/scripts)

@@ -18,6 +18,7 @@ This workspace is currently focused on the Nero stack and provides the matching 
 | TCP Offset Configuration | [tcp_offset](./docs/tcp_offset/TCP_OFFSET_EN.md) |
 | URDF | [agx_arm_description](./src/agx_arm_sim/agx_arm_description/README.md) |
 | Moveit| [Moveit](./src/agx_arm_moveit/README_EN.md) |
+| Nero MIT soft control | [agx_arm_mit_controller](./src/agx_arm_mit_controller/README.md) |
 | Q&A | [Q&A](./docs/Q&A.md) |
 
 ---
@@ -173,19 +174,16 @@ source install/setup.bash
 
 CAN module must be activated before use. For details, see: [CAN Configuration Guide](./docs/CAN_USER_EN.md)
 
-When only a single CAN module is connected to the computer, you can **quickly complete activation** through the following steps:
-
-Open a terminal window and execute the following command:
+The recommended path is the repo-owned role-based preparation script. It reads [config/can_interface_roles.json](./config/can_interface_roles.json) and keeps the SocketCAN naming, bitrate, and CAN FD settings aligned for the Nero arm, effectors, and OmniHand:
 
 ```bash
-cd ~/agx_arm_ws/src/agx_arm_ros/scripts 
-bash can_activate.sh
+cd ~/agx_arm_ws/src/agx_arm_ros
+python3 scripts/prepare_can_interfaces.py --list
+python3 scripts/prepare_can_interfaces.py --roles nero --dry-run
+python3 scripts/prepare_can_interfaces.py --roles nero
 ```
 
-Example for Jetson AGX Orin with Nero on usb-can:
-```bash
-bash can_activate.sh can_nero 1000000 "1-4.2:1.0"
-```
+If you need to pin a specific USB port or Linux interface, add `--nero-can-interface 1-4.2:1.0` or `--nero-can-interface can0`. To prepare both the arm and OmniHand together, use `--roles nero,omnihand`. The legacy `can_activate.sh` and `can_muti_activate.sh` flows remain documented in the CAN guide for compatibility.
 
 
 ### Launch Driver
@@ -194,7 +192,7 @@ You can start the driver using a launch file or by running the node directly.
 
 > **Important: Read before launching**
 > The parameters in the following launch commands **must** be replaced according to your actual hardware configuration:
-> - **`can_port`**: The CAN port connected to the arm, e.g. `can0`.
+> - **`can_port`**: The CAN port connected to the arm, e.g. `can0`; if you follow the recommended `prepare_can_interfaces.py` flow, the default Nero role name is `can_nero`.
 > - **`arm_type`**: The arm model. In this workspace the active example is `nero`.
 > - **`effector_type`**: The end-effector type, e.g. `none` or `agx_gripper`.
 > - **`tcp_offset`**: Tool Center Point (TCP) offset relative to the flange center, e.g. [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] 
@@ -222,18 +220,38 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 ```
 
 > **Note:**
-> - `start_single_agx_arm_rviz.launch.py` subscribes to the `/feedback/joint_states` topic. The parameter `control` controls whether RViz-side joint_state_publisher publishes to `control_topic` (default `control_topic:=/control/joint_states`, and default `control:=false`, so no control topics are published from RViz).
-> - `follow` controls whether RViz follows the real arm state; when set to `true`, real feedback is subscribed to drive the model display.
-> - If you only want to visualize and follow the real arm state, it is recommended to keep `control:=false`.
-> - If you want to use RViz joint sliders to publish to `control_topic` (default `/control/joint_states`), explicitly set `control:=true`. In this case, it may conflict with the control commands in [Control Examples](#control-examples).
+> - `start_single_agx_arm_rviz.launch.py` now defaults to `use_mit_controller:=true`, so the RViz control path prefers MIT soft trajectories instead of writing directly to `/control/joint_states`.
+> - When `control:=true` and `use_mit_controller:=true`, RViz joint sliders publish to `mit_controller/soft_target_joint_states`, and `agx_arm_mit_joint_state_bridge` turns those targets into short `trajectory_msgs/JointTrajectory` segments for the MIT controller.
+> - Use `mit_joint_target_duration_s` to tune the soft segment duration per slider update. Set `use_mit_controller:=false` if you intentionally want the legacy `/control/joint_states` path.
+> - `follow:=true` keeps the display synchronized with real feedback. If you only want state-follow visualization, keep `control:=false`.
 
 **MoveIt One-Click Launch (Arm Control + MoveIt + RViz):**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py can_port:=can0 arm_type:=nero effector_type:=agx_gripper
+ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
+    can_port:=can_nero \
+    arm_type:=nero \
+    effector_type:=agx_gripper \
+    load_simple_obstacles:=true
 ```
 
-> This launch file starts both the arm control node and MoveIt2 simultaneously, automatically connecting joint feedback (`/feedback/joint_states`) to MoveIt. No need to start two terminals separately. Supports all `agx_arm_ctrl` parameters (e.g. `tcp_offset`, `speed_percent`, etc.). See [Moveit](./src/agx_arm_moveit/README_EN.md) for details.
+> This launch file now defaults to `use_mit_controller:=true`: it starts `start_nero_mit_controller.launch.py` and routes MoveIt execution through `arm_controller/follow_joint_trajectory` into `mit_controller/joint_trajectory`. `load_simple_obstacles:=true` seeds the planning scene from [simple_obstacles.json](./src/agx_arm_moveit/config/simple_obstacles.json) via `src/agx_arm_moveit/scripts/apply_simple_obstacles.py`; use `simple_obstacles_config:=/abs/path/to/file.json` to replace that baseline. Set `use_mit_controller:=false` only if you explicitly want the legacy direct execution path.
+
+Tune the MIT side with `mit_control_rate_hz` and `mit_params_file` as needed.
+
+**Nero MIT Soft Trajectory Control (application node + arm runtime):**
+
+```bash
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
+    can_port:=can_nero \
+    arm_type:=nero \
+    effector_type:=agx_gripper \
+    tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+```
+
+This launch reuses `agx_arm_ctrl` as the hardware adapter and starts the MIT application node on top. In addition to `can_port`, it now forwards the main `agx_arm_ctrl` runtime parameters directly: `arm_type`, `effector_type`, `omnihand_type`, `launch_omnihand_bridge`, `omnihand_backend_type`, `auto_enable`, `fast_mode`, `speed_percent`, `pub_rate`, `enable_timeout`, `tcp_offset`, `gripper_default_effort`, and `publish_gripper_joint`. It also exposes MIT-specific `control_rate_hz`, `params_file`, and `log_level`.
+
+The MIT node subscribes to `feedback/joint_states`, accepts `trajectory_msgs/JointTrajectory`, and publishes `control/move_mit` continuously so higher-level ROS applications can use a soft trajectory surface for playback, gravity feedforward, and collision-aware control extensions.
 
 ### Launch Parameters
 

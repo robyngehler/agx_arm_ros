@@ -12,18 +12,41 @@ sudo apt update && sudo apt install can-utils ethtool
 
 These two tools are used to configure the CAN module.
 
-When only a single CAN module is connected to the computer, you can **quickly activate** it by following these steps:
+## 0 Recommended workflow: `prepare_can_interfaces.py`
 
-Open a terminal window and execute the following commands in sequence:
+Prefer the repo-owned role-based preparation script: `scripts/prepare_can_interfaces.py`.
+
+It reads `config/can_interface_roles.json` and automatically handles:
+
+- discovery of Linux CAN interfaces and USB `bus-info`
+- role resolution for the current repo roles (`nero`, `effector`, `omnihand`)
+- classic CAN or CAN FD bitrate configuration
+- interface renaming such as `can_nero`, `can_effector`, and `can_omnihand`
+- `restart-ms` and `txqueuelen` setup
+
+Run it from the repository root:
 
 ```bash
-cd ~/agx_arm_ws/src/agx_arm_ros/scripts 
-bash can_activate.sh
+cd ~/agx_arm_ws/src/agx_arm_ros
+python3 scripts/prepare_can_interfaces.py --list
+python3 scripts/prepare_can_interfaces.py --roles nero --dry-run
+python3 scripts/prepare_can_interfaces.py --roles nero
 ```
 
-If you see`ip: command not found` when executing a bash script, install the `ip` command, typically with: 
+Common examples:
+
+- Prepare only the arm: `python3 scripts/prepare_can_interfaces.py --roles nero`
+- Prepare the arm and OmniHand together: `python3 scripts/prepare_can_interfaces.py --roles nero,omnihand`
+- Pin a role to a USB bus-info: `python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface 3-1.4:1.0`
+- Pin a role to the current Linux interface name: `python3 scripts/prepare_can_interfaces.py --roles nero --nero-can-interface can0`
+
+Edit `config/can_interface_roles.json` if you want to change the default target names, bitrates, CAN FD data bitrate, or pre-bound USB bus-info values.
+
+If you see `ip: command not found` when executing the script, install the `ip` command, typically with:
 
 `sudo apt-get install iproute2`
+
+The legacy `can_activate.sh` and `can_muti_activate.sh` procedures remain below for compatibility with older manual workflows.
 
 ## 1 Find CAN Modules
 
@@ -102,8 +125,6 @@ bash can_activate.sh can0 1000000
 ```
 
 Here, `can0` can be replaced with any name, and `1000000` is the baud rate.
-
-## 
 
 ## 3 Activate Multiple CAN Modules Simultaneously (using `can_muti_activate.sh`)
 

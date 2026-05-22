@@ -31,11 +31,96 @@ def _default_params_file() -> str:
 def generate_launch_description():
     default_params_file = _default_params_file()
 
-    namespace_arg = DeclareLaunchArgument("namespace", default_value="")
-    can_port_arg = DeclareLaunchArgument("can_port", default_value="can_nero")
-    log_level_arg = DeclareLaunchArgument("log_level", default_value="info")
-    control_rate_arg = DeclareLaunchArgument("control_rate_hz", default_value="100.0")
-    params_file_arg = DeclareLaunchArgument("params_file", default_value=default_params_file)
+    namespace_arg = DeclareLaunchArgument(
+        "namespace",
+        default_value="",
+        description="ROS namespace for this arm instance.",
+    )
+    can_port_arg = DeclareLaunchArgument(
+        "can_port",
+        default_value="can_nero",
+        description="CAN interface used by the underlying agx_arm_ctrl driver.",
+    )
+    arm_type_arg = DeclareLaunchArgument(
+        "arm_type",
+        default_value="nero",
+        description="Robotic arm type forwarded to agx_arm_ctrl.",
+    )
+    effector_type_arg = DeclareLaunchArgument(
+        "effector_type",
+        default_value="none",
+        description="End-effector type forwarded to agx_arm_ctrl.",
+    )
+    omnihand_type_arg = DeclareLaunchArgument(
+        "omnihand_type",
+        default_value="left",
+        description="OmniHand side forwarded to agx_arm_ctrl when applicable.",
+    )
+    launch_omnihand_bridge_arg = DeclareLaunchArgument(
+        "launch_omnihand_bridge",
+        default_value="false",
+        description="Launch the repo-owned OmniHand bridge when effector_type is omnihand.",
+    )
+    omnihand_backend_type_arg = DeclareLaunchArgument(
+        "omnihand_backend_type",
+        default_value="mock",
+        description="Backend type for the repo-owned OmniHand bridge.",
+    )
+    auto_enable_arg = DeclareLaunchArgument(
+        "auto_enable",
+        default_value="true",
+        description="Automatically enable the AGX arm driver on startup.",
+    )
+    log_level_arg = DeclareLaunchArgument(
+        "log_level",
+        default_value="info",
+        description="Logging level for the MIT controller node.",
+    )
+    fast_mode_arg = DeclareLaunchArgument(
+        "fast_mode",
+        default_value="true",
+        description="Forward fast-mode control to agx_arm_ctrl.",
+    )
+    speed_percent_arg = DeclareLaunchArgument(
+        "speed_percent",
+        default_value="100",
+        description="Motion speed percentage forwarded to agx_arm_ctrl.",
+    )
+    pub_rate_arg = DeclareLaunchArgument(
+        "pub_rate",
+        default_value="200",
+        description="Feedback publish rate forwarded to agx_arm_ctrl.",
+    )
+    enable_timeout_arg = DeclareLaunchArgument(
+        "enable_timeout",
+        default_value="5.0",
+        description="Enable timeout in seconds forwarded to agx_arm_ctrl.",
+    )
+    tcp_offset_arg = DeclareLaunchArgument(
+        "tcp_offset",
+        default_value="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
+        description="TCP offset [x, y, z, rx, ry, rz] forwarded to agx_arm_ctrl.",
+    )
+    gripper_default_effort_arg = DeclareLaunchArgument(
+        "gripper_default_effort",
+        default_value="1.0",
+        description="Default gripper effort forwarded to agx_arm_ctrl.",
+    )
+    publish_gripper_joint_arg = DeclareLaunchArgument(
+        "publish_gripper_joint",
+        default_value="true",
+        description="Whether agx_arm_ctrl should publish the synthetic gripper joint.",
+    )
+    control_rate_arg = DeclareLaunchArgument(
+        "control_rate_hz",
+        default_value="100.0",
+        description="MIT controller update rate in hertz.",
+    )
+    params_file_arg = DeclareLaunchArgument(
+        "params_file",
+        default_value=default_params_file,
+        description="MIT controller parameter YAML file.",
+    )
 
     driver_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -48,9 +133,20 @@ def generate_launch_description():
         launch_arguments={
             "namespace": LaunchConfiguration("namespace"),
             "can_port": LaunchConfiguration("can_port"),
-            "arm_type": "nero",
+            "arm_type": LaunchConfiguration("arm_type"),
+            "effector_type": LaunchConfiguration("effector_type"),
+            "omnihand_type": LaunchConfiguration("omnihand_type"),
+            "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
+            "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "auto_enable": LaunchConfiguration("auto_enable"),
             "log_level": LaunchConfiguration("log_level"),
-            "fast_mode": "true",
+            "fast_mode": LaunchConfiguration("fast_mode"),
+            "speed_percent": LaunchConfiguration("speed_percent"),
+            "pub_rate": LaunchConfiguration("pub_rate"),
+            "enable_timeout": LaunchConfiguration("enable_timeout"),
+            "tcp_offset": LaunchConfiguration("tcp_offset"),
+            "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
+            "publish_gripper_joint": LaunchConfiguration("publish_gripper_joint"),
         }.items(),
     )
 
@@ -71,7 +167,20 @@ def generate_launch_description():
         [
             namespace_arg,
             can_port_arg,
+            arm_type_arg,
+            effector_type_arg,
+            omnihand_type_arg,
+            launch_omnihand_bridge_arg,
+            omnihand_backend_type_arg,
+            auto_enable_arg,
             log_level_arg,
+            fast_mode_arg,
+            speed_percent_arg,
+            pub_rate_arg,
+            enable_timeout_arg,
+            tcp_offset_arg,
+            gripper_default_effort_arg,
+            publish_gripper_joint_arg,
             control_rate_arg,
             params_file_arg,
             LogInfo(msg=["MIT controller params_file: ", LaunchConfiguration("params_file")]),

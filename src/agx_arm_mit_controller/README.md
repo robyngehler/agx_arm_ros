@@ -23,6 +23,15 @@ This package stays ROS-centric:
 - service: `~/hold_current` (`std_srvs/Empty`)
 - service: `~/cancel_trajectory` (`std_srvs/Empty`)
 
+## MoveIt And RViz Integration
+
+This package now provides two bridge nodes used by the higher-level control launches:
+
+- `agx_arm_mit_follow_joint_trajectory` exposes `control_msgs/action/FollowJointTrajectory` on `arm_controller/follow_joint_trajectory` and republishes accepted goals to `mit_controller/joint_trajectory`. `agx_arm_moveit demo.launch.py use_mit_controller:=true` and `agx_arm_ctrl start_single_agx_arm_moveit.launch.py` use this path.
+- `agx_arm_mit_joint_state_bridge` subscribes to `mit_controller/soft_target_joint_states` and converts RViz joint-slider targets into short single-point `JointTrajectory` segments. `agx_arm_ctrl start_single_agx_arm_rviz.launch.py control:=true use_mit_controller:=true` uses this bridge.
+
+The RViz bridge segment time is controlled by the `mit_joint_target_duration_s` launch argument on `start_single_agx_arm_rviz.launch.py`.
+
 ## Recorder Workflow
 
 `agx_arm_record_leader_trajectory` is an interactive ROS tool that:
@@ -194,10 +203,20 @@ If Pinocchio is not installed yet, the compare and FK validation tools explain t
 ## Launch
 
 ```bash
-ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py can_port:=can0
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
+  can_port:=can_nero \
+  arm_type:=nero \
+  effector_type:=agx_gripper \
+  tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
+`start_nero_mit_controller.launch.py` now forwards the main `agx_arm_ctrl` runtime arguments directly: `arm_type`, `effector_type`, `omnihand_type`, `launch_omnihand_bridge`, `omnihand_backend_type`, `auto_enable`, `fast_mode`, `speed_percent`, `pub_rate`, `enable_timeout`, `tcp_offset`, `gripper_default_effort`, and `publish_gripper_joint`.
+
+It also exposes MIT-specific `control_rate_hz`, `params_file`, and `log_level`.
+
 ## Typical command topic
+
+For direct topic-based testing, publish to `/mit_controller/joint_trajectory` as shown below. MoveIt uses the `arm_controller/follow_joint_trajectory` action bridge instead.
 
 ```bash
 ros2 topic pub /mit_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory "{

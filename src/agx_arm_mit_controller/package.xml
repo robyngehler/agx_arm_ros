@@ -10,6 +10,7 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>trajectory_msgs</depend>
+  <depend>control_msgs</depend>
   <depend>builtin_interfaces</depend>
   <depend>std_srvs</depend>
   <depend>agx_arm_msgs</depend>
