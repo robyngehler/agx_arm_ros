@@ -60,6 +60,23 @@ Data Sample Point: 75.0%
 
 These values should be treated as fallback/default SDK output, not as confirmed live hardware state.
 
+## Superseding update: exact 5 Mbit/s is available, but the external bus path is still dead
+
+The earlier `4 Mbit/s` mismatch hypothesis is no longer the leading explanation on this host.
+
+Current validated state:
+
+- the vendor SDK source clearly targets a `1 Mbit/s` arbitration phase with a `5 Mbit/s` CAN FD data phase,
+- Jetson native `mttcan` on this host accepts that timing exactly, including `sample-point 0.800` and `dsample-point 0.800`,
+- external-bus tests on both `can0` and `can1` still show `TX packets 0`, `RX packets 0`, SDK timeouts, and no `candump` traffic,
+- but an internal `loopback on` test on `can0` successfully transmits and receives a CAN FD frame, increments both `TX` and `RX` counters, and is visible in `candump`.
+
+Interpretation:
+
+- the local Jetson `mttcan` controller path and SocketCAN userspace path are functional,
+- the current blocker is no longer the SDK send path or the inability to realize the vendor bitrate,
+- the remaining fault is on the external path between the Jetson controller and the OmniHand bus.
+
 ## Latest validation on this host
 
 Additional validation on the current Jetson host now shows:
@@ -67,6 +84,13 @@ Additional validation on the current Jetson host now shows:
 - the SDK SocketCAN path does generate request frames locally; enabling `hand.show_data_details(True)` prints `SND` frames for `0x00010101` and `0x00020101`,
 - the repo-local SocketCAN backend has been aligned with the vendor ZLG backend by enabling CAN FD bit-rate switching on transmit,
 - but `demo_get_hardware_info.py` still times out, `candump` on `can_omnihand` stays silent, and `ip -details -statistics link show can_omnihand` remains at `TX packets 0` with accumulated `bus-errors` and automatic restarts.
+
+Newer Jetson-native tests on the physical `can0`/`can1` path sharpen that result further:
+
+- after rewiring `can0_in` to RX and `can0_out` to TX, both controllers can be configured to exact `1 Mbit/s / 5 Mbit/s`,
+- `cansend can0 123##1551122334455667788` and the same test on `can1` still leave `TX packets 0` and `RX packets 0`,
+- the SDK smoke test on `can0` and `can1` still times out with only local `SND` logs,
+- switching `can0` into internal `loopback on` mode produces a valid local receive in `candump` and increments `TX` plus `RX` counters.
 
 ### Additional timing candidates tested after this proposal
 
@@ -89,11 +113,12 @@ Interpretation:
 
 - missing CAN FD bit-rate switching in the SocketCAN path was not the only blocker,
 - the current failure still points below ROS and below the Python demo layer,
-- and the remaining suspects stay concentrated in kernel-driver transmission, CAN FD timing mismatch, or physical bus conditions.
+- CAN FD timing mismatch is no longer the main suspect on this host,
+- and the remaining suspects are now concentrated on the external electrical path: transceiver presence or enable, board-level routing, external wiring, termination, power, or hand-side mode.
 
-## Technical finding: exact 4 Mbit/s data phase is not currently produced
+## Historical note: earlier 4 Mbit/s mismatch hypothesis
 
-The vendor path appears to expect a CAN-FD data bitrate of `4000000` bit/s.
+An earlier hypothesis was that the vendor path expected a CAN-FD data bitrate of `4000000` bit/s.
 
 The Jetson native `mttcan` controller reports a CAN clock of `50000000` Hz. With this clock, the requested `4000000` data bitrate is not represented exactly by the current driver timing constraints. The interface instead reports:
 
@@ -116,21 +141,48 @@ The mismatch from 4 Mbit/s is approximately:
 
 For CAN FD this is likely too large if the hand is fixed to exactly 4 Mbit/s in the data phase.
 
+That observation remains mathematically correct, but it is no longer the leading blocker because the vendor source and the newer host tests both support exact `5 Mbit/s` operation on this Jetson path.
+
+## Current technical finding: exact 5 Mbit/s data phase is available on Jetson native mttcan
+
+The vendor SDK now points much more strongly at a `5 Mbit/s` data phase than at `4 Mbit/s`:
+
+- the ZLG backend initializes the data-domain timing block as `5M`,
+- the vendored SocketCAN helper macro also uses `dbitrate 5000000`.
+
+On this Jetson host, the native controller accepts that timing exactly:
+
+```text
+bitrate 1000000 sample-point 0.800
+dbitrate 5000000 dsample-point 0.800
+```
+
+This means the native Jetson path is no longer blocked by the inability to realize the vendor CAN FD rate.
+
 ## Working hypothesis
 
 The current failure is most likely caused by one of the following:
 
-1. The OmniHand firmware expects `dbitrate=4000000`, while the Jetson native interface runs at `3846153`.
-2. The SDK contains hardcoded CAN-FD timing assumptions that do not match the current SocketCAN interface.
-3. The SDK is sending requests, but the hand cannot decode them due to data-phase bitrate mismatch.
-4. The SDK generates request frames in userspace, but the Jetson SocketCAN path is still not producing observable bus traffic on `can_omnihand`; this must be verified with kernel counters and error frames, not only SDK logs.
-5. Less likely, but still possible: physical CAN-FD wiring, termination, power, or hand-side mode is incorrect.
+1. The Jetson local controller path works, but the external CAN electrical path is still not complete or not active.
+2. A CAN transceiver, transceiver-enable signal, or board-level routing between Jetson `mttcan` and the physical CAN bus is missing or incorrect.
+3. The hand-side bus conditions are still wrong: termination, power, bus polarity at the transceiver side, or required hand-side mode.
+4. Less likely now: a remaining SDK-level protocol mismatch after the external bus starts carrying frames.
 
 ## Recommendation
 
-The next useful step is to investigate whether the vendor SDK allows changing the CAN-FD data bitrate or whether the 4 Mbit/s data phase is hardcoded.
+The next useful step is no longer another arbitrary `dbitrate` sweep inside Jetson `mttcan`.
 
-Changing only the Jetson interface is not sufficient unless the hand/SDK side uses the same data bitrate. Both sides must agree on:
+The next useful step is to validate the external CAN path between Jetson and OmniHand.
+
+The current evidence already shows that:
+
+- the SDK can generate CAN FD requests,
+- Jetson `mttcan` can realize the vendor `1M/5M` timing,
+- and the controller can send and receive internally in loopback mode.
+
+What is still missing is proof that frames leave the Jetson over the real external bus and reach the hand.
+
+Both sides still must agree on:
 
 ```text
 arbitration bitrate
@@ -140,7 +192,7 @@ data sample point
 CAN FD frame format
 ```
 
-Therefore, the next phase should remain below ROS and focus only on SDK plus SocketCAN validation.
+Therefore, the next phase should remain below ROS and focus on hardware-path validation rather than more SDK timing edits.
 
 ## Proposed next tasks
 
