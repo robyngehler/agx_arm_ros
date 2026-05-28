@@ -1,7 +1,7 @@
 # Nero Physical AI Progress Monitor
 
-status: ACTIVE_SPRINT2_RUNTIME_PLUS_SPRINT3_ARM_HARDENING
-last_updated: 2026-05-21
+status: ACTIVE_SPRINT2_RUNTIME_PLUS_SPRINT3_ARM_HARDENING_PLUS_SPRINT4_DUO_BRINGUP
+last_updated: 2026-05-28
 
 ## Purpose
 
@@ -26,9 +26,9 @@ Use the top-level development docs like this:
 | Area | Status | Summary |
 | --- | --- | --- |
 | Sprint 1 asset and repo baseline | COMPLETE | Stable outputs were promoted into `docs/assets/` and `docs/control/`; the remaining gaps are external. |
-| Sprint 2 common environment and package structure merge | ACTIVE | Shared ROS2 semantics, package boundaries, Sprint 2 working notes, and stable interaction diagrams are in place; the remaining gate is real OmniHand backend and runtime validation work. |
-| Sprint 3 Nero planning and control hardening | ACTIVE | Arm-only MoveIt/MIT hardening has started in parallel; `nero_arm` and `nero_tool0` are being made canonical, TRAC-IK is the selected MoveIt IK baseline, and sim-only profile sweeps are valid evidence before real-arm collision-checked execution. |
-| Sprint 4 Nero plus OmniHand common baseline | PLANNED | Depends on the shared bridge boundary and normalized ROS2 contract from Sprint 2. |
+| Sprint 2 common environment and package structure merge | ACTIVE | Shared ROS2 semantics, package boundaries, Sprint 2 working notes, and stable interaction diagrams are in place; the remaining gate is still the first non-mock OmniHand backend plus runtime validation on a real hand path. |
+| Sprint 3 Nero planning and control hardening | ACTIVE | Arm-only MoveIt/MIT hardening continues in parallel and now also feeds the naming and description groundwork needed for the Duo body system slice. |
+| Sprint 4 Duo body plus OmniHand system baseline | ACTIVE | `src/duo_body_description` is now the documented staging package for the body-mounted system slice; prefix-safe right-first system Xacros and a description-only bringup launch are landed, and the remaining gates are ROS-side validation plus the generalization of single-arm control and MoveIt surfaces. |
 | Sprint 5 and later | PLANNED / EXTERNAL | Later phases stay roadmap items until AGV assets, broader simulation assets, and more hardware validation exist. |
 
 ## Roadmap Sprint Status
@@ -37,8 +37,8 @@ Use the top-level development docs like this:
 | --- | --- | --- | --- |
 | 1 | Asset audit and model baseline | COMPLETE | Closed locally except for AGV assets, broader USD coverage, and live OmniHand hardware validation. |
 | 2 | Common environment and package structure merge | ACTIVE | Package boundaries, simulation-first OmniHand integration, and stable repo interaction docs are in place; the remaining gate is the first non-mock backend plus validated runtime behavior on a real hand path. |
-| 3 | Nero planning and control baseline hardening | ACTIVE | Proceed on arm-only validation, TRAC-IK integration, naming hardening, and sim-only profile sweeps that do not change the shared ROS2 contract or launch ownership. |
-| 4 | Nero plus OmniHand common baseline | PLANNED | Start after the shared bridge boundary and normalized hand semantics are stable. |
+| 3 | Nero planning and control baseline hardening | ACTIVE | Proceed on arm-only validation, TRAC-IK integration, naming hardening, and the minimum prefix-safe description work that feeds Sprint 4 without reopening the shared ROS2 contract or launch ownership. |
+| 4 | Duo body plus OmniHand system baseline | ACTIVE | Right-side body-mounted description validation must complete first, then the current single-arm RViz, MoveIt, and controller-facing surfaces must be generalized in place. |
 | 5 | Static AGV/base integration | EXTERNAL | Blocked on AGV/base CAD, mounting references, and coordinate definitions not present in this workspace. |
 | 6 | Combined collision and planning validation | PLANNED | Wait for hand and base geometry to stabilize first. |
 | 7 | Isaac Sim digital twin integration | PLANNED | Wait for broader model-variant and USD coverage. |
@@ -57,14 +57,18 @@ Use the top-level development docs like this:
 
 - keep the public ROS2 surface agx_arm-centric while Sprint 2 runtime work settles
 - keep Sprint 2 scoped to OmniHand backend, SDK smoke-test, and runtime-graph validation rather than reopening package placement
-- run Sprint 3 only on Nero arm MoveIt/MIT hardening that remains valid without live OmniHand hardware
+- run Sprint 3 on Nero arm MoveIt/MIT hardening plus only the minimal naming and description groundwork needed by the Duo system slice
+- treat `src/duo_body_description` as the documented Sprint 3 and Sprint 4 staging package for body-mounted system bringup, not as a final long-term replacement for `src/agx_arm_sim/agx_arm_description`
+- make description and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable target and the left side as the immediate follow-on
 - treat sim-only MoveIt profile sweeps across effectors as valid Sprint 3 evidence before real-arm collision-checked execution
-- keep `nero_arm` as the monolithic active planning group in the current MoveIt surface
+- keep `nero_arm` as the monolithic active planning group in the current single-arm MoveIt surface while Sprint 4 documents the future `right_arm`, `left_arm`, and `both_arms` split for the Duo system
 - keep `nero_tool0` as the canonical Nero flange alias and `tcp_link` as the distinct TCP frame instead of collapsing those semantics together
 - use TRAC-IK as the current MoveIt IK baseline and source the external `~/workspace/trac_ik_ws` overlay on Humble / Jetson when the apt package is unavailable
+- keep Isaac and broader simulation work sequenced after the first validated Duo body system baseline
 - keep stable repo policy in `docs/project/` and runtime contracts in `docs/control/`
 - keep only three cross-sprint coordination docs at the top of `docs/development/`
 - put discovery, checklist, error/fix, and niche implementation details into sprint folders
+- keep the current Duo body integration record in `docs/development/sprint4/`
 - keep the wakeword-triggered demo and recording/playback helper documented as adjacent tooling in `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`; it supports later interaction work but is not a roadmap gate by itself
 
 ## Cross-Sprint Blockers
@@ -72,6 +76,8 @@ Use the top-level development docs like this:
 - AGV/base CAD, mounting data, and coordinate definitions are still missing locally
 - OmniHand live hardware validation still depends on a responsive device path and adapter
 - broader Isaac/USD asset coverage is still incomplete
+- current RViz, MoveIt, and controller-facing launch surfaces are still primarily single-arm oriented
+- a ROS-capable validation shell is still needed for package builds, `xacro`, `check_urdf`, and RViz checks on the Duo system path
 
 ## Update Rules
 

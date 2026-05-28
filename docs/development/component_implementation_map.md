@@ -1,7 +1,7 @@
 # Component And Implementation Map
 
-status: ACTIVE_SPRINT2_BASELINE
-last_updated: 2026-05-14
+status: ACTIVE_SPRINT3_4_DUO_SYSTEM
+last_updated: 2026-05-28
 
 ## Purpose
 
@@ -24,8 +24,9 @@ Use these three top-level development docs for cross-sprint coordination:
 | Component | Canonical code or asset surface | Stable docs | Working notes and deep dives |
 | --- | --- | --- | --- |
 | Nero description and model assets | `src/agx_arm_sim/agx_arm_description` | `docs/assets/repository_asset_inventory.md`, `docs/assets/nero_asset_validation.md`, `docs/project/repository_structure.md`, `docs/project/repo_interaction_diagrams.md` | `docs/development/sprint1/assets/repository_asset_inventory.md`, `docs/development/sprint1/assets/description_layer.md`, `docs/development/sprint1/assets/nero_asset_validation.md` |
-| MoveIt baseline | `src/agx_arm_moveit` | `docs/assets/nero_asset_validation.md`, `docs/project/repository_structure.md`, `docs/project/repo_interaction_diagrams.md` | `docs/development/sprint1/assets/moveit2_schema.md`, `docs/development/sprint2/README.md`, `docs/development/sprint2/checklist.md` |
-| Runtime arm bridge and ROS2 launch surfaces | `src/agx_arm_ctrl` | `docs/project/ros2_development_practices.md`, `docs/project/repo_interaction_diagrams.md`, `docs/control/omnihand_ros_integration_options.md`, `docs/control/omnihand_wrapper_integration_plan.md` | `docs/development/sprint2/README.md`, `docs/development/sprint2/checklist.md`, `docs/development/sprint2/open_questions.md` |
+| Duo body system assembly and multi-arm staging | `src/duo_body_description` plus shared assets from `src/agx_arm_sim/agx_arm_description` | `docs/project/repository_structure.md`, `docs/project/package_naming.md`, `docs/project/ros2_development_practices.md` | `docs/development/sprint3/README.md`, `docs/development/sprint3/checklist.md`, `docs/development/sprint4/README.md`, `docs/development/sprint4/checklist.md`, `docs/development/sprint4/planning/duo_system_integration_direction.md` |
+| MoveIt baseline | `src/agx_arm_moveit` | `docs/assets/nero_asset_validation.md`, `docs/project/repository_structure.md`, `docs/project/repo_interaction_diagrams.md` | `docs/development/sprint1/assets/moveit2_schema.md`, `docs/development/sprint2/README.md`, `docs/development/sprint2/checklist.md`, `docs/development/sprint3/README.md`, `docs/development/sprint4/README.md` |
+| Runtime arm bridge and ROS2 launch surfaces | `src/agx_arm_ctrl` | `docs/project/ros2_development_practices.md`, `docs/project/repo_interaction_diagrams.md`, `docs/control/omnihand_ros_integration_options.md`, `docs/control/omnihand_wrapper_integration_plan.md` | `docs/development/sprint2/README.md`, `docs/development/sprint2/checklist.md`, `docs/development/sprint2/open_questions.md`, `docs/development/sprint4/README.md`, `docs/development/sprint4/open_questions.md` |
 | MIT controller and gravity workflow | `src/agx_arm_mit_controller` | `docs/control/mit_controller_model_inventory.md` | `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`, `docs/development/sprint1/control/proposal.md`, `docs/development/sprint1/control/proposal_urdf_gravity_compensation.md`, `docs/development/sprint1/control/mit_controller_model_inventory.md` |
 | OmniHand SDK input and repo-owned bridge direction | `vendor/Omnihand-2025-SDK` as upstream input and `src/agx_arm_ctrl` as the repo-owned bridge surface | `docs/assets/omnihand_asset_validation.md`, `docs/control/omnihand_ros_integration_options.md`, `docs/control/omnihand_phase1_joint_map.md`, `docs/control/omnihand_phase1_run_log.md`, `docs/control/omnihand_wrapper_integration_plan.md` | `docs/development/sprint1/hand/omnihand_sdk_integration.md` |
 | Repo-owned ROS messages | `src/agx_arm_msgs` | `docs/project/ros2_development_practices.md`, `docs/project/repo_interaction_diagrams.md`, `docs/control/omnihand_ros_integration_options.md` | `docs/development/sprint2/README.md`, `docs/development/sprint2/open_questions.md` |
@@ -54,3 +55,5 @@ Optional subfolders should be created only when the sprint needs them, for examp
 - `learning/`
 
 Keep targeted controller notes under the owning sprint folder, for example `docs/development/sprint2/control/` for the current validated workflow and `docs/development/sprint1/control/` for historical proposal context.
+
+For the current Duo body direction change, keep cross-sprint intent in the three top-level development docs, keep the implementation record in `docs/development/sprint4/`, and treat package-local notes under `src/duo_body_description/` as supporting context rather than the cross-sprint source of truth.

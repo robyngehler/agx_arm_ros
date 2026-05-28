@@ -30,8 +30,10 @@ Read these first when changing package boundaries or OmniHand integration surfac
 ## Working Rules
 
 - start from the owning package instead of creating a parallel surface
+- use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface for Duo body system bringup; keep long-term canonical description ownership in `src/agx_arm_sim/agx_arm_description`
 - keep the OmniHand bridge in `agx_arm_ctrl` during Sprint 2
 - keep the public ROS contract agx_arm-centric
+- make description and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable Duo target
 - keep sprint-local evidence in `docs/development/sprintN/` and keep only roadmap, progress, and component routing at the top of `docs/development/`
 - do not map OmniHand onto the Revo2-specific message contract
 - keep `.github/` guidance in sync with the stable docs it mirrors

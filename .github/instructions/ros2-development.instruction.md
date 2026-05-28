@@ -10,6 +10,7 @@ Load this instruction for ROS2-native questions and decisions.
 
 - keep the public ROS surface agx_arm-centric
 - reuse the current owning packages before creating a new ROS2 surface
+- when the task is multi-arm or multi-hand bringup, make description and launch surfaces arm-count-aware from the start
 - prefer shared `control/joint_states` and combined `feedback/joint_states` for coordinated arm-plus-hand flows
 - keep hand-only diagnostics under `feedback/omnihand/*`
 - use standard ROS messages first and extend `agx_arm_msgs` only for repo-owned semantics
@@ -22,6 +23,7 @@ Load this instruction for ROS2-native questions and decisions.
 - `docs/assets/` for stable factual inventories and validation state
 - top-level `docs/development/` docs only for roadmap, progress, and component routing
 - `docs/development/sprintN/` for discovery, checklist, error/fix, and blocker tracking
+- use `docs/development/sprint4/` for the current Duo body system implementation record
 - keep `.github/` guidance synchronized with the stable docs it mirrors
 
 ## Validation

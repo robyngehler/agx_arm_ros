@@ -19,9 +19,14 @@ Sprint 3 is now active for Nero arm MoveIt and MIT-controller hardening that doe
 - [x] Run the sim-only MoveIt profile sweep on the current host and capture the common runtime gates.
 - [x] Run the sim-only MoveIt profile sweep on a host with `trac_ik_kinematics_plugin` available.
 - [x] Validate one representative live `/compute_ik` request on the TRAC-IK baseline for `nero_arm`.
+- [x] Land the minimum prefix-safe description groundwork needed for the Duo body system slice without forking canonical package ownership.
+- [x] Create the `src/duo_body_description` staging package surfaces needed for right-first description bringup.
+- [x] Capture the Sprint 3 to Sprint 4 handoff around Duo body system integration.
 - [ ] Validate at least one representative pose-planning task on the TRAC-IK + OMPL baseline.
 - [ ] Audit joint ordering, timing, and unit assumptions from MoveIt output into the MIT controller.
 - [ ] Iterate the full planning path across all current effector profiles and capture the remaining collision and execution-safety gaps.
 - [ ] Isolate the timeout-driven `move_group` shutdown crash well enough to tell whether it is host-local or workspace-local.
 
 The 2026-05-21 profile sweep reached "You can start planning now!" for all current effector profiles with the external `~/workspace/trac_ik_ws` overlay, and a live `/compute_ik` request returned `MoveItErrorCodes.SUCCESS` for `nero_arm`; the remaining shared gate is the timeout-driven `move_group` teardown crash on this host.
+
+The Duo body staging work that has already landed is an input to Sprint 4, not a replacement for the remaining Sprint 3 arm-hardening checks.

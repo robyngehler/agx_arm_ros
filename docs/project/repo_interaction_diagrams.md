@@ -1,11 +1,11 @@
 # Repo Interaction Diagrams
 
-status: ACTIVE_SPRINT2_BASELINE
-last_updated: 2026-05-17
+status: ACTIVE_SPRINT3_4_DUO_SYSTEM_STAGING
+last_updated: 2026-05-28
 
 ## Purpose
 
-This document provides the stable visual reference for how the current repo behaves during Sprint 2.
+This document provides the stable visual reference for how the current repo behaves during the current Sprint 2 through Sprint 4 transition.
 
 It focuses on the currently active ROS2 runtime and launch surfaces:
 
@@ -14,6 +14,8 @@ It focuses on the currently active ROS2 runtime and launch surfaces:
 - `src/agx_arm_moveit`
 - `src/agx_arm_sim/agx_arm_description`
 - `src/agx_arm_msgs`
+
+`src/duo_body_description` is intentionally not a primary actor in these diagrams yet. It is the current description-only Sprint 3 and Sprint 4 staging package for Duo body system bringup, while the runtime ownership shown here remains in the existing `agx_arm_*` packages.
 
 Use this document together with:
 

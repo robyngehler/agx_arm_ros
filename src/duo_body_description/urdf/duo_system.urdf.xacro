@@ -1,25 +1,53 @@
 <?xml version="1.0"?>
 <robot name="duo_nero_system" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+  <xacro:arg name="use_left_arm" default="false"/>
+  <xacro:arg name="use_left_hand" default="false"/>
+  <xacro:arg name="use_right_arm" default="true"/>
+  <xacro:arg name="use_right_hand" default="true"/>
+  <xacro:arg name="left_arm_prefix" default="left_arm_"/>
+  <xacro:arg name="right_arm_prefix" default="right_arm_"/>
+  <xacro:arg name="left_arm_base_xyz" default="0 0 0"/>
+  <xacro:arg name="left_arm_base_rpy" default="0 0 0"/>
+  <xacro:arg name="right_arm_base_xyz" default="0 0 0"/>
+  <xacro:arg name="right_arm_base_rpy" default="0 0 0"/>
+
+  <xacro:property name="left_arm_prefix" value="$(arg left_arm_prefix)"/>
+  <xacro:property name="right_arm_prefix" value="$(arg right_arm_prefix)"/>
+
   <xacro:include filename="$(find duo_body_description)/urdf/duo_body.xacro"/>
   <xacro:include filename="$(find duo_body_description)/urdf/nero_arm_macro.xacro"/>
 
   <xacro:duo_body/>
 
-  <joint name="left_mount_to_left_base" type="fixed">
-    <parent link="left_arm_mount_link"/>
-    <child link="left_base_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-  </joint>
+  <xacro:if value="$(arg use_left_arm)">
+    <xacro:nero_arm prefix="${left_arm_prefix}"/>
 
-  <xacro:nero_arm prefix="left_"/>
+    <joint name="${left_arm_prefix}mount_to_base" type="fixed">
+      <parent link="left_arm_mount_link"/>
+      <child link="${left_arm_prefix}base_link"/>
+      <origin xyz="$(arg left_arm_base_xyz)" rpy="$(arg left_arm_base_rpy)"/>
+    </joint>
 
-  <joint name="right_mount_to_right_base" type="fixed">
-    <parent link="right_arm_mount_link"/>
-    <child link="right_base_link"/>
-    <origin xyz="0 0 0" rpy="0 0 0"/>
-  </joint>
+    <xacro:if value="$(arg use_left_hand)">
+      <xacro:omnihand_flange arm_prefix="${left_arm_prefix}"/>
+      <xacro:omnihand_hand arm_prefix="${left_arm_prefix}" hand_side="left"/>
+    </xacro:if>
+  </xacro:if>
 
-  <xacro:nero_arm prefix="right_"/>
+  <xacro:if value="$(arg use_right_arm)">
+    <xacro:nero_arm prefix="${right_arm_prefix}"/>
+
+    <joint name="${right_arm_prefix}mount_to_base" type="fixed">
+      <parent link="right_arm_mount_link"/>
+      <child link="${right_arm_prefix}base_link"/>
+      <origin xyz="$(arg right_arm_base_xyz)" rpy="$(arg right_arm_base_rpy)"/>
+    </joint>
+
+    <xacro:if value="$(arg use_right_hand)">
+      <xacro:omnihand_flange arm_prefix="${right_arm_prefix}"/>
+      <xacro:omnihand_hand arm_prefix="${right_arm_prefix}" hand_side="right"/>
+    </xacro:if>
+  </xacro:if>
 
 </robot>

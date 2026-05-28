@@ -32,6 +32,7 @@ Do not load every instruction by default. Match context to the task.
 - source versus generated asset rules: `.github/instructions/generated-vs-source-assets.instruction.md`
 - local workflow and promotion order: `.github/instructions/local-agent-workflow.instruction.md`
 - OmniHand bridge contract and runtime surface: `.github/instructions/omnihand-bridge.instruction.md`
+- current Duo body system working notes: `docs/development/sprint4/`
 
 These instructions are concise Copilot-native mirrors of the current stable docs under `docs/project/` and `docs/control/`.
 
@@ -51,6 +52,7 @@ Use these when a task benefits from a narrower persona:
 ## Default Expectations
 
 - keep the public ROS surface agx_arm-centric
+- treat `src/duo_body_description` as the current Sprint 3 and Sprint 4 staging package for Duo body system assembly while keeping `src/agx_arm_sim/agx_arm_description` and `src/agx_arm_moveit` as the long-term canonical surfaces
 - keep the OmniHand bridge in `agx_arm_ctrl` during Sprint 2
 - prefer shared `control/joint_states` and combined `feedback/joint_states` for coordinated arm-plus-hand flows
 - use repo-owned `agx_arm_msgs` messages for OmniHand-specific diagnostics and tactile payloads

@@ -44,6 +44,14 @@ The current control assumption is that high-level planners and policies provide 
 
 Robot modeling is performed incrementally. Arm, hand, and AGV/base assets are validated independently before being merged into combined model variants.
 
+The current local execution order is now:
+
+- repo-local Duo body model
+- `body + right arm + right OmniHand`
+- mirrored left arm and left OmniHand integration
+- multi-arm-safe launch, MoveIt, and controller-path generalization
+- only after that, broader Isaac and later AGV/mobile expansion
+
 The model chain must support both:
 
 - simulation and planning workflows, and
@@ -118,6 +126,8 @@ nero_standalone
 nero_with_dummy_payload
 nero_with_omnihand_static
 nero_with_omnihand_articulated
+duo_body_right_arm_right_omnihand
+duo_body_dual_nero_dual_omnihand
 nero_on_static_agv
 nero_omnihand_on_static_agv
 nero_omnihand_on_mobile_agv
@@ -127,32 +137,45 @@ Each variant should be generated from shared Xacro or equivalent model component
 
 ### 4.4 Canonical Frame Naming
 
-The following frame semantics should be used consistently:
+The current repo-local Duo body staging baseline uses the following frame chain:
+
+```text
+body_base_link
+├── left_arm_mount_link
+│   └── left_arm_base_link
+│       └── left_arm_nero_tool0
+│           └── left_arm_omnihand_flange
+│               └── left_base_link
+└── right_arm_mount_link
+    └── right_arm_base_link
+        └── right_arm_nero_tool0
+            └── right_arm_omnihand_flange
+                └── right_base_link
+```
+
+Later mobile or AGV-mounted variants may wrap this under the larger navigation frame chain:
 
 ```text
 map
 └── odom
     └── agv_base_link
-        └── arm_mount_link
-            └── nero_base_link
-                └── nero_tool0
-                    └── wrist_adapter_link
-                        └── omnihand_palm_link
-                            └── grasp_frame
+        └── body_base_link
+            └── ... current Duo body chain ...
 ```
 
 Required semantic frames:
 
 | Frame | Meaning |
 |---|---|
+| `body_base_link` | Current repo-local Duo body reference frame for fixed two-arm body integration |
+| `left_arm_mount_link`, `right_arm_mount_link` | Mechanical mounting interfaces between the Duo body and each Nero arm |
+| `left_arm_base_link`, `right_arm_base_link` | Prefixed Nero arm base frames for multi-arm-safe composition |
+| `left_arm_nero_tool0`, `right_arm_nero_tool0` | Prefixed Nero flange frames in the current Duo body system chain |
+| `left_arm_omnihand_flange`, `right_arm_omnihand_flange` | Mechanical adapter frames between each Nero flange and OmniHand |
+| `left_base_link`, `right_base_link` | OmniHand base frames provided by the current hand description assets |
 | `map` | Global/world reference frame |
 | `odom` | Local odometry frame for future mobile-base operation |
-| `agv_base_link` | Main AGV/base reference frame |
-| `arm_mount_link` | Mechanical mounting interface between AGV/base and Nero arm |
-| `nero_base_link` | Nero arm base frame |
-| `nero_tool0` | Nero tool/flange frame |
-| `wrist_adapter_link` | Mechanical adapter between Nero flange and OmniHand |
-| `omnihand_palm_link` | Palm/base frame of the OmniHand Pro |
+| `agv_base_link` | Main AGV/base reference frame for later mobile or larger static-base variants |
 | `grasp_frame` | Task-level grasp reference frame used by planners and skills |
 
 ### 4.5 Planning Groups
@@ -160,20 +183,21 @@ Required semantic frames:
 Initial MoveIt 2 planning groups should be defined as follows:
 
 ```text
-nero_arm
-omnihand
-nero_arm_with_static_hand
-nero_arm_on_static_agv
-nero_arm_with_omnihand_on_static_agv
+right_arm
+right_arm_hand
+left_arm
+left_arm_hand
+both_arms
+both_arms_with_hands
 ```
 
 Recommended early usage:
 
-- `nero_arm`: primary arm IK and motion planning group
-- `omnihand`: hand control and later finger-level experiments
-- `nero_arm_with_static_hand`: arm planning with hand geometry treated as attached tool geometry
-- `nero_arm_on_static_agv`: arm planning with the static AGV/base as collision environment
-- `nero_arm_with_omnihand_on_static_agv`: combined collision-aware planning model for arm, hand envelope, and base
+- `right_arm`: first executable arm IK and motion-planning group for the right-side Duo system slice
+- `right_arm_hand`: right-arm planning with the attached hand geometry treated as part of the system envelope
+- `left_arm` and `left_arm_hand`: mirrored extension once the right-side chain is validated
+- `both_arms`: coordinated dual-arm planning group for shared-body tasks
+- `both_arms_with_hands`: later coordinated planning group after self-collision matrices and execution semantics stabilize
 
 The full articulated hand should not initially be part of the arm IK chain.
 
@@ -244,8 +268,9 @@ The current local repo execution order no longer matches the first-draft split o
 
 - Sprint 1 is treated as complete for asset audit, source-of-truth ownership, and repo-baseline decisions, aside from hardware-gated checks and AGV assets that are still external to the workspace.
 - Sprint 2 now focuses on the common environment merge: package structure baseline, OmniHand adapter boundary, normalized description assets, and the shared ROS/MoveIt semantics already being used locally.
-- Sprint 3 now focuses on validating and hardening the existing Nero planning and control baseline, adding missing IK or planning pieces only where they are not already available.
-- Sprint 4 now focuses on the first Nero plus OmniHand baseline on top of the shared adapter boundary and common ROS semantics from Sprint 2.
+- Sprint 3 now focuses on validating and hardening the existing Nero planning and control baseline, while landing only the multi-arm-safe description and naming groundwork needed for the first Duo body system slice.
+- Sprint 4 now focuses on the first body-mounted system baseline: `body + right arm + right OmniHand` first, then the mirrored left side, while keeping descriptions and bringup arm-count-aware from the start.
+- Simulation and Isaac work stay behind the first validated Duo body system baseline instead of leading it.
 
 ### Adjacent Demo Tooling Note
 
@@ -321,7 +346,7 @@ Consolidate the common environment, package structure, and OmniHand integration 
 
 ### Objective
 
-Validate and harden the existing Nero arm planning and control baseline, adding only the IK, planning, and interface pieces that are still missing.
+Validate and harden the existing Nero arm planning and control baseline, adding only the IK, planning, interface, and description-composition pieces that are still missing for the first Duo system bringup.
 
 ### Scope
 
@@ -330,6 +355,7 @@ Validate and harden the existing Nero arm planning and control baseline, adding 
 - Verify whether the current KDL and OMPL baseline already covers representative Nero planning tasks.
 - Introduce or validate TRAC-IK only where it materially improves the current baseline.
 - Resolve remaining gaps between the desired roadmap semantics and the current code paths, especially `arm` versus `nero_arm` and `link7`/`tcp_link` versus `nero_tool0`.
+- Land the minimum prefix-safe and side-selectable description groundwork needed so Sprint 4 can compose a body-mounted right-first system without reopening canonical package ownership.
 - Use Pinocchio for model sanity checks and FK validation, and use Ruckig as optional smoothing or comparison tooling where it adds value.
 - Capture the remaining IK, planning, collision, and execution gaps that still block a reliable Nero standalone baseline.
 
@@ -338,6 +364,7 @@ Validate and harden the existing Nero arm planning and control baseline, adding 
 - Validated Nero standalone planning and control baseline using the existing workspace packages
 - Confirmed `JointTrajectory` execution path into the MIT controller
 - Documented gap analysis for TRAC-IK, OMPL, naming, collision semantics, and execution safety
+- Prefix-safe Duo system description staging layer and a documented handoff into Sprint 4
 - Representative pose-planning checklist and debug scripts for the Nero arm
 - Clear list of missing pieces that still need implementation rather than rediscovery
 
@@ -350,40 +377,37 @@ Validate and harden the existing Nero arm planning and control baseline, adding 
 
 ---
 
-## Sprint 4: Nero Plus OmniHand Common Baseline
+## Sprint 4: Duo Body Plus OmniHand System Baseline
 
 ### Objective
 
-Build the first Nero plus OmniHand baseline on top of the shared adapter boundary and common ROS semantics established in Sprint 2.
+Build the first Duo body plus Nero plus OmniHand baseline on top of the shared adapter boundary and common ROS semantics established in Sprint 2.
 
 ### Scope
 
 - Reuse the repo-owned OmniHand adapter boundary and common ROS naming from Sprint 2.
-- Bring the first repo-owned ROS bridge and common hand status/diagnostic interfaces into the combined stack as far as hardware access allows.
-- Add `wrist_adapter_link` and `omnihand_palm_link` to the Nero tool chain.
-- Add and validate `grasp_frame` on the shared hand contract.
-- Represent the OmniHand as a static payload attached to `nero_tool0`.
+- Validate `body_base_link`, left/right mount frames, and the staged Duo body package as the current system-assembly surface.
+- Bring up `body + right arm + right OmniHand` first as the first executable system slice.
+- Keep descriptions and launch surfaces arm-count-aware from the start even while validating only the right side first.
+- Mirror the left arm and left OmniHand only after the right-side chain is validated.
+- Generalize the current single-arm assumptions in RViz, MoveIt, and controller-facing launch surfaces without forking long-term package ownership.
 - Keep full finger-level dexterous planning out of the primary arm IK chain during this baseline phase.
-- Define correct hand mass, center of mass, and inertia approximation.
-- Update gravity and payload configuration for the MIT controller.
-- Add simplified hand collision geometry to MoveIt 2.
-- Reuse the landed OmniHand MoveIt profiles as the planning base for the combined baseline.
-- Validate reachability and collision behavior with the attached hand envelope.
+- Add simplified hand collision geometry and body-aware collision reasoning to the planning baseline.
+- Define the first coordinated dual-arm planning targets needed for shared-body tasks such as a two-arm pouring workflow.
 
 ### Expected Outputs
 
-- `nero_with_omnihand_static` model variant
-- First repo-owned OmniHand bridge/common message surface aligned with agx_arm semantics
-- Updated MoveIt 2 configuration for arm planning with attached hand geometry and the shared hand contract
-- Updated MIT payload configuration
-- Validated `grasp_frame` definition
+- `duo_body_right_arm_right_omnihand` model variant
+- Configurable `duo_body_dual_nero_dual_omnihand` system description
+- Documented and partially validated right-side body-mounted baseline
+- Multi-arm-safe launch and MoveIt generalization task list
+- First coordinated dual-arm benchmark target, with pouring as the representative reference task
 
 ### Follow-up Documents
 
-- Tool payload integration document
-- OmniHand bridge and diagnostics document
-- Wrist adapter modeling document
-- Hand collision-envelope document
+- Duo system integration and frame-validation document
+- Multi-arm launch and MoveIt generalization document
+- Wrist adapter and hand collision-envelope document
 - MIT payload/gravity compensation document
 
 ---
@@ -398,8 +422,8 @@ Integrate the AGV/base CAD into the planning and simulation model as a static mo
 
 - Import AGV/base CAD as visual geometry.
 - Create simplified collision primitives for planning.
-- Define `agv_base_link` and `arm_mount_link`.
-- Validate the mounting pose between AGV/base and Nero arm.
+- Define `agv_base_link`, `body_base_link`, and the wrapper transforms around the current left and right body mount frames.
+- Validate the mounting pose between AGV/base, the Duo body, and the left/right Nero arm chains.
 - Include the AGV/base as a static collision environment in MoveIt 2.
 - Create the `nero_on_static_agv` and `nero_omnihand_on_static_agv` model variants.
 - Confirm that gravity compensation uses the correct arm mounting orientation.
@@ -408,7 +432,7 @@ Integrate the AGV/base CAD into the planning and simulation model as a static mo
 
 - Simplified AGV/base collision model
 - Static mount transform definition
-- Combined Nero + OmniHand + static AGV/base model
+- Combined Duo body + Nero + OmniHand + static AGV/base model
 - Collision-aware MoveIt 2 planning scene
 - Mounting-pose validation report
 

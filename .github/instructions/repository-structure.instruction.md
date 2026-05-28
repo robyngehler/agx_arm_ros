@@ -8,7 +8,8 @@ Use the current workspace layout as the implementation truth during Sprint 2.
 
 ## Canonical Package Roles
 
-- `src/agx_arm_sim/agx_arm_description`: single discoverable description package for Nero, Revo2, and repo-owned OmniHand assets
+- `src/agx_arm_sim/agx_arm_description`: canonical long-term description package for Nero, Revo2, and repo-owned OmniHand assets
+- `src/duo_body_description`: current Sprint 3 and Sprint 4 staging package for Duo body plus configurable arm-hand system assembly
 - `src/agx_arm_moveit`: current MoveIt baseline and simulation path
 - `src/agx_arm_ctrl`: runtime arm bridge, launch surfaces, and current end-effector integration point
 - `src/agx_arm_mit_controller`: runtime MIT controller node, shared trajectory/gravity libraries, and curated controller configs
@@ -20,13 +21,14 @@ Use the current workspace layout as the implementation truth during Sprint 2.
 ## Sprint 2 Placement Rules
 
 - keep the OmniHand bridge in `src/agx_arm_ctrl` for now
-- do not create a second discoverable description package
-- do not fork a second MoveIt package for the same Nero baseline
+- keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface
+- do not fork a second MoveIt package for the same Nero or Duo baseline
 - keep production MIT execution ownership in `src/agx_arm_mit_controller`
 - place app-layer demos under `src/agx_arm_mit_demos` instead of the controller runtime package
 - place debug, calibration, and legacy helper entry points under `src/agx_arm_mit_tools`
 - extend `src/agx_arm_msgs` instead of creating an OmniHand-only message package
 - use `.github/` for Copilot-native instruction mirrors, not as a replacement for stable project docs
+- keep descriptions and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable Duo target
 
 ## Documentation Split
 
@@ -38,4 +40,4 @@ Use the current workspace layout as the implementation truth during Sprint 2.
 
 ## Escalation Rule
 
-Create a new package only when a stable public ROS contract, dependency boundary, or rebuild boundary truly requires it.
+Create a new long-term package only when a stable public ROS contract, dependency boundary, or rebuild boundary truly requires it. Temporary staging packages are acceptable only when `docs/project/` documents their role and exit path.

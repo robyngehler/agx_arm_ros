@@ -4,7 +4,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 ## Scope
 
-- Preserve the current package boundaries during Sprint 2.
+- Preserve the current stable package boundaries; during Sprint 3 and Sprint 4, allow `src/duo_body_description` as a temporary staging surface for Duo body system assembly while the long-term canonical description and planning ownership remains under the existing `agx_arm_*` packages.
 - Keep implementation changes small, package-scoped, and validated.
 - Keep documentation aligned with any public contract or workflow change.
 
@@ -21,8 +21,9 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 ## Workspace Rules
 
-- Keep `src/agx_arm_sim/agx_arm_description` as the single discoverable description package.
-- Keep `src/agx_arm_moveit` as the current MoveIt baseline during Sprint 2.
+- Keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and source of shared Nero and OmniHand assets.
+- Allow `src/duo_body_description` as the current Sprint 3 and Sprint 4 staging package for Duo body plus configurable arm-hand system assembly; do not duplicate full Nero or OmniHand asset trees there.
+- Keep `src/agx_arm_moveit` as the current MoveIt baseline and generalize it in place rather than forking a second MoveIt package for the Duo system.
 - Keep runtime arm and hand integration in `src/agx_arm_ctrl` during Sprint 2.
 - Keep production MIT control ownership in `src/agx_arm_mit_controller`.
 - Keep MIT demo and workflow apps in `src/agx_arm_mit_demos` instead of the controller runtime package.
@@ -30,6 +31,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - Keep the OmniHand bridge in `src/agx_arm_ctrl` for now; only revisit a package split after a non-mock backend proves a separate boundary is useful.
 - Extend `src/agx_arm_msgs` for repo-owned OmniHand messages instead of creating a second message package.
 - Treat `vendor/Omnihand-2025-SDK` as upstream input, not as the public ROS contract.
+- Generalize description and launch surfaces to be arm-count-aware from the start; the first executable Duo target is `body + right arm + right OmniHand`, then mirror to the left side.
 
 ## ROS Contract Rules
 
@@ -43,7 +45,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 - Treat `.github/` as a concise Copilot-native mirror of the stable policy and integration docs under `docs/project/` and `docs/control/`.
 - Update `docs/control/` when the OmniHand command, feedback, launch, or package contract changes.
-- Update `docs/project/` when package boundaries, naming rules, or working workflow changes.
+- Update `docs/project/` when package boundaries, naming rules, working workflow, or explicitly allowed staging exceptions change.
 - Treat `.github/`, `docs/`, `src/`, `scripts/`, `config/`, and `vendor/` as source-managed.
 - Do not treat `build/`, `install/`, `log/`, or transient run outputs as canonical source.
 
@@ -56,7 +58,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 ## Definition Of Done
 
-- The change respects the current package boundaries.
+- The change respects the current package boundaries, including any temporary staging surface explicitly documented in `docs/project/`.
 - The smallest relevant docs were updated.
 - The Copilot-native `.github` mirrors remain consistent with the stable docs.
 - The narrowest relevant validation was run, or the limitation was called out.

@@ -47,7 +47,8 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 - Sprint 2 is still on course as the common environment and contract-hardening phase.
 - The repo already has the package-boundary baseline, OmniHand mock bridge skeleton, and simulation-first MoveIt integration expected in this phase.
 - The remaining Sprint 2 work is now less about repo discovery and more about runtime hardening, first real backend integration, and validating the hand contract against live behavior.
-- Sprint 3 can now start on arm-only MoveIt/MIT validation slices that do not reopen the shared ROS2 contract, launch ownership, or package-placement decisions.
+- Sprint 3 can now start on arm-only MoveIt/MIT validation slices and the minimum naming/description groundwork that do not reopen the shared ROS2 contract, launch ownership, or long-term package-placement decisions.
+- Sprint 4 description-only Duo system bringup can now start in parallel as long as it uses the documented `src/duo_body_description` staging package and does not fork the runtime contract away from `agx_arm_ctrl` or `agx_arm_moveit`.
 
 ## Document Map
 
