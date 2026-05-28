@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="duo_body">
+
+    <link name="body_base_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://duo_body_description/meshes/body_visual.stl"/>
+        </geometry>
+      </visual>
+
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://duo_body_description/meshes/body_collision.stl"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="left_arm_mount_link"/>
+    <joint name="body_to_left_arm_mount" type="fixed">
+      <parent link="body_base_link"/>
+      <child link="left_arm_mount_link"/>
+      <origin xyz="-0.136240 0.105467 0.070150" rpy="0 1.570796 -0.837758"/>
+    </joint>
+
+    <link name="right_arm_mount_link"/>
+    <joint name="body_to_right_arm_mount" type="fixed">
+      <parent link="body_base_link"/>
+      <child link="right_arm_mount_link"/>
+      <origin xyz="0.137511 0.104055 0.070000" rpy="0 1.570796 0.837758"/>
+    </joint>
+
+  </xacro:macro>
+
+</robot>

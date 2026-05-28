@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<robot name="duo_nero_system" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find duo_body_description)/urdf/duo_body.xacro"/>
+  <xacro:include filename="$(find duo_body_description)/urdf/nero_arm_macro.xacro"/>
+
+  <xacro:duo_body/>
+
+  <joint name="left_mount_to_left_base" type="fixed">
+    <parent link="left_arm_mount_link"/>
+    <child link="left_base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:nero_arm prefix="left_"/>
+
+  <joint name="right_mount_to_right_base" type="fixed">
+    <parent link="right_arm_mount_link"/>
+    <child link="right_base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:nero_arm prefix="right_"/>
+
+</robot>
