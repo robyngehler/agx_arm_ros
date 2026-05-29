@@ -171,6 +171,7 @@ When `use_mit_controller:=true`, `demo.launch.py` no longer starts the legacy br
 | `use_mit_controller` | `false` | When `true`, skip fake `ros2_control`, load `moveit_controllers_mit.yaml`, and expect `mit_controller` to provide `arm_controller/follow_joint_trajectory` | `true`, `false` |
 | `use_rviz` | `true` | Launch RViz | `true`, `false` |
 | `db` | `false` | Launch MoveIt warehouse database | `true`, `false` |
+| `planning_pipelines` | empty string | Optional comma-separated planning pipeline whitelist forwarded to `move_group.launch.py`; empty uses the package defaults | e.g. `ompl`, `ompl,chomp` |
 | `load_simple_obstacles` | `false` | Load the repo-owned baseline obstacle set into the planning scene | `true`, `false` |
 | `simple_obstacles_config` | `config/simple_obstacles.json` | Path to the planning-scene obstacle JSON file | Any readable JSON path |
 
@@ -184,9 +185,11 @@ When `use_mit_controller:=true`, `demo.launch.py` no longer starts the legacy br
 - The current MoveIt baseline expects TRAC-IK. If the distro package is unavailable on Humble / Jetson, use the documented source-build overlay and source `/opt/ros/$ROS_DISTRO/setup.bash`, `~/workspace/trac_ik_ws/install/setup.bash`, then this workspace's `install/setup.bash`.
 - `nero_tool0` now comes from the canonical Nero description package, while `tcp_link` remains the TCP and interactive planning target frame.
 - `config/simple_obstacles.json` is only a conservative baseline for early planning checks. Adjust it to match the real fixture and workspace before executing on hardware.
+- `share/agx_arm_moveit/scripts/plan_pose_smoke_test.py` provides the current repo-owned representative near-home OMPL pose-planning check for Sprint 3.
 - Simulation-only MoveIt validation across `none`, `agx_gripper`, `revo2`, and `omnihand` profiles is a valid hardening path before real-arm collision-checked execution.
 - OmniHand currently covers only the MoveIt simulation, RViz, SRDF, and fake `ros2_control` path. Real hardware bringup is still open.
-- A 2026-05-21 validation pass confirmed six-profile startup readiness with the external TRAC-IK overlay and a successful live `/compute_ik` call on `nero_arm`; the remaining known runtime issue is a Humble/aarch64 `move_group` shutdown crash after SIGINT.
+- A 2026-05-21 validation pass confirmed six-profile startup readiness with the external TRAC-IK overlay and a successful live `/compute_ik` call on `nero_arm`.
+- A 2026-05-28 validation pass confirmed that `plan_pose_smoke_test.py` can obtain a representative `ompl` pose plan for `nero_arm`, but the Humble/aarch64 `move_group` shutdown crash still reproduces even when the launch is reduced to `planning_pipelines:=ompl`.
 
 ### 2.5 RViz operations
 

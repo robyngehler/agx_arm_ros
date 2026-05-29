@@ -25,11 +25,11 @@ Do not use this Sprint 4 folder as the cross-sprint source of truth.
 
 | Area | Status | Summary |
 | --- | --- | --- |
-| Duo system staging package | STARTED | `src/duo_body_description` is now the documented staging package for Duo body plus configurable arm-hand system assembly. |
-| Right-side description baseline | STARTED | Prefix-safe Nero arm composition, side-selectable OmniHand attachment, and a description-only `display_duo_system.launch.py` bringup path are landed for `body + right arm + right OmniHand`. |
-| Left-side mirror | PLANNED | The left arm and left OmniHand should be added only after the right-side frame and mount validation is complete. |
-| Multi-arm-safe runtime and MoveIt generalization | OPEN | `agx_arm_ctrl`, the MIT-controller RViz path, and `agx_arm_moveit` still assume a single active arm chain in several places. |
-| Coordinated system demo target | PLANNED | The first representative two-arm benchmark is a coordinated pouring workflow, with Hefeweizen pouring as the reference example. |
+| Duo system staging package | CONFIRMED | `src/duo_body_description` is now the documented staging package for Duo body plus configurable arm-hand system assembly, and the package builds cleanly in the active ROS overlay again. |
+| Right-side description baseline | CONFIRMED | Prefix-safe Nero arm composition, side-selectable OmniHand attachment, and a description-only `display_duo_system.launch.py` bringup path are landed for `body + right arm + right OmniHand`; on 2026-05-28, `xacro`/`check_urdf` and the headless launch both succeeded for the right-side slice. |
+| Left-side mirror | PARTIAL | The left arm and left OmniHand now validate structurally through `xacro`/`check_urdf` and the headless launch path, but the visual RViz frame audit is still pending. |
+| Multi-arm-safe runtime and MoveIt generalization | PARTIAL | Existing `namespace`, `control_topic`, and MoveIt profile-builder hooks in the single-arm surfaces now also drive a first Duo-aware MIT RViz debug path via `custom_model`, `custom_model_xacro_args`, and `input_joint_prefix`; the next step is to lift that first slice into reusable per-arm and shared multi-arm bringup surfaces. |
+| Coordinated system demo target | CONFIRMED | The first representative two-arm benchmark is a coordinated Hefeweizen pouring workflow, using one coupled planning group with orchestration above per-arm execution. |
 
 ## Scope Adjustments From The Roadmap
 
@@ -53,6 +53,12 @@ Do not use this Sprint 4 folder as the cross-sprint source of truth.
 - `src/duo_body_description/urdf/duo_body.xacro`
 - `src/duo_body_description/urdf/duo_system.urdf.xacro`
 - `src/duo_body_description/urdf/nero_arm_macro.xacro`
+- `src/agx_arm_ctrl/launch/start_single_agx_arm_rviz.launch.py`
+- `src/agx_arm_mit_controller/launch/start_nero_mit_controller.launch.py`
+- `src/agx_arm_mit_tools/agx_arm_mit_tools/joint_state_trajectory_bridge.py`
+- `src/agx_arm_moveit/launch/_moveit_config_builder.py`
+- `src/agx_arm_moveit/launch/move_group.launch.py`
+- `src/agx_arm_sim/agx_arm_description/launch/display_control.launch.py`
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/nero/urdf/nero_description.urdf`
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/omnihand/urdf/omnihand_left_hand.xacro`
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/omnihand/urdf/omnihand_right_hand.xacro`

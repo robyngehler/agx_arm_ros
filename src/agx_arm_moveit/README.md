@@ -171,6 +171,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 | `use_mit_controller` | `false` | `true` 时跳过 fake `ros2_control`，加载 `moveit_controllers_mit.yaml`，并要求 `mit_controller` 提供 `arm_controller/follow_joint_trajectory` | `true`, `false` |
 | `use_rviz` | `true` | 是否启动 RViz | `true`, `false` |
 | `db` | `false` | 是否启动 MoveIt warehouse 数据库 | `true`, `false` |
+| `planning_pipelines` | 空字符串 | 可选的逗号分隔规划流水线白名单，会透传到 `move_group.launch.py`；留空时使用包内默认值 | 例如 `ompl`、`ompl,chomp` |
 | `load_simple_obstacles` | `false` | 是否加载仓库内置的基础障碍物集合 | `true`, `false` |
 | `simple_obstacles_config` | `config/simple_obstacles.json` | 规划场景障碍物 JSON 配置文件路径 | 任意可读 JSON 路径 |
 
@@ -184,8 +185,10 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 - `nero_tool0` 现在由 Nero 规范描述包直接提供，`tcp_link` 继续作为 TCP 与交互式规划目标参考帧。
 - `config/simple_obstacles.json` 只提供早期规划验证的保守基线；进入真机执行前仍应根据现场工装与工作空间自行调整。
+- `share/agx_arm_moveit/scripts/plan_pose_smoke_test.py` 提供当前 Sprint 3 使用的仓库内近 home 位姿 OMPL 规划烟雾测试。
 - 对 `none`、`agx_gripper`、`revo2`、`omnihand` 各配置做纯仿真 MoveIt 集成验证，是进入真机碰撞检查执行前的有效路径。
 - OmniHand 当前只覆盖 MoveIt 仿真、RViz、SRDF 和 fake `ros2_control` 路径，尚未接入真实硬件控制启动链路。
+- 2026-05-28 的验证表明，`plan_pose_smoke_test.py` 已能在 `nero_arm` 上成功拿到代表性的 `ompl` 位姿规划结果，但 Humble/aarch64 主机上的 `move_group` 退出崩溃即使在 `planning_pipelines:=ompl` 的精简路径下仍会复现。
 
 ### 2.5 RViz 操作
 

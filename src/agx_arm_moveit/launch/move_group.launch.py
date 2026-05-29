@@ -19,6 +19,12 @@ def _launch(context):
     moveit_config = build_moveit_config(context)
     follow = LaunchConfiguration("follow").perform(context) == "true"
     joint_states_topic = "feedback/joint_states" if follow else "control/joint_states"
+    planning_pipelines_value = LaunchConfiguration("planning_pipelines").perform(context).strip()
+    planning_pipelines = [
+        pipeline.strip()
+        for pipeline in planning_pipelines_value.split(",")
+        if pipeline.strip()
+    ]
 
     move_group_configuration = {
         "publish_robot_description_semantic": True,
@@ -48,6 +54,14 @@ def _launch(context):
         moveit_config.to_dict(),
         move_group_configuration,
     ]
+
+    if planning_pipelines:
+        move_group_params.append(
+            {
+                "planning_pipelines": planning_pipelines,
+                "default_planning_pipeline": planning_pipelines[0],
+            }
+        )
 
     remappings = [("joint_states", joint_states_topic)]
 
@@ -92,6 +106,11 @@ def generate_launch_description():
             DeclareBooleanLaunchArg("monitor_dynamics", default_value=False),
             DeclareLaunchArgument("capabilities", default_value=""),
             DeclareLaunchArgument("disable_capabilities", default_value=""),
+            DeclareLaunchArgument(
+                "planning_pipelines",
+                default_value="",
+                description="Optional comma-separated planning pipeline whitelist. Empty uses the package defaults.",
+            ),
             OpaqueFunction(function=_launch),
         ]
     )

@@ -1,29 +1,21 @@
 # Sprint 4 Open Questions
 
-## Package Boundary
+## Resolved Decisions
+
+- Keep `body_base_link` as the shared base frame. Use `left_arm_*` and `right_arm_*` prefixes for arm frames, keep the OmniHand base links as `left_base_link` and `right_base_link`, and use `right_arm`, `left_arm`, and `both_arms` as the initial planning-group names with hand-aware variants layered on top.
+- Use prefixed arm and link names inside one shared robot-level TF and planning structure for a single Duo body system. Keep per-arm namespaces available for multiple body-level robots rather than splitting one body-mounted two-arm robot across separate namespaces by default.
+- Treat one base with at most two arms as one robot. A future `>2` arm layout should be modeled as another body-level two-arm robot in its own namespace rather than stretching the current Duo system contract.
+- Grow `agx_arm_moveit` in place via prefix-aligned multi-profile outputs. Keep the future `left_*`, `right_*`, and `duo_*` SRDF/config surfaces synchronized instead of forking a second MoveIt package.
+- Keep one MIT controller instance per arm because gravity, tools, and local control limits remain arm-specific. Keep planning, collision checking, and shared tooling such as trajectory playback at the shared robot level.
+- Use shared planning and collision checks as the minimum stable contract for the first coordinated dual-arm task.
+- Use the coordinated Hefeweizen pouring workflow as the reference benchmark. Model it as one coupled planning group with orchestration above per-arm execution; the first executable slice may start with synchronized or sequential recorded per-arm trajectories after merged planning.
+- The first landed change for the MIT-controller RViz path is to preserve the current single-arm launch as a per-arm debug surface, forward `custom_model` and `custom_model_xacro_args` into `display_control.launch.py`, and let the MIT debug bridge strip a per-arm input joint prefix so the staged Duo description can drive the existing controller-facing debug path without moving controller ownership out of the current packages.
+
+## Remaining Open Questions
 
 - Should `src/duo_body_description` remain a standalone package after Sprint 4, or should its stable outputs be promoted into `src/agx_arm_sim/agx_arm_description` once the Duo system baseline settles?
+-> answer: should be promoted so only one package is left, deciding on if either no, one or two arms are used.
 - If it remains separate for longer, what is the explicit promotion or retirement criterion so it does not become an undocumented parallel source of truth?
+- What is the exact shared-vs-per-arm ROS topic, action, and launch split once a second live arm is added to `agx_arm_ctrl`, `agx_arm_mit_controller`, and `agx_arm_moveit`?
 
-## Naming And Bringup
-
-- Should the long-term multi-arm runtime use per-arm namespaces, per-arm prefixes, or both?
--> answer: use prefix for a common tf and control group. One body and multiple arms are treated as one robot.
-- How should a future `>2` arm-hand configuration be represented without hardcoding only `left` and `right` everywhere in the higher-level launch and planning surfaces?
--> answer: right now one base can contain max 2 arms, which equals one robot. >2 arms suggest an other body-2arm-robot, seperated by another namespace. (for now, a common tf and planning structure is still somewhat needed.)
-
-## MoveIt And Controller Generalization
-
-- Should `agx_arm_moveit` grow a generated multi-profile configuration path, or is a single composable Xacro/SRDF surface sufficient for the current two-arm target?
--> answer: multi-profile is better since one arm can operate on its own. Keep consistent with the prefix approach to allow common namespaces and make a plan to best keep left_*.srdf, right_*.srdf and duo_*.srdf synced.
-- What is the minimum change to the MIT-controller RViz path that preserves the current single-arm workflow while making room for a second arm?
--> answer: not investigated yet, please investigate and take the above decisions into account.
-- Which pieces of the current control stack should stay shared, and which should become per-arm once the second arm is added?
--> answer: not fully clear, but a single arm definitely needs a single MIT controller (different gravity, tools, ...), the control and path planning and collision avoidance should be shared. Tools like playback a recorded trajectory can be shared but should live as one instance each.
-
-## Early Task-Level Contract
-
-- What is the smallest stable planning and execution contract needed for the first coordinated dual-arm task?
--> answer: shared planning and collision checks at least.
-- Is the first two-arm pouring benchmark better represented as two synchronized arm plans, one coupled planning group, or a higher-level task orchestration layer above per-arm plans?
--> answer: one coupled planning group but merged with a task orchestration above... f.e. as a first step, recorded trajectories for each arm should be synced or performed after one each other. But before performing there should be a merged planning in the common planner of trajectories.
+- Does the current first Duo-aware MIT RViz debug path need an additional feedback-side joint-name prefix adapter for `follow:=true`, or is `follow:=false` sufficient until a wider per-arm live-feedback split is defined?

@@ -25,6 +25,7 @@ def select_target_positions(
 	joint_names: Sequence[str],
 	base_positions: Sequence[float],
 	msg: JointState,
+	input_joint_prefix: str = "",
 ) -> list[float]:
 	if len(base_positions) != len(joint_names):
 		raise ValueError("base_positions length must match joint_names")
@@ -32,8 +33,12 @@ def select_target_positions(
 	target_map = {joint: float(value) for joint, value in zip(joint_names, base_positions)}
 	used_joint = False
 	for name, value in zip(msg.name, msg.position):
-		if name in target_map:
-			target_map[name] = float(value)
+		lookup_name = str(name)
+		if input_joint_prefix and lookup_name.startswith(input_joint_prefix):
+			lookup_name = lookup_name[len(input_joint_prefix):]
+
+		if lookup_name in target_map:
+			target_map[lookup_name] = float(value)
 			used_joint = True
 
 	if not used_joint:
@@ -72,12 +77,14 @@ class JointStateTrajectoryBridge(Node):
 		self.declare_parameter("enable_service", "mit_controller/enable")
 		self.declare_parameter("segment_duration_s", 0.75)
 		self.declare_parameter("change_tolerance", 1e-4)
+		self.declare_parameter("input_joint_prefix", "")
 		self.declare_parameter("auto_enable", False)
 		self.declare_parameter("service_timeout_s", 3.0)
 
 		self.joint_names = [str(value) for value in self.get_parameter("joint_names").value]
 		self.segment_duration_s = float(self.get_parameter("segment_duration_s").value)
 		self.change_tolerance = float(self.get_parameter("change_tolerance").value)
+		self.input_joint_prefix = str(self.get_parameter("input_joint_prefix").value)
 		self.auto_enable = bool(self.get_parameter("auto_enable").value)
 		self.service_timeout_s = float(self.get_parameter("service_timeout_s").value)
 		self.feedback_topic = str(self.get_parameter("feedback_topic").value)
@@ -139,7 +146,12 @@ class JointStateTrajectoryBridge(Node):
 			return
 
 		try:
-			target_positions = select_target_positions(self.joint_names, base_positions, msg)
+			target_positions = select_target_positions(
+				self.joint_names,
+				base_positions,
+				msg,
+				input_joint_prefix=self.input_joint_prefix,
+			)
 		except ValueError as exc:
 			self.get_logger().warn(str(exc))
 			return

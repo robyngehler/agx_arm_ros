@@ -145,25 +145,25 @@ colcon build --symlink-install --packages-select agx_arm_description duo_body_de
 source install/setup.bash
 ```
 
-## 5. Keep mount-to-arm-base transform initially zero
+## 5. Use the current mount-to-arm-base correction as the default staging value
 
-In `duo_system.urdf.xacro`, keep:
+In `duo_system.urdf.xacro`, the current staging default is no longer zero. Use:
 
 ```xml
 <joint name="left_arm_mount_to_base" type="fixed">
   <parent link="left_arm_mount_link"/>
   <child link="left_arm_base_link"/>
-  <origin xyz="0 0 0" rpy="0 0 0"/>
+  <origin xyz="0.01 0.02 0" rpy="0 0 3.1415926"/>
 </joint>
 
 <joint name="right_arm_mount_to_base" type="fixed">
   <parent link="right_arm_mount_link"/>
   <child link="right_arm_base_link"/>
-  <origin xyz="0 0 0" rpy="0 0 0"/>
+  <origin xyz="0.01 0.02 0" rpy="0 0 3.1415926"/>
 </joint>
 ```
 
-This is correct if each mount frame is intentionally aligned to the Nero `base_link` frame.
+This is the current RViz-backed staging estimate after correcting the body mesh scale and mesh origin. It assumes the local mount-link frame convention is the same on both sides, so the same local translation and `pi` yaw correction can be used as the default on both the left and right arm bases.
 
 Important validation criterion:
 
