@@ -1,5 +1,23 @@
 # Sprint 4 Errors And Fixes
 
+## 2026-05-28: `duo_body_description` could not be built into the active ROS overlay
+
+Problem:
+
+- `src/duo_body_description/CMakeLists.txt` tried to install an `rviz/` directory that does not exist in the package.
+- That blocked `colcon build --packages-select duo_body_description`, so the intended ROS-native `xacro`, `check_urdf`, and launch validation could not run even in a correct shell.
+
+Fix:
+
+- Remove the nonexistent `rviz/` directory from the package install stanza.
+- Rebuild `duo_body_description` in a ROS-capable shell and rerun the intended `xacro`, `check_urdf`, and headless launch validation.
+
+Verification:
+
+- `colcon build --packages-select duo_body_description` completed successfully.
+- `xacro` + `check_urdf` succeeded for the `right`, `left`, and `both` profiles.
+- `ros2 launch duo_body_description display_duo_system.launch.py gui:=false use_rviz:=false ...` started successfully for the `right` and `left` slices.
+
 ## 2026-05-28: `duo_body_description` conflicted with the existing package-structure policy
 
 Problem:
@@ -35,3 +53,7 @@ Fix:
 
 - Keep editor diagnostics as the immediate static validation.
 - Record package-scoped ROS validation as the next step in a ROS-capable shell rather than pretending it already happened.
+
+Status update:
+
+- A later Linux ROS shell pass in this workspace completed the queued package-scoped validation; the remaining gap is now RViz visualization and physical mount measurement, not basic ROS tool availability.

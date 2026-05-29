@@ -80,6 +80,7 @@ def resolve_model_path(context, *args, **kwargs):
     revo2_type = LaunchConfiguration('revo2_type').perform(context)
     omnihand_type = LaunchConfiguration('omnihand_type').perform(context)
     custom_model = LaunchConfiguration('custom_model').perform(context)
+    custom_model_xacro_args = LaunchConfiguration('custom_model_xacro_args')
     follow = LaunchConfiguration('follow').perform(context)
     control = LaunchConfiguration('control').perform(context)
     control_topic = LaunchConfiguration('control_topic').perform(context)
@@ -90,12 +91,15 @@ def resolve_model_path(context, *args, **kwargs):
 
     if custom_model:
         model_path = _resolve_custom_model_path(pkg_path, custom_model)
+        robot_description = ParameterValue(
+            Command(['xacro ', model_path, ' ', custom_model_xacro_args]),
+            value_type=str,
+        )
     else:
         model_path = _resolve_builtin_model_path(
             arm_type, effector_type, revo2_type, omnihand_type, pkg_path
         )
-
-    robot_description = ParameterValue(Command(['xacro ', model_path]), value_type=str)
+        robot_description = ParameterValue(Command(['xacro ', model_path]), value_type=str)
 
     state_joint_topic = 'feedback/joint_states' if follow == 'true' else str(control_topic)
 
@@ -186,6 +190,11 @@ def generate_launch_description():
         default_value='',
         description='Optional custom model path. Prefer absolute path, or relative path under agx_arm_urdf/. If set, arm_type and effector_type are ignored.'
     )
+    custom_model_xacro_args_arg = DeclareLaunchArgument(
+        name='custom_model_xacro_args',
+        default_value='',
+        description='Optional extra xacro args appended when custom_model is set.'
+    )
     effector_type_arg = DeclareLaunchArgument(
         name='effector_type',
         default_value='none',
@@ -247,6 +256,7 @@ def generate_launch_description():
         namespace_arg,
         arm_type_arg,
         custom_model_arg,
+        custom_model_xacro_args_arg,
         effector_type_arg,
         revo2_type_arg,
         omnihand_type_arg,

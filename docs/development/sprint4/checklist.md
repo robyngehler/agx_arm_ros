@@ -19,21 +19,26 @@ Sprint 4 is now active for the first body-mounted Duo system baseline.
 
 ## Next Validation And Integration Steps
 
-- [ ] Run `xacro` and `check_urdf` for the right-side Duo system slice in a ROS-capable shell.
+- [x] Build `duo_body_description` in the active ROS overlay and clear the package-local blocker that prevented ROS-native validation.
+- [x] Run `xacro` and `check_urdf` for the right-side Duo system slice in a ROS-capable shell.
+- [x] Start `display_duo_system.launch.py` headlessly for the right and left slices in a ROS-capable shell.
 - [ ] Validate the right-side mount frames, base frame, flange frame, and OmniHand base frame in RViz.
 - [ ] Confirm whether the current zero mount-to-base transform is sufficient on the physical body or needs a small adjustment.
-- [ ] Add the left arm and left OmniHand chain and validate the mirrored body-mount behavior.
-- [ ] Decide the first stable frame and planning-group names for the full two-arm body system.
+- [x] Add the left arm and left OmniHand chain and validate the mirrored body-mount behavior.
+- [x] Decide the first stable frame and planning-group names for the full two-arm body system.
 
 ## Runtime And Planning Generalization
 
-- [ ] Generalize `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions.
-- [ ] Generalize the MIT-controller RViz path away from the current single-arm control assumptions.
-- [ ] Generalize `agx_arm_moveit` in place instead of creating a second multi-arm MoveIt package.
-- [ ] Define the initial `right_arm`, `left_arm`, and `both_arms` planning groups and the first hand-aware variants.
+- [ ] Generalize `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions while keeping one MIT controller per arm.
+- [x] Land the first Duo-aware MIT-controller RViz debug path by forwarding custom Duo Xacros through `display_control.launch.py` and stripping per-arm input prefixes in the MIT debug bridge.
+- [ ] Split the MIT-controller RViz path into a reusable Duo-aware description selector plus per-arm namespace-scoped controller/debug instances.
+- [ ] Generalize `agx_arm_moveit` in place via prefix-aligned multi-profile outputs instead of creating a second multi-arm MoveIt package.
+- [ ] Implement the initial `right_arm`, `left_arm`, and `both_arms` planning groups and the first hand-aware variants in the generated SRDF/config surfaces.
 - [ ] Capture the remaining execution-safety, collision, and controller-ownership gaps for coordinated dual-arm tasks.
 
 ## Demo-Oriented Exit Criteria
 
-- [ ] Record one first coordinated dual-arm benchmark target in concrete planning terms.
-- [ ] Use the coordinated Hefeweizen pouring workflow as the reference benchmark unless a narrower first demo proves more practical.
+- [x] Record one first coordinated dual-arm benchmark target in concrete planning terms.
+- [x] Use the coordinated Hefeweizen pouring workflow as the reference benchmark unless a narrower first demo proves more practical.
+
+The 2026-05-28 ROS-native validation pass built `duo_body_description`, then passed `xacro` + `check_urdf` for the `right`, `left`, and `both` profiles, and started the headless display launch for the right and left slices. A follow-up runtime pass also landed the first Duo-aware MIT RViz debug path through `start_single_agx_arm_rviz.launch.py`, `display_control.launch.py`, and the MIT joint-state bridge. The remaining validation gates now depend on RViz review, physical mount measurements, wider runtime generalization, and shared multi-arm planning surfaces rather than package discovery or URDF parsing.

@@ -7,9 +7,14 @@
   <xacro:arg name="use_right_hand" default="true"/>
   <xacro:arg name="left_arm_prefix" default="left_arm_"/>
   <xacro:arg name="right_arm_prefix" default="right_arm_"/>
-  <xacro:arg name="left_arm_base_xyz" default="0 0 0"/>
-  <xacro:arg name="left_arm_base_rpy" default="0 0 0"/>
-  <xacro:arg name="right_arm_base_xyz" default="0 0 0"/>
+  <!--<xacro:arg name="body_mesh_xyz" default="-0.11 -0.12411761856079102 -0.07"/>-->
+  <xacro:arg name="body_mesh_xyz" default="0 0 0"/>
+  <xacro:arg name="body_mesh_rpy" default="0 0 0"/>
+  <xacro:arg name="left_arm_base_xyz" default="0.01 0.02 0"/>
+  <xacro:arg name="left_arm_base_rpy" default="0 0 3.1415926"/>
+  <!--<xacro:arg name="right_arm_base_xyz" default="-0.01 -0.02 0"/>-->
+  <xacro:arg name="right_arm_base_xyz" default="0.0 0.0 0.0"/>
+  <!--<xacro:arg name="right_arm_base_rpy" default="0 0 3.1415926"/>-->
   <xacro:arg name="right_arm_base_rpy" default="0 0 0"/>
 
   <xacro:property name="left_arm_prefix" value="$(arg left_arm_prefix)"/>
@@ -18,7 +23,7 @@
   <xacro:include filename="$(find duo_body_description)/urdf/duo_body.xacro"/>
   <xacro:include filename="$(find duo_body_description)/urdf/nero_arm_macro.xacro"/>
 
-  <xacro:duo_body/>
+  <xacro:duo_body body_mesh_xyz="$(arg body_mesh_xyz)" body_mesh_rpy="$(arg body_mesh_rpy)"/>
 
   <xacro:if value="$(arg use_left_arm)">
     <xacro:nero_arm prefix="${left_arm_prefix}"/>

@@ -26,11 +26,12 @@ Do not use this Sprint 3 folder as the cross-sprint source of truth.
 | Area | Status | Summary |
 | --- | --- | --- |
 | MoveIt naming baseline | CONFIRMED | `nero_arm` is now the only active planning group, `nero_tool0` now originates in the canonical Nero description package, and `tcp_link` stays distinct as the TCP/planning target frame. |
-| `JointTrajectory` execution path | CONFIRMED | `src/agx_arm_mit_controller` already accepts `trajectory_msgs/JointTrajectory` and includes local buffer and IO tests for interpolation and joint-name validation. |
+| `JointTrajectory` execution path | CONFIRMED | `src/agx_arm_mit_controller` already accepts `trajectory_msgs/JointTrajectory` and includes local validation for interpolation and joint-name handling; a 2026-05-28 package-scoped test pass revalidated that path on the current host. |
 | MoveIt IK baseline | CONFIRMED | `agx_arm_moveit` now runs against TRAC-IK, and Humble / Jetson hosts can use the documented `~/workspace/trac_ik_ws` source-built overlay when the apt package is unavailable. |
+| Representative OMPL pose planning | CONFIRMED | `src/agx_arm_moveit/scripts/plan_pose_smoke_test.py` now provides a repo-owned near-home OMPL pose-planning check; on 2026-05-28 it succeeded locally against `nero_arm` with a `tcp_link` target offset by `+3 cm` in `x`. |
 | Simulation-first integration path | CONFIRMED | Sim-only MoveIt bringup across the current effector profiles is a valid Sprint 3 hardening path before collision-checked sim-plus-real execution. |
 | Duo system staging handoff | STARTED | `src/duo_body_description` now contains prefix-safe arm composition, side-selectable hand assembly, and a right-side default description bringup path; the remaining RViz, MoveIt, and controller generalization belongs to Sprint 4. |
-| Live validation evidence | PARTIAL | On 2026-05-21, a six-profile sim-only sweep reached the MoveIt ready state for `none`, `agx_gripper`, `revo2` left/right, and `omnihand` left/right with no TRAC-IK plugin-load errors after sourcing `~/workspace/trac_ik_ws/install/setup.bash`, and a live `/compute_ik` call on `nero_arm` returned `MoveItErrorCodes.SUCCESS`; the remaining shared gate is the timeout-driven `move_group` teardown crash on this Humble/aarch64 host. |
+| Live validation evidence | PARTIAL | On 2026-05-21, a six-profile sim-only sweep reached the MoveIt ready state for `none`, `agx_gripper`, `revo2` left/right, and `omnihand` left/right with no TRAC-IK plugin-load errors after sourcing `~/workspace/trac_ik_ws/install/setup.bash`, and a live `/compute_ik` call on `nero_arm` returned `MoveItErrorCodes.SUCCESS`. On 2026-05-28, a targeted `agx_arm_mit_controller` test pass confirmed the current non-hardware audit path for trajectory ordering and timing, `plan_pose_smoke_test.py` succeeded on the `ompl` pipeline, and an OMPL-only timeout run still reproduced the `move_group` teardown crash. The remaining shared gates are broader full-profile planning evidence and a smaller reproducible crash isolation path. |
 
 ## Scope Adjustments From The Roadmap
 
@@ -53,13 +54,18 @@ Do not use this Sprint 3 folder as the cross-sprint source of truth.
 - `src/agx_arm_moveit/config/agx_arm.srdf.xacro`
 - `src/agx_arm_moveit/config/agx_arm.srdf`
 - `src/agx_arm_moveit/config/kinematics.yaml`
+- `src/agx_arm_moveit/scripts/plan_pose_smoke_test.py`
+- `src/agx_arm_moveit/launch/demo.launch.py`
+- `src/agx_arm_moveit/launch/move_group.launch.py`
 - `src/agx_arm_moveit/package.xml`
 - `src/agx_arm_moveit/README.md`
 - `src/agx_arm_moveit/README_EN.md`
 - `scripts/agx_arm_install_deps.sh`
 - `scripts/moveit_profile_smoke_test.sh`
 - `src/agx_arm_mit_controller/README.md`
+- `src/agx_arm_mit_controller/config/nero_mit_controller_defaults.yaml`
 - `src/agx_arm_mit_controller/agx_arm_mit_controller/mit_controller_node.py`
+- `src/agx_arm_mit_controller/test/test_follow_joint_trajectory_validation.py`
 - `src/agx_arm_mit_controller/test/test_trajectory_buffer.py`
 - `src/agx_arm_mit_controller/test/test_trajectory_io.py`
 - `docs/tcp_offset/TCP_OFFSET.md`

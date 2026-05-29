@@ -1,20 +1,21 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:macro name="duo_body">
+  <!--<xacro:macro name="duo_body" params="body_mesh_xyz:='-0.11 -0.12411761856079102 -0.07' body_mesh_rpy:='0 0 0'">-->
+  <xacro:macro name="duo_body" params="body_mesh_xyz:='0 0 0' body_mesh_rpy:='0 0 0'">
 
     <link name="body_base_link">
       <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <origin xyz="${body_mesh_xyz}" rpy="${body_mesh_rpy}"/>
         <geometry>
-          <mesh filename="package://duo_body_description/meshes/body_visual.stl"/>
+          <mesh filename="package://duo_body_description/meshes/body_visual.stl" scale="0.001 0.001 0.001"/>
         </geometry>
       </visual>
 
       <collision>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <origin xyz="${body_mesh_xyz}" rpy="${body_mesh_rpy}"/>
         <geometry>
-          <mesh filename="package://duo_body_description/meshes/body_collision.stl"/>
+          <mesh filename="package://duo_body_description/meshes/body_collision.stl" scale="0.001 0.001 0.001"/>
         </geometry>
       </collision>
     </link>
@@ -23,7 +24,7 @@
     <joint name="body_to_left_arm_mount" type="fixed">
       <parent link="body_base_link"/>
       <child link="left_arm_mount_link"/>
-      <origin xyz="-0.136240 0.105467 0.070150" rpy="0 1.570796 -0.837758"/>
+      <origin xyz="-0.137511 0.104055 0.070000" rpy="0 1.570796 -0.837758"/>
     </joint>
 
     <link name="right_arm_mount_link"/>

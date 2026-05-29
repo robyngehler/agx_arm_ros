@@ -183,7 +183,10 @@ def _build_moveit(context):
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 str(package_path / "launch/move_group.launch.py")
-            )
+            ),
+            launch_arguments={
+                "planning_pipelines": LaunchConfiguration("planning_pipelines"),
+            }.items(),
         )
     )
 
@@ -327,6 +330,11 @@ def generate_launch_description():
             DeclareBooleanLaunchArg("use_rviz", default_value=True),
             DeclareBooleanLaunchArg("use_mit_controller", default_value=False),
             DeclareBooleanLaunchArg("load_simple_obstacles", default_value=False),
+            DeclareLaunchArgument(
+                "planning_pipelines",
+                default_value="",
+                description="Optional comma-separated planning pipeline whitelist forwarded to move_group.launch.py.",
+            ),
             DeclareLaunchArgument(
                 "simple_obstacles_config",
                 default_value=str(Path(__file__).resolve().parents[1] / "config" / "simple_obstacles.json"),

@@ -27,6 +27,18 @@ def generate_launch_description():
         description='ROS namespace for this arm instance (e.g. arm1).'
     )
 
+    custom_model_arg = DeclareLaunchArgument(
+        'custom_model',
+        default_value='',
+        description='Optional custom model path forwarded to display_control.launch.py.',
+    )
+
+    custom_model_xacro_args_arg = DeclareLaunchArgument(
+        'custom_model_xacro_args',
+        default_value='',
+        description='Optional extra xacro args appended when custom_model is set.',
+    )
+
     can_port_arg = DeclareLaunchArgument(
         'can_port',
         default_value='can0',
@@ -157,6 +169,12 @@ def generate_launch_description():
         description='Duration in seconds for RViz joint-slider soft MIT targets.',
     )
 
+    input_joint_prefix_arg = DeclareLaunchArgument(
+        'input_joint_prefix',
+        default_value='',
+        description='Optional prefix stripped from RViz-side joint names before forwarding MIT debug trajectories.',
+    )
+
     # description: use the sim-backed compatibility launch from agx_arm_description
     description_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -169,6 +187,8 @@ def generate_launch_description():
         launch_arguments={
             'namespace': LaunchConfiguration('namespace'),
             'arm_type': LaunchConfiguration('arm_type'),
+            'custom_model': LaunchConfiguration('custom_model'),
+            'custom_model_xacro_args': LaunchConfiguration('custom_model_xacro_args'),
             'effector_type': LaunchConfiguration('effector_type'),
             'revo2_type': LaunchConfiguration('revo2_type'),
             'omnihand_type': LaunchConfiguration('omnihand_type'),
@@ -249,6 +269,7 @@ def generate_launch_description():
         namespace=LaunchConfiguration('namespace'),
         parameters=[{
             'segment_duration_s': LaunchConfiguration('mit_joint_target_duration_s'),
+            'input_joint_prefix': LaunchConfiguration('input_joint_prefix'),
             'auto_enable': False,
         }],
         condition=IfCondition(
@@ -266,6 +287,8 @@ def generate_launch_description():
         # arguments
         log_level_arg,
         namespace_arg,
+        custom_model_arg,
+        custom_model_xacro_args_arg,
         can_port_arg,
         arm_type_arg,
         effector_type_arg,
@@ -286,6 +309,7 @@ def generate_launch_description():
         mit_control_rate_arg,
         mit_params_file_arg,
         mit_joint_target_duration_arg,
+        input_joint_prefix_arg,
         # description
         description_launch,
         # agx_arm

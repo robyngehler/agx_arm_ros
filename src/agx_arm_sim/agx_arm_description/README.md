@@ -144,6 +144,8 @@ ros2 launch agx_arm_description display_control.launch.py \
 | 参数 | 默认值 | 说明 | 可选值 |
 |------|--------|------|--------|
 | `arm_type` | `nero` | 机械臂型号 | `nero` |
+| `custom_model` | 空字符串 | 可选自定义模型路径；设置后优先于内置 arm/effector 组合 | 绝对路径或 `agx_arm_urdf/` 下的相对路径 |
+| `custom_model_xacro_args` | 空字符串 | 当 `custom_model` 指向 Xacro 时追加的额外参数字符串 | 任意合法 Xacro 参数串 |
 | `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2`, `omnihand` |
 | `revo2_type` | `left` | Revo2 左右手 | `left`, `right` |
 | `omnihand_type` | `left` | OmniHand 左右手 | `left`, `right` |
@@ -179,6 +181,14 @@ ros2 run xacro xacro \
 ```bash
 ros2 launch agx_arm_description display_control.launch.py \
     custom_model:=nero/urdf/nero_with_gripper_description.xacro
+```
+
+如果 `custom_model` 本身是带参数的 Xacro，还可以额外传入 `custom_model_xacro_args`，例如：
+
+```bash
+ros2 launch agx_arm_description display_control.launch.py \
+    custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
+    custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true'
 ```
 
 ## USD 资产说明

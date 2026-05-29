@@ -20,6 +20,21 @@ def test_select_target_positions_updates_only_controlled_joints():
     assert target == [0.1, 1.25, 0.3]
 
 
+def test_select_target_positions_accepts_prefixed_input_names():
+    msg = JointState()
+    msg.name = ["right_arm_joint1", "right_arm_joint3", "right_pinky_pip"]
+    msg.position = [1.5, -0.4, 0.9]
+
+    target = select_target_positions(
+        ["joint1", "joint2", "joint3"],
+        [0.1, 0.2, 0.3],
+        msg,
+        input_joint_prefix="right_arm_",
+    )
+
+    assert target == [1.5, 0.2, -0.4]
+
+
 def test_build_single_point_trajectory_sets_duration_and_zeroes():
     trajectory = build_single_point_trajectory(
         ["joint1", "joint2"],
