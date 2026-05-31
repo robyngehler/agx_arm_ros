@@ -24,7 +24,7 @@ def generate_launch_description():
     namespace_arg = DeclareLaunchArgument(
         'namespace',
         default_value='',
-        description='ROS namespace for this arm instance (e.g. arm1).'
+        description='ROS namespace for this robot instance. Leave empty for the default shared graph; use a namespace only to separate multiple robots.'
     )
 
     custom_model_arg = DeclareLaunchArgument(
@@ -122,7 +122,7 @@ def generate_launch_description():
         'follow',
         default_value='true',
         choices=['true', 'false'],
-        description='Follow real arm state.',
+        description='Follow real arm state. For prefixed Duo custom models, the currently supported path remains follow:=false until feedback-side prefix adaptation exists.',
     )
 
     control_arg = DeclareLaunchArgument(

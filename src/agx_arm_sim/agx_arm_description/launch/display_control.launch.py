@@ -177,7 +177,7 @@ def generate_launch_description():
     namespace_arg = DeclareLaunchArgument(
         name='namespace',
         default_value='',
-        description='ROS namespace for this arm instance (e.g. arm1).'
+        description='ROS namespace for this robot instance. Leave empty for the default shared graph; use a namespace only to separate multiple robots.'
     )
     arm_type_arg = DeclareLaunchArgument(
         name='arm_type',

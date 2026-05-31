@@ -4,7 +4,7 @@ description: "Use when deciding whether a file in agx_arm_ros is canonical sourc
 
 # Generated Vs Source Assets
 
-Keep Sprint 2 changes grounded in source-managed files and avoid treating runtime outputs as canonical input.
+Keep current-baseline changes grounded in source-managed files and avoid treating runtime outputs as canonical input.
 
 ## Source-Managed
 

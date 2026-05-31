@@ -33,13 +33,13 @@ Treat `.github/instructions/` and `.github/skills/` as concise Copilot-native mi
 2. Reuse `src/agx_arm_sim/agx_arm_description` for canonical shared description assets, `src/duo_body_description` for the current Duo system staging slice, and `src/agx_arm_moveit` for planning baselines.
 3. Keep the OmniHand adapter below ROS and keep the public ROS bridge repo-owned.
 4. Do not map OmniHand onto the existing Revo2-specific ROS message contract.
-5. Keep the OmniHand bridge in `agx_arm_ctrl` during Sprint 2 unless a real technical boundary requires a split later.
-6. Do not introduce package renames during Sprint 2 unless a real technical boundary requires them.
+5. Keep the OmniHand bridge in `agx_arm_ctrl` in the current baseline unless a real technical boundary requires a split later.
+6. Do not introduce package renames in the current baseline unless a real technical boundary requires them.
 7. Make description and bringup surfaces arm-count-aware from the start; the first executable Duo target is `body + right arm + right OmniHand`, then mirror to the left side.
 
 ## Preferred Change Order
 
-When adding new Sprint 2 functionality, use this order:
+When adding new functionality in the current Sprint 2 through Sprint 4 baseline, use this order:
 
 1. define or confirm the public contract in docs,
 2. add repo-owned messages when standard ROS types are not sufficient,
@@ -51,7 +51,7 @@ When adding new Sprint 2 functionality, use this order:
 
 The vendored OmniHand SDK now tracks the workspace fork as its default submodule remote.
 
-Sprint 2 workflow for vendor changes:
+Current workflow for vendor changes:
 
 1. land portability or safety patches in the workspace fork first,
 2. keep the original Agibot repository available as `upstream` for sync and review,
@@ -64,13 +64,13 @@ Use `docs/development/` for working logs and in-progress notes.
 
 Keep only the roadmap, progress monitor, and component map at the top of `docs/development/`. Put sprint-local discovery, checklist, error/fix, and niche implementation notes under `docs/development/sprintN/`.
 
-Promote stable outputs to the top-level docs tree when they become the canonical answer. Sprint 2 policy and structure decisions should live under `docs/project/` once settled, while the current Duo system implementation record should live under `docs/development/sprint4/` until its long-term package boundary is stable.
+Promote stable outputs to the top-level docs tree when they become the canonical answer. Stable policy and structure decisions should live under `docs/project/` once settled, while the current Duo system implementation record should live under `docs/development/sprint4/` until its long-term package boundary is stable.
 
 Keep `.github/` guidance concise and synchronized with the stable docs it mirrors.
 
 ## Validation Expectations
 
-Every Sprint 2 change should include the narrowest useful validation available for the touched surface.
+Every current-baseline change should include the narrowest useful validation available for the touched surface.
 
 Examples:
 
@@ -81,7 +81,7 @@ Examples:
 
 ## Anti-Patterns
 
-Avoid these during Sprint 2:
+Avoid these in the current baseline:
 
 - creating an undocumented second description package or letting a documented staging package turn into an unowned long-term fork
 - creating a duplicate MoveIt package for the same Nero baseline

@@ -249,12 +249,12 @@ The backend maps those local names to the vendor-declared active-joint order alr
 | --- | --- | --- | --- |
 | `control/joint_states` | `sensor_msgs/JointState` | Shared arm plus end-effector command surface used by the current agx_arm runtime | keep as the preferred shared arm-plus-OmniHand command path |
 | `feedback/joint_states` | `sensor_msgs/JointState` | Combined arm plus hand state used by MoveIt follow mode | keep as the canonical combined state |
-| `feedback/omnihand/joint_states` | `sensor_msgs/JointState` | Hand-only state for debugging and direct consumers | add |
-| `feedback/omnihand/status` | new `agx_arm_msgs/OmniHandStatus` | Device state, temperatures, currents, control mode, fault bits | add |
-| `feedback/omnihand/tactile_raw` | new `agx_arm_msgs/OmniHandTactileRaw` | Raw tactile payloads without premature abstraction | add |
+| `feedback/omnihand/joint_states` | `sensor_msgs/JointState` | Hand-only state for debugging and direct consumers | keep implemented for hand-only debugging and direct consumers |
+| `feedback/omnihand/status` | new `agx_arm_msgs/OmniHandStatus` | Device state, temperatures, currents, control mode, fault bits | keep implemented as the repo-owned status surface |
+| `feedback/omnihand/tactile_raw` | new `agx_arm_msgs/OmniHandTactileRaw` | Raw tactile payloads without premature abstraction | keep implemented as the raw tactile surface |
 | `control/omnihand/joint_trajectory` | `trajectory_msgs/JointTrajectory` | Bridge-specific compatibility path for hand-only or controller-oriented publishers | keep supported, but not as the only public command path |
 | `control/omnihand/follow_joint_trajectory` | `control_msgs/action/FollowJointTrajectory` | Optional later controller or action surface for tighter MoveIt integration | add later if needed |
-| `control/omnihand/stop` | `std_srvs/Trigger` or `std_srvs/Empty` | Safe stop or cancel hand motion | add |
+| `control/omnihand/stop` | `std_srvs/Trigger` or `std_srvs/Empty` | Safe stop or cancel hand motion | keep implemented as the bridge-local safe-stop surface |
 | `control/omnihand/set_control_mode` | repo-owned service only if required | Explicit mode switching when the backend truly needs it | keep optional |
 
 ## Message Strategy Recommendation

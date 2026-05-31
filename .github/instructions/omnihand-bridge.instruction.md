@@ -1,5 +1,5 @@
 ---
-description: "Use when modifying the OmniHand bridge, its topics, launch arguments, messages, or package placement. Captures the current Sprint 2 bridge contract."
+description: "Use when modifying the OmniHand bridge, its topics, launch arguments, messages, or package placement. Captures the current bridge contract."
 ---
 
 # OmniHand Bridge Contract
@@ -8,7 +8,7 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 
 ## Placement Rule
 
-- keep the bridge in `src/agx_arm_ctrl` during Sprint 2
+- keep the bridge in `src/agx_arm_ctrl` in the current baseline
 - revisit a dedicated package only after a non-mock backend proves a clear dependency or public-contract boundary
 
 ## Public ROS Contract

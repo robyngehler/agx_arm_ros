@@ -1,10 +1,10 @@
 ---
-description: "Use when naming new packages, messages, launch arguments, or deciding whether OmniHand should split out of agx_arm_ctrl during Sprint 2."
+description: "Use when naming new packages, messages, launch arguments, or deciding whether OmniHand should split out of agx_arm_ctrl in the current baseline."
 ---
 
 # Package Naming
 
-Avoid rename churn while Sprint 2 is still stabilizing the shared environment and OmniHand bridge.
+Avoid rename churn while the current Sprint 2 through Sprint 4 transition is still stabilizing the shared environment and OmniHand bridge.
 
 ## Current Canonical Names
 
@@ -19,7 +19,7 @@ Avoid rename churn while Sprint 2 is still stabilizing the shared environment an
 
 ## OmniHand Naming Rules
 
-- keep the bridge in `agx_arm_ctrl` during Sprint 2
+- keep the bridge in `agx_arm_ctrl` in the current baseline
 - if a later dedicated ROS bridge package becomes necessary, prefer `omnihand_driver_ros2`
 - if a later non-ROS backend library becomes necessary, prefer `omnihand_backend`
 - avoid packages that only mirror vendor naming
@@ -33,7 +33,7 @@ Avoid rename churn while Sprint 2 is still stabilizing the shared environment an
 
 ## Split Decision Rule
 
-Do not split the bridge into a new package during Sprint 2 unless one of these becomes true:
+Do not split the bridge into a new package in the current baseline unless one of these becomes true:
 
 1. the bridge acquires a stable ROS contract independent from `agx_arm_ctrl`
 2. it needs a dependency boundary that `agx_arm_ctrl` should not carry

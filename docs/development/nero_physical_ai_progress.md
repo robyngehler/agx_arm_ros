@@ -28,7 +28,7 @@ Use the top-level development docs like this:
 | Sprint 1 asset and repo baseline | COMPLETE | Stable outputs were promoted into `docs/assets/` and `docs/control/`; the remaining gaps are external. |
 | Sprint 2 common environment and package structure merge | ACTIVE | Shared ROS2 semantics, package boundaries, Sprint 2 working notes, and stable interaction diagrams are in place; the remaining gate is still the first non-mock OmniHand backend plus runtime validation on a real hand path. |
 | Sprint 3 Nero planning and control hardening | ACTIVE | TRAC-IK, six-profile MoveIt bringup, a live `/compute_ik` call, a repo-owned OMPL pose-plan smoke test, and a non-hardware MIT trajectory audit are now validated locally; the remaining gates are broader planning-path evidence and smaller-scope crash isolation beyond the still-reproduced `move_group` teardown fault. |
-| Sprint 4 Duo body plus OmniHand system baseline | ACTIVE | `src/duo_body_description` is now the documented staging package for the body-mounted system slice; ROS-native `xacro`/`check_urdf`, headless bringup, and a first Duo-aware MIT RViz debug path are validated locally, and the remaining gates are RViz/physical mount review plus the generalization of shared single-arm control and MoveIt surfaces. |
+| Sprint 4 Duo body plus OmniHand system baseline | ACTIVE | `src/duo_body_description` is now the documented staging package for the body-mounted system slice; ROS-native `xacro`/`check_urdf`, headless bringup, and a first control-topic Duo-aware MIT RViz debug path are validated locally, and the remaining gates are RViz/physical mount review plus the generalization of shared single-arm control and MoveIt surfaces. |
 | Sprint 5 and later | PLANNED / EXTERNAL | Later phases stay roadmap items until AGV assets, broader simulation assets, and more hardware validation exist. |
 
 ## Roadmap Sprint Status
@@ -65,7 +65,7 @@ Use the top-level development docs like this:
 - keep `nero_arm` as the monolithic active planning group in the current single-arm MoveIt surface while Sprint 4 documents the future `right_arm`, `left_arm`, and `both_arms` split for the Duo system
 - keep `nero_tool0` as the canonical Nero flange alias and `tcp_link` as the distinct TCP frame instead of collapsing those semantics together
 - use TRAC-IK as the current MoveIt IK baseline and source the external `~/workspace/trac_ik_ws` overlay on Humble / Jetson when the apt package is unavailable
-- use the new `custom_model`, `custom_model_xacro_args`, and `input_joint_prefix` hooks in the current RViz debug path as the first Duo-aware controller-facing slice rather than forking a second MIT debug stack immediately
+- use the new `custom_model`, `custom_model_xacro_args`, and `input_joint_prefix` hooks in the current RViz debug path as the first Duo-aware controller-facing slice on the control-topic side; feedback-side prefix adaptation and multi-arm MoveIt outputs remain open work
 - keep Isaac and broader simulation work sequenced after the first validated Duo body system baseline
 - keep stable repo policy in `docs/project/` and runtime contracts in `docs/control/`
 - keep only three cross-sprint coordination docs at the top of `docs/development/`
@@ -79,6 +79,7 @@ Use the top-level development docs like this:
 - OmniHand live hardware validation still depends on a responsive device path and adapter
 - broader Isaac/USD asset coverage is still incomplete
 - current RViz, MoveIt, and controller-facing launch surfaces are still primarily single-arm oriented
+- the Duo custom-model RViz path still lacks feedback-side prefix adaptation for a clean `follow:=true` contract
 - the Duo system still needs a graphical RViz pass and physical body measurements to confirm the staged mount transforms
 - the current `move_group` teardown crash still reproduces on this Humble/aarch64 host even when the launch is reduced to `planning_pipelines:=ompl`
 

@@ -18,18 +18,21 @@ found_artifacts:
 - normalized repo-owned OmniHand assets under `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/omnihand`
 - Nero attachment xacros for `nero_with_left_omnihand_description.xacro` and `nero_with_right_omnihand_description.xacro`
 - MoveIt support for `effector_type:=omnihand` and `omnihand_type:=left|right` under `src/agx_arm_moveit`
+- repo-owned OmniHand bridge node and launch surface under `src/agx_arm_ctrl`
+- repo-owned `agx_arm_msgs/OmniHandStatus` and `agx_arm_msgs/OmniHandTactileRaw`
 - validated mock-hardware launch path through `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
 missing_artifacts:
-- local ROS adapter package or wrapper layer aligned with the Nero control/planning stack
-- repo-owned hand status schema for OmniHand diagnostics and tactile data
+- non-mock backend support behind the repo-owned OmniHand bridge plus a validated live device path
+- validated runtime evidence for the combined arm-plus-hand path beyond the current mock bridge surface
 - vendor-supported `aarch64` runtime support or a validated `x86_64` bring-up environment for first hardware access
 - a documented upstream-sync and patch-submission workflow for the workspace-owned GitHub fork
 interface_notes:
 - the vendor README describes OmniHand 2025 as `10 active + 6 passive DOF` with `400+` tactile points
 - the vendor SDK documents CANFD with ZLG USBCANFD adapters as the primary supported transport
-- the current real runtime path only supports `agx_gripper` and `revo2` in `src/agx_arm_ctrl`; `src/agx_arm_moveit` and `src/agx_arm_sim/agx_arm_description` already expose the repo-owned OmniHand simulation contract
+- the current non-mock hardware-backed effector path in `src/agx_arm_ctrl` still only has validated arm-side support for `agx_gripper` and `revo2`; the repo-owned OmniHand bridge is landed there too, but remains mock-only until a real backend is validated
 - the current agx_arm stack already switches planning, description, and fake-controller profiles by `effector_type`, so OmniHand can be introduced as another repo-owned effector profile without exposing vendor ROS topics as the public contract
 - the local launch and naming contract is now frozen for the simulation slice: `effector_type:=omnihand`, `omnihand_type:=left|right`, and normalized `left_*` / `right_*` joint names
+- the repo-owned mock bridge already publishes `feedback/omnihand/joint_states`, `feedback/omnihand/status`, and `feedback/omnihand/tactile_raw`, and it exposes `control/omnihand/stop` plus the compatibility `control/omnihand/joint_trajectory` input
 - `pyAgxArm` exposes end-effector drivers for `agx_gripper` and `revo2`, not OmniHand
 - the vendor ROS2 API doc exposes left/right topic families under `/agihand/omnihand/{left,right}/...`
 - current local hand messages are Revo2-specific and should not be reused as the OmniHand long-term interface

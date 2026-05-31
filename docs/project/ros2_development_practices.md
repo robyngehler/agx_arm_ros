@@ -21,8 +21,8 @@ Use it when the task changes topics, services, actions, messages, launch surface
 
 ## Package And Launch Guidance
 
-- extend `src/agx_arm_ctrl` for the current runtime bridge surface during Sprint 2
-- extend `src/agx_arm_moveit` for the current planning baseline during Sprint 2
+- extend `src/agx_arm_ctrl` for the current runtime bridge surface in the active baseline
+- extend `src/agx_arm_moveit` for the current planning baseline in the active baseline
 - allow `src/duo_body_description` for the current description-only Duo system staging and visualization bringup, but do not fork the long-term runtime contract into it
 - keep repo-owned OmniHand messages under `src/agx_arm_msgs`
 - avoid rename churn while the shared ROS2 contract is still stabilizing

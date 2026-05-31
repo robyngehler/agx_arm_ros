@@ -30,7 +30,8 @@ Sprint 4 is now active for the first body-mounted Duo system baseline.
 ## Runtime And Planning Generalization
 
 - [ ] Generalize `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions while keeping one MIT controller per arm.
-- [x] Land the first Duo-aware MIT-controller RViz debug path by forwarding custom Duo Xacros through `display_control.launch.py` and stripping per-arm input prefixes in the MIT debug bridge.
+- [x] Land the first control-topic Duo-aware MIT-controller RViz debug path by forwarding custom Duo Xacros through `display_control.launch.py` and stripping per-arm input prefixes in the MIT debug bridge.
+- [ ] Add feedback-side prefix adaptation or another shared-state adapter before treating the Duo custom-model debug path as `follow:=true` capable.
 - [ ] Split the MIT-controller RViz path into a reusable Duo-aware description selector plus per-arm namespace-scoped controller/debug instances.
 - [ ] Generalize `agx_arm_moveit` in place via prefix-aligned multi-profile outputs instead of creating a second multi-arm MoveIt package.
 - [ ] Implement the initial `right_arm`, `left_arm`, and `both_arms` planning groups and the first hand-aware variants in the generated SRDF/config surfaces.
@@ -41,4 +42,4 @@ Sprint 4 is now active for the first body-mounted Duo system baseline.
 - [x] Record one first coordinated dual-arm benchmark target in concrete planning terms.
 - [x] Use the coordinated Hefeweizen pouring workflow as the reference benchmark unless a narrower first demo proves more practical.
 
-The 2026-05-28 ROS-native validation pass built `duo_body_description`, then passed `xacro` + `check_urdf` for the `right`, `left`, and `both` profiles, and started the headless display launch for the right and left slices. A follow-up runtime pass also landed the first Duo-aware MIT RViz debug path through `start_single_agx_arm_rviz.launch.py`, `display_control.launch.py`, and the MIT joint-state bridge. The remaining validation gates now depend on RViz review, physical mount measurements, wider runtime generalization, and shared multi-arm planning surfaces rather than package discovery or URDF parsing.
+The 2026-05-28 ROS-native validation pass built `duo_body_description`, then passed `xacro` + `check_urdf` for the `right`, `left`, and `both` profiles, and started the headless display launch for the right and left slices. A follow-up runtime pass also landed the first Duo-aware MIT RViz debug path through `start_single_agx_arm_rviz.launch.py`, `display_control.launch.py`, and the MIT joint-state bridge on the control-topic side. The remaining validation gates now depend on RViz review, physical mount measurements, feedback-side prefix handling, wider runtime generalization, and shared multi-arm planning surfaces rather than package discovery or URDF parsing.

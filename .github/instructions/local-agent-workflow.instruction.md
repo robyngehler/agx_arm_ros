@@ -1,5 +1,5 @@
 ---
-description: "Use when planning and sequencing work in agx_arm_ros. Covers the preferred change order, docs promotion flow, and validation expectations for Sprint 2."
+description: "Use when planning and sequencing work in agx_arm_ros. Covers the preferred change order, docs promotion flow, and validation expectations for the current Sprint 2 through Sprint 4 baseline."
 ---
 
 # Local Agent Workflow
@@ -31,7 +31,7 @@ Read these first when changing package boundaries or OmniHand integration surfac
 
 - start from the owning package instead of creating a parallel surface
 - use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface for Duo body system bringup; keep long-term canonical description ownership in `src/agx_arm_sim/agx_arm_description`
-- keep the OmniHand bridge in `agx_arm_ctrl` during Sprint 2
+- keep the OmniHand bridge in `agx_arm_ctrl` in the current baseline
 - keep the public ROS contract agx_arm-centric
 - make description and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable Duo target
 - keep sprint-local evidence in `docs/development/sprintN/` and keep only roadmap, progress, and component routing at the top of `docs/development/`

@@ -42,6 +42,8 @@ The legacy standalone `FollowJointTrajectory` bridge is no longer part of the no
 
 For RViz soft-target debugging, keep the MIT controller's topic input disabled by default and only enable it in explicit debug launches such as `agx_arm_ctrl start_agx_arm_components.launch.py mode:=debug_soft_target` or `start_single_agx_arm_rviz.launch.py use_mit_controller:=true control:=true`. Enable MIT explicitly before moving RViz sliders; the debug bridge no longer auto-arms the controller.
 
+For the current Duo custom-model and prefixed-joint slice, use `start_single_agx_arm_rviz.launch.py` with `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, and `follow:=false`. `start_agx_arm_components.launch.py mode:=debug_soft_target` is still the standard single-arm debug wrapper and does not yet forward the Duo custom-model hooks.
+
 ## Controller Behavior
 
 - fresh `feedback/joint_states` is required before enabling or accepting a trajectory goal

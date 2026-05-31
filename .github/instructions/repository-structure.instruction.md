@@ -1,10 +1,10 @@
 ---
-description: "Use when creating, moving, or extending package surfaces in agx_arm_ros. Covers the current Sprint 2 package boundaries and where new work belongs."
+description: "Use when creating, moving, or extending package surfaces in agx_arm_ros. Covers the current Sprint 2 through Sprint 4 package boundaries and where new work belongs."
 ---
 
 # Repository Structure
 
-Use the current workspace layout as the implementation truth during Sprint 2.
+Use the current workspace layout as the implementation truth during the active Sprint 2 through Sprint 4 baseline.
 
 ## Canonical Package Roles
 
@@ -18,7 +18,7 @@ Use the current workspace layout as the implementation truth during Sprint 2.
 - `src/agx_arm_msgs`: repo-owned ROS messages
 - `vendor/Omnihand-2025-SDK`: upstream SDK input, not the public repo contract
 
-## Sprint 2 Placement Rules
+## Current Placement Rules
 
 - keep the OmniHand bridge in `src/agx_arm_ctrl` for now
 - keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface
@@ -35,7 +35,7 @@ Use the current workspace layout as the implementation truth during Sprint 2.
 - `docs/assets/`: stable factual inventories and validation state
 - `docs/control/`: stable OmniHand and runtime integration decisions
 - `docs/development/`: fixed roadmap, progress, and component-routing docs plus sprint working folders
-- `docs/project/`: stable Sprint 2 package, naming, and workflow policy
+- `docs/project/`: stable package, naming, and workflow policy
 - `.github/`: concise Copilot-native instruction, skill, and agent layer
 
 ## Escalation Rule

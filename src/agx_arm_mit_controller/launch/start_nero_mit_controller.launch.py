@@ -35,7 +35,7 @@ def generate_launch_description():
     namespace_arg = DeclareLaunchArgument(
         "namespace",
         default_value="",
-        description="ROS namespace for this arm instance.",
+        description="ROS namespace for this robot instance. Leave empty for the default shared graph; use a namespace only to separate multiple robots.",
     )
     can_port_arg = DeclareLaunchArgument(
         "can_port",
