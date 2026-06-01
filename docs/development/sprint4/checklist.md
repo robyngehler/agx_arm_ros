@@ -31,7 +31,9 @@ Sprint 4 is now active for the first body-mounted Duo system baseline.
 
 - [ ] Generalize `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions while keeping one MIT controller per arm.
 - [x] Land the first control-topic Duo-aware MIT-controller RViz debug path by forwarding custom Duo Xacros through `display_control.launch.py` and stripping per-arm input prefixes in the MIT debug bridge.
-- [ ] Add feedback-side prefix adaptation or another shared-state adapter before treating the Duo custom-model debug path as `follow:=true` capable.
+- [x] Add feedback-side prefix adaptation plus the custom-model TCP-parent hook so the prefixed Duo debug path can route `follow:=true` consumers without renaming the canonical MIT-controller joint contract.
+- [x] Validate the landed prefixed `follow:=true` RViz path in a ROS-capable shell, including the adapter node, prefixed feedback topic, and preserved `0.005` m right-arm TCP offset.
+- [ ] Validate the corresponding prefixed `follow:=true` MoveIt path on top of the same feedback-adaptation contract.
 - [ ] Split the MIT-controller RViz path into a reusable Duo-aware description selector plus per-arm namespace-scoped controller/debug instances.
 - [ ] Generalize `agx_arm_moveit` in place via prefix-aligned multi-profile outputs instead of creating a second multi-arm MoveIt package.
 - [ ] Implement the initial `right_arm`, `left_arm`, and `both_arms` planning groups and the first hand-aware variants in the generated SRDF/config surfaces.

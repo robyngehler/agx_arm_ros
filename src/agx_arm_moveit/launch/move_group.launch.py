@@ -18,7 +18,10 @@ from _moveit_config_builder import build_moveit_config, declare_common_args
 def _launch(context):
     moveit_config = build_moveit_config(context)
     follow = LaunchConfiguration("follow").perform(context) == "true"
-    joint_states_topic = "feedback/joint_states" if follow else "control/joint_states"
+    follow_joint_states_topic = LaunchConfiguration("follow_joint_states_topic").perform(context)
+    joint_states_topic = (
+        follow_joint_states_topic if follow else "control/joint_states"
+    )
     planning_pipelines_value = LaunchConfiguration("planning_pipelines").perform(context).strip()
     planning_pipelines = [
         pipeline.strip()

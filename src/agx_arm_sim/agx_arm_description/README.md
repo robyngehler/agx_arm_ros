@@ -150,9 +150,11 @@ ros2 launch agx_arm_description display_control.launch.py \
 | `revo2_type` | `left` | Revo2 左右手 | `left`, `right` |
 | `omnihand_type` | `left` | OmniHand 左右手 | `left`, `right` |
 | `follow` | `false` | 是否跟随真实反馈 | `true`, `false` |
+| `follow_joint_states_topic` | `feedback/joint_states` | 当 `follow:=true` 时消费的 JointState 话题；多臂前缀模型可指向适配后的反馈话题 | 任意合法 topic |
 | `control` | `true` | 是否发布控制话题 | `true`, `false` |
 | `control_topic` | `control/joint_states` | 关节滑条输出目标话题 | 任意合法 topic |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz] | - |
+| `tcp_parent_frame` | 空字符串 | 自定义 TCP 静态变换的父坐标系；自定义模型若法兰名不是内置默认值，需要显式设置 | 任意合法 frame 名 |
 
 ## 解析 Xacro
 
@@ -188,7 +190,11 @@ ros2 launch agx_arm_description display_control.launch.py \
 ```bash
 ros2 launch agx_arm_description display_control.launch.py \
     custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
-    custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true'
+    custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true' \
+    follow:=true \
+    follow_joint_states_topic:=feedback/prefixed_joint_states \
+    tcp_parent_frame:=right_arm_nero_tool0 \
+    tcp_offset:='[0.005, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 ## USD 资产说明

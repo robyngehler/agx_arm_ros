@@ -82,8 +82,10 @@ def resolve_model_path(context, *args, **kwargs):
     custom_model = LaunchConfiguration('custom_model').perform(context)
     custom_model_xacro_args = LaunchConfiguration('custom_model_xacro_args')
     follow = LaunchConfiguration('follow').perform(context)
+    follow_joint_states_topic = LaunchConfiguration('follow_joint_states_topic').perform(context)
     control = LaunchConfiguration('control').perform(context)
     control_topic = LaunchConfiguration('control_topic').perform(context)
+    tcp_parent_frame = LaunchConfiguration('tcp_parent_frame').perform(context)
     tcp_offset = ast.literal_eval(
         LaunchConfiguration('tcp_offset').perform(context)
     )
@@ -101,7 +103,9 @@ def resolve_model_path(context, *args, **kwargs):
         )
         robot_description = ParameterValue(Command(['xacro ', model_path]), value_type=str)
 
-    state_joint_topic = 'feedback/joint_states' if follow == 'true' else str(control_topic)
+    state_joint_topic = (
+        follow_joint_states_topic if follow == 'true' else str(control_topic)
+    )
 
     robot_state_publisher_node = Node(
         package='robot_state_publisher',
@@ -151,8 +155,8 @@ def resolve_model_path(context, *args, **kwargs):
             *nodes,
         ]
 
-    if not custom_model:
-        flange = _flange_link(arm_type)
+    if not custom_model or tcp_parent_frame:
+        flange = tcp_parent_frame or _flange_link(arm_type)
         x, y, z, rx, ry, rz = tcp_offset
         nodes.append(
             Node(
@@ -235,6 +239,11 @@ def generate_launch_description():
         choices=['true', 'false'],
         description='Flag to enable follow mode'
     )
+    follow_joint_states_topic_arg = DeclareLaunchArgument(
+        name='follow_joint_states_topic',
+        default_value='feedback/joint_states',
+        description='JointState topic consumed when follow:=true. Use a prefixed adapter topic for custom multi-arm models.',
+    )
     control_arg = DeclareLaunchArgument(
         name='control',
         default_value='true',
@@ -251,6 +260,11 @@ def generate_launch_description():
         default_value='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]',
         description='TCP offset [x, y, z, rx, ry, rz] in meters/radians.'
     )
+    tcp_parent_frame_arg = DeclareLaunchArgument(
+        'tcp_parent_frame',
+        default_value='',
+        description='Optional parent frame for the tcp_offset static transform. Set this for custom models whose flange frame is not the built-in arm default.',
+    )
 
     return LaunchDescription([
         namespace_arg,
@@ -264,8 +278,10 @@ def generate_launch_description():
         gui_arg,
         rviz_arg,
         follow_arg,
+        follow_joint_states_topic_arg,
         control_arg,
         control_topic_arg,
         tcp_offset_arg,
+        tcp_parent_frame_arg,
         OpaqueFunction(function=resolve_model_path),
     ])

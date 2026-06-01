@@ -8,11 +8,29 @@ from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 import os
+from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 
+
+def _default_mit_params_file() -> str:
+    package_share_dir = Path(get_package_share_directory('agx_arm_mit_controller')).resolve()
+    installed_params_file = package_share_dir / 'config' / 'nero_mit_controller_defaults.yaml'
+
+    try:
+        workspace_root = package_share_dir.parents[3]
+    except IndexError:
+        return str(installed_params_file)
+
+    source_params_file = workspace_root / 'src' / 'agx_arm_mit_controller' / 'config' / 'nero_mit_controller_defaults.yaml'
+    if source_params_file.is_file():
+        return str(source_params_file)
+    return str(installed_params_file)
+
 def generate_launch_description():
+
+    default_mit_params_file = _default_mit_params_file()
 
     # arg
     log_level_arg = DeclareLaunchArgument(
@@ -122,7 +140,7 @@ def generate_launch_description():
         'follow',
         default_value='true',
         choices=['true', 'false'],
-        description='Follow real arm state. For prefixed Duo custom models, the currently supported path remains follow:=false until feedback-side prefix adaptation exists.',
+        description='Follow real arm state. Prefixed Duo custom models use the feedback-side adapter hooks when needed, while the MIT controller remains on canonical feedback/joint_states.',
     )
 
     control_arg = DeclareLaunchArgument(
@@ -159,7 +177,7 @@ def generate_launch_description():
 
     mit_params_file_arg = DeclareLaunchArgument(
         'mit_params_file',
-        default_value='',
+        default_value=default_mit_params_file,
         description='Optional MIT controller params file override when use_mit_controller is true.',
     )
 
@@ -174,6 +192,52 @@ def generate_launch_description():
         default_value='',
         description='Optional prefix stripped from RViz-side joint names before forwarding MIT debug trajectories.',
     )
+
+    feedback_joint_prefix_arg = DeclareLaunchArgument(
+        'feedback_joint_prefix',
+        default_value='',
+        description='Optional prefix added onto follow-side feedback/joint_states for custom prefixed models. Empty falls back to input_joint_prefix.',
+    )
+
+    follow_joint_states_topic_arg = DeclareLaunchArgument(
+        'follow_joint_states_topic',
+        default_value='feedback/joint_states',
+        description='JointState topic consumed by RViz when follow:=true. Override for prefixed custom-model feedback adaptation.',
+    )
+
+    tcp_parent_frame_arg = DeclareLaunchArgument(
+        'tcp_parent_frame',
+        default_value='',
+        description='Optional parent frame for the tcp_offset static transform. For the current prefixed Duo right-arm slice this is typically right_arm_nero_tool0.',
+    )
+
+    resolved_follow_joint_states_topic = PythonExpression([
+        "'",
+        LaunchConfiguration('follow_joint_states_topic'),
+        "' if '",
+        LaunchConfiguration('follow_joint_states_topic'),
+        "' != 'feedback/joint_states' else ('feedback/prefixed_joint_states' if ('",
+        LaunchConfiguration('follow'),
+        "' == 'true' and (('",
+        LaunchConfiguration('feedback_joint_prefix'),
+        "' != '') or ('",
+        LaunchConfiguration('input_joint_prefix'),
+        "' != ''))) else 'feedback/joint_states')",
+    ])
+
+    resolved_tcp_parent_frame = PythonExpression([
+        "'",
+        LaunchConfiguration('tcp_parent_frame'),
+        "' if '",
+        LaunchConfiguration('tcp_parent_frame'),
+        "' != '' else ('",
+        LaunchConfiguration('input_joint_prefix'),
+        "nero_tool0' if ('",
+        LaunchConfiguration('custom_model'),
+        "' != '' and '",
+        LaunchConfiguration('input_joint_prefix'),
+        "' != '') else '')",
+    ])
 
     # description: use the sim-backed compatibility launch from agx_arm_description
     description_launch = IncludeLaunchDescription(
@@ -194,7 +258,9 @@ def generate_launch_description():
             'omnihand_type': LaunchConfiguration('omnihand_type'),
             'pub_rate': LaunchConfiguration('pub_rate'),
             'follow': LaunchConfiguration('follow'),
+            'follow_joint_states_topic': resolved_follow_joint_states_topic,
             'tcp_offset': LaunchConfiguration('tcp_offset'),
+            'tcp_parent_frame': resolved_tcp_parent_frame,
             'control': LaunchConfiguration('control'),
             'control_topic': PythonExpression([
                 "'mit_controller/soft_target_joint_states' if '",
@@ -283,6 +349,41 @@ def generate_launch_description():
         ),
     )
 
+    feedback_joint_state_adapter = Node(
+        package='agx_arm_mit_tools',
+        executable='agx_arm_joint_state_name_adapter',
+        namespace=LaunchConfiguration('namespace'),
+        parameters=[{
+            'input_topic': 'feedback/joint_states',
+            'output_topic': 'feedback/prefixed_joint_states',
+            'joint_prefix': PythonExpression([
+                "'",
+                LaunchConfiguration('feedback_joint_prefix'),
+                "' if '",
+                LaunchConfiguration('feedback_joint_prefix'),
+                "' != '' else '",
+                LaunchConfiguration('input_joint_prefix'),
+                "'",
+            ]),
+            'mode': 'prepend',
+        }],
+        condition=IfCondition(
+            PythonExpression([
+                "('",
+                LaunchConfiguration('follow'),
+                "' == 'true') and (('",
+                LaunchConfiguration('feedback_joint_prefix'),
+                "' != '') or ('",
+                LaunchConfiguration('input_joint_prefix'),
+                "' != '')) and (('",
+                LaunchConfiguration('follow_joint_states_topic'),
+                "' == 'feedback/joint_states') or ('",
+                LaunchConfiguration('follow_joint_states_topic'),
+                "' == 'feedback/prefixed_joint_states'))",
+            ])
+        ),
+    )
+
     return LaunchDescription([
         # arguments
         log_level_arg,
@@ -310,10 +411,14 @@ def generate_launch_description():
         mit_params_file_arg,
         mit_joint_target_duration_arg,
         input_joint_prefix_arg,
+        feedback_joint_prefix_arg,
+        follow_joint_states_topic_arg,
+        tcp_parent_frame_arg,
         # description
         description_launch,
         # agx_arm
         agx_arm_launch,
         mit_arm_launch,
         mit_joint_state_bridge,
+        feedback_joint_state_adapter,
     ])

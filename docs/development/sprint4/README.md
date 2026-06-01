@@ -30,7 +30,7 @@ Do not use this Sprint 4 folder as the cross-sprint source of truth.
 | Duo system staging package | CONFIRMED | `src/duo_body_description` is now the documented staging package for Duo body plus configurable arm-hand system assembly, and the package builds cleanly in the active ROS overlay again. |
 | Right-side description baseline | CONFIRMED | Prefix-safe Nero arm composition, side-selectable OmniHand attachment, and a description-only `display_duo_system.launch.py` bringup path are landed for `body + right arm + right OmniHand`; on 2026-05-28, `xacro`/`check_urdf` and the headless launch both succeeded for the right-side slice. |
 | Left-side mirror | PARTIAL | The left arm and left OmniHand now validate structurally through `xacro`/`check_urdf` and the headless launch path, but the visual RViz frame audit is still pending. |
-| Duo-aware MIT RViz debug slice | PARTIAL | The existing single-arm RViz and MIT debug surface can now target staged Duo Xacros via `custom_model`, `custom_model_xacro_args`, and `input_joint_prefix`, but the currently supported slice is still the control-topic path with `follow:=false`; no feedback-side prefix adaptation is landed yet. |
+| Duo-aware MIT RViz debug slice | PARTIAL | The existing single-arm RViz and MIT debug surface can now target staged Duo Xacros via `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, the landed feedback-side JointState prefix adapter, and the custom-model TCP-parent hook; the right-side `tcp_offset` of `0.005` m in X is now preserved on that path, and a 2026-05-31 live launch confirmed the prefixed RViz `follow:=true` path plus adapter wiring without the hardware driver. The remaining gap is the corresponding MoveIt-side validation. |
 | MoveIt multi-arm generalization | OPEN | `agx_arm_moveit` still exposes the single-arm `nero_arm` baseline plus effector-specific profiles. Prefix-aligned `right_arm`, `left_arm`, and `both_arms` SRDF/config outputs remain open work. |
 | Coordinated system demo target | CONFIRMED | The first representative two-arm benchmark is a coordinated Hefeweizen pouring workflow, using one coupled planning group with orchestration above per-arm execution. |
 
@@ -40,12 +40,12 @@ Achieved in the current Sprint 4 baseline:
 
 - `src/duo_body_description` is a documented staging package with a prefix-safe body plus arm plus hand composition path.
 - The staged Duo system passed package-scoped `xacro` / `check_urdf` and headless description-only launch validation for the right and left slices.
-- The first Duo-aware MIT RViz debug slice exists through the current single-arm launch surface, but only on the RViz control-topic path.
+- The first Duo-aware MIT RViz debug slice exists through the current single-arm launch surface, and the follow-side prefix-adapter plus custom-model TCP-parent hooks are now landed for the current prefixed right-arm path.
 
 Still open before Sprint 4 exit:
 
 - the graphical RViz frame audit and physical mount measurement for the staged body geometry
-- feedback-side prefix adaptation or another shared-state adapter before treating the Duo custom-model path as `follow:=true` capable
+- MoveIt-side validation of the landed feedback-side prefix adapter after the prefixed RViz `follow:=true` runtime launch succeeded
 - reusable per-arm plus shared runtime launch surfaces in `agx_arm_ctrl` and `agx_arm_mit_controller`
 - prefix-aligned MoveIt outputs, including `right_arm`, `left_arm`, `both_arms`, and hand-aware variants
 

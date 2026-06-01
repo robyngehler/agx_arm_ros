@@ -31,6 +31,7 @@ interface_notes:
   - service: `~/enable`
   - service: `~/hold_current`
   - service: `~/cancel_trajectory`
+- prefixed Duo follow-mode consumers now use a separate JointState name adapter in `agx_arm_mit_tools`; the MIT controller itself stays on the canonical unprefixed `feedback/joint_states` contract
 - the package now also includes a long-lived motion-manager node that exposes `~/trigger_motion` for external wakeword-triggered playback over a curated trajectory library
 - the wakeword-oriented motion-manager is ongoing application work and should not yet be treated as a frozen Sprint 2 runtime contract
 - default gravity behavior is Pinocchio-based with `gravity_feedforward_sign: -1.0`

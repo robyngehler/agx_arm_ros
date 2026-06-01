@@ -48,6 +48,11 @@ def declare_common_args():
             "true: move_group subscribes to feedback/joint_states; "
             "false: subscribes to control/joint_states (mock hardware).",
         ),
+        DeclareLaunchArgument(
+            "follow_joint_states_topic",
+            default_value="feedback/joint_states",
+            description="JointState topic consumed when follow:=true. Override for prefixed custom-model feedback adaptation.",
+        ),
     ]
 
 

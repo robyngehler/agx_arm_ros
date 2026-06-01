@@ -167,6 +167,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 | `omnihand_type` | `left` | OmniHand 左右手类型 | `left`, `right` |
 | `namespace` | 空字符串 | 当前 MoveIt/控制实例命名空间 | 任意合法 ROS 命名空间 |
 | `follow` | `false` | `true` 时订阅 `/feedback/joint_states`，推荐用于真机 / MIT 路径；`false` 时订阅 `/control/joint_states` | `true`, `false` |
+| `follow_joint_states_topic` | `feedback/joint_states` | 当 `follow:=true` 时消费的 JointState 话题；多臂前缀模型可指向适配后的反馈话题 | 任意合法 topic |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度） | - |
 | `use_mit_controller` | `false` | `true` 时跳过 fake `ros2_control`，加载 `moveit_controllers_mit.yaml`，并要求 `mit_controller` 提供 `arm_controller/follow_joint_trajectory` | `true`, `false` |
 | `use_rviz` | `true` | 是否启动 RViz | `true`, `false` |

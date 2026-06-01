@@ -167,6 +167,7 @@ When `use_mit_controller:=true`, `demo.launch.py` no longer starts the legacy br
 | `omnihand_type` | `left` | OmniHand side | `left`, `right` |
 | `namespace` | empty string | Namespace for the MoveIt/control instance | Any valid ROS namespace |
 | `follow` | `false` | `true` subscribes to `/feedback/joint_states` and is recommended for real-arm / MIT flows; `false` subscribes to `/control/joint_states` | `true`, `false` |
+| `follow_joint_states_topic` | `feedback/joint_states` | JointState topic consumed when `follow:=true`; point this at an adapted topic for prefixed multi-arm models | Any valid topic |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP offset [x, y, z, rx, ry, rz] in meters/radians | - |
 | `use_mit_controller` | `false` | When `true`, skip fake `ros2_control`, load `moveit_controllers_mit.yaml`, and expect `mit_controller` to provide `arm_controller/follow_joint_trajectory` | `true`, `false` |
 | `use_rviz` | `true` | Launch RViz | `true`, `false` |
