@@ -44,7 +44,13 @@ export interface RosNode {
   parameters: ParameterDef[];
   lifecycleNode: boolean;
   lifecycleStates?: LifecycleState[];
+  sourceKind?: "workspace" | "knownTool";
+  integrationKey?: ToolIntegrationKey;
+  derivedFromLaunches?: string[];
+  notes?: string[];
 }
+
+export type ToolIntegrationKey = "moveit" | "rviz";
 
 export interface LifecycleState {
   from: string;

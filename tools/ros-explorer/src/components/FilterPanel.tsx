@@ -1,6 +1,14 @@
 import { useRef, useState, useEffect } from "react";
 import { useStore } from "../store";
+import { buildKnownToolNodes, TOOL_INTEGRATION_OPTIONS } from "../knownToolIntegrations";
 import { Network, GitBranch, Activity, Search, SlidersHorizontal, MessageSquare } from "lucide-react";
+
+type MultiSelectOption = {
+  value: string;
+  label: string;
+  description?: string;
+  searchText?: string;
+};
 
 // ── Custom multi-select dropdown ─────────────────────────────────────────────
 function MultiSelectDropdown({
@@ -11,14 +19,18 @@ function MultiSelectDropdown({
   onToggle,
   onClear,
   accentColor = "#3b82f6",
+  placeholder,
+  selectionSummary,
 }: {
   label: string;
   icon: React.ReactNode;
-  options: string[];
+  options: MultiSelectOption[];
   selected: Set<string>;
   onToggle: (v: string) => void;
   onClear: () => void;
   accentColor?: string;
+  placeholder?: string;
+  selectionSummary?: (count: number, total: number) => string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -33,8 +45,16 @@ function MultiSelectDropdown({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const filtered = options.filter((o) => o.toLowerCase().includes(search.toLowerCase()));
-  const count = selected.size;
+  const filtered = options.filter((option) => {
+    const haystack = `${option.label} ${option.description ?? ""} ${option.searchText ?? ""}`.toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
+  const count = options.filter((option) => selected.has(option.value)).length;
+  const summary = selectionSummary
+    ? selectionSummary(count, options.length)
+    : count > 0
+      ? `${count} ${label}${count > 1 ? "s" : ""} selected`
+      : placeholder ?? `Filter ${label}…`;
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
@@ -50,7 +70,7 @@ function MultiSelectDropdown({
       >
         {icon}
         <span style={{ fontSize: 12, color: count > 0 ? "#e2e8f0" : "#64748b", flex: 1 }}>
-          {count > 0 ? `${count} ${label}${count > 1 ? "s" : ""} selected` : `Filter ${label}…`}
+          {summary}
         </span>
         {count > 0 && (
           <span
@@ -88,25 +108,32 @@ function MultiSelectDropdown({
             )}
             {filtered.map((opt) => (
               <div
-                key={opt}
-                onClick={() => onToggle(opt)}
+                key={opt.value}
+                onClick={() => onToggle(opt.value)}
                 style={{
                   display: "flex", alignItems: "center", gap: 8,
                   padding: "5px 10px", cursor: "pointer", fontSize: 12,
-                  background: selected.has(opt) ? "#0f1f2a" : "transparent",
-                  color: selected.has(opt) ? "#e2e8f0" : "#94a3b8",
+                  background: selected.has(opt.value) ? "#0f1f2a" : "transparent",
+                  color: selected.has(opt.value) ? "#e2e8f0" : "#94a3b8",
                 }}
               >
                 <span style={{
                   width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                  border: `1.5px solid ${selected.has(opt) ? accentColor : "#475569"}`,
-                  background: selected.has(opt) ? accentColor : "transparent",
+                  border: `1.5px solid ${selected.has(opt.value) ? accentColor : "#475569"}`,
+                  background: selected.has(opt.value) ? accentColor : "transparent",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: 9, color: "#000", fontWeight: 900,
                 }}>
-                  {selected.has(opt) && "✓"}
+                  {selected.has(opt.value) && "✓"}
                 </span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt}</span>
+                <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt.label}</span>
+                  {opt.description && (
+                    <span style={{ fontSize: 10, color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {opt.description}
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -144,9 +171,12 @@ export function FilterPanel() {
   const {
     activeView, data,
     showTopics, showServices, showActions,
+    toolIntegrations,
     selectedPackages, topicFilters, msgTypeFilters,
+    selectedNodeIds,
     setShowTopics, setShowServices, setShowActions,
-    togglePackage,
+    setToolIntegrationEnabled,
+    togglePackage, toggleNodeSelection, setPackageNodeSelection,
     toggleTopicFilter, clearTopicFilters,
     toggleMsgTypeFilter, clearMsgTypeFilters,
   } = useStore();
@@ -154,25 +184,49 @@ export function FilterPanel() {
   if (!data) return null;
   if (activeView === "launch") return null;
 
+  const allNodes = data.nodes.concat(buildKnownToolNodes(data, toolIntegrations));
+
   const packagesWithNodes = data.packages.filter((p) =>
     data.nodes.some((n) => n.package === p.name)
   );
 
   const topicOptions = Array.from(new Set(
-    data.nodes.flatMap((n) => [
+    allNodes.flatMap((n) => [
       ...n.topics.map((t) => t.topic),
       ...n.services.map((s) => s.service),
       ...n.actions.map((a) => a.action),
     ])
-  )).sort();
+  )).sort().map((value) => ({ value, label: value }));
 
   const msgTypeOptions = Array.from(new Set(
-    data.nodes.flatMap((n) => [
+    allNodes.flatMap((n) => [
       ...n.topics.map((t) => t.msgType),
       ...n.services.map((s) => s.srvType),
       ...n.actions.map((a) => a.actionType),
     ]).filter(Boolean)
-  )).sort();
+  )).sort().map((value) => ({ value, label: value }));
+
+  const packageNodeOptions = new Map(
+    packagesWithNodes.map((pkg) => {
+      const options = data.nodes
+        .filter((node) => node.package === pkg.name)
+        .sort((left, right) => {
+          const leftPath = left.filePath.toLowerCase();
+          const rightPath = right.filePath.toLowerCase();
+          const leftPriority = Number(leftPath.includes("/test/") || leftPath.includes("/tests/") || left.nodeName.toLowerCase().includes("test") || left.nodeName.toLowerCase().includes("demo"));
+          const rightPriority = Number(rightPath.includes("/test/") || rightPath.includes("/tests/") || right.nodeName.toLowerCase().includes("test") || right.nodeName.toLowerCase().includes("demo"));
+          if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+          return left.nodeName.localeCompare(right.nodeName);
+        })
+        .map((node) => ({
+          value: node.id,
+          label: node.nodeName,
+          description: node.filePath.split("/").slice(-2).join("/"),
+          searchText: `${node.filePath} ${node.id}`,
+        }));
+      return [pkg.name, options] as const;
+    }),
+  );
 
   return (
     <div style={{
@@ -200,11 +254,56 @@ export function FilterPanel() {
 
           <div style={{ width: 1, height: 24, background: "#1e293b", margin: "0 4px" }} />
 
+          <span style={{ fontSize: 11, color: "#64748b" }}>Integrations</span>
+          {TOOL_INTEGRATION_OPTIONS.map((option) => {
+            const enabled = toolIntegrations[option.key];
+            return (
+              <button
+                key={option.key}
+                title={option.description}
+                style={btnStyle(enabled)}
+                onClick={() => setToolIntegrationEnabled(option.key, !enabled)}
+              >
+                <span style={{ background: `${option.accentColor}22`, borderRadius: 3, padding: "0 4px", color: option.accentColor, fontSize: 10 }}>
+                  {option.key === "moveit" ? "M" : "R"}
+                </span>
+                {option.label}
+              </button>
+            );
+          })}
+
           {packagesWithNodes.map((p) => (
             <button key={p.name} style={btnStyle(selectedPackages.has(p.name))} onClick={() => togglePackage(p.name)}>
               {p.name}
             </button>
           ))}
+
+          {packagesWithNodes.filter((pkg) => selectedPackages.has(pkg.name)).length > 0 && (
+            <div style={{ flexBasis: "100%", height: 0 }} />
+          )}
+
+          {packagesWithNodes.filter((pkg) => selectedPackages.has(pkg.name)).map((pkg) => {
+            const options = packageNodeOptions.get(pkg.name) ?? [];
+            const selectedForPackage = new Set(
+              options
+                .filter((option) => selectedNodeIds.has(option.value))
+                .map((option) => option.value),
+            );
+            return (
+              <MultiSelectDropdown
+                key={`${pkg.name}-nodes`}
+                label="node"
+                icon={<Network size={12} color={selectedForPackage.size < options.length ? "#60a5fa" : "#475569"} />}
+                options={options}
+                selected={selectedForPackage}
+                onToggle={toggleNodeSelection}
+                onClear={() => setPackageNodeSelection(pkg.name, [])}
+                accentColor="#2563eb"
+                placeholder={`${pkg.name} nodes…`}
+                selectionSummary={(count, total) => `${pkg.name}: ${count}/${total} nodes`}
+              />
+            );
+          })}
 
           <div style={{ width: 1, height: 24, background: "#1e293b", margin: "0 4px" }} />
 

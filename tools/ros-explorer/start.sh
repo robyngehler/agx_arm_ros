@@ -9,10 +9,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_PATH="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
+ensure_frontend_deps() {
+    if [[ -x "$SCRIPT_DIR/node_modules/.bin/vite" ]]; then
+        return
+    fi
+
+    echo "Installing local frontend dependencies for ROS Explorer..."
+    cd "$SCRIPT_DIR"
+
+    if [[ -f "$SCRIPT_DIR/package-lock.json" ]]; then
+        npm ci
+    else
+        npm install
+    fi
+}
+
 # ── production build mode ─────────────────────────────────────────────────────
 if [[ "${1:-}" == "--build" ]]; then
     echo "Building frontend…"
     cd "$SCRIPT_DIR"
+    ensure_frontend_deps
     npm run build
     WS_PATH="${2:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
     echo "Starting scanner server on http://localhost:7357"
@@ -45,4 +61,5 @@ trap cleanup EXIT
 
 # Start Vite dev server
 cd "$SCRIPT_DIR"
+ensure_frontend_deps
 npm run dev

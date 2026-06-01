@@ -21,6 +21,45 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+
+_UNRESOLVED = object()
+
+
+class _LoopContinue(Exception):
+    pass
+
+
+class _LoopBreak(Exception):
+    pass
+
+_UI_BACKEND_ROBOT_METADATA: dict[str, dict[str, Any]] = {
+    "ur_1": {
+        "display_name": "Universal Robot UR10e",
+        "capabilities": ["freedrive", "stop", "gripper", "trajectory"],
+        "coordinator_relevant": True,
+        "lifecycle_node": "ur_adapter",
+        "gripper_type": "RG6",
+    },
+    "portal": {
+        "display_name": "Portal XY System",
+        "capabilities": ["power", "jog", "stop", "goto", "home"],
+        "coordinator_relevant": True,
+        "lifecycle_node": "portal_adapter",
+    },
+    "panda_1": {
+        "display_name": "Franka Emika Panda",
+        "capabilities": ["freedrive", "stop", "gripper", "trajectory"],
+        "coordinator_relevant": True,
+        "lifecycle_node": "panda_adapter",
+        "gripper_type": "parallel_jaw",
+    },
+}
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,6 +83,162 @@ def _find_files(root: Path, *exts: str) -> list[Path]:
             if any(f.endswith(ext) for ext in exts):
                 result.append(Path(dirpath) / f)
     return result
+
+
+def _flatten_params(value: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    flattened: dict[str, Any] = {}
+    for key, item in value.items():
+        full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(item, dict):
+            flattened.update(_flatten_params(item, full_key))
+        else:
+            flattened[full_key] = item
+    return flattened
+
+
+def _find_ros_ws_root(path: Path) -> Path | None:
+    for parent in (path.resolve(), *path.resolve().parents):
+        if parent.name == "ros_ws" and (parent / "config").exists():
+            return parent
+        candidate = parent / "ros_ws"
+        if candidate.exists() and (candidate / "config").exists():
+            return candidate
+    return None
+
+
+def _resolve_workspace_config_path(current_path: Path, raw_path: str) -> Path | None:
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        return candidate if candidate.exists() else None
+    ws_root = _find_ros_ws_root(current_path)
+    if ws_root is None:
+        return None
+    if raw_path.startswith("ros_ws/"):
+        candidate = ws_root.parent / raw_path
+    else:
+        candidate = ws_root / raw_path
+    return candidate if candidate.exists() else None
+
+
+def _load_ui_backend_namespace_map(current_path: Path, config_path: str) -> dict[str, str]:
+    if yaml is None:
+        return {}
+    resolved_path = _resolve_workspace_config_path(current_path, config_path)
+    if resolved_path is None:
+        return {}
+    try:
+        payload = yaml.safe_load(_read(resolved_path)) or {}
+    except Exception:
+        return {}
+
+    namespaces = payload.get("namespaces", {}) if isinstance(payload, dict) else {}
+    result: dict[str, str] = {}
+    for entry in namespaces.get("ur_robots", []) or []:
+        if isinstance(entry, dict) and entry.get("name"):
+            name = str(entry["name"]).strip()
+            if name:
+                result[name] = f"/{name}"
+    portal = namespaces.get("portal")
+    if isinstance(portal, dict) and portal.get("name"):
+        name = str(portal["name"]).strip()
+        if name:
+            result[name] = f"/{name}"
+    for entry in namespaces.get("panda_robots", []) or []:
+        if isinstance(entry, dict) and entry.get("name"):
+            name = str(entry["name"]).strip()
+            if name:
+                result[name] = f"/{name}"
+    return result
+
+
+def _build_ui_backend_robot_registry(namespace_map: dict[str, str]) -> dict[str, dict[str, Any]]:
+    registry: dict[str, dict[str, Any]] = {}
+    for robot_id, metadata in _UI_BACKEND_ROBOT_METADATA.items():
+        namespace = namespace_map.get(robot_id)
+        if namespace is None:
+            continue
+        registry[robot_id] = {
+            **metadata,
+            "namespace": namespace,
+        }
+    for robot_id, namespace in namespace_map.items():
+        if robot_id in registry:
+            continue
+        registry[robot_id] = {
+            "namespace": namespace,
+            "display_name": robot_id,
+            "capabilities": ["stop"],
+            "coordinator_relevant": True,
+            "lifecycle_node": None,
+        }
+    return registry
+
+
+def _qualify_namespace_path(namespace: str, resource: str) -> str:
+    normalized_namespace = str(namespace or "").rstrip("/")
+    normalized_resource = str(resource or "").lstrip("/")
+    if not normalized_namespace:
+        return f"/{normalized_resource}"
+    return f"{normalized_namespace}/{normalized_resource}"
+
+
+def _build_ui_backend_managed_targets(
+    robot_registry: dict[str, dict[str, Any]],
+    db_bridge_namespace: str,
+    performer_helper_namespace: str,
+    coordinator_namespace: str,
+) -> list[dict[str, Any]]:
+    ur_robot_id = next((robot_id for robot_id in robot_registry if robot_id.startswith("ur_")), "ur_1")
+    ur_namespace = str(robot_registry.get(ur_robot_id, {}).get("namespace") or f"/{ur_robot_id}")
+    panda_robot_id = next((robot_id for robot_id in robot_registry if robot_id.startswith("panda_")), "panda_1")
+    coord_action_name = _qualify_namespace_path(coordinator_namespace, "execute_activity")
+    return [
+        {
+            "node_name": "db_bridge",
+            "namespace": db_bridge_namespace,
+            "kind": "service",
+            "probe": _qualify_namespace_path(db_bridge_namespace, "list_actions"),
+            "lifecycle": _qualify_namespace_path(db_bridge_namespace, "get_state"),
+        },
+        {
+            "node_name": "performer_helper",
+            "namespace": performer_helper_namespace,
+            "kind": "action",
+            "probe": _qualify_namespace_path(performer_helper_namespace, "perform"),
+            "lifecycle": _qualify_namespace_path(performer_helper_namespace, "get_state"),
+        },
+        {
+            "node_name": "coordination",
+            "namespace": coordinator_namespace,
+            "kind": "action",
+            "probe": coord_action_name,
+            "lifecycle": _qualify_namespace_path(coordinator_namespace, "get_state"),
+        },
+        {
+            "node_name": "portal_adapter",
+            "namespace": "/",
+            "kind": "service",
+            "probe": "/portal_adapter/get_state",
+            "lifecycle": "/portal_adapter/get_state",
+            "notes": ["Robot adapter for portal"],
+        },
+        {
+            "node_name": "ur_adapter",
+            "namespace": ur_namespace,
+            "kind": "service",
+            "probe": _qualify_namespace_path(ur_namespace, "ur_adapter/get_state"),
+            "lifecycle": _qualify_namespace_path(ur_namespace, "ur_adapter/get_state"),
+            "notes": [f"Robot adapter for {ur_robot_id}"],
+        },
+        {
+            "node_name": "panda_adapter",
+            "namespace": "/",
+            "kind": "service",
+            "probe": "/panda_adapter/get_state",
+            "lifecycle": "/panda_adapter/get_state",
+            "notes": [f"Robot adapter for {panda_robot_id}"],
+        },
+    ]
 
 
 # ── package.xml parser ───────────────────────────────────────────────────────
@@ -109,7 +304,12 @@ def _parse_msg_file(path: Path, pkg: str) -> dict[str, Any]:
 class _NodeVisitor(ast.NodeVisitor):
     """Extract ROS2 pub/sub/service/action/param calls from a Python node."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        initial_locals: dict[str, Any] | None = None,
+        initial_self_attrs: dict[str, Any] | None = None,
+        initial_param_defaults: dict[str, Any] | None = None,
+    ) -> None:
         self.node_name: str | None = None
         self.topics: list[dict] = []
         self.services: list[dict] = []
@@ -118,9 +318,246 @@ class _NodeVisitor(ast.NodeVisitor):
         self.lifecycle = False
         self._class_bases: list[str] = []
         # Variable resolution: declared parameter string defaults, self.attrs, local vars
-        self._param_defaults: dict[str, str] = {}
-        self._self_attrs: dict[str, str] = {}
-        self._locals: dict[str, str] = {}
+        self._param_defaults: dict[str, Any] = dict(initial_param_defaults or {})
+        self._self_attrs: dict[str, Any] = dict(initial_self_attrs or {})
+        self._locals: dict[str, Any] = dict(initial_locals or {})
+        self._resolved_loop_depth = 0
+
+    def _bind_target_value(self, target: ast.expr, value: Any) -> bool:
+        if isinstance(target, ast.Name):
+            self._locals[target.id] = value
+            return True
+        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (tuple, list)):
+            if len(target.elts) != len(value):
+                return False
+            return all(self._bind_target_value(subtarget, subvalue) for subtarget, subvalue in zip(target.elts, value))
+        return False
+
+    def _resolve_special_self_call(self, node: ast.Call) -> Any:
+        if not (isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "self"):
+            return _UNRESOLVED
+
+        method = node.func.attr
+        if method == "_get_robot_registry":
+            return self._self_attrs.get("_robot_registry", _UNRESOLVED)
+        if method == "_build_managed_node_targets":
+            return self._self_attrs.get("_managed_node_targets", _UNRESOLVED)
+        if method == "_namespace_for" and node.args:
+            robot_id = self._resolve_literal_value(node.args[0])
+            registry = self._self_attrs.get("_robot_registry", {})
+            if isinstance(robot_id, str) and isinstance(registry, dict):
+                namespace = str(registry.get(robot_id, {}).get("namespace") or "").strip()
+                return namespace or f"/{robot_id}"
+        if method in {"get_joint_states_topic", "get_position_topic"} and node.args:
+            robot_id = self._resolve_literal_value(node.args[0])
+            namespace_map = self._self_attrs.get("_robot_namespaces", {})
+            if isinstance(robot_id, str) and isinstance(namespace_map, dict):
+                namespace = namespace_map.get(robot_id)
+                if not isinstance(namespace, str):
+                    return _UNRESOLVED
+                suffix = "state/joint_states" if method == "get_joint_states_topic" else "state/position"
+                return f"{namespace}/{suffix}"
+        if method == "_qualify_path" and len(node.args) >= 2:
+            namespace = self._resolve_literal_value(node.args[0])
+            resource = self._resolve_literal_value(node.args[1])
+            if isinstance(namespace, str) and isinstance(resource, str):
+                return _qualify_namespace_path(namespace, resource)
+        return _UNRESOLVED
+
+    def _resolve_iterable_value(self, node: ast.expr | None) -> Any:
+        if node is None:
+            return _UNRESOLVED
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            container = self._resolve_literal_value(node.func.value)
+            if node.func.attr == "items" and isinstance(container, dict):
+                return list(container.items())
+            if node.func.attr == "values" and isinstance(container, dict):
+                return list(container.values())
+            if node.func.attr == "keys" and isinstance(container, dict):
+                return list(container.keys())
+        value = self._resolve_literal_value(node)
+        if isinstance(value, (list, tuple)):
+            return value
+        if isinstance(value, dict):
+            return list(value)
+        return _UNRESOLVED
+
+    def _resolve_condition_value(self, node: ast.expr | None) -> bool | None:
+        if node is None:
+            return None
+        if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            operand = self._resolve_condition_value(node.operand)
+            return None if operand is None else not operand
+        if isinstance(node, ast.BoolOp):
+            values = [self._resolve_condition_value(item) for item in node.values]
+            if any(value is None for value in values):
+                return None
+            if isinstance(node.op, ast.And):
+                return all(values)
+            if isinstance(node.op, ast.Or):
+                return any(values)
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+            left = self._resolve_literal_value(node.left)
+            right = self._resolve_literal_value(node.comparators[0])
+            if left is _UNRESOLVED or right is _UNRESOLVED:
+                return None
+            op = node.ops[0]
+            if isinstance(op, ast.Eq):
+                return left == right
+            if isinstance(op, ast.NotEq):
+                return left != right
+            if isinstance(op, ast.In):
+                try:
+                    return left in right
+                except TypeError:
+                    return None
+            if isinstance(op, ast.NotIn):
+                try:
+                    return left not in right
+                except TypeError:
+                    return None
+        return None
+
+    def _resolve_literal_value(self, node: ast.expr | None) -> Any:
+        """Resolve a concrete literal-ish expression without falling back to source text."""
+        if node is None:
+            return _UNRESOLVED
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Dict):
+            resolved: dict[Any, Any] = {}
+            for key_node, value_node in zip(node.keys, node.values):
+                key = self._resolve_literal_value(key_node)
+                value = self._resolve_literal_value(value_node)
+                if key is _UNRESOLVED or value is _UNRESOLVED:
+                    return _UNRESOLVED
+                resolved[key] = value
+            return resolved
+        if isinstance(node, ast.List):
+            resolved_items: list[Any] = []
+            for item in node.elts:
+                value = self._resolve_literal_value(item)
+                if value is _UNRESOLVED:
+                    return _UNRESOLVED
+                resolved_items.append(value)
+            return resolved_items
+        if isinstance(node, ast.Tuple):
+            resolved_items: list[Any] = []
+            for item in node.elts:
+                value = self._resolve_literal_value(item)
+                if value is _UNRESOLVED:
+                    return _UNRESOLVED
+                resolved_items.append(value)
+            return tuple(resolved_items)
+        if isinstance(node, ast.JoinedStr):
+            resolved = self._resolve_joined_str(node)
+            return resolved if resolved else _UNRESOLVED
+        if isinstance(node, ast.BoolOp):
+            resolved = self._resolve_bool_op(node)
+            return resolved if resolved else _UNRESOLVED
+        if isinstance(node, ast.Name):
+            return self._locals.get(node.id, _UNRESOLVED)
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id == "self"):
+            return self._self_attrs.get(node.attr, _UNRESOLVED)
+        if isinstance(node, ast.Subscript):
+            container = self._resolve_literal_value(node.value)
+            if container is _UNRESOLVED:
+                return _UNRESOLVED
+            key = self._resolve_literal_value(node.slice)
+            if key is _UNRESOLVED:
+                return _UNRESOLVED
+            try:
+                return container[key]
+            except (KeyError, IndexError, TypeError):
+                return _UNRESOLVED
+        if isinstance(node, ast.Call):
+            special_self_call = self._resolve_special_self_call(node)
+            if special_self_call is not _UNRESOLVED:
+                return special_self_call
+            if isinstance(node.func, ast.Name) and node.func.id == "str" and node.args:
+                value = self._resolve_literal_value(node.args[0])
+                return _UNRESOLVED if value is _UNRESOLVED else str(value)
+            if isinstance(node.func, ast.Attribute):
+                if node.func.attr in {"items", "values", "keys"}:
+                    container = self._resolve_literal_value(node.func.value)
+                    if isinstance(container, dict):
+                        if node.func.attr == "items":
+                            return list(container.items())
+                        if node.func.attr == "values":
+                            return list(container.values())
+                        return list(container.keys())
+                    return _UNRESOLVED
+                if node.func.attr == "get":
+                    container = self._resolve_literal_value(node.func.value)
+                    if isinstance(container, dict) and node.args:
+                        key = self._resolve_literal_value(node.args[0])
+                        if key is _UNRESOLVED:
+                            return _UNRESOLVED
+                        default = _UNRESOLVED
+                        if len(node.args) > 1:
+                            default = self._resolve_literal_value(node.args[1])
+                        return container.get(key, default if default is not _UNRESOLVED else None)
+                if node.func.attr == "get_parameter" and isinstance(node.func.value, ast.Attribute):
+                    value = node.func.value
+                    if value.attr == "value" and node.args:
+                        pname_node = node.args[0]
+                        pname = self._resolve_literal_value(pname_node)
+                        if isinstance(pname, str):
+                            return self._param_defaults.get(pname, _UNRESOLVED)
+        if (isinstance(node, ast.Attribute) and node.attr == "value"
+                and isinstance(node.value, ast.Call)):
+            call = node.value
+            if (isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "get_parameter" and call.args):
+                pname = self._resolve_literal_value(call.args[0])
+                if isinstance(pname, str):
+                    return self._param_defaults.get(pname, _UNRESOLVED)
+        return _UNRESOLVED
+
+    def _resolve_literal_string(self, node: ast.expr | None) -> str:
+        """Resolve a concrete string expression without falling back to source text."""
+        value = self._resolve_literal_value(node)
+        return value if isinstance(value, str) else ""
+
+    def _resolve_joined_str(self, node: ast.JoinedStr) -> str:
+        """Resolve an f-string when all interpolated values are known."""
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant):
+                parts.append(str(value.value))
+                continue
+            if isinstance(value, ast.FormattedValue):
+                resolved = self._resolve_literal_string(value.value)
+                if not resolved:
+                    return ""
+                parts.append(resolved)
+        return "".join(parts)
+
+    def _resolve_bool_op(self, node: ast.BoolOp) -> str:
+        """Resolve `a or b` by returning the first resolvable non-empty branch."""
+        if not isinstance(node.op, ast.Or):
+            return ""
+        for value in node.values:
+            resolved = self._resolve_literal_string(value)
+            if resolved:
+                return resolved
+        return ""
+
+    def _bind_function_defaults(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Bind simple function argument defaults into the local scope while visiting."""
+        positional_args = list(node.args.posonlyargs) + list(node.args.args)
+        defaults = list(node.args.defaults)
+        if defaults:
+            default_targets = positional_args[-len(defaults):]
+            for arg_node, default_node in zip(default_targets, defaults):
+                default_value = self._resolve_literal_value(default_node)
+                if default_value is not _UNRESOLVED:
+                    self._locals[arg_node.arg] = default_value
 
     # ── variable resolution helpers ───────────────────────────────────────────
 
@@ -130,6 +567,10 @@ class _NodeVisitor(ast.NodeVisitor):
             return ""
         if isinstance(n, ast.Constant):
             return str(n.value)
+        if isinstance(n, ast.JoinedStr):
+            return self._resolve_joined_str(n)
+        if isinstance(n, ast.BoolOp):
+            return self._resolve_bool_op(n)
         # self.attr → look up in tracked self-attributes
         if (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
                 and n.value.id == "self"):
@@ -151,30 +592,25 @@ class _NodeVisitor(ast.NodeVisitor):
 
         Handles: "literal", str(expr), self.get_parameter("name").value
         """
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            return node.value
-        # str(...) wrapper
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "str" and node.args):
-            return self._extract_string_value(node.args[0])
-        # expr.value  →  (self.)get_parameter("name").value
-        if (isinstance(node, ast.Attribute) and node.attr == "value"
-                and isinstance(node.value, ast.Call)):
-            call = node.value
-            if (isinstance(call.func, ast.Attribute)
-                    and call.func.attr == "get_parameter" and call.args):
-                pname_node = call.args[0]
-                if (isinstance(pname_node, ast.Constant)
-                        and isinstance(pname_node.value, str)):
-                    return self._param_defaults.get(pname_node.value, "")
-        return ""
+        return self._resolve_literal_string(node)
+
+    def _dedupe_connections(self, connections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        deduped: list[dict[str, Any]] = []
+        for connection in connections:
+            key = tuple(sorted((str(k), str(v)) for k, v in connection.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(connection)
+        return deduped
 
     # ── assignment tracking ───────────────────────────────────────────────────
 
     def visit_Assign(self, node: ast.Assign) -> None:
         """Track self.attr = <string> and local_var = <string> assignments."""
-        val = self._extract_string_value(node.value)
-        if val:
+        val = self._resolve_literal_value(node.value)
+        if val is not _UNRESOLVED:
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     self._locals[target.id] = val
@@ -183,6 +619,67 @@ class _NodeVisitor(ast.NodeVisitor):
                         and target.value.id == "self"):
                     self._self_attrs[target.attr] = val
         self.generic_visit(node)
+
+    def visit_For(self, node: ast.For) -> None:
+        iterable = self._resolve_iterable_value(node.iter)
+        if iterable is _UNRESOLVED:
+            self.generic_visit(node)
+            return
+
+        previous_locals = dict(self._locals)
+        try:
+            for item in iterable:
+                self._locals = dict(previous_locals)
+                if not self._bind_target_value(node.target, item):
+                    continue
+                try:
+                    self._resolved_loop_depth += 1
+                    for statement in node.body:
+                        self.visit(statement)
+                except _LoopContinue:
+                    continue
+                except _LoopBreak:
+                    break
+                finally:
+                    self._resolved_loop_depth -= 1
+                for statement in node.orelse:
+                    self.visit(statement)
+        finally:
+            self._locals = previous_locals
+
+    def visit_Continue(self, node: ast.Continue) -> None:
+        if self._resolved_loop_depth <= 0:
+            return
+        raise _LoopContinue()
+
+    def visit_Break(self, node: ast.Break) -> None:
+        if self._resolved_loop_depth <= 0:
+            return
+        raise _LoopBreak()
+
+    def visit_If(self, node: ast.If) -> None:
+        condition = self._resolve_condition_value(node.test)
+        if condition is True:
+            for statement in node.body:
+                self.visit(statement)
+            return
+        if condition is False:
+            for statement in node.orelse:
+                self.visit(statement)
+            return
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        previous_locals = dict(self._locals)
+        self._bind_function_defaults(node)
+        self.generic_visit(node)
+        self._locals = previous_locals
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        previous_locals = dict(self._locals)
+        self._bind_function_defaults(node)
+        self.generic_visit(node)
+        self._locals = previous_locals
 
     # ── class definitions ─────────────────────────────────────────────────────
 
@@ -207,15 +704,16 @@ class _NodeVisitor(ast.NodeVisitor):
 
         # super().__init__("node_name")
         if fname == "__init__" and node.args:
-            val = self._resolve(node.args[0])
-            if val and not val.startswith("("):
+            val = self._resolve_literal_string(node.args[0])
+            if val:
                 self.node_name = val
 
         # create_publisher(MsgType, "topic", qos)
-        if fname == "create_publisher" and len(node.args) >= 2:
+        # create_lifecycle_publisher(MsgType, "topic", qos)
+        if fname in {"create_publisher", "create_lifecycle_publisher"} and len(node.args) >= 2:
             msg_type = self._resolve(node.args[0])
-            topic = self._resolve(node.args[1])
-            if topic and "." not in topic and not topic.startswith("("):
+            topic = self._resolve_literal_string(node.args[1])
+            if topic:
                 self.topics.append({
                     "topic": topic,
                     "msgType": msg_type.replace(".", "/"),
@@ -225,8 +723,8 @@ class _NodeVisitor(ast.NodeVisitor):
         # create_subscription(MsgType, "topic", cb, qos)
         if fname == "create_subscription" and len(node.args) >= 2:
             msg_type = self._resolve(node.args[0])
-            topic = self._resolve(node.args[1])
-            if topic and "." not in topic and not topic.startswith("("):
+            topic = self._resolve_literal_string(node.args[1])
+            if topic:
                 self.topics.append({
                     "topic": topic,
                     "msgType": msg_type.replace(".", "/"),
@@ -236,8 +734,8 @@ class _NodeVisitor(ast.NodeVisitor):
         # create_service(SrvType, "name", cb)
         if fname == "create_service" and len(node.args) >= 2:
             srv_type = self._resolve(node.args[0])
-            svc = self._resolve(node.args[1])
-            if svc and "." not in svc and not svc.startswith("("):
+            svc = self._resolve_literal_string(node.args[1])
+            if svc:
                 self.services.append({
                     "service": svc,
                     "srvType": srv_type.replace(".", "/"),
@@ -247,8 +745,8 @@ class _NodeVisitor(ast.NodeVisitor):
         # create_client(SrvType, "name")
         if fname == "create_client" and len(node.args) >= 2:
             srv_type = self._resolve(node.args[0])
-            svc = self._resolve(node.args[1])
-            if svc and "." not in svc and not svc.startswith("("):
+            svc = self._resolve_literal_string(node.args[1])
+            if svc:
                 self.services.append({
                     "service": svc,
                     "srvType": srv_type.replace(".", "/"),
@@ -258,8 +756,8 @@ class _NodeVisitor(ast.NodeVisitor):
         # ActionServer(node_ref, ActionType, "action_name", execute_callback=...)
         if fname == "ActionServer" and len(node.args) >= 3:
             action_type = self._resolve(node.args[1])
-            action = self._resolve(node.args[2])
-            if action and not action.startswith("("):
+            action = self._resolve_literal_string(node.args[2])
+            if action:
                 self.actions.append({
                     "action": action,
                     "actionType": action_type.replace(".", "/"),
@@ -269,8 +767,8 @@ class _NodeVisitor(ast.NodeVisitor):
         # ActionClient(node_ref, ActionType, "action_name")
         if fname == "ActionClient" and len(node.args) >= 3:
             action_type = self._resolve(node.args[1])
-            action = self._resolve(node.args[2])
-            if action and not action.startswith("("):
+            action = self._resolve_literal_string(node.args[2])
+            if action:
                 self.actions.append({
                     "action": action,
                     "actionType": action_type.replace(".", "/"),
@@ -279,7 +777,7 @@ class _NodeVisitor(ast.NodeVisitor):
 
         # declare_parameter("name", default, ParameterDescriptor(...))
         if fname == "declare_parameter" and node.args:
-            pname = self._resolve(node.args[0])
+            pname = self._resolve_literal_string(node.args[0])
             default: str | None = None
             if len(node.args) > 1:
                 default_node = node.args[1]
@@ -303,7 +801,89 @@ class _NodeVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _parse_python_node(path: Path, pkg: str) -> dict[str, Any] | None:
+def _load_package_params(pkg_dir: Path, pkg_name: str) -> dict[str, Any]:
+    if yaml is None:
+        return {}
+
+    params_path = pkg_dir / "config" / f"{pkg_name}_params.yaml"
+    if not params_path.exists():
+        return {}
+
+    try:
+        payload = yaml.safe_load(_read(params_path)) or {}
+    except Exception:
+        return {}
+
+    for section_name in (pkg_name, f"{pkg_name}_node"):
+        node_section = payload.get(section_name, {})
+        ros_params = node_section.get("ros__parameters", {})
+        if isinstance(ros_params, dict) and ros_params:
+            return ros_params
+    return {}
+
+
+def _seed_scan_context_for_python_file(path: Path, pkg_name: str, package_params: dict[str, Any]) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "locals": None,
+        "self_attrs": None,
+        "param_defaults": _flatten_params(package_params) if package_params else None,
+    }
+    stem = path.stem
+    if pkg_name == "performer_helper" and stem.endswith("_performer_helper"):
+        helper_key = stem[: -len("_performer_helper")]
+        device_helpers = package_params.get("device_helpers", {})
+        helper_config = device_helpers.get(helper_key)
+        if isinstance(helper_config, dict):
+            context["locals"] = {"config": helper_config}
+        return context
+
+    if pkg_name == "ui_backend" and path.parent.name == "facades":
+        flat_params = context["param_defaults"] or {}
+        namespace_config = str(flat_params.get("namespace_config", "ros_ws/config/namespaces.yaml"))
+        namespace_map = _load_ui_backend_namespace_map(path, namespace_config)
+        registry = _build_ui_backend_robot_registry(namespace_map)
+        self_attrs: dict[str, Any] = {}
+
+        if stem == "telemetry_hub":
+            self_attrs["_robot_namespaces"] = namespace_map
+            portal_ns = namespace_map.get("portal", "/portal")
+            self_attrs["_portal_position_topic"] = f"{portal_ns}/state/position"
+        elif stem == "robot_ops_facade":
+            self_attrs["_robot_registry"] = registry
+        elif stem == "system_inspector":
+            db_bridge_namespace = str(flat_params.get("db_bridge.namespace", "/db_bridge"))
+            performer_helper_namespace = str(flat_params.get("performer_helper.namespace", "/performer_helper"))
+            coordinator_namespace = str(flat_params.get("coordinator.namespace", "/coord"))
+            self_attrs["_robot_registry"] = registry
+            self_attrs["_db_bridge_namespace"] = db_bridge_namespace
+            self_attrs["_performer_helper_namespace"] = performer_helper_namespace
+            self_attrs["_coordinator_namespace"] = coordinator_namespace
+            self_attrs["_coord_action_name"] = _qualify_namespace_path(coordinator_namespace, "execute_activity")
+            self_attrs["_core_services"] = {
+                "db_bridge": _qualify_namespace_path(db_bridge_namespace, "list_actions"),
+                "performer_helper": _qualify_namespace_path(performer_helper_namespace, "perform"),
+                "coordination": _qualify_namespace_path(coordinator_namespace, "execute_activity"),
+            }
+            self_attrs["_managed_node_targets"] = _build_ui_backend_managed_targets(
+                registry,
+                db_bridge_namespace,
+                performer_helper_namespace,
+                coordinator_namespace,
+            )
+
+        if self_attrs:
+            context["self_attrs"] = self_attrs
+
+    return context
+
+
+def _parse_python_node(
+    path: Path,
+    pkg: str,
+    initial_locals: dict[str, Any] | None = None,
+    initial_self_attrs: dict[str, Any] | None = None,
+    initial_param_defaults: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     text = _read(path)
     if "rclpy" not in text and "Node" not in text:
         return None
@@ -312,7 +892,11 @@ def _parse_python_node(path: Path, pkg: str) -> dict[str, Any] | None:
     except SyntaxError:
         return None
 
-    visitor = _NodeVisitor()
+    visitor = _NodeVisitor(
+        initial_locals=initial_locals,
+        initial_self_attrs=initial_self_attrs,
+        initial_param_defaults=initial_param_defaults,
+    )
     visitor.visit(tree)
 
     if not visitor.topics and not visitor.services and not visitor.actions and not visitor.node_name:
@@ -326,13 +910,97 @@ def _parse_python_node(path: Path, pkg: str) -> dict[str, Any] | None:
         "nodeName": node_name,
         "package": pkg,
         "filePath": str(path),
-        "topics": visitor.topics,
-        "services": visitor.services,
-        "actions": visitor.actions,
-        "parameters": visitor.parameters,
+        "topics": visitor._dedupe_connections(visitor.topics),
+        "services": visitor._dedupe_connections(visitor.services),
+        "actions": visitor._dedupe_connections(visitor.actions),
+        "parameters": visitor._dedupe_connections(visitor.parameters),
         "lifecycleNode": visitor.lifecycle,
         "lifecycleStates": [],
     }
+
+
+def _merge_node_data(base_node: dict[str, Any], extra_node: dict[str, Any]) -> None:
+    for key in ("topics", "services", "actions", "parameters"):
+        combined = list(base_node.get(key, [])) + list(extra_node.get(key, []))
+        deduped: list[dict[str, Any]] = []
+        seen: set[tuple[tuple[str, str], ...]] = set()
+        for entry in combined:
+            signature = tuple(sorted((str(k), str(v)) for k, v in entry.items()))
+            if signature in seen:
+                continue
+            seen.add(signature)
+            deduped.append(entry)
+        base_node[key] = deduped
+
+
+def _build_performer_helper_fallback_nodes(
+    pkg_dir: Path,
+    package_params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build helper nodes from performer_helper config as a discovery fallback."""
+    fallback_nodes: list[dict[str, Any]] = []
+    device_helpers = package_params.get("device_helpers", {})
+    if not isinstance(device_helpers, dict):
+        return fallback_nodes
+
+    for helper_name, helper_cfg in device_helpers.items():
+        if not isinstance(helper_name, str) or not isinstance(helper_cfg, dict):
+            continue
+
+        node_name = f"{helper_name}_performer_helper"
+        file_path = str(pkg_dir / "performer_helper" / f"{node_name}.py")
+
+        topics: list[dict[str, Any]] = []
+        for topic_name in (helper_cfg.get("subscribers", {}) or {}).values():
+            if isinstance(topic_name, str) and topic_name:
+                topics.append({"topic": topic_name, "msgType": "unknown", "direction": "sub"})
+        for topic_name in (helper_cfg.get("state_topics", {}) or {}).values():
+            if isinstance(topic_name, str) and topic_name:
+                topics.append({"topic": topic_name, "msgType": "unknown", "direction": "sub"})
+
+        services: list[dict[str, Any]] = []
+        for service_name in (helper_cfg.get("service_clients", {}) or {}).values():
+            if isinstance(service_name, str) and service_name:
+                services.append({"service": service_name, "srvType": "unknown", "role": "client"})
+
+        actions: list[dict[str, Any]] = []
+        for action_name in (helper_cfg.get("action_clients", {}) or {}).values():
+            if isinstance(action_name, str) and action_name:
+                actions.append({"action": action_name, "actionType": "unknown", "role": "client"})
+
+        fallback_nodes.append({
+            "id": f"performer_helper/{node_name}",
+            "nodeName": node_name,
+            "package": "performer_helper",
+            "filePath": file_path,
+            "topics": topics,
+            "services": services,
+            "actions": actions,
+            "parameters": [],
+            "lifecycleNode": False,
+            "lifecycleStates": [],
+        })
+
+    return fallback_nodes
+
+
+def _assign_unique_node_ids(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for node in nodes:
+        grouped.setdefault(node["id"], []).append(node)
+
+    for group in grouped.values():
+        if len(group) == 1:
+            continue
+        used_ids: set[str] = set()
+        for index, node in enumerate(group, start=1):
+            stem = Path(node["filePath"]).stem
+            candidate = f"{node['id']}@{stem}"
+            if candidate in used_ids:
+                candidate = f"{candidate}-{index}"
+            used_ids.add(candidate)
+            node["id"] = candidate
+    return nodes
 
 
 # ── launch file parser ────────────────────────────────────────────────────────
@@ -522,6 +1190,10 @@ def scan_workspace(root: str) -> dict[str, Any]:
         packages.append(pkg_info)
         pkg_name = pkg_info["name"]
         pkg_dir = pkg_xml.parent
+        package_params = _load_package_params(pkg_dir, pkg_name)
+        ui_backend_facade_nodes: list[dict[str, Any]] = []
+        ui_backend_main_node: dict[str, Any] | None = None
+        package_nodes: list[dict[str, Any]] = []
 
         # messages
         for ext in (".msg", ".srv", ".action"):
@@ -532,9 +1204,40 @@ def scan_workspace(root: str) -> dict[str, Any]:
         for f in _find_files(pkg_dir, ".py"):
             if "launch" in str(f):
                 continue
-            result = _parse_python_node(f, pkg_name)
+            if f.name.startswith("test_") or f.name.endswith("_test.py"):
+                continue
+            scan_context = _seed_scan_context_for_python_file(f, pkg_name, package_params)
+            result = _parse_python_node(
+                f,
+                pkg_name,
+                initial_locals=scan_context.get("locals"),
+                initial_self_attrs=scan_context.get("self_attrs"),
+                initial_param_defaults=scan_context.get("param_defaults"),
+            )
             if result:
-                nodes.append(result)
+                if pkg_name == "ui_backend" and f.parent.name == "facades":
+                    ui_backend_facade_nodes.append(result)
+                    continue
+                if pkg_name == "ui_backend" and f.stem == "ui_backend_node":
+                    ui_backend_main_node = result
+                package_nodes.append(result)
+
+        if pkg_name == "performer_helper":
+            fallback_helpers = _build_performer_helper_fallback_nodes(pkg_dir, package_params)
+            package_nodes_by_id = {node["id"]: node for node in package_nodes}
+            for helper_node in fallback_helpers:
+                existing = package_nodes_by_id.get(helper_node["id"])
+                if existing is not None:
+                    _merge_node_data(existing, helper_node)
+                else:
+                    package_nodes.append(helper_node)
+                    package_nodes_by_id[helper_node["id"]] = helper_node
+
+        if pkg_name == "ui_backend" and ui_backend_main_node is not None:
+            for facade_node in ui_backend_facade_nodes:
+                _merge_node_data(ui_backend_main_node, facade_node)
+
+        nodes.extend(package_nodes)
 
         # launch files
         for f in _find_files(pkg_dir, ".launch.py"):
@@ -548,6 +1251,8 @@ def scan_workspace(root: str) -> dict[str, Any]:
         if setup_py.exists():
             for ep in _parse_setup_entry_points(setup_py, pkg_name):
                 entry_points.append(ep)
+
+    nodes = _assign_unique_node_ids(nodes)
 
     return {
         "root": str(ws),

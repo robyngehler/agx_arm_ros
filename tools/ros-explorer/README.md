@@ -7,10 +7,13 @@ Built with Vite + React + TypeScript · zero ROS installation required.
 
 ```bash
 cd tools/ros-explorer
+npm ci
 ./start.sh                          # dev mode, scans ../../ (workspace root)
 ./start.sh /path/to/other/ros_ws    # scan a specific workspace
 ./start.sh --build                  # production build → served on :7357
 ```
+
+`vite` is provided by this package's local `devDependencies`, so `npm ci` must be run in `tools/ros-explorer` at least once. `./start.sh` now bootstraps the local dependencies automatically when `node_modules/.bin/vite` is missing.
 
 No scanner? Click **Demo Data** in the UI to load built-in mock data.
 
@@ -21,6 +24,8 @@ No scanner? Click **Demo Data** in the UI to load built-in mock data.
 | **Node Graph** | Interactive graph of all ROS nodes connected via topics/services/actions. Filter by package, connection type, or topic name. |
 | **Launch Trees** | Hierarchical view of launch files, arguments, sub-launches, and spawned nodes. Expandable depth (default 3). |
 | **Lifecycle / States** | ROS2 standard lifecycle diagram, per-node state machines, and topic sequence flows via Mermaid. |
+
+The node graph also supports launch-derived integrations for well-known system tools such as `move_group` and `rviz2`. These integrations are toggleable in the filter bar and synthesize first-class runtime nodes from launch metadata so repo-owned nodes can be linked against MoveIt and RViz without requiring those packages to live inside the repository.
 
 ## Scanner
 

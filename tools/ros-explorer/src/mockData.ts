@@ -182,4 +182,9 @@ export const mockData: WorkspaceData = {
     { name: "OmniHandStatus", package: "agx_arm_msgs", kind: "msg", filePath: "src/agx_arm_msgs/msg/OmniHandStatus.msg", fields: [{ name: "finger_positions", type: "float64[]" }, { name: "finger_efforts", type: "float64[]" }, { name: "is_connected", type: "bool" }] },
     { name: "OmniHandTactileRaw", package: "agx_arm_msgs", kind: "msg", filePath: "src/agx_arm_msgs/msg/OmniHandTactileRaw.msg", fields: [{ name: "data", type: "uint8[]" }, { name: "finger_id", type: "uint8" }] },
   ],
+  entryPoints: [
+    { name: "agx_arm_ctrl_single_node", module: "agx_arm_ctrl.agx_arm_ctrl_single_node:main", package: "agx_arm_ctrl" },
+    { name: "omnihand_bridge_node", module: "agx_arm_ctrl.omnihand_bridge_node:main", package: "agx_arm_ctrl" },
+    { name: "mit_controller_node", module: "agx_arm_mit_controller.mit_controller_node:main", package: "agx_arm_mit_controller" },
+  ],
 };
