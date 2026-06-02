@@ -58,3 +58,21 @@ def test_joint_trajectory_buffer_reorders_joint_names_when_enabled():
     assert buffer.initial_point.positions == (2.0, 1.0)
     assert buffer.initial_point.velocities == (0.2, 0.1)
     assert buffer.initial_point.efforts == (0.4, 0.3)
+
+
+def test_joint_trajectory_buffer_rejects_mixed_prefixed_joint_names():
+    msg = SimpleNamespace(
+        joint_names=["right_arm_joint1", "joint2"],
+        points=[make_point(1, [0.0, 0.0])],
+    )
+
+    try:
+        JointTrajectoryBuffer.from_ros_message(
+            ["joint1", "joint2"],
+            msg,
+            input_joint_prefix="right_arm_",
+        )
+    except ValueError as exc:
+        assert "joint_names mismatch" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for mixed prefixed joint_names")

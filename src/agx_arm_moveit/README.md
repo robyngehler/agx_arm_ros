@@ -157,15 +157,54 @@ ros2 launch agx_arm_moveit demo.launch.py \
 
 当 `use_mit_controller:=true` 时，`demo.launch.py` 不再启动旧的桥接执行路径，而是要求 MIT 控制器已经提供 `arm_controller/follow_joint_trajectory`。
 
+当前 Sprint 4 的 prefixed Duo 单臂控制路径也已打通，可将 MoveIt 绑定到 body-mounted custom model 的某一侧机械臂，同时仍通过该臂命名空间内的 MIT controller 执行轨迹：
+
+```bash
+ros2 launch agx_arm_moveit demo.launch.py \
+  use_rviz:=false \
+  use_mit_controller:=true \
+  follow:=true \
+  follow_joint_states_topic:=feedback/prefixed_joint_states \
+  moveit_profile:=right_arm \
+  robot_name:=duo_nero_system \
+  custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
+  custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true' \
+  planning_pipelines:=ompl
+```
+
+其中 `moveit_profile:=right_arm` 会自动推导 `right_arm_` 前缀、`right_arm` 规划组、`right_arm_base_link` 和 `right_arm_nero_tool0`。`left_arm` 镜像路径使用相同契约。若需要覆盖这些默认值，仍可显式传入 `input_joint_prefix`、`arm_base_frame`、`arm_tip_frame`。
+
+`both_arms` 也已作为首个双臂规划 profile 落地，但当前仅面向 `agx_arm_moveit demo.launch.py` 的规划面，不走 MIT 或 `agx_arm_ctrl` 包装执行路径：
+
+```bash
+ros2 launch agx_arm_moveit demo.launch.py \
+  use_rviz:=false \
+  moveit_profile:=both_arms \
+  custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
+  custom_model_xacro_args:='use_left_arm:=true use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
+  planning_pipelines:=ompl
+```
+
+该 profile 会生成 `left_arm`、`right_arm` 和组合后的 `both_arms` 规划组，并为左右臂分别加载 IK；但 staged Duo custom model 目前还没有对应的双臂执行控制面，因此这里会显式跳过 fake `ros2_control`，保留为 planning-only bringup。
+
+若走 `agx_arm_ctrl start_single_agx_arm_moveit.launch.py` 或 `agx_arm_ctrl start_agx_arm_components.launch.py mode:=moveit_mit` 包装启动，同样可透传 `moveit_profile`、`robot_name`、`custom_model`、`custom_model_xacro_args`，并继续使用自动推导的 prefixed feedback adapter。
+
 ### 2.3 启动参数
 
 | 参数 | 默认值 | 说明 | 可选值 |
 |------|--------|------|--------|
 | `arm_type` | `nero` | 机械臂型号 | `nero` |
+| `moveit_profile` | `nero_arm` | MoveIt 规划 profile；`right_arm` / `left_arm` 会自动推导 Duo custom model 的前缀、group 与 arm chain 帧，`both_arms` 会生成双臂组合规划组 | `nero_arm`, `right_arm`, `left_arm`, `both_arms` |
+| `robot_name` | `agx_arm` | SRDF 使用的机器人名；custom model 的 URDF 名称不同步时需要覆盖，例如 `duo_nero_system` | 任意合法 robot name |
+| `custom_model` | 空字符串 | 可选 custom model 路径；设置后 MoveIt 直接对该 xacro/URDF 建模，而不是使用内置单臂描述 | 任意可读 xacro/URDF |
+| `custom_model_xacro_args` | 空字符串 | `custom_model` 额外透传的 xacro 参数字符串 | 任意合法 xacro 参数 |
 | `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2`, `omnihand` |
 | `revo2_type` | `left` | Revo2 灵巧手类型 | `left`, `right` |
 | `omnihand_type` | `left` | OmniHand 左右手类型 | `left`, `right` |
 | `namespace` | 空字符串 | 当前 MoveIt/控制实例命名空间 | 任意合法 ROS 命名空间 |
+| `input_joint_prefix` | 空字符串 | prefixed custom model 中当前受控机械臂的关节前缀；会同时用于控制器 joint 列表和 MIT 轨迹边界适配 | 例如 `right_arm_` |
+| `arm_base_frame` | 空字符串 | custom model 下 MoveIt arm chain 的 base link；留空时会按前缀自动推导 | 例如 `right_arm_base_link` |
+| `arm_tip_frame` | 空字符串 | custom model 下 MoveIt arm chain 的 tip link；留空时会按前缀自动推导 | 例如 `right_arm_nero_tool0` |
 | `follow` | `false` | `true` 时订阅 `/feedback/joint_states`，推荐用于真机 / MIT 路径；`false` 时订阅 `/control/joint_states` | `true`, `false` |
 | `follow_joint_states_topic` | `feedback/joint_states` | 当 `follow:=true` 时消费的 JointState 话题；多臂前缀模型可指向适配后的反馈话题 | 任意合法 topic |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP 偏移 [x, y, z, rx, ry, rz]（米/弧度） | - |
@@ -182,6 +221,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - `namespace` 仍可用于多实例隔离，但多个实例都应基于 Nero 资产树。
 - `publish_gripper_joint` 会在一键启动路径中自动处理，以避免 MoveIt 中出现无效关节告警。
 - `start_single_agx_arm_moveit.launch.py` 与 `start_single_agx_arm_rviz.launch.py` 默认都会走 MIT 软轨迹路径；`demo.launch.py` 仍保留 `use_mit_controller:=false` 作为纯仿真默认值。
+- `moveit_profile:=right_arm`、`moveit_profile:=left_arm` 与 `moveit_profile:=both_arms` 已落地为第一批 Duo profile；其中 `both_arms` 当前仍是 `demo.launch.py` 下的 planning-only 路径，hand-aware 组合仍是后续工作。
 - `start_agx_arm_components.launch.py` 提供新的公共 agx_arm_ctrl 组件启动面，包含 `manual_vendor`、`debug_soft_target`、`moveit_mit` 三种模式。
 - 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 - `nero_tool0` 现在由 Nero 规范描述包直接提供，`tcp_link` 继续作为 TCP 与交互式规划目标参考帧。

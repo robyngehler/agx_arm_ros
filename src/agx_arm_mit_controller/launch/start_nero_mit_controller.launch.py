@@ -117,6 +117,11 @@ def generate_launch_description():
         default_value="100.0",
         description="MIT controller update rate in hertz.",
     )
+    input_joint_prefix_arg = DeclareLaunchArgument(
+        "input_joint_prefix",
+        default_value="",
+        description="Optional prefix stripped from incoming trajectory joint names before MIT validation.",
+    )
     params_file_arg = DeclareLaunchArgument(
         "params_file",
         default_value=default_params_file,
@@ -173,6 +178,7 @@ def generate_launch_description():
             LaunchConfiguration("params_file"),
             {
                 "control_rate_hz": LaunchConfiguration("control_rate_hz"),
+                "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
                 "enable_debug_joint_trajectory_topic": LaunchConfiguration(
                     "enable_debug_joint_trajectory_topic"
                 ),
@@ -199,6 +205,7 @@ def generate_launch_description():
             gripper_default_effort_arg,
             publish_gripper_joint_arg,
             control_rate_arg,
+            input_joint_prefix_arg,
             params_file_arg,
             launch_driver_arg,
             enable_debug_joint_trajectory_topic_arg,

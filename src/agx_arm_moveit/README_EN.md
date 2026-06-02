@@ -157,11 +157,40 @@ ros2 launch agx_arm_moveit demo.launch.py \
 
 When `use_mit_controller:=true`, `demo.launch.py` no longer starts the legacy bridge path. It expects the MIT controller to already provide `arm_controller/follow_joint_trajectory`.
 
+The first Duo per-arm profile path is now available through `moveit_profile:=right_arm|left_arm`, which derives the prefixed joint names and the staged body-mounted arm chain frames automatically for the current custom-model slice:
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+  use_rviz:=false \
+  follow:=true \
+  moveit_profile:=right_arm \
+  custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
+  custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true' \
+  planning_pipelines:=ompl
+```
+
+This right-arm profile auto-derives the `right_arm_` joint prefix, the `right_arm` planning group, and the `right_arm_base_link` to `right_arm_nero_tool0` arm chain. `left_arm` mirrors the same contract. The lower-level `input_joint_prefix`, `arm_base_frame`, and `arm_tip_frame` overrides still remain available when the staged defaults are not sufficient.
+
+`both_arms` is now also available as the first dual-arm planning profile, but intentionally only on `agx_arm_moveit demo.launch.py` for now:
+
+```bash
+ros2 launch agx_arm_moveit demo.launch.py \
+  use_rviz:=false \
+  moveit_profile:=both_arms \
+  custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
+  custom_model_xacro_args:='use_left_arm:=true use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
+  planning_pipelines:=ompl
+```
+
+That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group while loading separate IK solvers for the left and right chains. The staged Duo custom-model path still lacks a matching dual-arm execution surface, so this launch deliberately skips fake `ros2_control` and stays planning-only.
+
 ### 2.3 Launch parameters
 
 | Parameter | Default | Description | Options |
 |-----------|---------|-------------|---------|
 | `arm_type` | `nero` | Arm model | `nero` |
+| `moveit_profile` | `nero_arm` | MoveIt planning profile; `right_arm` and `left_arm` auto-derive the Duo custom-model prefix, group, and arm-chain frames, while `both_arms` emits the first composed dual-arm planning group | `nero_arm`, `right_arm`, `left_arm`, `both_arms` |
 | `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2`, `omnihand` |
 | `revo2_type` | `left` | Revo2 hand side | `left`, `right` |
 | `omnihand_type` | `left` | OmniHand side | `left`, `right` |
@@ -182,6 +211,7 @@ When `use_mit_controller:=true`, `demo.launch.py` no longer starts the legacy br
 - `namespace` still works for multi-instance isolation, but each instance is expected to use the Nero asset tree.
 - `publish_gripper_joint` is handled automatically in the combined bringup path to avoid invalid-joint warnings.
 - `start_single_agx_arm_moveit.launch.py` and `start_single_agx_arm_rviz.launch.py` now default to the MIT soft-trajectory route. `demo.launch.py` still keeps `use_mit_controller:=false` as the simulation-first default.
+- `moveit_profile:=right_arm`, `moveit_profile:=left_arm`, and `moveit_profile:=both_arms` are the first landed Duo profiles. `both_arms` is still planning-only on `demo.launch.py`, and the hand-aware variants are still open work.
 - `start_agx_arm_components.launch.py` provides the new common agx_arm_ctrl bringup surface with `manual_vendor`, `debug_soft_target`, and `moveit_mit` modes.
 - The current MoveIt baseline expects TRAC-IK. If the distro package is unavailable on Humble / Jetson, use the documented source-build overlay and source `/opt/ros/$ROS_DISTRO/setup.bash`, `~/workspace/trac_ik_ws/install/setup.bash`, then this workspace's `install/setup.bash`.
 - `nero_tool0` now comes from the canonical Nero description package, while `tcp_link` remains the TCP and interactive planning target frame.

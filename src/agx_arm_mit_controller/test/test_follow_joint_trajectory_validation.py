@@ -72,3 +72,35 @@ def test_validate_trajectory_goal_accepts_reordered_joints_when_enabled():
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+
+def test_validate_trajectory_goal_accepts_prefixed_joints_when_prefix_configured():
+    rclpy.init()
+    node = NeroMitControllerNode()
+    try:
+        node.input_joint_prefix = "right_arm_"
+        node._feedback_callback(_joint_state([0.0] * 7))
+
+        buffer, error_code, detail = node._validate_trajectory_goal(
+            _trajectory(
+                [
+                    "right_arm_joint1",
+                    "right_arm_joint2",
+                    "right_arm_joint3",
+                    "right_arm_joint4",
+                    "right_arm_joint5",
+                    "right_arm_joint6",
+                    "right_arm_joint7",
+                ],
+                [(1.0, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])],
+            )
+        )
+
+        assert error_code == 0
+        assert detail == ""
+        assert buffer is not None
+        assert buffer.joint_names == tuple(node.joint_names)
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()

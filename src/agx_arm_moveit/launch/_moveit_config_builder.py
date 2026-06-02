@@ -1,13 +1,163 @@
 import ast
 
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration
+from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
 ALL_ARM_TYPES = ["nero"]
 ALL_EFFECTOR_TYPES = ["none", "agx_gripper", "revo2", "omnihand"]
 ALL_REVO2_TYPES = ["left", "right"]
 ALL_OMNIHAND_TYPES = ["left", "right"]
+ALL_MOVEIT_PROFILES = ["nero_arm", "right_arm", "left_arm", "both_arms"]
+CANONICAL_ARM_JOINTS = [
+    "joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7",
+]
+DEFAULT_MOVEIT_GROUP = "nero_arm"
+DUAL_ARM_MOVEIT_GROUP = "both_arms"
+DUAL_ARM_JOINT_PREFIXES = ["left_arm_", "right_arm_"]
+TRAC_IK_KINEMATICS = {
+    "kinematics_solver": "trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin",
+    "kinematics_solver_search_resolution": 0.005,
+    "kinematics_solver_timeout": 0.01,
+    "kinematics_solver_attempts": 5,
+    "solve_type": "Distance",
+}
+MOVEIT_PROFILE_DEFAULTS = {
+    "nero_arm": {
+        "planning_group_name": "nero_arm",
+        "input_joint_prefix": "",
+        "arm_base_frame": "base_link",
+        "arm_tip_frame": "tcp_link",
+    },
+    "right_arm": {
+        "planning_group_name": "right_arm",
+        "input_joint_prefix": "right_arm_",
+        "arm_base_frame": "right_arm_base_link",
+        "arm_tip_frame": "right_arm_nero_tool0",
+    },
+    "left_arm": {
+        "planning_group_name": "left_arm",
+        "input_joint_prefix": "left_arm_",
+        "arm_base_frame": "left_arm_base_link",
+        "arm_tip_frame": "left_arm_nero_tool0",
+    },
+    "both_arms": {
+        "planning_group_name": "both_arms",
+        "input_joint_prefix": "",
+        "arm_base_frame": "",
+        "arm_tip_frame": "",
+    },
+}
+
+
+def _prefixed_arm_joint_names(joint_prefix: str) -> list[str]:
+    if not joint_prefix:
+        return list(CANONICAL_ARM_JOINTS)
+    return [f"{joint_prefix}{joint_name}" for joint_name in CANONICAL_ARM_JOINTS]
+
+
+def _resolved_arm_base_frame(custom_model: str, joint_prefix: str, explicit_frame: str) -> str:
+    if explicit_frame:
+        return explicit_frame
+    if custom_model:
+        return f"{joint_prefix}base_link" if joint_prefix else "base_link"
+    return "base_link"
+
+
+def _resolved_arm_tip_frame(custom_model: str, joint_prefix: str, explicit_frame: str) -> str:
+    if explicit_frame:
+        return explicit_frame
+    if custom_model:
+        return f"{joint_prefix}nero_tool0" if joint_prefix else "nero_tool0"
+    return "tcp_link"
+
+
+def _build_joint_limits(joint_names: list[str]) -> dict:
+    return {
+        "robot_description_planning": {
+            "default_velocity_scaling_factor": 0.1,
+            "default_acceleration_scaling_factor": 0.1,
+            "joint_limits": {
+                joint_name: {
+                    "has_velocity_limits": True,
+                    "max_velocity": 5.0,
+                    "has_acceleration_limits": True,
+                    "max_acceleration": 5.0,
+                }
+                for joint_name in joint_names
+            }
+        },
+    }
+
+
+def _build_kinematics(moveit_profile: str, group_name: str) -> dict:
+    if moveit_profile == DUAL_ARM_MOVEIT_GROUP:
+        return {
+            "left_arm": dict(TRAC_IK_KINEMATICS),
+            "right_arm": dict(TRAC_IK_KINEMATICS),
+        }
+    return {group_name: dict(TRAC_IK_KINEMATICS)}
+
+
+def _profile_joint_prefixes(moveit_profile: str, explicit_joint_prefix: str) -> list[str]:
+    if moveit_profile == DUAL_ARM_MOVEIT_GROUP:
+        if explicit_joint_prefix:
+            raise ValueError(
+                "moveit_profile 'both_arms' does not accept input_joint_prefix; it always uses left_arm_ and right_arm_"
+            )
+        return list(DUAL_ARM_JOINT_PREFIXES)
+    return [explicit_joint_prefix or MOVEIT_PROFILE_DEFAULTS[moveit_profile]["input_joint_prefix"]]
+
+
+def _profile_arm_joint_names(moveit_profile: str, explicit_joint_prefix: str) -> list[str]:
+    joint_names: list[str] = []
+    for joint_prefix in _profile_joint_prefixes(moveit_profile, explicit_joint_prefix):
+        joint_names.extend(_prefixed_arm_joint_names(joint_prefix))
+    return joint_names
+
+
+def _resolve_profile_settings(
+    moveit_profile: str,
+    custom_model: str,
+    explicit_joint_prefix: str,
+    explicit_arm_base_frame: str,
+    explicit_arm_tip_frame: str,
+) -> dict[str, str]:
+    defaults = MOVEIT_PROFILE_DEFAULTS.get(moveit_profile)
+    if defaults is None:
+        raise ValueError(f"Unsupported moveit_profile '{moveit_profile}'")
+
+    if moveit_profile != DEFAULT_MOVEIT_GROUP and not custom_model:
+        raise ValueError(
+            f"moveit_profile '{moveit_profile}' requires custom_model so the prefixed Duo frames exist"
+        )
+
+    if moveit_profile == DUAL_ARM_MOVEIT_GROUP and (
+        explicit_arm_base_frame or explicit_arm_tip_frame
+    ):
+        raise ValueError(
+            "moveit_profile 'both_arms' does not accept single-arm base/tip overrides; use the staged Duo defaults"
+        )
+
+    input_joint_prefixes = _profile_joint_prefixes(moveit_profile, explicit_joint_prefix)
+    input_joint_prefix = input_joint_prefixes[0] if len(input_joint_prefixes) == 1 else ""
+
+    return {
+        "planning_group_name": defaults["planning_group_name"],
+        "input_joint_prefix": input_joint_prefix,
+        "arm_base_frame": explicit_arm_base_frame or defaults["arm_base_frame"],
+        "arm_tip_frame": explicit_arm_tip_frame or defaults["arm_tip_frame"],
+        "include_dual_arm_groups": "true" if moveit_profile == DUAL_ARM_MOVEIT_GROUP else "false",
+        "left_arm_base_frame": "left_arm_base_link",
+        "left_arm_tip_frame": "left_arm_nero_tool0",
+        "left_arm_joint_prefix": "left_arm_",
+        "left_arm_link_prefix": "left_arm_",
+        "right_arm_base_frame": "right_arm_base_link",
+        "right_arm_tip_frame": "right_arm_nero_tool0",
+        "right_arm_joint_prefix": "right_arm_",
+        "right_arm_link_prefix": "right_arm_",
+    }
 
 
 def declare_common_args():
@@ -20,6 +170,27 @@ def declare_common_args():
         DeclareLaunchArgument(
             "arm_type", default_value="nero",
             choices=ALL_ARM_TYPES, description="Arm type.",
+        ),
+        DeclareLaunchArgument(
+            "moveit_profile",
+            default_value=DEFAULT_MOVEIT_GROUP,
+            choices=ALL_MOVEIT_PROFILES,
+            description="MoveIt planning profile. Use right_arm or left_arm for prefixed Duo custom-model bringup.",
+        ),
+        DeclareLaunchArgument(
+            "robot_name",
+            default_value="agx_arm",
+            description="Robot name used in the generated SRDF. Override this for custom models whose URDF robot name differs.",
+        ),
+        DeclareLaunchArgument(
+            "custom_model",
+            default_value="",
+            description="Optional custom model path. When set, MoveIt uses this xacro/URDF instead of the built-in arm model.",
+        ),
+        DeclareLaunchArgument(
+            "custom_model_xacro_args",
+            default_value="",
+            description="Optional extra xacro args appended when custom_model is set.",
         ),
         DeclareLaunchArgument(
             "effector_type", default_value="none",
@@ -39,6 +210,21 @@ def declare_common_args():
             "tcp_offset",
             default_value="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
             description="TCP offset [x, y, z, rx, ry, rz] in meters/radians.",
+        ),
+        DeclareLaunchArgument(
+            "input_joint_prefix",
+            default_value="",
+            description="Optional prefix used by prefixed custom models for the controlled arm joints.",
+        ),
+        DeclareLaunchArgument(
+            "arm_base_frame",
+            default_value="",
+            description="Optional arm base frame used by the MoveIt arm chain when custom_model is set.",
+        ),
+        DeclareLaunchArgument(
+            "arm_tip_frame",
+            default_value="",
+            description="Optional arm tip frame used by the MoveIt arm chain when custom_model is set.",
         ),
         DeclareLaunchArgument(
             "follow",
@@ -70,13 +256,42 @@ def _select_profile(
 
 def build_moveit_config(context):
     arm_type = LaunchConfiguration("arm_type").perform(context)
+    moveit_profile = LaunchConfiguration("moveit_profile").perform(context)
+    custom_model = LaunchConfiguration("custom_model").perform(context)
+    custom_model_xacro_args = LaunchConfiguration("custom_model_xacro_args").perform(context)
     effector_type = LaunchConfiguration("effector_type").perform(context)
     revo2_type = LaunchConfiguration("revo2_type").perform(context)
     omnihand_type = LaunchConfiguration("omnihand_type").perform(context)
+    explicit_joint_prefix = LaunchConfiguration("input_joint_prefix").perform(context)
+    explicit_arm_base_frame = LaunchConfiguration("arm_base_frame").perform(context)
+    explicit_arm_tip_frame = LaunchConfiguration("arm_tip_frame").perform(context)
+    profile_settings = _resolve_profile_settings(
+        moveit_profile,
+        custom_model,
+        explicit_joint_prefix,
+        explicit_arm_base_frame,
+        explicit_arm_tip_frame,
+    )
+    input_joint_prefix = profile_settings["input_joint_prefix"]
+    arm_base_frame = _resolved_arm_base_frame(
+        custom_model,
+        input_joint_prefix,
+        profile_settings["arm_base_frame"],
+    )
+    arm_tip_frame = _resolved_arm_tip_frame(
+        custom_model,
+        input_joint_prefix,
+        profile_settings["arm_tip_frame"],
+    )
     use_mit_controller = context.launch_configurations.get("use_mit_controller", "false") == "true"
+    if moveit_profile == DUAL_ARM_MOVEIT_GROUP and use_mit_controller:
+        raise ValueError(
+            "moveit_profile 'both_arms' is not wired into the MIT execution path yet; use demo.launch.py with use_mit_controller:=false"
+        )
     tcp_offset = ast.literal_eval(
         LaunchConfiguration("tcp_offset").perform(context)
     )
+    controller_joint_names = _profile_arm_joint_names(moveit_profile, explicit_joint_prefix)
 
     profile = _select_profile(effector_type, revo2_type, omnihand_type)
     trajectory_execution_config = (
@@ -93,10 +308,26 @@ def build_moveit_config(context):
         "tcp_offset_rpy": f"{tcp_offset[3]} {tcp_offset[4]} {tcp_offset[5]}",
     }
     srdf_mappings = {
+        "robot_name": LaunchConfiguration("robot_name").perform(context),
         "arm_type": arm_type,
         "effector_type": effector_type,
         "revo2_type": revo2_type,
         "omnihand_type": omnihand_type,
+        "planning_group_name": profile_settings["planning_group_name"],
+        "arm_base_frame": arm_base_frame,
+        "arm_tip_frame": arm_tip_frame,
+        "arm_joint_prefix": input_joint_prefix,
+        "arm_link_prefix": input_joint_prefix,
+        "include_end_effector_groups": "false" if custom_model else "true",
+        "include_dual_arm_groups": profile_settings["include_dual_arm_groups"],
+        "left_arm_base_frame": profile_settings["left_arm_base_frame"],
+        "left_arm_tip_frame": profile_settings["left_arm_tip_frame"],
+        "left_arm_joint_prefix": profile_settings["left_arm_joint_prefix"],
+        "left_arm_link_prefix": profile_settings["left_arm_link_prefix"],
+        "right_arm_base_frame": profile_settings["right_arm_base_frame"],
+        "right_arm_tip_frame": profile_settings["right_arm_tip_frame"],
+        "right_arm_joint_prefix": profile_settings["right_arm_joint_prefix"],
+        "right_arm_link_prefix": profile_settings["right_arm_link_prefix"],
     }
 
     moveit_config = (
@@ -112,12 +343,28 @@ def build_moveit_config(context):
         .to_moveit_configs()
     )
 
+    if custom_model:
+        moveit_config.robot_description = {
+            "robot_description": ParameterValue(
+                Command(["xacro ", custom_model, " ", custom_model_xacro_args]),
+                value_type=str,
+            )
+        }
+
+    if custom_model or moveit_profile != DEFAULT_MOVEIT_GROUP:
+        moveit_config.robot_description_kinematics = _build_kinematics(
+            moveit_profile,
+            profile_settings["planning_group_name"]
+        )
+
     if arm_type == "nero":
         moveit_config.trajectory_execution[
             "moveit_simple_controller_manager"
         ]["arm_controller"]["joints"] = [
-            "joint1", "joint2", "joint3", "joint4",
-            "joint5", "joint6", "joint7",
+            *controller_joint_names,
         ]
+
+    if custom_model or input_joint_prefix or moveit_profile == DUAL_ARM_MOVEIT_GROUP:
+        moveit_config.joint_limits = _build_joint_limits(controller_joint_names)
 
     return moveit_config

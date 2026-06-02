@@ -3,14 +3,31 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
+from pathlib import Path
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 
 
+def _default_mit_params_file() -> str:
+    package_share_dir = Path(get_package_share_directory("agx_arm_mit_controller")).resolve()
+    installed_params_file = package_share_dir / "config" / "nero_mit_controller_defaults.yaml"
+
+    try:
+        workspace_root = package_share_dir.parents[3]
+    except IndexError:
+        return str(installed_params_file)
+
+    source_params_file = workspace_root / "src" / "agx_arm_mit_controller" / "config" / "nero_mit_controller_defaults.yaml"
+    if source_params_file.is_file():
+        return str(source_params_file)
+    return str(installed_params_file)
+
+
 def generate_launch_description():
+    default_mit_params_file = _default_mit_params_file()
+
     log_level_arg = DeclareLaunchArgument(
         "log_level",
         default_value="info",
@@ -37,6 +54,27 @@ def generate_launch_description():
         default_value="nero",
         choices=["nero"],
         description="Robotic arm type.",
+    )
+    moveit_profile_arg = DeclareLaunchArgument(
+        "moveit_profile",
+        default_value="nero_arm",
+        choices=["nero_arm", "right_arm", "left_arm"],
+        description="MoveIt planning profile. Use right_arm or left_arm for prefixed Duo custom-model bringup.",
+    )
+    robot_name_arg = DeclareLaunchArgument(
+        "robot_name",
+        default_value="",
+        description="Optional SRDF robot name override for custom models. Empty defaults to duo_nero_system when custom_model is set, otherwise agx_arm.",
+    )
+    custom_model_arg = DeclareLaunchArgument(
+        "custom_model",
+        default_value="",
+        description="Optional custom model path forwarded to the debug and MoveIt wrapper launches.",
+    )
+    custom_model_xacro_args_arg = DeclareLaunchArgument(
+        "custom_model_xacro_args",
+        default_value="",
+        description="Optional extra xacro args appended when custom_model is set.",
     )
     effector_type_arg = DeclareLaunchArgument(
         "effector_type",
@@ -99,6 +137,36 @@ def generate_launch_description():
         default_value="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
         description="TCP offset in x, y, z, roll, pitch, yaw in meters/radians.",
     )
+    input_joint_prefix_arg = DeclareLaunchArgument(
+        "input_joint_prefix",
+        default_value="",
+        description="Optional prefix stripped from prefixed custom-model joint names before controller-side processing.",
+    )
+    feedback_joint_prefix_arg = DeclareLaunchArgument(
+        "feedback_joint_prefix",
+        default_value="",
+        description="Optional prefix added onto follow-side feedback/joint_states for prefixed custom models. Empty falls back to input_joint_prefix.",
+    )
+    follow_joint_states_topic_arg = DeclareLaunchArgument(
+        "follow_joint_states_topic",
+        default_value="feedback/joint_states",
+        description="JointState topic consumed when follow:=true. Override for prefixed custom-model feedback adaptation.",
+    )
+    arm_base_frame_arg = DeclareLaunchArgument(
+        "arm_base_frame",
+        default_value="",
+        description="Optional arm base frame used by MoveIt for custom body-mounted models.",
+    )
+    arm_tip_frame_arg = DeclareLaunchArgument(
+        "arm_tip_frame",
+        default_value="",
+        description="Optional arm tip frame used by MoveIt for custom body-mounted models.",
+    )
+    tcp_parent_frame_arg = DeclareLaunchArgument(
+        "tcp_parent_frame",
+        default_value="",
+        description="Optional parent frame for the tcp_offset static transform in debug RViz mode.",
+    )
     gripper_default_effort_arg = DeclareLaunchArgument(
         "gripper_default_effort",
         default_value="1.0",
@@ -123,7 +191,7 @@ def generate_launch_description():
     )
     mit_params_file_arg = DeclareLaunchArgument(
         "mit_params_file",
-        default_value="",
+        default_value=default_mit_params_file,
         description="Optional MIT controller params file override.",
     )
     mit_joint_target_duration_arg = DeclareLaunchArgument(
@@ -149,12 +217,8 @@ def generate_launch_description():
 
     mode_is_moveit = PythonExpression(["'", LaunchConfiguration("mode"), "' == 'moveit_mit'"])
     mode_is_debug = PythonExpression(["'", LaunchConfiguration("mode"), "' == 'debug_soft_target'"])
-    mode_uses_mit = PythonExpression([
-        "'", LaunchConfiguration("mode"), "' == 'moveit_mit' or '",
-        LaunchConfiguration("mode"), "' == 'debug_soft_target'",
-    ])
 
-    driver_launch = IncludeLaunchDescription(
+    manual_vendor_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
                 get_package_share_directory("agx_arm_ctrl"),
@@ -183,21 +247,69 @@ def generate_launch_description():
                 LaunchConfiguration("publish_gripper_joint"), "'",
             ]),
         }.items(),
+        condition=IfCondition(PythonExpression(["'", LaunchConfiguration("mode"), "' == 'manual_vendor'"])),
     )
 
-    mit_launch = IncludeLaunchDescription(
+    debug_soft_target_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                get_package_share_directory("agx_arm_mit_controller"),
+                get_package_share_directory("agx_arm_ctrl"),
                 "launch",
-                "start_nero_mit_controller.launch.py",
+                "start_single_agx_arm_rviz.launch.py",
             )
         ),
         launch_arguments={
+            "log_level": LaunchConfiguration("log_level"),
             "namespace": LaunchConfiguration("namespace"),
             "can_port": LaunchConfiguration("can_port"),
             "arm_type": LaunchConfiguration("arm_type"),
+            "custom_model": LaunchConfiguration("custom_model"),
+            "custom_model_xacro_args": LaunchConfiguration("custom_model_xacro_args"),
             "effector_type": LaunchConfiguration("effector_type"),
+            "revo2_type": LaunchConfiguration("revo2_type"),
+            "omnihand_type": LaunchConfiguration("omnihand_type"),
+            "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
+            "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "auto_enable": LaunchConfiguration("auto_enable"),
+            "pub_rate": LaunchConfiguration("pub_rate"),
+            "follow": LaunchConfiguration("follow"),
+            "control": "true",
+            "use_mit_controller": "true",
+            "mit_control_rate_hz": LaunchConfiguration("mit_control_rate_hz"),
+            "mit_params_file": LaunchConfiguration("mit_params_file"),
+            "mit_joint_target_duration_s": LaunchConfiguration("mit_joint_target_duration_s"),
+            "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
+            "feedback_joint_prefix": LaunchConfiguration("feedback_joint_prefix"),
+            "follow_joint_states_topic": LaunchConfiguration("follow_joint_states_topic"),
+            "tcp_parent_frame": LaunchConfiguration("tcp_parent_frame"),
+            "enable_timeout": LaunchConfiguration("enable_timeout"),
+            "fast_mode": LaunchConfiguration("fast_mode"),
+            "speed_percent": LaunchConfiguration("speed_percent"),
+            "tcp_offset": LaunchConfiguration("tcp_offset"),
+            "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
+        }.items(),
+        condition=IfCondition(mode_is_debug),
+    )
+
+    moveit_mit_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("agx_arm_ctrl"),
+                "launch",
+                "start_single_agx_arm_moveit.launch.py",
+            )
+        ),
+        launch_arguments={
+            "log_level": LaunchConfiguration("log_level"),
+            "namespace": LaunchConfiguration("namespace"),
+            "can_port": LaunchConfiguration("can_port"),
+            "arm_type": LaunchConfiguration("arm_type"),
+            "moveit_profile": LaunchConfiguration("moveit_profile"),
+            "robot_name": LaunchConfiguration("robot_name"),
+            "custom_model": LaunchConfiguration("custom_model"),
+            "custom_model_xacro_args": LaunchConfiguration("custom_model_xacro_args"),
+            "effector_type": LaunchConfiguration("effector_type"),
+            "revo2_type": LaunchConfiguration("revo2_type"),
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
@@ -206,73 +318,17 @@ def generate_launch_description():
             "speed_percent": LaunchConfiguration("speed_percent"),
             "pub_rate": LaunchConfiguration("pub_rate"),
             "enable_timeout": LaunchConfiguration("enable_timeout"),
-            "tcp_offset": LaunchConfiguration("tcp_offset"),
+            "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
+            "feedback_joint_prefix": LaunchConfiguration("feedback_joint_prefix"),
+            "follow_joint_states_topic": LaunchConfiguration("follow_joint_states_topic"),
+            "arm_base_frame": LaunchConfiguration("arm_base_frame"),
+            "arm_tip_frame": LaunchConfiguration("arm_tip_frame"),
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
-            "publish_gripper_joint": "false",
-            "control_rate_hz": LaunchConfiguration("mit_control_rate_hz"),
-            "params_file": LaunchConfiguration("mit_params_file"),
-            "log_level": LaunchConfiguration("log_level"),
-            "launch_driver": "false",
-            "enable_debug_joint_trajectory_topic": PythonExpression([
-                "'true' if '", LaunchConfiguration("mode"), "' == 'debug_soft_target' else 'false'",
-            ]),
-        }.items(),
-        condition=IfCondition(mode_uses_mit),
-    )
-
-    display_control_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory("agx_arm_description"),
-                "launch",
-                "display_control.launch.py",
-            )
-        ),
-        launch_arguments={
-            "namespace": LaunchConfiguration("namespace"),
-            "arm_type": LaunchConfiguration("arm_type"),
-            "effector_type": LaunchConfiguration("effector_type"),
-            "revo2_type": LaunchConfiguration("revo2_type"),
-            "omnihand_type": LaunchConfiguration("omnihand_type"),
-            "pub_rate": LaunchConfiguration("pub_rate"),
             "follow": LaunchConfiguration("follow"),
             "tcp_offset": LaunchConfiguration("tcp_offset"),
-            "control": "true",
-            "control_topic": "mit_controller/soft_target_joint_states",
-        }.items(),
-        condition=IfCondition(mode_is_debug),
-    )
-
-    mit_joint_state_bridge = Node(
-        package="agx_arm_mit_tools",
-        executable="agx_arm_mit_joint_state_bridge",
-        namespace=LaunchConfiguration("namespace"),
-        parameters=[
-            {
-                "segment_duration_s": LaunchConfiguration("mit_joint_target_duration_s"),
-                "auto_enable": False,
-            }
-        ],
-        condition=IfCondition(mode_is_debug),
-    )
-
-    moveit_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory("agx_arm_moveit"),
-                "launch",
-                "demo.launch.py",
-            )
-        ),
-        launch_arguments={
-            "namespace": LaunchConfiguration("namespace"),
-            "arm_type": LaunchConfiguration("arm_type"),
-            "effector_type": LaunchConfiguration("effector_type"),
-            "revo2_type": LaunchConfiguration("revo2_type"),
-            "omnihand_type": LaunchConfiguration("omnihand_type"),
-            "tcp_offset": LaunchConfiguration("tcp_offset"),
-            "follow": LaunchConfiguration("follow"),
             "use_mit_controller": "true",
+            "mit_control_rate_hz": LaunchConfiguration("mit_control_rate_hz"),
+            "mit_params_file": LaunchConfiguration("mit_params_file"),
             "load_simple_obstacles": LaunchConfiguration("load_simple_obstacles"),
             "simple_obstacles_config": LaunchConfiguration("simple_obstacles_config"),
         }.items(),
@@ -285,6 +341,10 @@ def generate_launch_description():
         mode_arg,
         can_port_arg,
         arm_type_arg,
+        moveit_profile_arg,
+        robot_name_arg,
+        custom_model_arg,
+        custom_model_xacro_args_arg,
         effector_type_arg,
         revo2_type_arg,
         omnihand_type_arg,
@@ -296,6 +356,12 @@ def generate_launch_description():
         pub_rate_arg,
         enable_timeout_arg,
         tcp_offset_arg,
+        input_joint_prefix_arg,
+        feedback_joint_prefix_arg,
+        follow_joint_states_topic_arg,
+        arm_base_frame_arg,
+        arm_tip_frame_arg,
+        tcp_parent_frame_arg,
         gripper_default_effort_arg,
         publish_gripper_joint_arg,
         follow_arg,
@@ -304,9 +370,7 @@ def generate_launch_description():
         mit_joint_target_duration_arg,
         load_simple_obstacles_arg,
         simple_obstacles_config_arg,
-        driver_launch,
-        mit_launch,
-        display_control_launch,
-        mit_joint_state_bridge,
-        moveit_launch,
+        manual_vendor_launch,
+        debug_soft_target_launch,
+        moveit_mit_launch,
     ])

@@ -24,7 +24,7 @@ The repo now treats the body-mounted multi-arm system as the main integration di
   - `use_right_arm`
   - `use_right_hand`
 - `src/duo_body_description/launch/display_duo_system.launch.py` provides a minimal description-only bringup path for RViz and `robot_state_publisher` validation.
-- `src/duo_body_description/CMakeLists.txt` no longer installs a nonexistent `rviz/` directory, so the staging package now builds cleanly in the active ROS overlay again.
+- `src/duo_body_description/CMakeLists.txt` now installs the actual `launch/`, `meshes/`, `rviz/`, and `urdf/` assets, and `display_duo_system.launch.py` now prefers the workspace source RViz/Xacro files when present so Sprint 4 mount iteration is less sensitive to stale installed copies.
 - Stable policy and development docs now acknowledge the staging package instead of leaving it in conflict with the documented package structure.
 
 ## First Practical Validation Slice
@@ -56,9 +56,9 @@ This keeps the immediate geometry and frame audit small while still proving that
 
 1. Run the RViz frame audit for the right-side mount, base, flange, and hand frames with `Fixed Frame := body_base_link`.
 2. Refine the current staging mount-to-base correction and body-mesh origin against the physical body and CAD reference until the plate holes, base-link axis, and real joint-center alignment agree.
-3. Validate the corresponding prefixed `follow:=true` MoveIt path on top of the now-validated RViz/runtime adapter contract.
-4. Extend the current `agx_arm_moveit` namespace/profile builder into prefix-aligned multi-profile `right_arm`, `left_arm`, and `both_arms` outputs.
-5. Generalize `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions while keeping one MIT controller per arm and shared planning above them.
+3. Harden the landed prefixed `follow:=true` MoveIt path and the first `right_arm`, `left_arm`, and planning-only `both_arms` profiles into a broader runtime-facing contract.
+4. Generalize `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions while keeping one MIT controller per arm and shared planning above them.
+5. Decide how the planning-only `both_arms` surface should be exposed above the current single-arm wrappers without blurring MIT execution ownership.
 6. Capture the remaining execution-safety and collision gaps for coordinated dual-arm tasks.
 
 ## Near-Term Benchmark Target

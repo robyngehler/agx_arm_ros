@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from ament_index_python.packages import get_package_share_path
 
 from launch import LaunchDescription
@@ -9,18 +11,29 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 
-DEFAULT_RVIZ_CONFIG = (
-    get_package_share_path('duo_body_description') / 'rviz' / 'display_duo_system.rviz'
-)
+def _prefer_source_file(*relative_parts: str) -> Path:
+    package_share_dir = get_package_share_path('duo_body_description').resolve()
+    installed_file = package_share_dir.joinpath(*relative_parts)
+
+    try:
+        workspace_root = package_share_dir.parents[3]
+    except IndexError:
+        return installed_file
+
+    source_file = workspace_root / 'src' / 'duo_body_description' / Path(*relative_parts)
+    if source_file.is_file():
+        return source_file
+    return installed_file
+
+
+DEFAULT_RVIZ_CONFIG = _prefer_source_file('rviz', 'display_duo_system.rviz')
 
 
 def _launch_setup(context, *args, **kwargs):
     del args
     del kwargs
 
-    model_path = (
-        get_package_share_path('duo_body_description') / 'urdf' / 'duo_system.urdf.xacro'
-    )
+    model_path = _prefer_source_file('urdf', 'duo_system.urdf.xacro')
 
     body_mesh_xyz = LaunchConfiguration('body_mesh_xyz').perform(context).strip()
     body_mesh_rpy = LaunchConfiguration('body_mesh_rpy').perform(context).strip()

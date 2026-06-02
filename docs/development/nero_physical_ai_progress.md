@@ -62,10 +62,10 @@ Use the top-level development docs like this:
 - make description and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable target and the left side as the immediate follow-on
 - treat sim-only MoveIt profile sweeps across effectors as valid Sprint 3 evidence before real-arm collision-checked execution
 - use `src/agx_arm_moveit/scripts/plan_pose_smoke_test.py` as the current repo-owned representative near-home OMPL pose-planning check for Sprint 3
-- keep `nero_arm` as the monolithic active planning group in the current single-arm MoveIt surface while Sprint 4 documents the future `right_arm`, `left_arm`, and `both_arms` split for the Duo system
+- keep `nero_arm` as the baseline single-arm MoveIt group while Sprint 4 hardens the newly landed `right_arm`, `left_arm`, and planning-only `both_arms` Duo profiles into a broader multi-arm runtime surface
 - keep `nero_tool0` as the canonical Nero flange alias and `tcp_link` as the distinct TCP frame instead of collapsing those semantics together
 - use TRAC-IK as the current MoveIt IK baseline and source the external `~/workspace/trac_ik_ws` overlay on Humble / Jetson when the apt package is unavailable
-- use the new `custom_model`, `custom_model_xacro_args`, and `input_joint_prefix` hooks in the current RViz debug path as the first Duo-aware controller-facing slice on the control-topic side; feedback-side prefix adaptation and multi-arm MoveIt outputs remain open work
+- use the new `custom_model`, `custom_model_xacro_args`, and `input_joint_prefix` hooks in the current RViz debug path as the first Duo-aware controller-facing slice on the control-topic side; feedback-side prefix adaptation is now landed, while broader multi-arm runtime exposure remains open work
 - keep Isaac and broader simulation work sequenced after the first validated Duo body system baseline
 - keep stable repo policy in `docs/project/` and runtime contracts in `docs/control/`
 - keep only three cross-sprint coordination docs at the top of `docs/development/`
@@ -79,7 +79,7 @@ Use the top-level development docs like this:
 - OmniHand live hardware validation still depends on a responsive device path and adapter
 - broader Isaac/USD asset coverage is still incomplete
 - current RViz, MoveIt, and controller-facing launch surfaces are still primarily single-arm oriented
-- the Duo custom-model RViz path still lacks feedback-side prefix adaptation for a clean `follow:=true` contract
+- the Duo runtime wrappers are still primarily single-arm oriented, and the current `both_arms` MoveIt profile remains planning-only on `demo.launch.py`
 - the Duo system still needs a graphical RViz pass and physical body measurements to confirm the staged mount transforms
 - the current `move_group` teardown crash still reproduces on this Humble/aarch64 host even when the launch is reduced to `planning_pipelines:=ompl`
 

@@ -24,6 +24,7 @@ from moveit_configs_utils.launch_utils import DeclareBooleanLaunchArg
 from _moveit_config_builder import (
     ALL_ARM_TYPES,
     ALL_EFFECTOR_TYPES,
+    ALL_MOVEIT_PROFILES,
     ALL_OMNIHAND_TYPES,
     ALL_REVO2_TYPES,
     build_moveit_config,
@@ -31,12 +32,31 @@ from _moveit_config_builder import (
 
 
 def _build_ros2_controllers_file(
-    arm_type, effector_type, revo2_type, omnihand_type, namespace
+    arm_type, effector_type, revo2_type, omnihand_type, namespace, moveit_profile, input_joint_prefix
 ):
     """Build ros2_controllers config and return path to a temporary YAML file."""
-    arm_joints = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    if arm_type == "nero":
-        arm_joints.append("joint7")
+    if moveit_profile == "both_arms":
+        joint_prefixes = ["left_arm_", "right_arm_"]
+    else:
+        resolved_input_joint_prefix = input_joint_prefix
+        if not resolved_input_joint_prefix and moveit_profile == "right_arm":
+            resolved_input_joint_prefix = "right_arm_"
+        if not resolved_input_joint_prefix and moveit_profile == "left_arm":
+            resolved_input_joint_prefix = "left_arm_"
+        joint_prefixes = [resolved_input_joint_prefix]
+
+    arm_joints = []
+    for joint_prefix in joint_prefixes:
+        arm_joints.extend([
+            f"{joint_prefix}joint1",
+            f"{joint_prefix}joint2",
+            f"{joint_prefix}joint3",
+            f"{joint_prefix}joint4",
+            f"{joint_prefix}joint5",
+            f"{joint_prefix}joint6",
+        ])
+        if arm_type == "nero":
+            arm_joints.append(f"{joint_prefix}joint7")
 
     cm_controllers = {
         "arm_controller": {
@@ -154,12 +174,20 @@ def _build_namespaced_moveit_rviz_config(package_path, namespace):
 def _build_moveit(context):
     namespace = LaunchConfiguration("namespace").perform(context)
     arm_type = LaunchConfiguration("arm_type").perform(context)
+    moveit_profile = LaunchConfiguration("moveit_profile").perform(context)
     effector_type = LaunchConfiguration("effector_type").perform(context)
     revo2_type = LaunchConfiguration("revo2_type").perform(context)
     omnihand_type = LaunchConfiguration("omnihand_type").perform(context)
+    input_joint_prefix = LaunchConfiguration("input_joint_prefix").perform(context)
     use_mit_controller = LaunchConfiguration("use_mit_controller")
     moveit_config = build_moveit_config(context)
     package_path = moveit_config.package_path
+    use_fake_execution = (
+        moveit_profile != "both_arms"
+        and context.launch_configurations.get("use_mit_controller", "false") != "true"
+    )
+    launch_fake_execution = "true" if use_fake_execution else "false"
+    dual_arm_planning_only = "true" if moveit_profile == "both_arms" and not use_fake_execution else "false"
 
     actions = []
 
@@ -212,7 +240,13 @@ def _build_moveit(context):
     )
 
     ros2_controllers_yaml = _build_ros2_controllers_file(
-        arm_type, effector_type, revo2_type, omnihand_type, namespace
+        arm_type,
+        effector_type,
+        revo2_type,
+        omnihand_type,
+        namespace,
+        moveit_profile,
+        input_joint_prefix,
     )
     actions.append(
         Node(
@@ -223,7 +257,7 @@ def _build_moveit(context):
                 ros2_controllers_yaml,
             ],
             remappings=[("joint_states", "control/joint_states")],
-            condition=UnlessCondition(use_mit_controller),
+            condition=IfCondition(launch_fake_execution),
         )
     )
 
@@ -232,7 +266,7 @@ def _build_moveit(context):
             PythonLaunchDescriptionSource(
                 str(package_path / "launch/spawn_controllers.launch.py")
             ),
-            condition=UnlessCondition(use_mit_controller),
+            condition=IfCondition(launch_fake_execution),
         )
     )
 
@@ -243,6 +277,16 @@ def _build_moveit(context):
                 "arm_controller/follow_joint_trajectory."
             ),
             condition=IfCondition(use_mit_controller),
+        )
+    )
+
+    actions.append(
+        LogInfo(
+            msg=(
+                "MoveIt both_arms profile currently starts as a planning-only surface; "
+                "fake ros2_control is skipped until the staged Duo model owns a compatible execution path."
+            ),
+            condition=IfCondition(dual_arm_planning_only),
         )
     )
 
@@ -287,6 +331,27 @@ def generate_launch_description():
                 description="Arm type.",
             ),
             DeclareLaunchArgument(
+                "moveit_profile",
+                default_value="nero_arm",
+                choices=ALL_MOVEIT_PROFILES,
+                description="MoveIt planning profile. Use right_arm or left_arm for prefixed Duo custom-model bringup.",
+            ),
+            DeclareLaunchArgument(
+                "robot_name",
+                default_value="agx_arm",
+                description="Robot name used in the generated SRDF. Override this for custom models whose URDF robot name differs.",
+            ),
+            DeclareLaunchArgument(
+                "custom_model",
+                default_value="",
+                description="Optional custom model path. When set, MoveIt uses this xacro/URDF instead of the built-in arm model.",
+            ),
+            DeclareLaunchArgument(
+                "custom_model_xacro_args",
+                default_value="",
+                description="Optional extra xacro args appended when custom_model is set.",
+            ),
+            DeclareLaunchArgument(
                 "effector_type",
                 default_value="none",
                 choices=ALL_EFFECTOR_TYPES,
@@ -308,6 +373,21 @@ def generate_launch_description():
                 "tcp_offset",
                 default_value="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
                 description="TCP offset [x, y, z, rx, ry, rz] in meters/radians.",
+            ),
+            DeclareLaunchArgument(
+                "input_joint_prefix",
+                default_value="",
+                description="Optional prefix used by prefixed custom models for the controlled arm joints.",
+            ),
+            DeclareLaunchArgument(
+                "arm_base_frame",
+                default_value="",
+                description="Optional arm base frame used by the MoveIt arm chain when custom_model is set.",
+            ),
+            DeclareLaunchArgument(
+                "arm_tip_frame",
+                default_value="",
+                description="Optional arm tip frame used by the MoveIt arm chain when custom_model is set.",
             ),
             DeclareLaunchArgument(
                 "follow",

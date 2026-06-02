@@ -87,6 +87,7 @@ class NeroMitControllerNode(Node):
         self.declare_parameter("goal_velocity_tolerance", [0.20] * 7)
         self.declare_parameter("goal_time_tolerance_s", 0.5)
         self.declare_parameter("allow_joint_reordering", False)
+        self.declare_parameter("input_joint_prefix", "")
         self.declare_parameter("reject_new_goal_while_executing", True)
         self.declare_parameter("enable_debug_joint_trajectory_topic", False)
 
@@ -114,6 +115,7 @@ class NeroMitControllerNode(Node):
         self.goal_velocity_tolerance = self._load_float_array("goal_velocity_tolerance")
         self.goal_time_tolerance_s = float(self.get_parameter("goal_time_tolerance_s").value)
         self.allow_joint_reordering = bool(self.get_parameter("allow_joint_reordering").value)
+        self.input_joint_prefix = str(self.get_parameter("input_joint_prefix").value)
         self.reject_new_goal_while_executing = bool(
             self.get_parameter("reject_new_goal_while_executing").value
         )
@@ -475,6 +477,7 @@ class NeroMitControllerNode(Node):
             self.joint_names,
             msg,
             allow_joint_reordering=self.allow_joint_reordering,
+            input_joint_prefix=self.input_joint_prefix,
         )
 
     def _validation_error_code(self, message: str) -> int:

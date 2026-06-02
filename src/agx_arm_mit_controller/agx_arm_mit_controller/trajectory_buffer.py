@@ -41,10 +41,26 @@ class JointTrajectoryBuffer:
         msg: object,
         *,
         allow_joint_reordering: bool = False,
+        input_joint_prefix: str = "",
     ) -> "JointTrajectoryBuffer":
         joint_names = tuple(getattr(msg, "joint_names", []))
+        if input_joint_prefix:
+            unprefixed_joint_names = [
+                name for name in joint_names if not name.startswith(input_joint_prefix)
+            ]
+            if unprefixed_joint_names:
+                raise ValueError(
+                    f"joint_names mismatch, expected all names to start with "
+                    f"{input_joint_prefix!r}, got {list(joint_names)}"
+                )
+        normalized_joint_names = tuple(
+            name[len(input_joint_prefix):]
+            if input_joint_prefix and name.startswith(input_joint_prefix)
+            else name
+            for name in joint_names
+        )
         expected = tuple(expected_joint_names)
-        if joint_names == expected:
+        if normalized_joint_names == expected:
             reorder_indices = tuple(range(len(expected)))
         else:
             if not allow_joint_reordering:
@@ -52,16 +68,18 @@ class JointTrajectoryBuffer:
                     f"joint_names mismatch, expected {list(expected_joint_names)}, got {list(joint_names)}"
                 )
 
-            if len(joint_names) != len(expected):
+            if len(normalized_joint_names) != len(expected):
                 raise ValueError(
                     f"joint_names mismatch, expected {list(expected_joint_names)}, got {list(joint_names)}"
                 )
-            if len(set(joint_names)) != len(joint_names):
+            if len(set(normalized_joint_names)) != len(normalized_joint_names):
                 raise ValueError("trajectory joint_names contains duplicates")
 
-            joint_index_map = {name: index for index, name in enumerate(joint_names)}
+            joint_index_map = {
+                name: index for index, name in enumerate(normalized_joint_names)
+            }
             missing_joints = [joint for joint in expected if joint not in joint_index_map]
-            unknown_joints = [joint for joint in joint_names if joint not in expected]
+            unknown_joints = [joint for joint in normalized_joint_names if joint not in expected]
             if missing_joints or unknown_joints:
                 raise ValueError(
                     f"joint_names mismatch, expected {list(expected_joint_names)}, got {list(joint_names)}"
