@@ -182,7 +182,43 @@ function ExternalEndpointCard({ data }: NodeProps) {
   );
 }
 
-const nodeTypes = { rosNode: RosNodeCard, topicBridge: TopicBridgeCard, externalEndpoint: ExternalEndpointCard };
+function SemanticEndpointCard({ data }: NodeProps) {
+  const { endpointType, labels } = data as {
+    endpointType: "service" | "action";
+    labels: string[];
+  };
+  const isAction = endpointType === "action";
+  const color = isAction ? "#fcd34d" : "#f59e0b";
+  const title = labels.length <= 3 ? labels.join(" · ") : `${labels.length} semantic ${isAction ? "actions" : "services"}`;
+
+  return (
+    <div style={{
+      border: `1px dashed ${color}`,
+      borderRadius: 8,
+      background: isAction ? "#241906" : "#211406",
+      padding: "5px 10px",
+      fontFamily: "monospace",
+      fontSize: 11,
+      minWidth: 160,
+      textAlign: "center",
+      color: "#e2e8f0",
+    }}>
+      <Handle type="target" position={Position.Left} style={{ background: color }} />
+      <Handle type="source" position={Position.Right} style={{ background: color }} />
+      <div style={{ fontSize: 9, color, marginBottom: 2 }}>
+        semantic {endpointType}
+      </div>
+      <div style={{ fontWeight: 600, wordBreak: "break-word" }}>{title}</div>
+    </div>
+  );
+}
+
+const nodeTypes = {
+  rosNode: RosNodeCard,
+  topicBridge: TopicBridgeCard,
+  externalEndpoint: ExternalEndpointCard,
+  semanticEndpoint: SemanticEndpointCard,
+};
 
 // ── Dagre auto-layout (left-to-right hierarchical) ───────────────────────────
 const NODE_W = 240;
@@ -503,12 +539,73 @@ export function NodeGraphView() {
     }));
 
     const rfEdges: Edge[] = [];
+    const semanticBridgeMeta = new Map<string, { nodeIndex: number; labels: Set<string> }>();
     const topicBridgeMap = new Map<string, string>(); // topic → bridge node id
     const topicBridgeMetadata = new Map<string, { topic: string; msgType: string }>();
 
     const connectionPass = (name: string) => topicFilters.size === 0
       || [...topicFilters].some((filterValue) => sameSemanticEndpointName(filterValue, name));
     const typePass = (t: string) => msgTypeFilters.size === 0 || msgTypeFilters.has(t) || [...msgTypeFilters].some((f) => shortType(f) === shortType(t));
+    const pushSemanticEdge = ({
+      kind,
+      source,
+      target,
+      label,
+      color,
+      dasharray,
+      width,
+    }: {
+      kind: "service" | "action";
+      source: string;
+      target: string;
+      label: string;
+      color: string;
+      dasharray: string;
+      width: number;
+    }) => {
+      const pairKey = `${kind}:${source}:${target}`;
+      const existing = semanticBridgeMeta.get(pairKey);
+      if (existing) {
+        existing.labels.add(label);
+        rfNodes[existing.nodeIndex] = {
+          ...rfNodes[existing.nodeIndex],
+          data: {
+            ...(rfNodes[existing.nodeIndex].data as object),
+            labels: [...existing.labels],
+          },
+        };
+        return;
+      }
+
+      const labels = new Set([label]);
+      const bridgeId = `sem_bridge__${kind}__${source}__${target}`;
+      const nodeIndex = rfNodes.push({
+        id: bridgeId,
+        type: "semanticEndpoint",
+        position: { x: 0, y: 0 },
+        data: {
+          endpointType: kind,
+          labels: [...labels],
+          sourceId: source,
+          targetId: target,
+        },
+      }) - 1;
+      rfEdges.push({
+        id: `${bridgeId}__in`,
+        source,
+        target: bridgeId,
+        style: { stroke: color, strokeDasharray: dasharray, strokeWidth: width },
+        markerEnd: { type: MarkerType.ArrowClosed, color },
+      });
+      rfEdges.push({
+        id: `${bridgeId}__out`,
+        source: bridgeId,
+        target,
+        style: { stroke: color, strokeDasharray: dasharray, strokeWidth: width },
+        markerEnd: { type: MarkerType.ArrowClosed, color },
+      });
+      semanticBridgeMeta.set(pairKey, { nodeIndex, labels });
+    };
     const findCompatibleTopicBridge = (topic: string, msgType: string): string | null => {
       for (const [bridgeId, metadata] of topicBridgeMetadata) {
         if (!sameSemanticType(metadata.msgType, msgType)) continue;
@@ -681,15 +778,14 @@ export function NodeGraphView() {
               const semanticName = clientService
                 ? findSharedSemanticEndpoint(clientService.service, svcName) || svcName
                 : svcName;
-              rfEdges.push({
-                id: `${clientNode.id}--svc_sem--${serverId}--${semanticName}`,
+              pushSemanticEdge({
+                kind: "service",
                 source: clientNode.id,
                 target: serverId,
                 label: semanticName,
-                labelStyle: { fill: "#fcd34d", fontSize: 10 },
-                style: { stroke: "#f59e0b", strokeDasharray: "3,5", strokeWidth: 1.5 },
-                markerEnd: { type: MarkerType.ArrowClosed, color: "#f59e0b" },
-                data: { kind: "service", service: semanticName, srvType, clientId: clientNode.id, serverId },
+                color: "#f59e0b",
+                dasharray: "3,5",
+                width: 1.5,
               });
             }
             continue;
@@ -699,6 +795,7 @@ export function NodeGraphView() {
             : (allClients.length > 0 || allSemanticClients.length > 0)
               ? "filtered"
               : "external";
+          if (presence !== "external") continue;
           const bridgeId = `svc_ext_c__${svcName.replace(/\//g, "_")}`;
           rfNodes.push({ id: bridgeId, type: "externalEndpoint", position: { x: 0, y: 0 },
             data: {
@@ -746,15 +843,14 @@ export function NodeGraphView() {
                   ? findSharedSemanticEndpoint(semanticServer.service, svcName) || svcName
                   : svcName;
                 if (!semanticServerNode) continue;
-                rfEdges.push({
-                  id: `${clientId}--svc_sem--${semanticServerId}--${semanticName}`,
+                pushSemanticEdge({
+                  kind: "service",
                   source: clientId,
                   target: semanticServerId,
                   label: semanticName,
-                  labelStyle: { fill: "#fcd34d", fontSize: 10 },
-                  style: { stroke: "#f59e0b", strokeDasharray: "3,5", strokeWidth: 1.5 },
-                  markerEnd: { type: MarkerType.ArrowClosed, color: "#f59e0b" },
-                  data: { kind: "service", service: semanticName, srvType: clientService.srvType, clientId, serverId: semanticServerId },
+                  color: "#f59e0b",
+                  dasharray: "3,5",
+                  width: 1.5,
                 });
               }
             }
@@ -765,6 +861,7 @@ export function NodeGraphView() {
             : (allServers.length > 0 || allSemanticServers.length > 0)
               ? "filtered"
               : "external";
+          if (presence !== "external") continue;
           const bridgeId = `svc_ext_s__${svcName.replace(/\//g, "_")}`;
           rfNodes.push({ id: bridgeId, type: "externalEndpoint", position: { x: 0, y: 0 },
             data: {
@@ -836,15 +933,14 @@ export function NodeGraphView() {
               const semanticName = clientAction
                 ? findSharedSemanticEndpoint(clientAction.action, actName) || actName
                 : actName;
-              rfEdges.push({
-                id: `${clientNode.id}--act_sem--${serverId}--${semanticName}`,
+              pushSemanticEdge({
+                kind: "action",
                 source: clientNode.id,
                 target: serverId,
                 label: semanticName,
-                labelStyle: { fill: "#fcd34d", fontSize: 10 },
-                style: { stroke: "#f59e0b", strokeDasharray: "4,4", strokeWidth: 1.6 },
-                markerEnd: { type: MarkerType.ArrowClosed, color: "#f59e0b" },
-                data: { kind: "action", action: semanticName, actionType, clientId: clientNode.id, serverId },
+                color: "#f59e0b",
+                dasharray: "4,4",
+                width: 1.6,
               });
             }
             continue;
@@ -854,6 +950,7 @@ export function NodeGraphView() {
             : (allClients.length > 0 || allSemanticClients.length > 0)
               ? "filtered"
               : "external";
+          if (presence !== "external") continue;
           const bridgeId = `act_ext_c__${actName.replace(/\//g, "_")}`;
           rfNodes.push({ id: bridgeId, type: "externalEndpoint", position: { x: 0, y: 0 },
             data: {
@@ -901,15 +998,14 @@ export function NodeGraphView() {
                   ? findSharedSemanticEndpoint(semanticServer.action, actName) || actName
                   : actName;
                 if (!semanticServerNode) continue;
-                rfEdges.push({
-                  id: `${clientId}--act_sem--${semanticServerId}--${semanticName}`,
+                pushSemanticEdge({
+                  kind: "action",
                   source: clientId,
                   target: semanticServerId,
                   label: semanticName,
-                  labelStyle: { fill: "#fcd34d", fontSize: 10 },
-                  style: { stroke: "#f59e0b", strokeDasharray: "4,4", strokeWidth: 1.6 },
-                  markerEnd: { type: MarkerType.ArrowClosed, color: "#f59e0b" },
-                  data: { kind: "action", action: semanticName, actionType: clientAction.actionType, clientId, serverId: semanticServerId },
+                  color: "#f59e0b",
+                  dasharray: "4,4",
+                  width: 1.6,
                 });
               }
             }
@@ -920,6 +1016,7 @@ export function NodeGraphView() {
             : (allServers.length > 0 || allSemanticServers.length > 0)
               ? "filtered"
               : "external";
+          if (presence !== "external") continue;
           const bridgeId = `act_ext_s__${actName.replace(/\//g, "_")}`;
           rfNodes.push({ id: bridgeId, type: "externalEndpoint", position: { x: 0, y: 0 },
             data: {
@@ -1047,7 +1144,13 @@ export function NodeGraphView() {
           <Controls style={{ background: "#1e293b", borderColor: "#334155", color: "#94a3b8" }} />
           <MiniMap
             style={{ background: "#1e293b" }}
-            nodeColor={(n) => (n.type === "topicBridge" ? "#334155" : n.type === "externalEndpoint" ? "#44337a" : "#3b82f6")}
+            nodeColor={(n) => (n.type === "topicBridge"
+              ? "#334155"
+              : n.type === "externalEndpoint"
+                ? "#44337a"
+                : n.type === "semanticEndpoint"
+                  ? "#f59e0b"
+                  : "#3b82f6")}
           />
         </ReactFlow>
       </div>
@@ -1074,6 +1177,16 @@ export function NodeGraphView() {
           semanticPeerIds={(selectedFlowNode.data as { name: string; endpointType: "action"|"service"; role: "server"|"client"; presence: EndpointPresence; semanticPeerIds?: string[] }).semanticPeerIds ?? []}
           allNodes={allNodes}
           messages={data.messages}
+          onClose={clearSelection}
+        />
+      )}
+      {!selectedRosNode && selectedFlowNode?.type === "semanticEndpoint" && (
+        <SemanticEndpointDetailPanel
+          endpointType={(selectedFlowNode.data as { endpointType: "action" | "service"; labels: string[]; sourceId: string; targetId: string }).endpointType}
+          labels={(selectedFlowNode.data as { endpointType: "action" | "service"; labels: string[]; sourceId: string; targetId: string }).labels}
+          sourceId={(selectedFlowNode.data as { endpointType: "action" | "service"; labels: string[]; sourceId: string; targetId: string }).sourceId}
+          targetId={(selectedFlowNode.data as { endpointType: "action" | "service"; labels: string[]; sourceId: string; targetId: string }).targetId}
+          allNodes={allNodes}
           onClose={clearSelection}
         />
       )}
@@ -1497,6 +1610,79 @@ function ExternalEndpointDetailPanel({ name, endpointType, role, presence, seman
           </div>
         </div>
         {msgDef && <MsgDefSection msgDef={msgDef} />}
+      </div>
+    </div>
+  );
+}
+
+function SemanticEndpointDetailPanel({ endpointType, labels, sourceId, targetId, allNodes, onClose }: {
+  endpointType: "action" | "service";
+  labels: string[];
+  sourceId: string;
+  targetId: string;
+  allNodes: RosNode[];
+  onClose: () => void;
+}) {
+  const isAction = endpointType === "action";
+  const accentColor = isAction ? "#fcd34d" : "#f59e0b";
+  const sourceNode = allNodes.find((node) => node.id === sourceId) ?? null;
+  const targetNode = allNodes.find((node) => node.id === targetId) ?? null;
+
+  return (
+    <div style={{ width: 300, borderLeft: "1px solid #1e293b", background: "#080e1a", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #1e293b", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
+          <div style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#e2e8f0" }}>
+            semantic {endpointType}
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>✕</button>
+        </div>
+        <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, background: isAction ? "#1c1500" : "#211406", border: `1px solid ${accentColor}`, borderRadius: 4, padding: "1px 6px", color: accentColor }}>
+            {labels.length} {labels.length === 1 ? "match" : "matches"}
+          </span>
+        </div>
+      </div>
+      <div style={{ padding: "8px 14px", overflowY: "auto", flex: 1 }}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, color: accentColor, fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Endpoints
+          </div>
+          {labels.map((label) => (
+            <div key={label} style={{ fontSize: 11, color: "#e2e8f0", fontFamily: "monospace", padding: "2px 0" }}>
+              {label}
+            </div>
+          ))}
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, color: "#67e8f9", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Source
+          </div>
+          {sourceNode ? (
+            <div style={{ fontSize: 11, color: "#e2e8f0", fontFamily: "monospace" }}>
+              <span style={{ color: pkgColor(sourceNode.package), fontSize: 9 }}>■ </span>
+              {sourceNode.nodeName}<span style={{ color: "#475569" }}> · {sourceNode.package}</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: "#475569" }}>Unknown</div>
+          )}
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, color: "#86efac", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Target
+          </div>
+          {targetNode ? (
+            <div style={{ fontSize: 11, color: "#e2e8f0", fontFamily: "monospace" }}>
+              <span style={{ color: pkgColor(targetNode.package), fontSize: 9 }}>■ </span>
+              {targetNode.nodeName}<span style={{ color: "#475569" }}> · {targetNode.package}</span>
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: "#475569" }}>Unknown</div>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>
+          This bridge exists because the ROS names match only after namespace normalization, so the relation is semantic rather than a direct raw-name match.
+        </div>
       </div>
     </div>
   );
