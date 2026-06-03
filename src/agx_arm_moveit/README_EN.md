@@ -67,34 +67,36 @@ source install/setup.bash
 
 If you installed TRAC-IK from a distro package instead of a source overlay, the conditional line simply does nothing.
 
+Canonical package-local MoveIt bringup:
+
 No end effector:
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero
 ```
 
 With AgileX gripper:
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=agx_gripper
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero effector_type:=agx_gripper
 ```
 
 With Revo2 hand:
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
 ```
 
 With OmniHand:
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=omnihand omnihand_type:=left
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero effector_type:=omnihand omnihand_type:=left
 ```
 
 Load the repo-owned simple obstacle baseline:
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero load_simple_obstacles:=true
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero load_simple_obstacles:=true
 ```
 
 This calls `scripts/apply_simple_obstacles.py` and seeds the planning scene from `config/simple_obstacles.json`. Use `simple_obstacles_config:=/abs/path/to/file.json` if you want to replace that baseline.
@@ -106,6 +108,16 @@ Recommended common bringup for native MIT execution:
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
+  can_port:=can_nero \
+  arm_type:=nero \
+  effector_type:=agx_gripper \
+  load_simple_obstacles:=true
+```
+
+Canonical combined MoveIt wrapper:
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
   can_port:=can_nero \
   arm_type:=nero \
   effector_type:=agx_gripper \
@@ -147,7 +159,7 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
   publish_gripper_joint:=false
 
 # Terminal 2
-ros2 launch agx_arm_moveit demo.launch.py \
+ros2 launch agx_arm_moveit start_moveit.launch.py \
   arm_type:=nero \
   effector_type:=agx_gripper \
   follow:=true \
@@ -155,7 +167,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
   load_simple_obstacles:=true
 ```
 
-When `use_mit_controller:=true`, `demo.launch.py` no longer starts the legacy bridge path. It expects the MIT controller to already provide `arm_controller/follow_joint_trajectory`.
+When `use_mit_controller:=true`, `start_moveit.launch.py` no longer starts the legacy bridge path. It expects the MIT controller to already provide `arm_controller/follow_joint_trajectory`. `demo.launch.py` is now only a compatibility alias pointing at the same implementation.
 
 The first Duo per-arm profile path is now available through `moveit_profile:=right_arm|left_arm`, which derives the prefixed joint names and the staged body-mounted arm chain frames automatically for the current custom-model slice:
 
@@ -172,18 +184,21 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 
 This right-arm profile auto-derives the `right_arm_` joint prefix, the `right_arm` planning group, and the `right_arm_base_link` to `right_arm_nero_tool0` arm chain. `left_arm` mirrors the same contract. The lower-level `input_joint_prefix`, `arm_base_frame`, and `arm_tip_frame` overrides still remain available when the staged defaults are not sufficient.
 
-`both_arms` is now also available as the first dual-arm planning profile, but intentionally only on `agx_arm_moveit demo.launch.py` for now:
+`both_arms` is now available on the canonical `agx_arm_ctrl start_agx_arm_components.launch.py mode:=moveit_mit` path when you provide two managed `arm_instances`, and it remains available directly on `agx_arm_moveit start_moveit.launch.py`:
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py \
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
   use_rviz:=false \
+  follow:=true \
   moveit_profile:=both_arms \
   custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
   custom_model_xacro_args:='use_left_arm:=true use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
+  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: false}, {name: right_arm, namespace: right_arm, can_port: can_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: false}]' \
   planning_pipelines:=ompl
 ```
 
-That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group while loading separate IK solvers for the left and right chains. The staged Duo custom-model path still lacks a matching dual-arm execution surface, so this launch deliberately skips fake `ros2_control` and stays planning-only.
+That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group while loading separate IK solvers for the left and right chains. The combined wrapper now also starts one MIT controller per declared arm instance, keeps each arm runtime in its own namespace, and merges the prefixed feedback path back into MoveIt/RViz. `start_moveit.launch.py` is the canonical package-local entrypoint; `demo.launch.py` remains only as the compatibility alias.
 
 ### 2.3 Launch parameters
 
@@ -210,8 +225,9 @@ That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group w
 - The active launch surface no longer exposes Piper-family options.
 - `namespace` still works for multi-instance isolation, but each instance is expected to use the Nero asset tree.
 - `publish_gripper_joint` is handled automatically in the combined bringup path to avoid invalid-joint warnings.
-- `start_single_agx_arm_moveit.launch.py` and `start_single_agx_arm_rviz.launch.py` now default to the MIT soft-trajectory route. `demo.launch.py` still keeps `use_mit_controller:=false` as the simulation-first default.
-- `moveit_profile:=right_arm`, `moveit_profile:=left_arm`, and `moveit_profile:=both_arms` are the first landed Duo profiles. `both_arms` is still planning-only on `demo.launch.py`, and the hand-aware variants are still open work.
+- `start_moveit.launch.py` is now the canonical package-local MoveIt entrypoint. `demo.launch.py` remains as a compatibility alias.
+- `start_agx_arm_moveit.launch.py` is now the canonical combined MoveIt wrapper. `start_single_agx_arm_moveit.launch.py` remains as a compatibility alias, while `start_single_agx_arm.launch.py` still accurately names the one-driver-per-arm launch surface.
+- `moveit_profile:=right_arm`, `moveit_profile:=left_arm`, and `moveit_profile:=both_arms` are the first landed Duo profiles. `both_arms` now runs through the combined MIT wrapper when you provide two managed `arm_instances`; the hand-aware variants are still open work.
 - `start_agx_arm_components.launch.py` provides the new common agx_arm_ctrl bringup surface with `manual_vendor`, `debug_soft_target`, and `moveit_mit` modes.
 - The current MoveIt baseline expects TRAC-IK. If the distro package is unavailable on Humble / Jetson, use the documented source-build overlay and source `/opt/ros/$ROS_DISTRO/setup.bash`, `~/workspace/trac_ik_ws/install/setup.bash`, then this workspace's `install/setup.bash`.
 - `nero_tool0` now comes from the canonical Nero description package, while `tcp_link` remains the TCP and interactive planning target frame.

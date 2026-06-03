@@ -9,14 +9,11 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 from _moveit_config_builder import build_moveit_config, declare_common_args
+from _multi_arm_runtime import resolve_follow_joint_states_topic
 
 
 def _launch(context):
-    follow = LaunchConfiguration("follow").perform(context)
-    follow_joint_states_topic = LaunchConfiguration("follow_joint_states_topic").perform(context)
-    joint_states_topic = (
-        follow_joint_states_topic if follow == "true" else "control/joint_states"
-    )
+    joint_states_topic = resolve_follow_joint_states_topic(context)
 
     moveit_config = build_moveit_config(context)
 

@@ -67,34 +67,36 @@ source install/setup.bash
 
 若使用发行版提供的 TRAC-IK apt 包，上述条件判断会直接跳过 overlay source。
 
+规范的包内 MoveIt 启动入口：
+
 无末端执行器：
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero
 ```
 
 带 AgileX 夹爪：
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=agx_gripper
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero effector_type:=agx_gripper
 ```
 
 带 Revo2 灵巧手：
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero effector_type:=revo2 revo2_type:=left
 ```
 
 带 OmniHand 灵巧手：
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero effector_type:=omnihand omnihand_type:=left
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero effector_type:=omnihand omnihand_type:=left
 ```
 
 加载仓库内置的简易障碍物基线：
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero load_simple_obstacles:=true
+ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero load_simple_obstacles:=true
 ```
 
 该选项会调用 `scripts/apply_simple_obstacles.py`，将 `config/simple_obstacles.json` 中的基础障碍物集合注入 MoveIt 规划场景。若需替换障碍物集合，可传入 `simple_obstacles_config:=/abs/path/to/file.json`。
@@ -106,6 +108,16 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero load_simple_obstacles:=
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
+  can_port:=can_nero \
+  arm_type:=nero \
+  effector_type:=agx_gripper \
+  load_simple_obstacles:=true
+```
+
+规范的一键 MoveIt 包装启动名称：
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
   can_port:=can_nero \
   arm_type:=nero \
   effector_type:=agx_gripper \
@@ -147,7 +159,7 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
   publish_gripper_joint:=false
 
 # 终端 2
-ros2 launch agx_arm_moveit demo.launch.py \
+ros2 launch agx_arm_moveit start_moveit.launch.py \
   arm_type:=nero \
   effector_type:=agx_gripper \
   follow:=true \
@@ -155,7 +167,7 @@ ros2 launch agx_arm_moveit demo.launch.py \
   load_simple_obstacles:=true
 ```
 
-当 `use_mit_controller:=true` 时，`demo.launch.py` 不再启动旧的桥接执行路径，而是要求 MIT 控制器已经提供 `arm_controller/follow_joint_trajectory`。
+当 `use_mit_controller:=true` 时，`start_moveit.launch.py` 不再启动旧的桥接执行路径，而是要求 MIT 控制器已经提供 `arm_controller/follow_joint_trajectory`。`demo.launch.py` 现在仅保留为指向同一实现的兼容别名。
 
 当前 Sprint 4 的 prefixed Duo 单臂控制路径也已打通，可将 MoveIt 绑定到 body-mounted custom model 的某一侧机械臂，同时仍通过该臂命名空间内的 MIT controller 执行轨迹：
 
@@ -174,18 +186,21 @@ ros2 launch agx_arm_moveit demo.launch.py \
 
 其中 `moveit_profile:=right_arm` 会自动推导 `right_arm_` 前缀、`right_arm` 规划组、`right_arm_base_link` 和 `right_arm_nero_tool0`。`left_arm` 镜像路径使用相同契约。若需要覆盖这些默认值，仍可显式传入 `input_joint_prefix`、`arm_base_frame`、`arm_tip_frame`。
 
-`both_arms` 也已作为首个双臂规划 profile 落地，但当前仅面向 `agx_arm_moveit demo.launch.py` 的规划面，不走 MIT 或 `agx_arm_ctrl` 包装执行路径：
+`both_arms` 也已作为首个双臂规划 profile 落地。现在既可以走包内的 `agx_arm_moveit start_moveit.launch.py`，也可以在提供双臂 `arm_instances` 时走 `agx_arm_ctrl start_agx_arm_components.launch.py mode:=moveit_mit` 的统一入口：
 
 ```bash
-ros2 launch agx_arm_moveit demo.launch.py \
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
   use_rviz:=false \
+  follow:=true \
   moveit_profile:=both_arms \
   custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
   custom_model_xacro_args:='use_left_arm:=true use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
+  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: false}, {name: right_arm, namespace: right_arm, can_port: can_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: false}]' \
   planning_pipelines:=ompl
 ```
 
-该 profile 会生成 `left_arm`、`right_arm` 和组合后的 `both_arms` 规划组，并为左右臂分别加载 IK；但 staged Duo custom model 目前还没有对应的双臂执行控制面，因此这里会显式跳过 fake `ros2_control`，保留为 planning-only bringup。
+该 profile 会生成 `left_arm`、`right_arm` 和组合后的 `both_arms` 规划组，并为左右臂分别加载 IK。统一包装启动面现在还能按 `arm_instances` 为每个 prefix 启动一个 MIT controller，把每个 arm runtime 放到自己的 namespace 中，并把 prefixed feedback 合并回 MoveIt / RViz。`start_moveit.launch.py` 是规范的包内入口；`demo.launch.py` 仅保留为兼容别名。
 
 若走 `agx_arm_ctrl start_single_agx_arm_moveit.launch.py` 或 `agx_arm_ctrl start_agx_arm_components.launch.py mode:=moveit_mit` 包装启动，同样可透传 `moveit_profile`、`robot_name`、`custom_model`、`custom_model_xacro_args`，并继续使用自动推导的 prefixed feedback adapter。
 
@@ -220,8 +235,9 @@ ros2 launch agx_arm_moveit demo.launch.py \
 - 当前活动配置只覆盖 Nero，不再暴露 Piper 系列启动选项。
 - `namespace` 仍可用于多实例隔离，但多个实例都应基于 Nero 资产树。
 - `publish_gripper_joint` 会在一键启动路径中自动处理，以避免 MoveIt 中出现无效关节告警。
-- `start_single_agx_arm_moveit.launch.py` 与 `start_single_agx_arm_rviz.launch.py` 默认都会走 MIT 软轨迹路径；`demo.launch.py` 仍保留 `use_mit_controller:=false` 作为纯仿真默认值。
-- `moveit_profile:=right_arm`、`moveit_profile:=left_arm` 与 `moveit_profile:=both_arms` 已落地为第一批 Duo profile；其中 `both_arms` 当前仍是 `demo.launch.py` 下的 planning-only 路径，hand-aware 组合仍是后续工作。
+- `start_moveit.launch.py` 现在是规范的包内 MoveIt 启动名。`demo.launch.py` 保留为兼容别名。
+- `start_agx_arm_moveit.launch.py` 现在是规范的一键 MoveIt 包装启动名。`start_single_agx_arm_moveit.launch.py` 保留为兼容别名；底层 `start_single_agx_arm.launch.py` 仍准确对应单个驱动实例。
+- `moveit_profile:=right_arm`、`moveit_profile:=left_arm` 与 `moveit_profile:=both_arms` 已落地为第一批 Duo profile；其中 `both_arms` 在提供双臂 `arm_instances` 时已经能走统一 MIT 包装入口，hand-aware 组合仍是后续工作。
 - `start_agx_arm_components.launch.py` 提供新的公共 agx_arm_ctrl 组件启动面，包含 `manual_vendor`、`debug_soft_target`、`moveit_mit` 三种模式。
 - 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 - `nero_tool0` 现在由 Nero 规范描述包直接提供，`tcp_link` 继续作为 TCP 与交互式规划目标参考帧。

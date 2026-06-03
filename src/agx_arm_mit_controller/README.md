@@ -38,13 +38,13 @@ MoveIt / RViz
   -> agx_arm_ctrl_single_node
 ```
 
-The legacy standalone `FollowJointTrajectory` bridge is no longer part of the normal runtime surface. `agx_arm_moveit demo.launch.py use_mit_controller:=true` expects `mit_controller` to already provide `arm_controller/follow_joint_trajectory`.
+The legacy standalone `FollowJointTrajectory` bridge is no longer part of the normal runtime surface. `agx_arm_moveit start_moveit.launch.py use_mit_controller:=true` expects `mit_controller` to already provide `arm_controller/follow_joint_trajectory`. `demo.launch.py` remains as a compatibility alias.
 
 For RViz soft-target debugging, keep the MIT controller's topic input disabled by default and only enable it in explicit debug launches such as `agx_arm_ctrl start_agx_arm_components.launch.py mode:=debug_soft_target` or `start_single_agx_arm_rviz.launch.py use_mit_controller:=true control:=true`. Enable MIT explicitly before moving RViz sliders; the debug bridge no longer auto-arms the controller.
 
 For the current Duo custom-model and prefixed-joint slice, use `start_single_agx_arm_rviz.launch.py` with `custom_model`, `custom_model_xacro_args`, `input_joint_prefix:=right_arm_`, and `tcp_offset:='[0.005, 0.0, 0.0, 0.0, 0.0, 0.0]'`. The launch now auto-derives the prefixed follow-side adapter and `right_arm_nero_tool0` TCP parent for the common single-arm Duo path; override `feedback_joint_prefix`, `follow_joint_states_topic`, or `tcp_parent_frame` only when that default path is not sufficient. `start_agx_arm_components.launch.py mode:=debug_soft_target` now forwards the same Duo custom-model hooks through the common wrapper.
 
-For prefixed MoveIt execution on the same staged Duo model, `start_single_agx_arm_moveit.launch.py` and `start_nero_mit_controller.launch.py` now also accept `input_joint_prefix`. `start_single_agx_arm_moveit.launch.py` and `start_agx_arm_components.launch.py mode:=moveit_mit` also expose `moveit_profile:=right_arm|left_arm`, which auto-derives the corresponding prefix, planning group, and Duo base/tip frames for the first per-arm profile path. Keep the MIT controller on canonical `joint1` through `joint7` inside its namespace, require a consistent configured prefix on incoming MoveIt trajectories, and strip that prefix at the action boundary.
+For prefixed MoveIt execution on the same staged Duo model, `start_agx_arm_moveit.launch.py`, `start_single_agx_arm_moveit.launch.py`, and `start_nero_mit_controller.launch.py` accept `input_joint_prefix`. `start_agx_arm_components.launch.py mode:=moveit_mit` and the new canonical `start_agx_arm_moveit.launch.py` also expose `moveit_profile:=right_arm|left_arm|both_arms`; `both_arms` is driven through two declared `arm_instances`, one MIT controller per arm, and a merged prefixed feedback path back into MoveIt/RViz. Keep each MIT controller on canonical `joint1` through `joint7` inside its namespace, require a consistent configured prefix on incoming MoveIt trajectories, and strip that prefix at the action boundary.
 
 ## Controller Behavior
 

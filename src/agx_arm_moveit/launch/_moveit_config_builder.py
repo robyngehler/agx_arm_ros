@@ -5,6 +5,8 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
+from _multi_arm_runtime import controller_joint_names, controller_path, resolve_arm_instances
+
 ALL_ARM_TYPES = ["nero"]
 ALL_EFFECTOR_TYPES = ["none", "agx_gripper", "revo2", "omnihand"]
 ALL_REVO2_TYPES = ["left", "right"]
@@ -117,6 +119,28 @@ def _profile_arm_joint_names(moveit_profile: str, explicit_joint_prefix: str) ->
     return joint_names
 
 
+def _build_mit_trajectory_execution(arm_instances: list[dict[str, str]]) -> dict:
+    controller_names: list[str] = []
+    controllers: dict[str, dict] = {}
+    for instance in arm_instances:
+        name = controller_path(instance)
+        controller_names.append(name)
+        controllers[name] = {
+            "type": "FollowJointTrajectory",
+            "joints": controller_joint_names(instance["joint_prefix"]),
+            "action_ns": "follow_joint_trajectory",
+            "default": len(arm_instances) == 1,
+        }
+
+    return {
+        "moveit_controller_manager": "moveit_simple_controller_manager/MoveItSimpleControllerManager",
+        "moveit_simple_controller_manager": {
+            "controller_names": controller_names,
+            **controllers,
+        },
+    }
+
+
 def _resolve_profile_settings(
     moveit_profile: str,
     custom_model: str,
@@ -217,6 +241,16 @@ def declare_common_args():
             description="Optional prefix used by prefixed custom models for the controlled arm joints.",
         ),
         DeclareLaunchArgument(
+            "feedback_joint_prefix",
+            default_value="",
+            description="Optional prefix added onto follow-side feedback/joint_states. This is mainly used by the multi-arm runtime wrappers.",
+        ),
+        DeclareLaunchArgument(
+            "arm_instances",
+            default_value="",
+            description="Optional YAML list describing managed arm runtime instances. Empty derives defaults from moveit_profile.",
+        ),
+        DeclareLaunchArgument(
             "arm_base_frame",
             default_value="",
             description="Optional arm base frame used by the MoveIt arm chain when custom_model is set.",
@@ -263,6 +297,8 @@ def build_moveit_config(context):
     revo2_type = LaunchConfiguration("revo2_type").perform(context)
     omnihand_type = LaunchConfiguration("omnihand_type").perform(context)
     explicit_joint_prefix = LaunchConfiguration("input_joint_prefix").perform(context)
+    explicit_feedback_joint_prefix = LaunchConfiguration("feedback_joint_prefix").perform(context)
+    arm_instances_raw = LaunchConfiguration("arm_instances").perform(context)
     explicit_arm_base_frame = LaunchConfiguration("arm_base_frame").perform(context)
     explicit_arm_tip_frame = LaunchConfiguration("arm_tip_frame").perform(context)
     profile_settings = _resolve_profile_settings(
@@ -273,6 +309,12 @@ def build_moveit_config(context):
         explicit_arm_tip_frame,
     )
     input_joint_prefix = profile_settings["input_joint_prefix"]
+    arm_instances = resolve_arm_instances(
+        moveit_profile,
+        arm_instances_raw,
+        explicit_joint_prefix,
+        explicit_feedback_joint_prefix,
+    )
     arm_base_frame = _resolved_arm_base_frame(
         custom_model,
         input_joint_prefix,
@@ -284,14 +326,10 @@ def build_moveit_config(context):
         profile_settings["arm_tip_frame"],
     )
     use_mit_controller = context.launch_configurations.get("use_mit_controller", "false") == "true"
-    if moveit_profile == DUAL_ARM_MOVEIT_GROUP and use_mit_controller:
-        raise ValueError(
-            "moveit_profile 'both_arms' is not wired into the MIT execution path yet; use demo.launch.py with use_mit_controller:=false"
-        )
     tcp_offset = ast.literal_eval(
         LaunchConfiguration("tcp_offset").perform(context)
     )
-    controller_joint_names = _profile_arm_joint_names(moveit_profile, explicit_joint_prefix)
+    controlled_joint_names = _profile_arm_joint_names(moveit_profile, explicit_joint_prefix)
 
     profile = _select_profile(effector_type, revo2_type, omnihand_type)
     trajectory_execution_config = (
@@ -357,14 +395,19 @@ def build_moveit_config(context):
             profile_settings["planning_group_name"]
         )
 
+    if use_mit_controller:
+        moveit_config.trajectory_execution = _build_mit_trajectory_execution(arm_instances)
+
     if arm_type == "nero":
-        moveit_config.trajectory_execution[
+        moveit_simple_controller_manager = moveit_config.trajectory_execution[
             "moveit_simple_controller_manager"
-        ]["arm_controller"]["joints"] = [
-            *controller_joint_names,
         ]
+        if not use_mit_controller and "arm_controller" in moveit_simple_controller_manager:
+            moveit_simple_controller_manager["arm_controller"]["joints"] = [
+                *controlled_joint_names,
+            ]
 
     if custom_model or input_joint_prefix or moveit_profile == DUAL_ARM_MOVEIT_GROUP:
-        moveit_config.joint_limits = _build_joint_limits(controller_joint_names)
+        moveit_config.joint_limits = _build_joint_limits(controlled_joint_names)
 
     return moveit_config

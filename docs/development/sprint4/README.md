@@ -31,8 +31,8 @@ Do not use this Sprint 4 folder as the cross-sprint source of truth.
 | Right-side description baseline | CONFIRMED | Prefix-safe Nero arm composition, side-selectable OmniHand attachment, and a description-only `display_duo_system.launch.py` bringup path are landed for `body + right arm + right OmniHand`; on 2026-05-28, `xacro`/`check_urdf` and the headless launch both succeeded for the right-side slice, and the Duo display launch now prefers workspace source RViz/Xacro files during local Sprint 4 iteration. |
 | Left-side mirror | PARTIAL | The left arm and left OmniHand now validate structurally through `xacro`/`check_urdf` and the headless launch path, but the visual RViz frame audit is still pending. |
 | Duo-aware MIT RViz debug slice | PARTIAL | The existing single-arm RViz and MIT debug surface can now target staged Duo Xacros via `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, the landed feedback-side JointState prefix adapter, and the custom-model TCP-parent hook; the right-side `tcp_offset` of `0.005` m in X is now preserved on that path, and a 2026-05-31 live launch confirmed the prefixed RViz `follow:=true` path plus adapter wiring without the hardware driver. |
-| Prefixed per-arm MoveIt path | PARTIAL | `agx_arm_moveit demo.launch.py` and `agx_arm_ctrl start_single_agx_arm_moveit.launch.py` now accept prefixed custom body models through `robot_name`, `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, `arm_base_frame`, and `arm_tip_frame`, while the MIT controller strips the same prefix on incoming trajectories. A 2026-06-02 headless launch reached `You can start planning now!` for the staged right-arm Duo slice with `follow_joint_states_topic:=feedback/prefixed_joint_states`. |
-| MoveIt multi-arm generalization | PARTIAL | The first profile selector is landed through `moveit_profile:=right_arm|left_arm|both_arms`. The staged custom-model path no longer depends on manual prefix/frame wiring, and `both_arms` now loads as a planning-only Duo profile on `demo.launch.py`. MIT-backed dual-arm execution and hand-aware variants remain open work. |
+| Prefixed per-arm MoveIt path | CONFIRMED | `agx_arm_moveit start_moveit.launch.py` is now the canonical package-local MoveIt entrypoint, with `demo.launch.py` reduced to a compatibility alias. The package-local and combined `agx_arm_ctrl` wrappers accept prefixed custom body models through `robot_name`, `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, `arm_base_frame`, and `arm_tip_frame`, while the MIT controller strips the same prefix on incoming trajectories. The 2026-06-02 headless right-arm pass reached `You can start planning now!`, and the launch ownership now matches the canonical naming. |
+| MoveIt multi-arm generalization | PARTIAL | The first profile selector is landed through `moveit_profile:=right_arm|left_arm|both_arms`. The staged custom-model path no longer depends on manual prefix/frame wiring, and the combined wrapper now starts one MIT controller per declared `arm_instance`, keeps the per-arm runtimes namespace-scoped, and merges prefixed feedback back into one MoveIt/RViz stream. Hand-aware variants and live dual-hardware validation remain open work. |
 | Coordinated system demo target | CONFIRMED | The first representative two-arm benchmark is a coordinated Hefeweizen pouring workflow, using one coupled planning group with orchestration above per-arm execution. |
 
 ## Achieved Vs Open Boundary
@@ -47,8 +47,9 @@ Achieved in the current Sprint 4 baseline:
 Still open before Sprint 4 exit:
 
 - the graphical RViz frame audit and physical mount measurement for the staged body geometry
-- reusable per-arm plus shared runtime launch surfaces in `agx_arm_ctrl` and `agx_arm_mit_controller`
-- prefix-aligned MoveIt outputs, including `right_arm`, `left_arm`, `both_arms`, and hand-aware variants
+- the graphical RViz frame audit and physical mount measurement for the staged body geometry
+- hand-aware MoveIt outputs beyond the landed `right_arm`, `left_arm`, and `both_arms` profiles
+- live dual-hardware validation of the namespace-scoped MIT plus agx_arm_ctrl runtime path
 
 ## Scope Adjustments From The Roadmap
 

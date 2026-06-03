@@ -13,15 +13,12 @@ from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils.launch_utils import DeclareBooleanLaunchArg
 
 from _moveit_config_builder import build_moveit_config, declare_common_args
+from _multi_arm_runtime import resolve_follow_joint_states_topic
 
 
 def _launch(context):
     moveit_config = build_moveit_config(context)
-    follow = LaunchConfiguration("follow").perform(context) == "true"
-    follow_joint_states_topic = LaunchConfiguration("follow_joint_states_topic").perform(context)
-    joint_states_topic = (
-        follow_joint_states_topic if follow else "control/joint_states"
-    )
+    joint_states_topic = resolve_follow_joint_states_topic(context)
     planning_pipelines_value = LaunchConfiguration("planning_pipelines").perform(context).strip()
     planning_pipelines = [
         pipeline.strip()

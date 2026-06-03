@@ -57,3 +57,35 @@ Fix:
 Status update:
 
 - A later Linux ROS shell pass in this workspace completed the queued package-scoped validation; the remaining gap is now RViz visualization and physical mount measurement, not basic ROS tool availability.
+
+## 2026-06-03: the canonical MoveIt launch name still pointed at a legacy implementation surface
+
+Problem:
+
+- `start_moveit.launch.py` had already become the intended neutral package-local entrypoint, but the real implementation still lived in `demo.launch.py`.
+- That left the docs, naming, and implementation ownership misaligned just as Sprint 4 grew from a single prefixed arm slice into a shared multi-arm MoveIt wrapper.
+
+Fix:
+
+- Move the actual package-local MoveIt implementation into `src/agx_arm_moveit/launch/start_moveit.launch.py`.
+- Reduce `src/agx_arm_moveit/launch/demo.launch.py` to a pure compatibility alias.
+- Update the Sprint 4 notes and package docs so `start_moveit.launch.py` is documented as the canonical package-local MoveIt surface and `demo.launch.py` is documented as legacy compatibility only.
+
+Verification:
+
+- `python3 -m py_compile src/agx_arm_moveit/launch/start_moveit.launch.py`
+
+## 2026-06-03: the first dual-arm MoveIt runtime still lacked an explicit documented shared-vs-per-arm contract
+
+Problem:
+
+- The multi-arm runtime wrapper could already launch one MIT controller per arm and route shared MoveIt planning across both arms, but Sprint 4 notes still described the shared surfaces as if wider runtime generalization had not landed.
+
+Fix:
+
+- Document the namespace-scoped per-arm runtime split in `agx_arm_ctrl` and the canonical `start_moveit.launch.py` plus `start_agx_arm_moveit.launch.py` launch hierarchy.
+- Record that the combined wrapper now merges per-arm feedback back into one prefixed MoveIt/RViz stream.
+
+Verification:
+
+- The 2026-06-03 headless `moveit_profile:=both_arms` validation through `start_agx_arm_components.launch.py mode:=moveit_mit` reached `You can start planning now!` with `left_arm` and `right_arm` MIT controller instances running concurrently.

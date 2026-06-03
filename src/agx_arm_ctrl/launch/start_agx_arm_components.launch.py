@@ -58,8 +58,8 @@ def generate_launch_description():
     moveit_profile_arg = DeclareLaunchArgument(
         "moveit_profile",
         default_value="nero_arm",
-        choices=["nero_arm", "right_arm", "left_arm"],
-        description="MoveIt planning profile. Use right_arm or left_arm for prefixed Duo custom-model bringup.",
+        choices=["nero_arm", "right_arm", "left_arm", "both_arms"],
+        description="MoveIt planning profile. Use both_arms with arm_instances for staged Duo multi-arm bringup.",
     )
     robot_name_arg = DeclareLaunchArgument(
         "robot_name",
@@ -75,6 +75,11 @@ def generate_launch_description():
         "custom_model_xacro_args",
         default_value="",
         description="Optional extra xacro args appended when custom_model is set.",
+    )
+    arm_instances_arg = DeclareLaunchArgument(
+        "arm_instances",
+        default_value="",
+        description="Optional YAML list describing managed arm runtime instances for the MoveIt bringup wrapper.",
     )
     effector_type_arg = DeclareLaunchArgument(
         "effector_type",
@@ -184,6 +189,18 @@ def generate_launch_description():
         choices=["true", "false"],
         description="Follow real arm state for visualization and MoveIt.",
     )
+    use_rviz_arg = DeclareLaunchArgument(
+        "use_rviz",
+        default_value="true",
+        choices=["true", "false"],
+        description="Launch RViz as part of the wrapped MoveIt bringup.",
+    )
+    db_arg = DeclareLaunchArgument(
+        "db",
+        default_value="false",
+        choices=["true", "false"],
+        description="Launch the MoveIt warehouse database in the wrapped MoveIt bringup.",
+    )
     mit_control_rate_arg = DeclareLaunchArgument(
         "mit_control_rate_hz",
         default_value="100.0",
@@ -204,6 +221,11 @@ def generate_launch_description():
         default_value="false",
         choices=["true", "false"],
         description="Seed the MoveIt planning scene with the repo-owned simple obstacle set.",
+    )
+    planning_pipelines_arg = DeclareLaunchArgument(
+        "planning_pipelines",
+        default_value="",
+        description="Optional comma-separated planning pipeline whitelist forwarded into move_group.",
     )
     simple_obstacles_config_arg = DeclareLaunchArgument(
         "simple_obstacles_config",
@@ -296,7 +318,7 @@ def generate_launch_description():
             os.path.join(
                 get_package_share_directory("agx_arm_ctrl"),
                 "launch",
-                "start_single_agx_arm_moveit.launch.py",
+                "start_agx_arm_moveit.launch.py",
             )
         ),
         launch_arguments={
@@ -308,6 +330,7 @@ def generate_launch_description():
             "robot_name": LaunchConfiguration("robot_name"),
             "custom_model": LaunchConfiguration("custom_model"),
             "custom_model_xacro_args": LaunchConfiguration("custom_model_xacro_args"),
+            "arm_instances": LaunchConfiguration("arm_instances"),
             "effector_type": LaunchConfiguration("effector_type"),
             "revo2_type": LaunchConfiguration("revo2_type"),
             "omnihand_type": LaunchConfiguration("omnihand_type"),
@@ -325,10 +348,13 @@ def generate_launch_description():
             "arm_tip_frame": LaunchConfiguration("arm_tip_frame"),
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
             "follow": LaunchConfiguration("follow"),
+            "use_rviz": LaunchConfiguration("use_rviz"),
+            "db": LaunchConfiguration("db"),
             "tcp_offset": LaunchConfiguration("tcp_offset"),
             "use_mit_controller": "true",
             "mit_control_rate_hz": LaunchConfiguration("mit_control_rate_hz"),
             "mit_params_file": LaunchConfiguration("mit_params_file"),
+            "planning_pipelines": LaunchConfiguration("planning_pipelines"),
             "load_simple_obstacles": LaunchConfiguration("load_simple_obstacles"),
             "simple_obstacles_config": LaunchConfiguration("simple_obstacles_config"),
         }.items(),
@@ -345,6 +371,7 @@ def generate_launch_description():
         robot_name_arg,
         custom_model_arg,
         custom_model_xacro_args_arg,
+        arm_instances_arg,
         effector_type_arg,
         revo2_type_arg,
         omnihand_type_arg,
@@ -365,10 +392,13 @@ def generate_launch_description():
         gripper_default_effort_arg,
         publish_gripper_joint_arg,
         follow_arg,
+        use_rviz_arg,
+        db_arg,
         mit_control_rate_arg,
         mit_params_file_arg,
         mit_joint_target_duration_arg,
         load_simple_obstacles_arg,
+        planning_pipelines_arg,
         simple_obstacles_config_arg,
         manual_vendor_launch,
         debug_soft_target_launch,
