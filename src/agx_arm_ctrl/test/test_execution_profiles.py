@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import yaml
+
+from agx_arm_ctrl.execution_profiles import resolve_execution_profile
+
+
+def test_resolve_right_hand_profile_sets_duo_model_and_omnihand():
+    resolved = resolve_execution_profile(
+        "right_hand",
+        duo_model_path="/tmp/duo_system.urdf.xacro",
+    )
+
+    assert resolved["custom_model"] == "/tmp/duo_system.urdf.xacro"
+    assert resolved["moveit_profile"] == "right_arm"
+    assert resolved["effector_type"] == "omnihand"
+    assert resolved["omnihand_type"] == "right"
+    assert resolved["launch_omnihand_bridge"] == "true"
+    assert resolved["input_joint_prefix"] == "right_arm_"
+    assert resolved["feedback_joint_prefix"] == "right_arm_"
+    assert resolved["tcp_parent_frame"] == "right_arm_nero_tool0"
+    assert (
+        resolved["custom_model_xacro_args"]
+        == "use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true"
+    )
+
+
+def test_resolve_duo_arm_profile_provides_planning_only_instances():
+    resolved = resolve_execution_profile(
+        "duo_arm",
+        duo_model_path="/tmp/duo_system.urdf.xacro",
+    )
+
+    assert resolved["custom_model"] == "/tmp/duo_system.urdf.xacro"
+    assert resolved["moveit_profile"] == "both_arms"
+    assert resolved["effector_type"] == "none"
+
+    arm_instances = yaml.safe_load(resolved["arm_instances"])
+    assert arm_instances == [
+        {
+            "name": "left_arm",
+            "namespace": "left_arm",
+            "joint_prefix": "left_arm_",
+            "feedback_joint_prefix": "left_arm_",
+            "launch_driver": False,
+        },
+        {
+            "name": "right_arm",
+            "namespace": "right_arm",
+            "joint_prefix": "right_arm_",
+            "feedback_joint_prefix": "right_arm_",
+            "launch_driver": False,
+        },
+    ]
+
+
+def test_resolve_multi_arm_profile_can_be_rejected_for_single_arm_surfaces():
+    try:
+        resolve_execution_profile(
+            "duo_arm",
+            duo_model_path="/tmp/duo_system.urdf.xacro",
+            allow_multi_arm=False,
+        )
+    except ValueError as exc:
+        assert "multi-arm" in str(exc)
+    else:
+        raise AssertionError("Expected multi-arm profile rejection")
+
+
+def test_resolve_unknown_profile_lists_choices():
+    try:
+        resolve_execution_profile("unknown_profile", duo_model_path="/tmp/duo_system.urdf.xacro")
+    except ValueError as exc:
+        assert "Available profiles" in str(exc)
+        assert "right_hand" in str(exc)
+    else:
+        raise AssertionError("Expected unknown profile rejection")

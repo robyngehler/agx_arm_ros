@@ -36,6 +36,7 @@ interface_notes:
 - the wakeword-oriented motion-manager is ongoing application work and should not yet be treated as a frozen Sprint 2 runtime contract
 - default gravity behavior is Pinocchio-based with `gravity_feedforward_sign: -1.0`
 - when `gravity_urdf_path` and `calibration_file` are empty, the controller auto-discovers the canonical Nero URDF and `config/nero_gravity_calibration.json`
+- when `custom_model` is used for a prefixed Duo arm, the launch now resolves a mounted arm-only gravity URDF slice before the controller starts; the current MIT contract still excludes separate OmniHand joints from the Pinocchio model
 - the gravity model now prefers the canonical `nero_tool0` frame and falls back to legacy flange names for existing assets
 - the launch file now prefers the source YAML in a colcon workspace so parameter tuning does not require a rebuild
 risks:

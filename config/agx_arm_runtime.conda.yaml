@@ -1,0 +1,12 @@
+name: agx-arm-runtime
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - scipy
+  - pyyaml
+  - pytest
+  - python-can
+  - pinocchio

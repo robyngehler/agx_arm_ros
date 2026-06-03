@@ -1,34 +1,26 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-set -e
+set -euo pipefail
 
-echo -e "\n[1/4] Installing Python dependencies..."
-if command -v pip3 &> /dev/null; then
-    echo "  Attempting to install Python dependencies..."
-    
-    # Try with --break-system-packages first
-    if pip3 install --user python-can scipy numpy --break-system-packages 2>/dev/null; then
-        echo "  ✓ Installed successfully with --break-system-packages"
-    else
-        echo "  ⚠ Failed with --break-system-packages, trying without it"
-        pip3 install --user python-can scipy numpy
-    fi
-    echo "  ✓ Python dependencies installation completed."
-else
-    echo "  ✗ pip3 not found. Please install Python3 and pip first."
-    exit 1
-fi
+echo ""
+echo "[info] Installing system and ROS dependencies only."
+echo "[info] This script intentionally avoids pip so colcon builds stay on system Python."
+echo "[info] For the optional conda runtime/dev environment, use scripts/setup_agx_arm_runtime_env.sh after this script."
 
-# 2. Install CAN tools
-echo -e "\n[2/4] Installing CAN tools..."
+echo -e "\n[1/3] Installing base Python and CAN tools..."
 sudo apt update
-sudo apt install -y can-utils ethtool
-echo "  ✓ CAN tools installation completed."
+sudo apt install -y \
+    can-utils \
+    ethtool \
+    python3-can \
+    python3-numpy \
+    python3-pytest \
+    python3-scipy \
+    python3-yaml
+echo "  ✓ Base Python and CAN tooling installation completed."
 
-# 3. Install ROS2 dependencies
-echo -e "\n[3/4] Installing ROS2 control-related dependencies..."
-# Check ROS_DISTRO environment variable
-if [ -z "$ROS_DISTRO" ]; then
+echo -e "\n[2/3] Installing ROS2 control-related dependencies..."
+if [[ -z "${ROS_DISTRO:-}" ]]; then
     echo "  ✗ Environment variable ROS_DISTRO is not set."
     exit 1
 fi
@@ -45,8 +37,7 @@ sudo apt install -y \
 
 echo "  ✓ ROS2 control dependencies installation completed."
 
-# 4. Install MoveIt2 and additional controllers
-echo -e "\n[4/4] Installing MoveIt2 and related dependencies..."
+echo -e "\n[3/3] Installing MoveIt2 and related dependencies..."
 
 sudo apt install -y ros-$ROS_DISTRO-moveit*
 moveit_extra_packages=(
@@ -68,15 +59,14 @@ fi
 
 sudo apt-get install -y "${moveit_extra_packages[@]}"
 
-# Set locale to English to avoid MoveIt startup issues
 if [[ "$(locale | grep LC_NUMERIC)" != *"en_US.UTF-8"* ]]; then
     echo "export LC_NUMERIC=en_US.UTF-8" >> ~/.bashrc
-    source ~/.bashrc
-    echo "  ✓ Set LC_NUMERIC locale to en_US.UTF-8."
+    echo "  ✓ Added LC_NUMERIC=en_US.UTF-8 to ~/.bashrc. Open a new shell or source ~/.bashrc before running MoveIt."
 else
     echo "  ✓ LC_NUMERIC locale is already set to en_US.UTF-8."
 fi
 
-# Update package list
-echo "Updating package list..."
-sudo apt-get update
+echo ""
+echo "[next] Build with scripts/colcon_build_system_python.sh"
+echo "[next] Optional runtime/dev env: scripts/setup_agx_arm_runtime_env.sh"
+echo "[next] Run ROS commands inside conda with scripts/run_in_ros_conda.sh -- <command>"

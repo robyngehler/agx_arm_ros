@@ -49,6 +49,12 @@ def generate_launch_description():
         default_value="can0",
         description="CAN port to be used by the AGX Arm node.",
     )
+    execution_profile_arg = DeclareLaunchArgument(
+        "execution_profile",
+        default_value="manual",
+        choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
+        description="Repo-owned execution preset for the wrapped debug and MoveIt launches.",
+    )
     arm_type_arg = DeclareLaunchArgument(
         "arm_type",
         default_value="nero",
@@ -285,6 +291,7 @@ def generate_launch_description():
             "namespace": LaunchConfiguration("namespace"),
             "can_port": LaunchConfiguration("can_port"),
             "arm_type": LaunchConfiguration("arm_type"),
+            "execution_profile": LaunchConfiguration("execution_profile"),
             "custom_model": LaunchConfiguration("custom_model"),
             "custom_model_xacro_args": LaunchConfiguration("custom_model_xacro_args"),
             "effector_type": LaunchConfiguration("effector_type"),
@@ -326,6 +333,7 @@ def generate_launch_description():
             "namespace": LaunchConfiguration("namespace"),
             "can_port": LaunchConfiguration("can_port"),
             "arm_type": LaunchConfiguration("arm_type"),
+            "execution_profile": LaunchConfiguration("execution_profile"),
             "moveit_profile": LaunchConfiguration("moveit_profile"),
             "robot_name": LaunchConfiguration("robot_name"),
             "custom_model": LaunchConfiguration("custom_model"),
@@ -366,6 +374,7 @@ def generate_launch_description():
         namespace_arg,
         mode_arg,
         can_port_arg,
+        execution_profile_arg,
         arm_type_arg,
         moveit_profile_arg,
         robot_name_arg,

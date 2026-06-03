@@ -19,6 +19,15 @@ Use it when the task changes topics, services, actions, messages, launch surface
 6. Use standard ROS messages when they already fit; add repo-owned message types in `src/agx_arm_msgs` only when the repo needs semantics that standard types do not provide.
 7. Do not treat vendor ROS packages or vendor topic names as the public repo contract.
 
+## Python Environment Rules
+
+- keep `colcon build` on system Python and avoid Conda/Miniforge interpreters in build shells
+- use `scripts/colcon_build_system_python.sh` as the default repo build entry point when Python environment drift is possible
+- install system-side Python build and test dependencies with `scripts/agx_arm_install_deps.sh`; do not use repo docs to justify `pip3 install` into the ROS build shell
+- treat `config/agx_arm_runtime.conda.yaml` plus `scripts/setup_agx_arm_runtime_env.sh` as the optional runtime and development Conda path
+- when running ROS commands inside the optional Conda environment, preserve the sourced ROS overlay and append to `PYTHONPATH` instead of replacing it; `scripts/run_in_ros_conda.sh` is the preferred wrapper
+- if a local TRAC-IK overlay is needed, source it in both the build and runtime paths through `AGX_ARM_TRAC_IK_OVERLAY`
+
 ## Package And Launch Guidance
 
 - extend `src/agx_arm_ctrl` for the current runtime bridge surface in the active baseline

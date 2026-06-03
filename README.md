@@ -70,7 +70,7 @@ pip3 install .
 
 ### 3. 安装依赖
 
-运行脚本一键安装所有依赖
+先安装系统侧依赖。该脚本只安装 apt/ROS 依赖，不会再向当前 Python 环境里直接 `pip3 install`，这样 `colcon build` 会稳定停留在系统 Python 上。
 
 ```bash
 cd ~/agx_arm_ws/src/agx_arm_ros/scripts/
@@ -78,93 +78,33 @@ chmod +x agx_arm_install_deps.sh
 bash ./agx_arm_install_deps.sh
 ```
 
-或者依次执行以下命令手动安装：
-
-1. Python 依赖
-
-    根据你的 ROS 版本选择安装命令：
-
-    **Jazzy** 安装命令:
-
-    ```bash
-    pip3 install python-can scipy numpy --break-system-packages
-    ```
-
-    **Humble** 安装命令:
-
-    ```bash
-    pip3 install python-can scipy numpy
-    ```
-
-2. CAN 工具
-
-    ```bash
-    sudo apt update && sudo apt install can-utils ethtool
-    ```
-
-3. ROS2 依赖
-
-    ```bash
-    sudo apt install -y \
-        ros-$ROS_DISTRO-ros2-control \
-        ros-$ROS_DISTRO-ros2-controllers \
-        ros-$ROS_DISTRO-controller-manager \
-        ros-$ROS_DISTRO-topic-tools \
-        ros-$ROS_DISTRO-joint-state-publisher-gui \
-        ros-$ROS_DISTRO-robot-state-publisher \
-        ros-$ROS_DISTRO-xacro \
-        python3-colcon-common-extensions
-    ```
-
-4. Moveit
-
-    使用 MoveIt 前，需先配置相关依赖。 具体步骤请参考：[agx_arm_moveit](./src/agx_arm_moveit/README.md)
-    
-    或者依次执行以下命令进行配置：
-
-    ```bash
-    sudo apt install ros-$ROS_DISTRO-moveit*
-    ```
-
-    ```bash
-    sudo apt-get install -y \
-        ros-$ROS_DISTRO-control* \
-        ros-$ROS_DISTRO-joint-trajectory-controller \
-        ros-$ROS_DISTRO-joint-state-* \
-        ros-$ROS_DISTRO-gripper-controllers \
-        ros-$ROS_DISTRO-trajectory-msgs
-    ```
-
-    若 apt 元数据里存在 `ros-$ROS_DISTRO-trac-ik-kinematics-plugin`，请额外安装：
-
-    ```bash
-    sudo apt-get install -y ros-$ROS_DISTRO-trac-ik-kinematics-plugin
-    ```
-
-    在 ROS 2 Humble / Jetson 环境下，该 TRAC-IK apt 包可能不存在。此时请参考 [TRAC-IK Humble / Jetson 复现实录](./docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md)，在独立 overlay 中源码构建并先于 `agx_arm_ros` source。
-
-    若系统语言区域设置不为英文区域，须设置为英文区域
-
-    ```bash
-    echo "export LC_NUMERIC=en_US.UTF-8" >> ~/.bashrc
-    source ~/.bashrc
-    ```
-
-### 4.编译并Source工作空间
-
-检查是否在虚拟环境里，如果是，建议先退出虚拟环境。
+如果你需要一个包含 `python-can`、`PyYAML`、`scipy`、`pinocchio` 和 `pyAgxArm` 的统一运行/开发环境，再额外创建仓库自带的 Conda 环境：
 
 ```bash
-which pip3
+cd ~/agx_arm_ws/src/agx_arm_ros/
+bash ./scripts/setup_agx_arm_runtime_env.sh
 ```
 
-编译工作空间并加载环境配置：
+更多说明请参考：[Python 环境工作流](./docs/project/python_environment_workflow.md)。
+
+### 4. 编译并 Source 工作空间
+
+编译阶段建议始终使用仓库自带的系统 Python 包装脚本。它会过滤掉 Conda/Miniforge 路径，再执行 `colcon build`：
 
 ```bash
-cd ~/agx_arm_ws
-colcon build
+cd ~/agx_arm_ws/src/agx_arm_ros
+bash ./scripts/colcon_build_system_python.sh
 source install/setup.bash
 ```
+
+如果你需要在 Conda 运行环境里执行 ROS 命令，不要手工混用 `conda activate` 和 `source install/setup.bash`，优先使用：
+
+```bash
+cd ~/agx_arm_ws/src/agx_arm_ros
+bash ./scripts/run_in_ros_conda.sh -- ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=right_hand
+```
+
+如果需要单独的 TRAC-IK overlay，请先设置 `AGX_ARM_TRAC_IK_OVERLAY=/path/to/install/setup.bash`，再运行上述 build/runtime 脚本。
 
 ---
 

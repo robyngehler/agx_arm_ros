@@ -1,15 +1,13 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import (
-    DeclareLaunchArgument, IncludeLaunchDescription,
-)
-from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration
-from launch.substitutions import PythonExpression
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 import os
 from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
+
+from agx_arm_ctrl.execution_profiles import resolve_execution_profile
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 
@@ -28,21 +26,227 @@ def _default_mit_params_file() -> str:
         return str(source_params_file)
     return str(installed_params_file)
 
+
+def _resolved_argument(context, profile_values: dict[str, str], name: str) -> str:
+    if name in profile_values:
+        return profile_values[name]
+    return LaunchConfiguration(name).perform(context).strip()
+
+
+def _resolved_follow_joint_states_topic(
+    follow: str,
+    explicit_topic: str,
+    input_joint_prefix: str,
+    feedback_joint_prefix: str,
+) -> str:
+    if explicit_topic and explicit_topic != 'feedback/joint_states':
+        return explicit_topic
+    if follow == 'true' and (feedback_joint_prefix or input_joint_prefix):
+        return 'feedback/prefixed_joint_states'
+    return 'feedback/joint_states'
+
+
+def _resolved_tcp_parent_frame(explicit_parent_frame: str, custom_model: str, input_joint_prefix: str) -> str:
+    if explicit_parent_frame:
+        return explicit_parent_frame
+    if custom_model and input_joint_prefix:
+        return f'{input_joint_prefix}nero_tool0'
+    return ''
+
+
+def _launch_actions(context):
+    profile_values = resolve_execution_profile(
+        LaunchConfiguration('execution_profile').perform(context).strip(),
+        allow_multi_arm=False,
+    )
+
+    namespace = LaunchConfiguration('namespace').perform(context).strip()
+    log_level = LaunchConfiguration('log_level').perform(context).strip()
+    custom_model = _resolved_argument(context, profile_values, 'custom_model')
+    custom_model_xacro_args = _resolved_argument(context, profile_values, 'custom_model_xacro_args')
+    can_port = LaunchConfiguration('can_port').perform(context).strip()
+    arm_type = LaunchConfiguration('arm_type').perform(context).strip()
+    effector_type = _resolved_argument(context, profile_values, 'effector_type')
+    revo2_type = _resolved_argument(context, profile_values, 'revo2_type')
+    omnihand_type = _resolved_argument(context, profile_values, 'omnihand_type')
+    launch_omnihand_bridge = _resolved_argument(context, profile_values, 'launch_omnihand_bridge')
+    omnihand_backend_type = LaunchConfiguration('omnihand_backend_type').perform(context).strip()
+    auto_enable = LaunchConfiguration('auto_enable').perform(context).strip()
+    fast_mode = LaunchConfiguration('fast_mode').perform(context).strip()
+    speed_percent = LaunchConfiguration('speed_percent').perform(context).strip()
+    pub_rate = LaunchConfiguration('pub_rate').perform(context).strip()
+    enable_timeout = LaunchConfiguration('enable_timeout').perform(context).strip()
+    follow = LaunchConfiguration('follow').perform(context).strip()
+    control = LaunchConfiguration('control').perform(context).strip()
+    tcp_offset = LaunchConfiguration('tcp_offset').perform(context).strip()
+    gripper_default_effort = LaunchConfiguration('gripper_default_effort').perform(context).strip()
+    use_mit_controller = LaunchConfiguration('use_mit_controller').perform(context).strip() == 'true'
+    mit_control_rate_hz = LaunchConfiguration('mit_control_rate_hz').perform(context).strip()
+    mit_params_file = LaunchConfiguration('mit_params_file').perform(context).strip()
+    mit_joint_target_duration_s = LaunchConfiguration('mit_joint_target_duration_s').perform(context).strip()
+    input_joint_prefix = _resolved_argument(context, profile_values, 'input_joint_prefix')
+    feedback_joint_prefix = _resolved_argument(context, profile_values, 'feedback_joint_prefix')
+    follow_joint_states_topic = _resolved_follow_joint_states_topic(
+        follow,
+        LaunchConfiguration('follow_joint_states_topic').perform(context).strip(),
+        input_joint_prefix,
+        feedback_joint_prefix,
+    )
+    tcp_parent_frame = _resolved_tcp_parent_frame(
+        _resolved_argument(context, profile_values, 'tcp_parent_frame'),
+        custom_model,
+        input_joint_prefix,
+    )
+
+    actions = [
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    get_package_share_directory('agx_arm_description'),
+                    'launch',
+                    'display_control.launch.py',
+                )
+            ),
+            launch_arguments={
+                'namespace': namespace,
+                'arm_type': arm_type,
+                'custom_model': custom_model,
+                'custom_model_xacro_args': custom_model_xacro_args,
+                'effector_type': effector_type,
+                'revo2_type': revo2_type,
+                'omnihand_type': omnihand_type,
+                'pub_rate': pub_rate,
+                'follow': follow,
+                'follow_joint_states_topic': follow_joint_states_topic,
+                'tcp_offset': tcp_offset,
+                'tcp_parent_frame': tcp_parent_frame,
+                'control': control,
+                'control_topic': 'mit_controller/soft_target_joint_states' if use_mit_controller else 'control/joint_states',
+            }.items(),
+        )
+    ]
+
+    if use_mit_controller:
+        actions.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        get_package_share_directory('agx_arm_mit_controller'),
+                        'launch',
+                        'start_nero_mit_controller.launch.py',
+                    )
+                ),
+                launch_arguments={
+                    'namespace': namespace,
+                    'can_port': can_port,
+                    'arm_type': arm_type,
+                    'custom_model': custom_model,
+                    'custom_model_xacro_args': custom_model_xacro_args,
+                    'effector_type': effector_type,
+                    'omnihand_type': omnihand_type,
+                    'launch_omnihand_bridge': launch_omnihand_bridge,
+                    'omnihand_backend_type': omnihand_backend_type,
+                    'auto_enable': auto_enable,
+                    'fast_mode': fast_mode,
+                    'speed_percent': speed_percent,
+                    'pub_rate': pub_rate,
+                    'enable_timeout': enable_timeout,
+                    'tcp_offset': tcp_offset,
+                    'gripper_default_effort': gripper_default_effort,
+                    'control_rate_hz': mit_control_rate_hz,
+                    'params_file': mit_params_file,
+                    'log_level': log_level,
+                    'input_joint_prefix': input_joint_prefix,
+                    'enable_debug_joint_trajectory_topic': control,
+                }.items(),
+            )
+        )
+    else:
+        actions.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        get_package_share_directory('agx_arm_ctrl'),
+                        'launch',
+                        'start_single_agx_arm.launch.py',
+                    )
+                ),
+                launch_arguments={
+                    'namespace': namespace,
+                    'can_port': can_port,
+                    'pub_rate': pub_rate,
+                    'auto_enable': auto_enable,
+                    'fast_mode': fast_mode,
+                    'arm_type': arm_type,
+                    'speed_percent': speed_percent,
+                    'enable_timeout': enable_timeout,
+                    'effector_type': effector_type,
+                    'omnihand_type': omnihand_type,
+                    'launch_omnihand_bridge': launch_omnihand_bridge,
+                    'omnihand_backend_type': omnihand_backend_type,
+                    'tcp_offset': tcp_offset,
+                    'gripper_default_effort': gripper_default_effort,
+                }.items(),
+            )
+        )
+
+    if use_mit_controller and control == 'true':
+        actions.append(
+            Node(
+                package='agx_arm_mit_tools',
+                executable='agx_arm_mit_joint_state_bridge',
+                namespace=namespace,
+                parameters=[{
+                    'segment_duration_s': mit_joint_target_duration_s,
+                    'input_joint_prefix': input_joint_prefix,
+                    'auto_enable': False,
+                }],
+            )
+        )
+
+    if (
+        follow == 'true'
+        and (feedback_joint_prefix or input_joint_prefix)
+        and follow_joint_states_topic in ('feedback/joint_states', 'feedback/prefixed_joint_states')
+    ):
+        actions.append(
+            Node(
+                package='agx_arm_mit_tools',
+                executable='agx_arm_joint_state_name_adapter',
+                namespace=namespace,
+                parameters=[{
+                    'input_topic': 'feedback/joint_states',
+                    'output_topic': 'feedback/prefixed_joint_states',
+                    'joint_prefix': feedback_joint_prefix or input_joint_prefix,
+                    'mode': 'prepend',
+                }],
+            )
+        )
+
+    return actions
+
+
 def generate_launch_description():
 
     default_mit_params_file = _default_mit_params_file()
 
-    # arg
     log_level_arg = DeclareLaunchArgument(
         'log_level',
         default_value='info',
         description='Logging level (debug, info, warn, error, fatal).'
     )
-    
+
     namespace_arg = DeclareLaunchArgument(
         'namespace',
         default_value='',
         description='ROS namespace for this robot instance. Leave empty for the default shared graph; use a namespace only to separate multiple robots.'
+    )
+
+    execution_profile_arg = DeclareLaunchArgument(
+        'execution_profile',
+        default_value='manual',
+        choices=['manual', 'standalone', 'left_arm', 'left_hand', 'right_arm', 'right_hand', 'duo_arm'],
+        description='Repo-owned execution preset for single-arm debug and MIT bringup. Multi-arm profiles are rejected here.',
     )
 
     custom_model_arg = DeclareLaunchArgument(
@@ -78,7 +282,7 @@ def generate_launch_description():
     )
 
     revo2_type_arg = DeclareLaunchArgument(
-       'revo2_type',
+        'revo2_type',
         default_value='left',
         choices=['left', 'right'],
         description='Revo2 end effector type (e.g. left, right).'
@@ -211,183 +415,10 @@ def generate_launch_description():
         description='Optional parent frame for the tcp_offset static transform. For the current prefixed Duo right-arm slice this is typically right_arm_nero_tool0.',
     )
 
-    resolved_follow_joint_states_topic = PythonExpression([
-        "'",
-        LaunchConfiguration('follow_joint_states_topic'),
-        "' if '",
-        LaunchConfiguration('follow_joint_states_topic'),
-        "' != 'feedback/joint_states' else ('feedback/prefixed_joint_states' if ('",
-        LaunchConfiguration('follow'),
-        "' == 'true' and (('",
-        LaunchConfiguration('feedback_joint_prefix'),
-        "' != '') or ('",
-        LaunchConfiguration('input_joint_prefix'),
-        "' != ''))) else 'feedback/joint_states')",
-    ])
-
-    resolved_tcp_parent_frame = PythonExpression([
-        "'",
-        LaunchConfiguration('tcp_parent_frame'),
-        "' if '",
-        LaunchConfiguration('tcp_parent_frame'),
-        "' != '' else ('",
-        LaunchConfiguration('input_joint_prefix'),
-        "nero_tool0' if ('",
-        LaunchConfiguration('custom_model'),
-        "' != '' and '",
-        LaunchConfiguration('input_joint_prefix'),
-        "' != '') else '')",
-    ])
-
-    # description: use the sim-backed compatibility launch from agx_arm_description
-    description_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('agx_arm_description'),
-                'launch',
-                'display_control.launch.py',
-            )
-        ),
-        launch_arguments={
-            'namespace': LaunchConfiguration('namespace'),
-            'arm_type': LaunchConfiguration('arm_type'),
-            'custom_model': LaunchConfiguration('custom_model'),
-            'custom_model_xacro_args': LaunchConfiguration('custom_model_xacro_args'),
-            'effector_type': LaunchConfiguration('effector_type'),
-            'revo2_type': LaunchConfiguration('revo2_type'),
-            'omnihand_type': LaunchConfiguration('omnihand_type'),
-            'pub_rate': LaunchConfiguration('pub_rate'),
-            'follow': LaunchConfiguration('follow'),
-            'follow_joint_states_topic': resolved_follow_joint_states_topic,
-            'tcp_offset': LaunchConfiguration('tcp_offset'),
-            'tcp_parent_frame': resolved_tcp_parent_frame,
-            'control': LaunchConfiguration('control'),
-            'control_topic': PythonExpression([
-                "'mit_controller/soft_target_joint_states' if '",
-                LaunchConfiguration('use_mit_controller'),
-                "' == 'true' else 'control/joint_states'",
-            ]),
-        }.items(),
-    )
-
-    # agx_arm
-    agx_arm_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('agx_arm_ctrl'),
-                'launch',
-                'start_single_agx_arm.launch.py',
-            )
-        ),
-        launch_arguments={
-            'namespace': LaunchConfiguration('namespace'),
-            'can_port': LaunchConfiguration('can_port'),
-            'pub_rate': LaunchConfiguration('pub_rate'),
-            'auto_enable': LaunchConfiguration('auto_enable'),
-            'fast_mode': LaunchConfiguration('fast_mode'),
-            'arm_type': LaunchConfiguration('arm_type'),
-            'speed_percent': LaunchConfiguration('speed_percent'),
-            'enable_timeout': LaunchConfiguration('enable_timeout'),
-            'effector_type': LaunchConfiguration('effector_type'),
-            'omnihand_type': LaunchConfiguration('omnihand_type'),
-            'launch_omnihand_bridge': LaunchConfiguration('launch_omnihand_bridge'),
-            'omnihand_backend_type': LaunchConfiguration('omnihand_backend_type'),
-            'tcp_offset': LaunchConfiguration('tcp_offset'),
-            'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
-        }.items(),
-        condition=UnlessCondition(LaunchConfiguration('use_mit_controller')),
-    )
-
-    mit_arm_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('agx_arm_mit_controller'),
-                'launch',
-                'start_nero_mit_controller.launch.py',
-            )
-        ),
-        launch_arguments={
-            'namespace': LaunchConfiguration('namespace'),
-            'can_port': LaunchConfiguration('can_port'),
-            'arm_type': LaunchConfiguration('arm_type'),
-            'effector_type': LaunchConfiguration('effector_type'),
-            'omnihand_type': LaunchConfiguration('omnihand_type'),
-            'launch_omnihand_bridge': LaunchConfiguration('launch_omnihand_bridge'),
-            'omnihand_backend_type': LaunchConfiguration('omnihand_backend_type'),
-            'auto_enable': LaunchConfiguration('auto_enable'),
-            'fast_mode': LaunchConfiguration('fast_mode'),
-            'speed_percent': LaunchConfiguration('speed_percent'),
-            'pub_rate': LaunchConfiguration('pub_rate'),
-            'enable_timeout': LaunchConfiguration('enable_timeout'),
-            'tcp_offset': LaunchConfiguration('tcp_offset'),
-            'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
-            'control_rate_hz': LaunchConfiguration('mit_control_rate_hz'),
-            'params_file': LaunchConfiguration('mit_params_file'),
-            'log_level': LaunchConfiguration('log_level'),
-            'enable_debug_joint_trajectory_topic': LaunchConfiguration('control'),
-        }.items(),
-        condition=IfCondition(LaunchConfiguration('use_mit_controller')),
-    )
-
-    mit_joint_state_bridge = Node(
-        package='agx_arm_mit_tools',
-        executable='agx_arm_mit_joint_state_bridge',
-        namespace=LaunchConfiguration('namespace'),
-        parameters=[{
-            'segment_duration_s': LaunchConfiguration('mit_joint_target_duration_s'),
-            'input_joint_prefix': LaunchConfiguration('input_joint_prefix'),
-            'auto_enable': False,
-        }],
-        condition=IfCondition(
-            PythonExpression([
-                "'",
-                LaunchConfiguration('use_mit_controller'),
-                "' == 'true' and '",
-                LaunchConfiguration('control'),
-                "' == 'true'",
-            ])
-        ),
-    )
-
-    feedback_joint_state_adapter = Node(
-        package='agx_arm_mit_tools',
-        executable='agx_arm_joint_state_name_adapter',
-        namespace=LaunchConfiguration('namespace'),
-        parameters=[{
-            'input_topic': 'feedback/joint_states',
-            'output_topic': 'feedback/prefixed_joint_states',
-            'joint_prefix': PythonExpression([
-                "'",
-                LaunchConfiguration('feedback_joint_prefix'),
-                "' if '",
-                LaunchConfiguration('feedback_joint_prefix'),
-                "' != '' else '",
-                LaunchConfiguration('input_joint_prefix'),
-                "'",
-            ]),
-            'mode': 'prepend',
-        }],
-        condition=IfCondition(
-            PythonExpression([
-                "('",
-                LaunchConfiguration('follow'),
-                "' == 'true') and (('",
-                LaunchConfiguration('feedback_joint_prefix'),
-                "' != '') or ('",
-                LaunchConfiguration('input_joint_prefix'),
-                "' != '')) and (('",
-                LaunchConfiguration('follow_joint_states_topic'),
-                "' == 'feedback/joint_states') or ('",
-                LaunchConfiguration('follow_joint_states_topic'),
-                "' == 'feedback/prefixed_joint_states'))",
-            ])
-        ),
-    )
-
     return LaunchDescription([
-        # arguments
         log_level_arg,
         namespace_arg,
+        execution_profile_arg,
         custom_model_arg,
         custom_model_xacro_args_arg,
         can_port_arg,
@@ -414,11 +445,5 @@ def generate_launch_description():
         feedback_joint_prefix_arg,
         follow_joint_states_topic_arg,
         tcp_parent_frame_arg,
-        # description
-        description_launch,
-        # agx_arm
-        agx_arm_launch,
-        mit_arm_launch,
-        mit_joint_state_bridge,
-        feedback_joint_state_adapter,
+        OpaqueFunction(function=_launch_actions),
     ])

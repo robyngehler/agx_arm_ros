@@ -22,6 +22,7 @@ from _multi_arm_runtime import (  # noqa: E402
     requires_prefixed_feedback,
     resolve_arm_instances,
 )
+from agx_arm_ctrl.execution_profiles import resolve_execution_profile  # noqa: E402
 
 
 def _bool_string(value: object, default: str) -> str:
@@ -34,11 +35,17 @@ def _value_or_default(raw_value: object, default_value: str) -> str:
     return text if text else default_value
 
 
-def _resolved_robot_name(context) -> str:
-    robot_name = LaunchConfiguration("robot_name").perform(context).strip()
+def _resolved_argument(context, profile_values: dict[str, str], name: str) -> str:
+    if name in profile_values:
+        return profile_values[name]
+    return LaunchConfiguration(name).perform(context).strip()
+
+
+def _resolved_robot_name(context, profile_values: dict[str, str]) -> str:
+    robot_name = _resolved_argument(context, profile_values, "robot_name")
     if robot_name:
         return robot_name
-    custom_model = LaunchConfiguration("custom_model").perform(context).strip()
+    custom_model = _resolved_argument(context, profile_values, "custom_model")
     return "duo_nero_system" if custom_model else "agx_arm"
 
 
@@ -70,10 +77,22 @@ def _resolved_follow_joint_states_topic(context, instances: list[dict[str, str]]
 
 
 def _instance_runtime_launches(context):
-    moveit_profile = LaunchConfiguration("moveit_profile").perform(context).strip()
-    explicit_joint_prefix = LaunchConfiguration("input_joint_prefix").perform(context).strip()
-    explicit_feedback_joint_prefix = LaunchConfiguration("feedback_joint_prefix").perform(context).strip()
-    arm_instances_raw = LaunchConfiguration("arm_instances").perform(context)
+    profile_values = resolve_execution_profile(
+        LaunchConfiguration("execution_profile").perform(context).strip()
+    )
+    moveit_profile = _resolved_argument(context, profile_values, "moveit_profile")
+    explicit_joint_prefix = _resolved_argument(context, profile_values, "input_joint_prefix")
+    explicit_feedback_joint_prefix = _resolved_argument(context, profile_values, "feedback_joint_prefix")
+    arm_instances_raw = _resolved_argument(context, profile_values, "arm_instances")
+    custom_model = _resolved_argument(context, profile_values, "custom_model")
+    custom_model_xacro_args = _resolved_argument(context, profile_values, "custom_model_xacro_args")
+    effector_type = _resolved_argument(context, profile_values, "effector_type")
+    revo2_type = _resolved_argument(context, profile_values, "revo2_type")
+    omnihand_type = _resolved_argument(context, profile_values, "omnihand_type")
+    launch_omnihand_bridge = _resolved_argument(context, profile_values, "launch_omnihand_bridge")
+    tcp_offset = _resolved_argument(context, profile_values, "tcp_offset")
+    arm_base_frame = _resolved_argument(context, profile_values, "arm_base_frame")
+    arm_tip_frame = _resolved_argument(context, profile_values, "arm_tip_frame")
     instances = resolve_arm_instances(
         moveit_profile,
         arm_instances_raw,
@@ -87,9 +106,9 @@ def _instance_runtime_launches(context):
     actions = []
     if len(instances) > 1:
         for instance in instances:
-            if not instance["can_port"]:
+            if _bool_string(instance["launch_driver"], "true") == "true" and not instance["can_port"]:
                 raise ValueError(
-                    "Multi-arm runtime launch requires arm_instances entries to define can_port"
+                    "Multi-arm runtime launch requires arm_instances entries to define can_port when launch_driver is true"
                 )
 
     for instance in instances:
@@ -98,10 +117,10 @@ def _instance_runtime_launches(context):
             "namespace": instance_namespace,
             "can_port": _value_or_default(instance["can_port"], LaunchConfiguration("can_port").perform(context)),
             "arm_type": _value_or_default(instance["arm_type"], LaunchConfiguration("arm_type").perform(context)),
-            "effector_type": _value_or_default(instance["effector_type"], LaunchConfiguration("effector_type").perform(context)),
-            "omnihand_type": _value_or_default(instance["omnihand_type"], LaunchConfiguration("omnihand_type").perform(context)),
-            "revo2_type": _value_or_default(instance["revo2_type"], LaunchConfiguration("revo2_type").perform(context)),
-            "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge").perform(context),
+            "effector_type": _value_or_default(instance["effector_type"], effector_type),
+            "omnihand_type": _value_or_default(instance["omnihand_type"], omnihand_type),
+            "revo2_type": _value_or_default(instance["revo2_type"], revo2_type),
+            "launch_omnihand_bridge": launch_omnihand_bridge,
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type").perform(context),
             "auto_enable": LaunchConfiguration("auto_enable").perform(context),
             "log_level": LaunchConfiguration("log_level").perform(context),
@@ -109,7 +128,7 @@ def _instance_runtime_launches(context):
             "speed_percent": LaunchConfiguration("speed_percent").perform(context),
             "pub_rate": LaunchConfiguration("pub_rate").perform(context),
             "enable_timeout": LaunchConfiguration("enable_timeout").perform(context),
-            "tcp_offset": _value_or_default(instance["tcp_offset"], LaunchConfiguration("tcp_offset").perform(context)),
+            "tcp_offset": _value_or_default(instance["tcp_offset"], tcp_offset),
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort").perform(context),
             "publish_gripper_joint": "false",
         }
@@ -123,6 +142,8 @@ def _instance_runtime_launches(context):
                     launch_arguments={
                         **common_arguments,
                         "control_rate_hz": LaunchConfiguration("mit_control_rate_hz").perform(context),
+                        "custom_model": custom_model,
+                        "custom_model_xacro_args": custom_model_xacro_args,
                         "input_joint_prefix": instance["joint_prefix"],
                         "params_file": LaunchConfiguration("mit_params_file").perform(context),
                         "launch_driver": _bool_string(instance["launch_driver"], "true"),
@@ -170,17 +191,17 @@ def _instance_runtime_launches(context):
                 "namespace": root_namespace,
                 "arm_type": LaunchConfiguration("arm_type").perform(context),
                 "moveit_profile": moveit_profile,
-                "robot_name": _resolved_robot_name(context),
-                "custom_model": LaunchConfiguration("custom_model").perform(context),
-                "custom_model_xacro_args": LaunchConfiguration("custom_model_xacro_args").perform(context),
-                "effector_type": LaunchConfiguration("effector_type").perform(context),
-                "revo2_type": LaunchConfiguration("revo2_type").perform(context),
-                "omnihand_type": LaunchConfiguration("omnihand_type").perform(context),
-                "tcp_offset": LaunchConfiguration("tcp_offset").perform(context),
+                "robot_name": _resolved_robot_name(context, profile_values),
+                "custom_model": custom_model,
+                "custom_model_xacro_args": custom_model_xacro_args,
+                "effector_type": effector_type,
+                "revo2_type": revo2_type,
+                "omnihand_type": omnihand_type,
+                "tcp_offset": tcp_offset,
                 "input_joint_prefix": explicit_joint_prefix,
                 "feedback_joint_prefix": explicit_feedback_joint_prefix,
-                "arm_base_frame": LaunchConfiguration("arm_base_frame").perform(context),
-                "arm_tip_frame": LaunchConfiguration("arm_tip_frame").perform(context),
+                "arm_base_frame": arm_base_frame,
+                "arm_tip_frame": arm_tip_frame,
                 "follow": LaunchConfiguration("follow").perform(context),
                 "follow_joint_states_topic": _resolved_follow_joint_states_topic(context, instances),
                 "use_mit_controller": LaunchConfiguration("use_mit_controller").perform(context),
@@ -189,17 +210,27 @@ def _instance_runtime_launches(context):
                 "planning_pipelines": LaunchConfiguration("planning_pipelines").perform(context),
                 "load_simple_obstacles": LaunchConfiguration("load_simple_obstacles").perform(context),
                 "simple_obstacles_config": LaunchConfiguration("simple_obstacles_config").perform(context),
-                "arm_instances": LaunchConfiguration("arm_instances").perform(context),
+                "arm_instances": arm_instances_raw,
             }.items(),
         )
     )
 
-    if LaunchConfiguration("arm_instances").perform(context).strip():
+    if arm_instances_raw:
         actions.append(
             LogInfo(
                 msg=[
                     "Managed arm instances: ",
-                    LaunchConfiguration("arm_instances"),
+                    arm_instances_raw,
+                ]
+            )
+        )
+
+    if profile_values:
+        actions.append(
+            LogInfo(
+                msg=[
+                    "Resolved execution_profile: ",
+                    LaunchConfiguration("execution_profile"),
                 ]
             )
         )
@@ -213,6 +244,12 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("log_level", default_value="info"),
             DeclareLaunchArgument("namespace", default_value=""),
+            DeclareLaunchArgument(
+                "execution_profile",
+                default_value="manual",
+                choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
+                description="Repo-owned execution preset that resolves mounted Duo model, prefixes, and supported hand wiring from one choice.",
+            ),
             DeclareLaunchArgument("can_port", default_value="can0"),
             DeclareLaunchArgument("arm_type", default_value="nero", choices=["nero"]),
             DeclareLaunchArgument(

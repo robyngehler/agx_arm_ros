@@ -15,6 +15,7 @@ Load this instruction for ROS2-native questions and decisions.
 - keep hand-only diagnostics under `feedback/omnihand/*`
 - use standard ROS messages first and extend `agx_arm_msgs` only for repo-owned semantics
 - do not treat vendor ROS packages or vendor topics as the public repo contract
+- keep `colcon build` on system Python; use the repo-owned wrappers for optional Conda runtime and development shells instead of mixing build and runtime interpreters
 
 ## Value Capture
 
@@ -32,3 +33,4 @@ Load this instruction for ROS2-native questions and decisions.
 - prefer `colcon build --packages-select ...` for touched packages
 - run `colcon test --packages-select ...` when relevant tests exist
 - say explicitly when hardware validation could not be run
+- when Python environment drift is part of the issue, use `scripts/colcon_build_system_python.sh` for builds and `scripts/run_in_ros_conda.sh` for optional runtime commands

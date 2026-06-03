@@ -1,0 +1,97 @@
+profiles:
+  manual: {}
+
+  standalone:
+    robot_name: agx_arm
+    moveit_profile: nero_arm
+    effector_type: none
+
+  left_arm:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: left_arm
+    effector_type: none
+    input_joint_prefix: left_arm_
+    feedback_joint_prefix: left_arm_
+    arm_base_frame: left_arm_base_link
+    arm_tip_frame: left_arm_nero_tool0
+    tcp_parent_frame: left_arm_nero_tool0
+    custom_model_xacro_args:
+      use_left_arm: true
+      use_left_hand: false
+      use_right_arm: false
+      use_right_hand: false
+
+  left_hand:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: left_arm
+    effector_type: omnihand
+    omnihand_type: left
+    launch_omnihand_bridge: true
+    input_joint_prefix: left_arm_
+    feedback_joint_prefix: left_arm_
+    arm_base_frame: left_arm_base_link
+    arm_tip_frame: left_arm_nero_tool0
+    tcp_parent_frame: left_arm_nero_tool0
+    custom_model_xacro_args:
+      use_left_arm: true
+      use_left_hand: true
+      use_right_arm: false
+      use_right_hand: false
+
+  right_arm:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: right_arm
+    effector_type: none
+    input_joint_prefix: right_arm_
+    feedback_joint_prefix: right_arm_
+    arm_base_frame: right_arm_base_link
+    arm_tip_frame: right_arm_nero_tool0
+    tcp_parent_frame: right_arm_nero_tool0
+    custom_model_xacro_args:
+      use_left_arm: false
+      use_left_hand: false
+      use_right_arm: true
+      use_right_hand: false
+
+  right_hand:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: right_arm
+    effector_type: omnihand
+    omnihand_type: right
+    launch_omnihand_bridge: true
+    input_joint_prefix: right_arm_
+    feedback_joint_prefix: right_arm_
+    arm_base_frame: right_arm_base_link
+    arm_tip_frame: right_arm_nero_tool0
+    tcp_parent_frame: right_arm_nero_tool0
+    custom_model_xacro_args:
+      use_left_arm: false
+      use_left_hand: false
+      use_right_arm: true
+      use_right_hand: true
+
+  duo_arm:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: both_arms
+    effector_type: none
+    custom_model_xacro_args:
+      use_left_arm: true
+      use_left_hand: false
+      use_right_arm: true
+      use_right_hand: false
+    arm_instances:
+      - name: left_arm
+        namespace: left_arm
+        joint_prefix: left_arm_
+        feedback_joint_prefix: left_arm_
+        launch_driver: false
+      - name: right_arm
+        namespace: right_arm
+        joint_prefix: right_arm_
+        feedback_joint_prefix: right_arm_
+        launch_driver: false

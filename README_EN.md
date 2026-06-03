@@ -70,7 +70,7 @@ pip3 install .
 
 ### 3. Install Dependencies
 
-Run the script to install all dependencies at once:
+Install the system-side dependencies first. The repo script now stays on apt and ROS packages only, so `colcon build` does not drift into whichever Python environment happens to be active.
 
 ```bash
 cd ~/agx_arm_ws/src/agx_arm_ros/scripts/
@@ -78,93 +78,33 @@ chmod +x agx_arm_install_deps.sh
 bash ./agx_arm_install_deps.sh
 ```
 
-Or install manually by executing the following commands in order:
+If you also want one reproducible Conda environment for runtime and Python-side development, create the repo-owned environment afterwards:
 
-1. Python dependencies
+```bash
+cd ~/agx_arm_ws/src/agx_arm_ros/
+bash ./scripts/setup_agx_arm_runtime_env.sh
+```
 
-    Choose the installation command based on your ROS version:
-
-    **Jazzy** installation command:
-
-    ```bash
-    pip3 install python-can scipy numpy --break-system-packages
-    ```
-
-    **Humble** installation command:
-
-    ```bash
-    pip3 install python-can scipy numpy
-    ```
-
-2. CAN tools
-
-    ```bash
-    sudo apt update && sudo apt install can-utils ethtool
-    ```
-
-3. ROS2 dependencies
-
-    ```bash
-    sudo apt install -y \
-        ros-$ROS_DISTRO-ros2-control \
-        ros-$ROS_DISTRO-ros2-controllers \
-        ros-$ROS_DISTRO-controller-manager \
-        ros-$ROS_DISTRO-topic-tools \
-        ros-$ROS_DISTRO-joint-state-publisher-gui \
-        ros-$ROS_DISTRO-robot-state-publisher \
-        ros-$ROS_DISTRO-xacro \
-        python3-colcon-common-extensions
-    ```
-
-4. MoveIt
-
-    Before using MoveIt, you need to configure the related dependencies. For detailed steps, please refer to: [agx_arm_moveit](./src/agx_arm_moveit/README_EN.md)
-    
-    Or execute the following commands in order:
-
-    ```bash
-    sudo apt install ros-$ROS_DISTRO-moveit*
-    ```
-
-    ```bash
-    sudo apt-get install -y \
-        ros-$ROS_DISTRO-control* \
-        ros-$ROS_DISTRO-joint-trajectory-controller \
-        ros-$ROS_DISTRO-joint-state-* \
-        ros-$ROS_DISTRO-gripper-controllers \
-        ros-$ROS_DISTRO-trajectory-msgs
-    ```
-
-    If `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` is available in your apt metadata, install it as well:
-
-    ```bash
-    sudo apt-get install -y ros-$ROS_DISTRO-trac-ik-kinematics-plugin
-    ```
-
-    On ROS 2 Humble / Jetson, the TRAC-IK apt package may be missing. In that case, build TRAC-IK in a separate overlay and source it before `agx_arm_ros`; see [TRAC-IK Humble / Jetson repro](./docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md).
-
-    If the system locale is not set to English, it must be set to English locale:
-
-    ```bash
-    echo "export LC_NUMERIC=en_US.UTF-8" >> ~/.bashrc
-    source ~/.bashrc
-    ```
+For more detail, see [Python environment workflow](./docs/project/python_environment_workflow.md).
 
 ### 4. Build and Source Workspace
 
-Check if you are in a virtual environment. If so, it is recommended to exit the virtual environment first.
+Use the repo build wrapper for workspace builds. It strips Conda/Miniforge paths before calling `colcon build` so the ROS overlay is generated with system Python:
 
 ```bash
-which pip3
-```
-
-Build and Source the workspace:
-
-```bash
-cd ~/agx_arm_ws
-colcon build
+cd ~/agx_arm_ws/src/agx_arm_ros
+bash ./scripts/colcon_build_system_python.sh
 source install/setup.bash
 ```
+
+When you want to run ROS commands inside the optional Conda environment, prefer the repo wrapper instead of manually mixing `conda activate` and `source install/setup.bash`:
+
+```bash
+cd ~/agx_arm_ws/src/agx_arm_ros
+bash ./scripts/run_in_ros_conda.sh -- ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=right_hand
+```
+
+If you need a separate TRAC-IK overlay, export `AGX_ARM_TRAC_IK_OVERLAY=/path/to/install/setup.bash` before running the build or runtime wrappers above.
 
 ---
 
