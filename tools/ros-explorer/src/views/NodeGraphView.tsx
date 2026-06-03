@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect, type ReactNode } from "react";
 import {
   ReactFlow,
   Background,
@@ -219,6 +219,59 @@ const nodeTypes = {
   externalEndpoint: ExternalEndpointCard,
   semanticEndpoint: SemanticEndpointCard,
 };
+
+const DETAIL_PANEL_MIN_WIDTH = 300;
+const DETAIL_PANEL_DEFAULT_WIDTH = 360;
+const DETAIL_PANEL_MAX_WIDTH = 720;
+
+type DetailPanelShellProps = {
+  width: number;
+  onResizeStart: () => void;
+  children: ReactNode;
+};
+
+function DetailPanelShell({ width, onResizeStart, children }: DetailPanelShellProps) {
+  return (
+    <div
+      style={{
+        position: "relative",
+        width,
+        minWidth: width,
+        maxWidth: width,
+        borderLeft: "1px solid #1e293b",
+        background: "#080e1a",
+        overflowY: "auto",
+        flexShrink: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div
+        onMouseDown={(event) => {
+          event.preventDefault();
+          onResizeStart();
+        }}
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: 0,
+          width: 10,
+          transform: "translateX(-50%)",
+          cursor: "col-resize",
+          zIndex: 10,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        title="Drag to resize details"
+      >
+        <div style={{ width: 2, height: 48, borderRadius: 999, background: "#334155", opacity: 0.9 }} />
+      </div>
+      {children}
+    </div>
+  );
+}
 
 // ── Dagre auto-layout (left-to-right hierarchical) ───────────────────────────
 const NODE_W = 240;
@@ -460,6 +513,8 @@ export function NodeGraphView() {
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(DETAIL_PANEL_DEFAULT_WIDTH);
+  const [isResizingDetailPanel, setIsResizingDetailPanel] = useState(false);
 
   const allNodes = useMemo(() => {
     if (!data) return [] as RosNode[];
@@ -480,6 +535,39 @@ export function NodeGraphView() {
     setSelectedItemId(null);
     setSelectedEdge(null);
   }, []);
+
+  const handleDetailPanelResizeStart = useCallback(() => {
+    setIsResizingDetailPanel(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isResizingDetailPanel) return undefined;
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const maxWidth = Math.min(DETAIL_PANEL_MAX_WIDTH, Math.max(DETAIL_PANEL_MIN_WIDTH, window.innerWidth - 240));
+      const nextWidth = window.innerWidth - event.clientX;
+      setDetailPanelWidth(Math.max(DETAIL_PANEL_MIN_WIDTH, Math.min(maxWidth, nextWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingDetailPanel(false);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingDetailPanel]);
 
   const { nodes: flowNodes, edges: flowEdges } = useMemo(() => {
     if (!data) return { nodes: [], edges: [] };
@@ -539,7 +627,7 @@ export function NodeGraphView() {
     }));
 
     const rfEdges: Edge[] = [];
-    const semanticBridgeMeta = new Map<string, { nodeIndex: number; labels: Set<string> }>();
+    const semanticEdgeMeta = new Map<string, { edgeIndex: number; labels: Set<string> }>();
     const topicBridgeMap = new Map<string, string>(); // topic → bridge node id
     const topicBridgeMetadata = new Map<string, { topic: string; msgType: string }>();
 
@@ -551,6 +639,7 @@ export function NodeGraphView() {
       source,
       target,
       label,
+      typeName,
       color,
       dasharray,
       width,
@@ -559,52 +648,66 @@ export function NodeGraphView() {
       source: string;
       target: string;
       label: string;
+      typeName: string;
       color: string;
       dasharray: string;
       width: number;
     }) => {
       const pairKey = `${kind}:${source}:${target}`;
-      const existing = semanticBridgeMeta.get(pairKey);
+      const existing = semanticEdgeMeta.get(pairKey);
       if (existing) {
         existing.labels.add(label);
-        rfNodes[existing.nodeIndex] = {
-          ...rfNodes[existing.nodeIndex],
-          data: {
-            ...(rfNodes[existing.nodeIndex].data as object),
-            labels: [...existing.labels],
-          },
+        const labels = [...existing.labels];
+        const currentEdge = rfEdges[existing.edgeIndex];
+        rfEdges[existing.edgeIndex] = {
+          ...currentEdge,
+          data: currentEdge.data && "kind" in currentEdge.data
+            ? (currentEdge.data.kind === "service"
+                ? {
+                    ...currentEdge.data,
+                    service: labels[0],
+                    semanticMatch: true,
+                    semanticLabels: labels,
+                  }
+                : {
+                    ...currentEdge.data,
+                    action: labels[0],
+                    semanticMatch: true,
+                    semanticLabels: labels,
+                  })
+            : currentEdge.data,
         };
         return;
       }
 
       const labels = new Set([label]);
-      const bridgeId = `sem_bridge__${kind}__${source}__${target}`;
-      const nodeIndex = rfNodes.push({
-        id: bridgeId,
-        type: "semanticEndpoint",
-        position: { x: 0, y: 0 },
-        data: {
-          endpointType: kind,
-          labels: [...labels],
-          sourceId: source,
-          targetId: target,
-        },
-      }) - 1;
-      rfEdges.push({
-        id: `${bridgeId}__in`,
+      const edgeIndex = rfEdges.push({
+        id: `${kind}_sem__${source}__${target}`,
         source,
-        target: bridgeId,
-        style: { stroke: color, strokeDasharray: dasharray, strokeWidth: width },
-        markerEnd: { type: MarkerType.ArrowClosed, color },
-      });
-      rfEdges.push({
-        id: `${bridgeId}__out`,
-        source: bridgeId,
         target,
         style: { stroke: color, strokeDasharray: dasharray, strokeWidth: width },
         markerEnd: { type: MarkerType.ArrowClosed, color },
-      });
-      semanticBridgeMeta.set(pairKey, { nodeIndex, labels });
+        data: kind === "service"
+          ? {
+              kind: "service",
+              service: label,
+              srvType: typeName,
+              clientId: source,
+              serverId: target,
+              semanticMatch: true,
+              semanticLabels: [...labels],
+            }
+          : {
+              kind: "action",
+              action: label,
+              actionType: typeName,
+              clientId: source,
+              serverId: target,
+              semanticMatch: true,
+              semanticLabels: [...labels],
+            },
+      }) - 1;
+      semanticEdgeMeta.set(pairKey, { edgeIndex, labels });
     };
     const findCompatibleTopicBridge = (topic: string, msgType: string): string | null => {
       for (const [bridgeId, metadata] of topicBridgeMetadata) {
@@ -641,13 +744,11 @@ export function NodeGraphView() {
               const visibleSemanticSubscribers = findSemanticTopicPeers(n, t.topic, t.msgType, "sub", rosNodes);
               const allSemanticSubscribers = findSemanticTopicPeers(n, t.topic, t.msgType, "sub", allNodes);
               const hasExactVisibleSubscribers = rosNodes.some((node) => node.topics.some((item) => item.direction === "sub" && item.topic === t.topic));
-              const visibilityState: TopicBridgeVisibility = hasExactVisibleSubscribers
+              const visibilityState: TopicBridgeVisibility = (hasExactVisibleSubscribers || visibleSemanticSubscribers.length > 0)
                 ? "internal"
-                : visibleSemanticSubscribers.length > 0
-                  ? "semantic"
-                  : ((allTopicSubscribers.get(t.topic) ?? []).length > 0 || allSemanticSubscribers.length > 0)
-                    ? "filtered"
-                    : exactTopicVisibilityState(t.topic);
+                : ((allTopicSubscribers.get(t.topic) ?? []).length > 0 || allSemanticSubscribers.length > 0)
+                  ? "filtered"
+                  : exactTopicVisibilityState(t.topic);
               const bridgeId = `topic__${t.topic.replace(/\//g, "_")}`;
               topicBridgeMap.set(t.topic, bridgeId);
               topicBridgeMetadata.set(bridgeId, { topic: t.topic, msgType: t.msgType });
@@ -687,7 +788,7 @@ export function NodeGraphView() {
           const visibleSemanticPublishers = findSemanticTopicPeers(n, t.topic, t.msgType, "pub", rosNodes);
           const allSemanticPublishers = findSemanticTopicPeers(n, t.topic, t.msgType, "pub", allNodes);
           const visibilityState: TopicBridgeVisibility = visibleSemanticPublishers.length > 0
-            ? "semantic"
+            ? "internal"
             : ((allTopicPublishers.get(t.topic) ?? []).length > 0 || allSemanticPublishers.length > 0)
               ? "filtered"
               : exactTopicVisibilityState(t.topic);
@@ -783,6 +884,7 @@ export function NodeGraphView() {
                 source: clientNode.id,
                 target: serverId,
                 label: semanticName,
+                typeName: srvType,
                 color: "#f59e0b",
                 dasharray: "3,5",
                 width: 1.5,
@@ -848,6 +950,7 @@ export function NodeGraphView() {
                   source: clientId,
                   target: semanticServerId,
                   label: semanticName,
+                  typeName: clientService.srvType,
                   color: "#f59e0b",
                   dasharray: "3,5",
                   width: 1.5,
@@ -938,6 +1041,7 @@ export function NodeGraphView() {
                 source: clientNode.id,
                 target: serverId,
                 label: semanticName,
+                typeName: actionType,
                 color: "#f59e0b",
                 dasharray: "4,4",
                 width: 1.6,
@@ -1003,6 +1107,7 @@ export function NodeGraphView() {
                   source: clientId,
                   target: semanticServerId,
                   label: semanticName,
+                  typeName: clientAction.actionType,
                   color: "#f59e0b",
                   dasharray: "4,4",
                   width: 1.6,
@@ -1155,7 +1260,13 @@ export function NodeGraphView() {
         </ReactFlow>
       </div>
       {selectedRosNode && (
-        <NodeDetailPanel node={selectedRosNode} allNodes={allNodes} onClose={clearSelection} />
+        <NodeDetailPanel
+          node={selectedRosNode}
+          allNodes={allNodes}
+          onClose={clearSelection}
+          panelWidth={detailPanelWidth}
+          onResizeStart={handleDetailPanelResizeStart}
+        />
       )}
       {!selectedRosNode && selectedFlowNode?.type === "topicBridge" && (
         <TopicDetailPanel
@@ -1166,6 +1277,8 @@ export function NodeGraphView() {
           allNodes={allNodes}
           messages={data.messages}
           onClose={clearSelection}
+          panelWidth={detailPanelWidth}
+          onResizeStart={handleDetailPanelResizeStart}
         />
       )}
       {!selectedRosNode && selectedFlowNode?.type === "externalEndpoint" && (
@@ -1178,6 +1291,8 @@ export function NodeGraphView() {
           allNodes={allNodes}
           messages={data.messages}
           onClose={clearSelection}
+          panelWidth={detailPanelWidth}
+          onResizeStart={handleDetailPanelResizeStart}
         />
       )}
       {!selectedRosNode && selectedFlowNode?.type === "semanticEndpoint" && (
@@ -1188,6 +1303,8 @@ export function NodeGraphView() {
           targetId={(selectedFlowNode.data as { endpointType: "action" | "service"; labels: string[]; sourceId: string; targetId: string }).targetId}
           allNodes={allNodes}
           onClose={clearSelection}
+          panelWidth={detailPanelWidth}
+          onResizeStart={handleDetailPanelResizeStart}
         />
       )}
       {selectedEdge?.data && (
@@ -1196,6 +1313,8 @@ export function NodeGraphView() {
           allNodes={allNodes}
           messages={data.messages}
           onClose={() => setSelectedEdge(null)}
+          panelWidth={detailPanelWidth}
+          onResizeStart={handleDetailPanelResizeStart}
         />
       )}
     </div>
@@ -1203,7 +1322,13 @@ export function NodeGraphView() {
 }
 
 // ── Node detail panel ─────────────────────────────────────────────────────────
-function NodeDetailPanel({ node, allNodes, onClose }: { node: RosNode; allNodes: RosNode[]; onClose: () => void }) {
+function NodeDetailPanel({ node, allNodes, onClose, panelWidth, onResizeStart }: {
+  node: RosNode;
+  allNodes: RosNode[];
+  onClose: () => void;
+  panelWidth: number;
+  onResizeStart: () => void;
+}) {
   const [tab, setTab] = useState<"actions" | "services" | "topics">("actions");
 
   // Build lookup maps for match detection
@@ -1263,10 +1388,7 @@ function NodeDetailPanel({ node, allNodes, onClose }: { node: RosNode; allNodes:
   );
 
   return (
-    <div style={{
-      width: 300, borderLeft: "1px solid #1e293b", background: "#080e1a",
-      overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column",
-    }}>
+    <DetailPanelShell width={panelWidth} onResizeStart={onResizeStart}>
       {/* Header */}
       <div style={{ padding: "10px 14px 6px", borderBottom: "1px solid #1e293b", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1431,23 +1553,31 @@ function NodeDetailPanel({ node, allNodes, onClose }: { node: RosNode; allNodes:
               })
         )}
       </div>
-    </div>
+    </DetailPanelShell>
   );
 }
 
 // ── Topic detail panel ────────────────────────────────────────────────────────
-function TopicDetailPanel({ topic, msgType, visibilityState, semanticPeerIds, allNodes, messages, onClose }: {
+function TopicDetailPanel({ topic, msgType, visibilityState, semanticPeerIds, allNodes, messages, onClose, panelWidth, onResizeStart }: {
   topic: string; msgType: string; visibilityState: TopicBridgeVisibility;
   semanticPeerIds: string[];
   allNodes: RosNode[]; messages: MsgDef[]; onClose: () => void;
+  panelWidth: number; onResizeStart: () => void;
 }) {
-  const publishers = allNodes.filter((n) => n.topics.some((t) => t.direction === "pub" && t.topic === topic));
-  const subscribers = allNodes.filter((n) => n.topics.some((t) => t.direction === "sub" && t.topic === topic));
-  const semanticPeers = allNodes.filter((node) => semanticPeerIds.includes(node.id));
+  const publishers = allNodes.filter((n) => n.topics.some((t) => (
+    t.direction === "pub"
+    && sameSemanticEndpointName(t.topic, topic)
+    && sameSemanticType(t.msgType, msgType)
+  )));
+  const subscribers = allNodes.filter((n) => n.topics.some((t) => (
+    t.direction === "sub"
+    && sameSemanticEndpointName(t.topic, topic)
+    && sameSemanticType(t.msgType, msgType)
+  )));
   const msgDef = findMsgDef(messages, msgType);
 
   return (
-    <div style={{ width: 300, borderLeft: "1px solid #1e293b", background: "#080e1a", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+    <DetailPanelShell width={panelWidth} onResizeStart={onResizeStart}>
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #1e293b", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
           <div style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#e2e8f0", wordBreak: "break-all" }}>{topic}</div>
@@ -1467,27 +1597,21 @@ function TopicDetailPanel({ topic, msgType, visibilityState, semanticPeerIds, al
               peer hidden by filters
             </span>
           )}
-          {visibilityState === "semantic" && (
-            <span style={{ fontSize: 10, background: "#211406", border: "1px solid #f59e0b", borderRadius: 4, padding: "1px 6px", color: "#fcd34d" }}>
-              semantic peer visible
+          {semanticPeerIds.length > 0 && (
+            <span style={{ fontSize: 10, background: "#132134", border: "1px solid #2563eb", borderRadius: 4, padding: "1px 6px", color: "#93c5fd" }}>
+              alias-matched endpoints folded in
             </span>
           )}
         </div>
       </div>
       <div style={{ padding: "8px 14px", overflowY: "auto", flex: 1 }}>
-        {semanticPeers.length > 0 && (
+        {semanticPeerIds.length > 0 && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 10, color: "#fcd34d", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
-              Semantic Peers ({semanticPeers.length})
+            <div style={{ fontSize: 10, color: "#93c5fd", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Alias Resolution
             </div>
-            {semanticPeers.map((node) => (
-              <div key={node.id} style={{ fontSize: 11, color: "#e2e8f0", fontFamily: "monospace", padding: "2px 0" }}>
-                <span style={{ color: pkgColor(node.package), fontSize: 9 }}>■ </span>
-                {node.nodeName}<span style={{ color: "#475569" }}> · {node.package}</span>
-              </div>
-            ))}
-            <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
-              Namespace-normalized match, not an exact raw topic name.
+            <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.4 }}>
+              This topic family includes namespace-normalized aliases. Matching publishers and subscribers are folded into the same topic bridge instead of appearing as separate semantic peer nodes.
             </div>
           </div>
         )}
@@ -1521,14 +1645,15 @@ function TopicDetailPanel({ topic, msgType, visibilityState, semanticPeerIds, al
         </div>
         {msgDef && <MsgDefSection msgDef={msgDef} />}
       </div>
-    </div>
+    </DetailPanelShell>
   );
 }
 
 // ── External endpoint detail panel ───────────────────────────────────────────
-function ExternalEndpointDetailPanel({ name, endpointType, role, presence, semanticPeerIds, allNodes, messages, onClose }: {
+function ExternalEndpointDetailPanel({ name, endpointType, role, presence, semanticPeerIds, allNodes, messages, onClose, panelWidth, onResizeStart }: {
   name: string; endpointType: "action" | "service"; role: "server" | "client"; presence: EndpointPresence; semanticPeerIds: string[];
   allNodes: RosNode[]; messages: MsgDef[]; onClose: () => void;
+  panelWidth: number; onResizeStart: () => void;
 }) {
   // `role` is the MISSING side — find nodes with the PRESENT side (opposite role)
   const presentRole = role === "client" ? "server" : "client";
@@ -1546,7 +1671,7 @@ function ExternalEndpointDetailPanel({ name, endpointType, role, presence, seman
   const accentColor = isAction ? "#fcd34d" : "#d8b4fe";
 
   return (
-    <div style={{ width: 300, borderLeft: "1px solid #1e293b", background: "#080e1a", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+    <DetailPanelShell width={panelWidth} onResizeStart={onResizeStart}>
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #1e293b", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
           <div style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#e2e8f0", wordBreak: "break-all" }}>{name}</div>
@@ -1611,17 +1736,19 @@ function ExternalEndpointDetailPanel({ name, endpointType, role, presence, seman
         </div>
         {msgDef && <MsgDefSection msgDef={msgDef} />}
       </div>
-    </div>
+    </DetailPanelShell>
   );
 }
 
-function SemanticEndpointDetailPanel({ endpointType, labels, sourceId, targetId, allNodes, onClose }: {
+function SemanticEndpointDetailPanel({ endpointType, labels, sourceId, targetId, allNodes, onClose, panelWidth, onResizeStart }: {
   endpointType: "action" | "service";
   labels: string[];
   sourceId: string;
   targetId: string;
   allNodes: RosNode[];
   onClose: () => void;
+  panelWidth: number;
+  onResizeStart: () => void;
 }) {
   const isAction = endpointType === "action";
   const accentColor = isAction ? "#fcd34d" : "#f59e0b";
@@ -1629,7 +1756,7 @@ function SemanticEndpointDetailPanel({ endpointType, labels, sourceId, targetId,
   const targetNode = allNodes.find((node) => node.id === targetId) ?? null;
 
   return (
-    <div style={{ width: 300, borderLeft: "1px solid #1e293b", background: "#080e1a", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+    <DetailPanelShell width={panelWidth} onResizeStart={onResizeStart}>
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #1e293b", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
           <div style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#e2e8f0" }}>
@@ -1684,27 +1811,29 @@ function SemanticEndpointDetailPanel({ endpointType, labels, sourceId, targetId,
           This bridge exists because the ROS names match only after namespace normalization, so the relation is semantic rather than a direct raw-name match.
         </div>
       </div>
-    </div>
+    </DetailPanelShell>
   );
 }
 
 // ── Edge detail panel (matched service / action) ──────────────────────────────
-type ServiceEdgeData = { kind: "service"; service: string; srvType: string; clientId: string; serverId: string };
-type ActionEdgeData  = { kind: "action";  action: string; actionType: string; clientId: string; serverId: string };
+type ServiceEdgeData = { kind: "service"; service: string; srvType: string; clientId: string; serverId: string; semanticMatch?: boolean; semanticLabels?: string[] };
+type ActionEdgeData  = { kind: "action";  action: string; actionType: string; clientId: string; serverId: string; semanticMatch?: boolean; semanticLabels?: string[] };
 
-function EdgeDetailPanel({ edgeData, allNodes, messages, onClose }: {
+function EdgeDetailPanel({ edgeData, allNodes, messages, onClose, panelWidth, onResizeStart }: {
   edgeData: ServiceEdgeData | ActionEdgeData; allNodes: RosNode[]; messages: MsgDef[]; onClose: () => void;
+  panelWidth: number; onResizeStart: () => void;
 }) {
   const isAction = edgeData.kind === "action";
   const name     = isAction ? edgeData.action  : edgeData.service;
   const typeStr  = isAction ? edgeData.actionType : edgeData.srvType;
+  const semanticLabels = edgeData.semanticLabels ?? [name];
   const clientNode = allNodes.find((n) => n.id === edgeData.clientId);
   const serverNode = allNodes.find((n) => n.id === edgeData.serverId);
   const msgDef   = findMsgDef(messages, typeStr);
   const accentColor = isAction ? "#fcd34d" : "#d8b4fe";
 
   return (
-    <div style={{ width: 300, borderLeft: "1px solid #1e293b", background: "#080e1a", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+    <DetailPanelShell width={panelWidth} onResizeStart={onResizeStart}>
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid #1e293b", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
           <div style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#e2e8f0", wordBreak: "break-all" }}>{name}</div>
@@ -1715,6 +1844,11 @@ function EdgeDetailPanel({ edgeData, allNodes, messages, onClose }: {
             {isAction ? <Zap size={9} style={{ display: "inline", marginRight: 2 }} /> : <Wrench size={9} style={{ display: "inline", marginRight: 2 }} />}
             {edgeData.kind}
           </span>
+          {edgeData.semanticMatch && (
+            <span style={{ fontSize: 10, background: "#211406", border: "1px solid #f59e0b", borderRadius: 4, padding: "1px 6px", color: "#fcd34d" }}>
+              alias-matched route
+            </span>
+          )}
           {typeStr && (
             <span style={{ fontSize: 10, background: "#1e1b4b", border: "1px solid #4338ca", borderRadius: 4, padding: "1px 6px", color: "#a5b4fc" }}>
               {typeStr}
@@ -1723,6 +1857,21 @@ function EdgeDetailPanel({ edgeData, allNodes, messages, onClose }: {
         </div>
       </div>
       <div style={{ padding: "8px 14px", overflowY: "auto", flex: 1 }}>
+        {edgeData.semanticMatch && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: "#fcd34d", fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Resolved Endpoint Names
+            </div>
+            {semanticLabels.map((label) => (
+              <div key={label} style={{ fontSize: 11, color: "#e2e8f0", fontFamily: "monospace", padding: "2px 0" }}>
+                {label}
+              </div>
+            ))}
+            <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+              The edge is routed directly between the visible nodes while preserving the alias-derived endpoint names here.
+            </div>
+          </div>
+        )}
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 10, color: accentColor, fontWeight: 700, marginBottom: 4 }}>
             <ArrowLeft size={10} style={{ display: "inline", marginRight: 3 }} />Server
@@ -1743,7 +1892,7 @@ function EdgeDetailPanel({ edgeData, allNodes, messages, onClose }: {
         </div>
         {msgDef && <MsgDefSection msgDef={msgDef} />}
       </div>
-    </div>
+    </DetailPanelShell>
   );
 }
 
