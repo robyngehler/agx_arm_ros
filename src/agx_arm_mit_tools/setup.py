@@ -28,6 +28,7 @@ setup(
             "agx_arm_mit_joint_state_bridge = agx_arm_mit_tools.joint_state_trajectory_bridge:main",
             "agx_arm_joint_state_name_adapter = agx_arm_mit_tools.joint_state_name_adapter:main",
             "agx_arm_joint_state_merger = agx_arm_mit_tools.joint_state_merger:main",
+            "agx_arm_duo_soft_estop = agx_arm_mit_tools.duo_soft_estop:main",
             "agx_arm_test_position_hold = agx_arm_mit_tools.test_position_hold:main",
             "agx_arm_validate_urdf_mdh = agx_arm_mit_tools.validate_urdf_mdh:main",
             "agx_arm_compare_gravity = agx_arm_mit_tools.compare_gravity:main",

@@ -8,16 +8,20 @@
   <xacro:arg name="planning_group_name" default="nero_arm" />
   <xacro:arg name="arm_base_frame" default="base_link" />
   <xacro:arg name="arm_tip_frame" default="tcp_link" />
+  <xacro:arg name="end_effector_parent_link" default="tcp_link" />
+  <xacro:arg name="mount_body_link" default="" />
   <xacro:arg name="arm_joint_prefix" default="" />
   <xacro:arg name="arm_link_prefix" default="" />
   <xacro:arg name="include_end_effector_groups" default="true" />
   <xacro:arg name="include_dual_arm_groups" default="false" />
   <xacro:arg name="left_arm_base_frame" default="left_arm_base_link" />
   <xacro:arg name="left_arm_tip_frame" default="left_arm_nero_tool0" />
+  <xacro:arg name="left_mount_body_link" default="" />
   <xacro:arg name="left_arm_joint_prefix" default="left_arm_" />
   <xacro:arg name="left_arm_link_prefix" default="left_arm_" />
   <xacro:arg name="right_arm_base_frame" default="right_arm_base_link" />
   <xacro:arg name="right_arm_tip_frame" default="right_arm_nero_tool0" />
+  <xacro:arg name="right_mount_body_link" default="" />
   <xacro:arg name="right_arm_joint_prefix" default="right_arm_" />
   <xacro:arg name="right_arm_link_prefix" default="right_arm_" />
 
@@ -26,15 +30,19 @@
   <xacro:property name="planning_group_name" value="$(arg planning_group_name)" />
   <xacro:property name="arm_base_frame" value="$(arg arm_base_frame)" />
   <xacro:property name="arm_tip_frame" value="$(arg arm_tip_frame)" />
+  <xacro:property name="end_effector_parent_link" value="$(arg end_effector_parent_link)" />
+  <xacro:property name="mount_body_link" value="$(arg mount_body_link)" />
   <xacro:property name="arm_joint_prefix" value="$(arg arm_joint_prefix)" />
   <xacro:property name="arm_link_prefix" value="$(arg arm_link_prefix)" />
   <xacro:property name="include_dual_arm_groups" value="$(arg include_dual_arm_groups)" />
   <xacro:property name="left_arm_base_frame" value="$(arg left_arm_base_frame)" />
   <xacro:property name="left_arm_tip_frame" value="$(arg left_arm_tip_frame)" />
+  <xacro:property name="left_mount_body_link" value="$(arg left_mount_body_link)" />
   <xacro:property name="left_arm_joint_prefix" value="$(arg left_arm_joint_prefix)" />
   <xacro:property name="left_arm_link_prefix" value="$(arg left_arm_link_prefix)" />
   <xacro:property name="right_arm_base_frame" value="$(arg right_arm_base_frame)" />
   <xacro:property name="right_arm_tip_frame" value="$(arg right_arm_tip_frame)" />
+  <xacro:property name="right_mount_body_link" value="$(arg right_mount_body_link)" />
   <xacro:property name="right_arm_joint_prefix" value="$(arg right_arm_joint_prefix)" />
   <xacro:property name="right_arm_link_prefix" value="$(arg right_arm_link_prefix)" />
 
@@ -56,37 +64,16 @@
     </group_state>
   </xacro:macro>
 
-  <xacro:macro name="nero_arm_disable_collisions" params="link_prefix">
+  <xacro:macro name="nero_arm_disable_collisions" params="link_prefix mount_body_link">
     <disable_collisions link1="${link_prefix}base_link" link2="${link_prefix}link1" reason="Adjacent" />
-    <disable_collisions link1="${link_prefix}base_link" link2="${link_prefix}link2" reason="Never" />
-    <disable_collisions link1="${link_prefix}base_link" link2="${link_prefix}link3" reason="Never" />
     <disable_collisions link1="${link_prefix}link1" link2="${link_prefix}link2" reason="Adjacent" />
-    <disable_collisions link1="${link_prefix}link1" link2="${link_prefix}link3" reason="Never" />
     <disable_collisions link1="${link_prefix}link2" link2="${link_prefix}link3" reason="Adjacent" />
-    <disable_collisions link1="${link_prefix}link2" link2="${link_prefix}link4" reason="Never" />
     <disable_collisions link1="${link_prefix}link3" link2="${link_prefix}link4" reason="Adjacent" />
-    <disable_collisions link1="${link_prefix}link3" link2="${link_prefix}link5" reason="Never" />
-    <disable_collisions link1="${link_prefix}link3" link2="${link_prefix}link6" reason="Never" />
     <disable_collisions link1="${link_prefix}link4" link2="${link_prefix}link5" reason="Adjacent" />
-    <disable_collisions link1="${link_prefix}link4" link2="${link_prefix}link6" reason="Never" />
     <disable_collisions link1="${link_prefix}link5" link2="${link_prefix}link6" reason="Adjacent" />
-
-    <xacro:if value="$(eval arm_type == 'nero')">
-      <disable_collisions link1="${link_prefix}base_link" link2="${link_prefix}link4" reason="Never" />
-      <disable_collisions link1="${link_prefix}base_link" link2="${link_prefix}link5" reason="Never" />
-      <disable_collisions link1="${link_prefix}base_link" link2="${link_prefix}link6" reason="Never" />
-      <disable_collisions link1="${link_prefix}base_link" link2="${link_prefix}link7" reason="Never" />
-      <disable_collisions link1="${link_prefix}link1" link2="${link_prefix}link4" reason="Never" />
-      <disable_collisions link1="${link_prefix}link1" link2="${link_prefix}link5" reason="Never" />
-      <disable_collisions link1="${link_prefix}link1" link2="${link_prefix}link6" reason="Never" />
-      <disable_collisions link1="${link_prefix}link1" link2="${link_prefix}link7" reason="Never" />
-      <disable_collisions link1="${link_prefix}link2" link2="${link_prefix}link5" reason="Never" />
-      <disable_collisions link1="${link_prefix}link2" link2="${link_prefix}link6" reason="Never" />
-      <disable_collisions link1="${link_prefix}link2" link2="${link_prefix}link7" reason="Never" />
-      <disable_collisions link1="${link_prefix}link3" link2="${link_prefix}link7" reason="Never" />
-      <disable_collisions link1="${link_prefix}link4" link2="${link_prefix}link7" reason="Never" />
-      <disable_collisions link1="${link_prefix}link5" link2="${link_prefix}link7" reason="Never" />
-      <disable_collisions link1="${link_prefix}link6" link2="${link_prefix}link7" reason="Adjacent" />
+    <disable_collisions link1="${link_prefix}link6" link2="${link_prefix}link7" reason="Adjacent" />
+    <xacro:if value="${mount_body_link != ''}">
+      <disable_collisions link1="${mount_body_link}" link2="${link_prefix}base_link" reason="Adjacent" />
     </xacro:if>
   </xacro:macro>
 
@@ -103,7 +90,7 @@
       <joint name="${side}_pinky_abad_joint" />
       <joint name="${side}_pinky_pip_joint" />
     </group>
-    <end_effector name="${side}_omnihand_eef" parent_link="tcp_link" group="hand" parent_group="${planning_group_name}" />
+    <end_effector name="${side}_omnihand_eef" parent_link="${end_effector_parent_link}" group="hand" parent_group="${planning_group_name}" />
     <group_state name="hand_open" group="hand">
       <joint name="${side}_thumb_roll_joint" value="0.0" />
       <joint name="${side}_thumb_abad_joint" value="0.0" />
@@ -192,7 +179,7 @@
       <joint name="gripper_joint1" />
       <joint name="gripper_joint2" />
     </group>
-    <end_effector name="gripper_eef" parent_link="tcp_link" group="gripper" parent_group="${planning_group_name}" />
+    <end_effector name="gripper_eef" parent_link="${end_effector_parent_link}" group="gripper" parent_group="${planning_group_name}" />
     <group_state name="gripper_open" group="gripper">
       <joint name="gripper_joint1" value="0.05" />
       <joint name="gripper_joint2" value="-0.05" />
@@ -244,7 +231,7 @@
       <link name="left_pinky_proximal_link" />
       <link name="left_pinky_distal_link" />
     </group>
-    <end_effector name="left_hand_eef" parent_link="tcp_link" group="hand" parent_group="${planning_group_name}" />
+    <end_effector name="left_hand_eef" parent_link="${end_effector_parent_link}" group="hand" parent_group="${planning_group_name}" />
     <group_state name="hand_open" group="hand">
       <joint name="left_thumb_metacarpal_joint" value="0.0" />
       <joint name="left_thumb_proximal_joint" value="0.1" />
@@ -390,7 +377,7 @@
       <link name="right_pinky_proximal_link" />
       <link name="right_pinky_distal_link" />
     </group>
-    <end_effector name="right_hand_eef" parent_link="tcp_link" group="hand" parent_group="${planning_group_name}" />
+    <end_effector name="right_hand_eef" parent_link="${end_effector_parent_link}" group="hand" parent_group="${planning_group_name}" />
     <group_state name="hand_open" group="hand">
       <joint name="right_thumb_metacarpal_joint" value="0.0" />
       <joint name="right_thumb_proximal_joint" value="0.1" />
@@ -549,10 +536,10 @@
 
   <!-- ======================== ARM DISABLE COLLISIONS ======================== -->
   <xacro:if value="$(arg include_dual_arm_groups)">
-    <xacro:nero_arm_disable_collisions link_prefix="${left_arm_link_prefix}" />
-    <xacro:nero_arm_disable_collisions link_prefix="${right_arm_link_prefix}" />
+    <xacro:nero_arm_disable_collisions link_prefix="${left_arm_link_prefix}" mount_body_link="${left_mount_body_link}" />
+    <xacro:nero_arm_disable_collisions link_prefix="${right_arm_link_prefix}" mount_body_link="${right_mount_body_link}" />
   </xacro:if>
   <xacro:unless value="$(arg include_dual_arm_groups)">
-    <xacro:nero_arm_disable_collisions link_prefix="${arm_link_prefix}" />
+    <xacro:nero_arm_disable_collisions link_prefix="${arm_link_prefix}" mount_body_link="${mount_body_link}" />
   </xacro:unless>
 </robot>

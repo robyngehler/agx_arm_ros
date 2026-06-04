@@ -218,6 +218,22 @@ def _launch_actions(context):
             )
         )
 
+    actions.append(
+        Node(
+            package="agx_arm_mit_tools",
+            executable="agx_arm_duo_soft_estop",
+            namespace=root_namespace,
+            parameters=[
+                {
+                    "arm_namespaces": [
+                        join_relative_namespaces(root_namespace, instance["namespace"])
+                        for instance in instances
+                    ],
+                }
+            ],
+        )
+    )
+
     if profile_values:
         actions.append(
             LogInfo(

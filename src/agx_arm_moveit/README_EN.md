@@ -17,7 +17,7 @@ Current support:
 
 - Arm type: `nero`
 - End effectors: `none`, `agx_gripper`, `revo2`, `omnihand`
-- Planning groups: `nero_arm` plus end-effector groups on the built-in single-arm model, and `right_arm`, `left_arm`, `both_arms` on the staged Duo custom-model path
+- Planning groups: `nero_arm` plus end-effector groups on the built-in single-arm model, and `right_arm` or `left_arm` plus the matching hand end-effector groups on the staged Duo custom-model path; `both_arms` remains the arm-only dual-arm slice
 - Kinematics plugin: TRAC-IK (`trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin`)
 
 ## 1. Installation
@@ -146,7 +146,17 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
   revo2_type:=left
 ```
 
-OmniHand is not wired into the real `agx_arm_ctrl` hardware bringup path yet. At this stage it is available only through the simulation and visualization surfaces in `agx_arm_moveit` and `display_control.launch.py`.
+The shared config-based wrappers now resolve the first per-arm OmniHand bringup path through `execution_profile:=left_hand|right_hand`. That profile family keeps the underlying MoveIt planning group at `left_arm` or `right_arm`, adds the matching OmniHand end-effector group on the staged Duo custom model, and forwards the bridge-friendly arm, frame, and feedback defaults in one place:
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
+  execution_profile:=right_hand \
+  can_port:=can_right \
+  follow:=true \
+  use_rviz:=false
+```
+
+This contract is intentionally per-arm. `moveit_profile:=both_arms` and `execution_profile:=duo_arm` still stay arm-only while the shared dual-hand collision and controller-ownership semantics remain open.
 
 Recommended split-launch flow if you want to keep the MIT soft-trajectory path while bringing components up separately:
 
@@ -200,6 +210,8 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 
 That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group while loading separate IK solvers for the left and right chains. The combined wrapper now also starts one MIT controller per declared arm instance, keeps each arm runtime in its own namespace, and merges the prefixed feedback path back into MoveIt/RViz. `start_moveit.launch.py` is the canonical package-local entrypoint; `demo.launch.py` remains only as the compatibility alias.
 
+The shared dual-arm MIT wrappers now also start `agx_arm_duo_soft_estop`. It exposes `/emergency_stop` for the current central soft-stop path and per-arm `hold_<namespace>` services that fan `cancel_trajectory` plus `hold_current` into each MIT namespace. Future one-arm selective fixation can build on those per-arm hooks without changing the current central stop contract.
+
 ### 2.3 Launch parameters
 
 | Parameter | Default | Description | Options |
@@ -235,14 +247,15 @@ That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group w
 - `publish_gripper_joint` is handled automatically in the combined bringup path to avoid invalid-joint warnings.
 - `start_moveit.launch.py` is now the canonical package-local MoveIt entrypoint. `demo.launch.py` remains as a compatibility alias.
 - `start_agx_arm_moveit.launch.py` is now the canonical combined MoveIt wrapper. `start_single_agx_arm_moveit.launch.py` remains as a compatibility alias, while `start_single_agx_arm.launch.py` still accurately names the one-driver-per-arm launch surface.
-- `moveit_profile:=right_arm`, `moveit_profile:=left_arm`, and `moveit_profile:=both_arms` are the first landed Duo profiles. `both_arms` now runs through the combined MIT wrapper when you provide two managed `arm_instances`; the hand-aware variants are still open work.
+- `moveit_profile:=right_arm`, `moveit_profile:=left_arm`, and `moveit_profile:=both_arms` are the first landed Duo profiles. On the shared `agx_arm_ctrl` wrappers, `execution_profile:=left_hand|right_hand` now resolves the first hand-aware per-arm config path, while `both_arms` and `execution_profile:=duo_arm` intentionally remain arm-only.
 - `start_agx_arm_components.launch.py` provides the new common agx_arm_ctrl bringup surface with `manual_vendor`, `debug_soft_target`, and `moveit_mit` modes.
 - The current MoveIt baseline expects TRAC-IK. If the distro package is unavailable on Humble / Jetson, use the documented source-build overlay and source `/opt/ros/$ROS_DISTRO/setup.bash`, `~/workspace/trac_ik_ws/install/setup.bash`, then this workspace's `install/setup.bash`.
 - `nero_tool0` now comes from the canonical Nero description package, while `tcp_link` remains the TCP and interactive planning target frame.
 - `config/simple_obstacles.json` is only a conservative baseline for early planning checks. Adjust it to match the real fixture and workspace before executing on hardware.
 - `share/agx_arm_moveit/scripts/plan_pose_smoke_test.py` provides the current repo-owned representative near-home OMPL pose-planning check for Sprint 3.
 - Simulation-only MoveIt validation across `none`, `agx_gripper`, `revo2`, and `omnihand` profiles is a valid hardening path before real-arm collision-checked execution.
-- OmniHand currently covers only the MoveIt simulation, RViz, SRDF, and fake `ros2_control` path. Real hardware bringup is still open.
+- The staged Duo gravity slice now keeps an active OmniHand as a fixed-pose payload by freezing its joints at zero pose in the derived URDF. The MIT controller still owns only the seven Nero arm joints; dynamic hand-pose compensation remains future work.
+- Per-arm OmniHand now covers the staged Duo MoveIt, RViz, generated SRDF, config-based `agx_arm_ctrl` wrappers, and the MIT gravity payload slice. Live dual-hand execution and a hand-aware `both_arms` contract remain open.
 - A 2026-05-21 validation pass confirmed six-profile startup readiness with the external TRAC-IK overlay and a successful live `/compute_ik` call on `nero_arm`.
 - A 2026-05-28 validation pass confirmed that `plan_pose_smoke_test.py` can obtain a representative `ompl` pose plan for `nero_arm`, but the Humble/aarch64 `move_group` shutdown crash still reproduces even when the launch is reduced to `planning_pipelines:=ompl`.
 
@@ -251,7 +264,7 @@ That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group w
 ![piper_moveit](./assets/pictures/piper_moveit.png)
 
 - Drag the interactive marker at the arm tip to define a target pose.
-- Use the MotionPlanning panel to switch between `nero_arm`, `gripper`, and `hand` on the built-in single-arm model, or `right_arm`, `left_arm`, and `both_arms` on the staged Duo custom-model path.
+- Use the MotionPlanning panel to switch between `nero_arm`, `gripper`, and `hand` on the built-in single-arm model, or `right_arm`, `left_arm`, and `both_arms` on the staged Duo custom-model path. The wrapper-level `left_hand` and `right_hand` execution profiles reuse the matching per-arm planning group while adding the staged OmniHand end-effector group.
 - Pick preset states such as `home`, `gripper_open`, `hand_half_close`, or `hand_close` from Goal State.
 
 ## 3. Troubleshooting

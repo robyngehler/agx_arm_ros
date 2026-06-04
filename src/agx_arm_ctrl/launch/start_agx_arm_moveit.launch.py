@@ -189,6 +189,23 @@ def _instance_runtime_launches(context):
             )
         )
 
+    if len(instances) > 1 and use_mit_controller:
+        actions.append(
+            Node(
+                package="agx_arm_mit_tools",
+                executable="agx_arm_duo_soft_estop",
+                namespace=root_namespace,
+                parameters=[
+                    {
+                        "arm_namespaces": [
+                            join_relative_namespaces(root_namespace, instance["namespace"])
+                            for instance in instances
+                        ],
+                    }
+                ],
+            )
+        )
+
     actions.append(
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(

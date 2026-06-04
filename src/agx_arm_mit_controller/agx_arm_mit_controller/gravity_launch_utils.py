@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 
 def parse_xacro_mappings(raw_args: str) -> dict[str, str]:
@@ -44,10 +45,10 @@ def _apply_duo_slice_mappings(
     if not side:
         return mappings
 
-    # Keep the gravity model arm-only for the current MIT controller contract.
-    # The controller owns exactly joint1..joint7 and does not execute separate
-    # post-Pinocchio hand compensation today.
-    side_hand_enabled = "false"
+    # Keep only the active arm slice. When the runtime profile uses OmniHand,
+    # keep that hand in the generated URDF so its fixed-pose inertial load can
+    # be folded into the arm gravity model.
+    side_hand_enabled = "true" if effector_type == "omnihand" else "false"
     resolved = dict(mappings)
     if side == "left":
         resolved.update(
@@ -68,6 +69,60 @@ def _apply_duo_slice_mappings(
             }
         )
     return resolved
+
+
+def _freeze_subtree_joints(urdf_text: str, root_link: str) -> str:
+    root = ET.fromstring(urdf_text)
+    joints = root.findall("joint")
+
+    child_joints: dict[str, list[ET.Element]] = {}
+    for joint in joints:
+        parent = joint.find("parent")
+        parent_link = "" if parent is None else parent.attrib.get("link", "")
+        if not parent_link:
+            continue
+        child_joints.setdefault(parent_link, []).append(joint)
+
+    pending_links = [root_link]
+    seen_links: set[str] = set()
+    subtree_joints: list[ET.Element] = []
+    while pending_links:
+        link_name = pending_links.pop()
+        if link_name in seen_links:
+            continue
+        seen_links.add(link_name)
+        for joint in child_joints.get(link_name, []):
+            subtree_joints.append(joint)
+            child = joint.find("child")
+            child_link = "" if child is None else child.attrib.get("link", "")
+            if child_link:
+                pending_links.append(child_link)
+
+    for joint in subtree_joints:
+        if joint.attrib.get("type") == "fixed":
+            continue
+        joint.attrib["type"] = "fixed"
+        for tag_name in ("axis", "limit", "mimic", "dynamics"):
+            element = joint.find(tag_name)
+            if element is not None:
+                joint.remove(element)
+
+    return ET.tostring(root, encoding="unicode")
+
+
+def _apply_static_omnihand_payload(
+    model_path: Path,
+    urdf_text: str,
+    input_joint_prefix: str,
+    effector_type: str,
+) -> str:
+    if model_path.name != "duo_system.urdf.xacro" or effector_type != "omnihand":
+        return urdf_text
+
+    side = _duo_side_for_prefix(input_joint_prefix)
+    if side not in ("left", "right"):
+        return urdf_text
+    return _freeze_subtree_joints(urdf_text, f"{side}_base_link")
 
 
 def resolve_gravity_urdf_path(
@@ -106,7 +161,7 @@ def resolve_gravity_urdf_path(
         import xacro  # type: ignore
 
         generated_urdf = xacro.process_file(str(model_path), mappings=mappings)
-        temp_urdf.write(generated_urdf.toprettyxml(indent="  "))
+        generated_urdf_text = generated_urdf.toprettyxml(indent="  ")
     except ModuleNotFoundError:
         xacro_command = shutil.which("xacro")
         if xacro_command is None:
@@ -127,7 +182,16 @@ def resolve_gravity_urdf_path(
             raise RuntimeError(
                 f"xacro failed while deriving gravity URDF from {model_path}: {details}"
             ) from exc
-        temp_urdf.write(result.stdout)
+
+        generated_urdf_text = result.stdout
+
+    generated_urdf_text = _apply_static_omnihand_payload(
+        model_path,
+        generated_urdf_text,
+        input_joint_prefix,
+        effector_type,
+    )
+    temp_urdf.write(generated_urdf_text)
 
     temp_urdf.close()
     return temp_urdf.name

@@ -17,7 +17,7 @@
 
 - 臂型：`nero`
 - 末端执行器：`none`、`agx_gripper`、`revo2`、`omnihand`
-- 规划组：内置单臂模型下的 `nero_arm` 及末端执行器组，以及 staged Duo custom model 路径下的 `right_arm`、`left_arm`、`both_arms`
+- 规划组：内置单臂模型下的 `nero_arm` 及末端执行器组，以及 staged Duo custom model 路径下的 `right_arm` 或 `left_arm` 加对应手部 end-effector 组；`both_arms` 继续作为仅机械臂的双臂规划切片
 - 运动学插件：TRAC-IK（`trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin`）
 
 ## 1 安装
@@ -146,7 +146,17 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
   revo2_type:=left
 ```
 
-当前 OmniHand 还没有接入 `agx_arm_ctrl` 的真实硬件启动路径。现阶段仅支持 `agx_arm_moveit` / `display_control.launch.py` 下的仿真与可视化集成，不应把 `effector_type:=omnihand` 误解为真机后端已经打通。
+共享的 config-based 包装启动面现在已经打通第一条按侧别区分的 OmniHand 路径，可通过 `execution_profile:=left_hand|right_hand` 一次性解析 staged Duo custom model、prefixed arm chain、`effector_type:=omnihand` 以及匹配的 bridge 默认值：
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
+  execution_profile:=right_hand \
+  can_port:=can_right \
+  follow:=true \
+  use_rviz:=false
+```
+
+这一契约目前仍然是单臂的。`moveit_profile:=both_arms` 与 `execution_profile:=duo_arm` 继续保持 arm-only，直到共享双手的碰撞矩阵与控制器归属语义明确下来。
 
 若采用分步启动并保留 MIT 软轨迹路径，推荐使用以下方式让 MoveIt 跟随真实反馈并通过 MIT 执行轨迹：
 
@@ -202,6 +212,8 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 
 该 profile 会生成 `left_arm`、`right_arm` 和组合后的 `both_arms` 规划组，并为左右臂分别加载 IK。统一包装启动面现在还能按 `arm_instances` 为每个 prefix 启动一个 MIT controller，把每个 arm runtime 放到自己的 namespace 中，并把 prefixed feedback 合并回 MoveIt / RViz。`start_moveit.launch.py` 是规范的包内入口；`demo.launch.py` 仅保留为兼容别名。
 
+共享的双臂 MIT 包装启动面现在还会自动启动 `agx_arm_duo_soft_estop`。它提供 `/emergency_stop` 作为当前的中心化软停入口，并提供按臂的 `hold_<namespace>` 服务，将 `cancel_trajectory` 与 `hold_current` 扇出到各自的 MIT namespace。未来若要做单臂选择性固定，可在这些按臂 hook 上继续扩展，而不必改动当前的中心化停机契约。
+
 若走 `agx_arm_ctrl start_single_agx_arm_moveit.launch.py` 或 `agx_arm_ctrl start_agx_arm_components.launch.py mode:=moveit_mit` 包装启动，同样可透传 `moveit_profile`、`robot_name`、`custom_model`、`custom_model_xacro_args`，并继续使用自动推导的 prefixed feedback adapter。
 
 ### 2.3 启动参数
@@ -239,14 +251,15 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 - `publish_gripper_joint` 会在一键启动路径中自动处理，以避免 MoveIt 中出现无效关节告警。
 - `start_moveit.launch.py` 现在是规范的包内 MoveIt 启动名。`demo.launch.py` 保留为兼容别名。
 - `start_agx_arm_moveit.launch.py` 现在是规范的一键 MoveIt 包装启动名。`start_single_agx_arm_moveit.launch.py` 保留为兼容别名；底层 `start_single_agx_arm.launch.py` 仍准确对应单个驱动实例。
-- `moveit_profile:=right_arm`、`moveit_profile:=left_arm` 与 `moveit_profile:=both_arms` 已落地为第一批 Duo profile；其中 `both_arms` 在提供双臂 `arm_instances` 时已经能走统一 MIT 包装入口，hand-aware 组合仍是后续工作。
+- `moveit_profile:=right_arm`、`moveit_profile:=left_arm` 与 `moveit_profile:=both_arms` 已落地为第一批 Duo profile。在共享 `agx_arm_ctrl` 包装启动面上，`execution_profile:=left_hand|right_hand` 现在已经解析出第一批 hand-aware 单臂 config path；`both_arms` 与 `execution_profile:=duo_arm` 仍按设计保持 arm-only。
 - `start_agx_arm_components.launch.py` 提供新的公共 agx_arm_ctrl 组件启动面，包含 `manual_vendor`、`debug_soft_target`、`moveit_mit` 三种模式。
 - 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 - `nero_tool0` 现在由 Nero 规范描述包直接提供，`tcp_link` 继续作为 TCP 与交互式规划目标参考帧。
 - `config/simple_obstacles.json` 只提供早期规划验证的保守基线；进入真机执行前仍应根据现场工装与工作空间自行调整。
 - `share/agx_arm_moveit/scripts/plan_pose_smoke_test.py` 提供当前 Sprint 3 使用的仓库内近 home 位姿 OMPL 规划烟雾测试。
 - 对 `none`、`agx_gripper`、`revo2`、`omnihand` 各配置做纯仿真 MoveIt 集成验证，是进入真机碰撞检查执行前的有效路径。
-- OmniHand 当前只覆盖 MoveIt 仿真、RViz、SRDF 和 fake `ros2_control` 路径，尚未接入真实硬件控制启动链路。
+- staged Duo 的 gravity slice 现在会把活动中的 OmniHand 作为固定姿态 payload 保留下来，即在派生 URDF 中把手部关节冻结到零位。MIT controller 仍只控制 Nero 的七个关节；动态手姿补偿仍是后续工作。
+- 当前的按臂 OmniHand 路径已经覆盖 staged Duo MoveIt、RViz、生成的 SRDF、config-based `agx_arm_ctrl` 包装启动面以及 MIT gravity payload 切片。双臂带手执行和 hand-aware `both_arms` 契约仍未完成。
 - 2026-05-28 的验证表明，`plan_pose_smoke_test.py` 已能在 `nero_arm` 上成功拿到代表性的 `ompl` 位姿规划结果，但 Humble/aarch64 主机上的 `move_group` 退出崩溃即使在 `planning_pipelines:=ompl` 的精简路径下仍会复现。
 
 ### 2.5 RViz 操作
@@ -254,7 +267,7 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 ![piper_moveit](./assets/pictures/piper_moveit.png)
 
 - 拖动机械臂末端的交互标记来设定目标位姿。
-- 在左侧 MotionPlanning 面板中切换内置单臂模型的 `nero_arm`、`gripper`、`hand` 规划组，或 staged Duo custom model 路径下的 `right_arm`、`left_arm`、`both_arms` 规划组。
+- 在左侧 MotionPlanning 面板中切换内置单臂模型的 `nero_arm`、`gripper`、`hand` 规划组，或 staged Duo custom model 路径下的 `right_arm`、`left_arm`、`both_arms` 规划组。包装启动层的 `left_hand` / `right_hand` execution profile 会复用对应单臂规划组，并叠加 staged OmniHand end-effector 组。
 - 在 Goal State 中选择 `home`、`gripper_open`、`hand_half_close`、`hand_close` 等预设状态。
 
 ## 3 常见问题

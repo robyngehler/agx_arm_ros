@@ -184,6 +184,24 @@ def _resolve_profile_settings(
     }
 
 
+def _resolve_include_end_effector_groups(custom_model: str, moveit_profile: str) -> str:
+    if custom_model and moveit_profile == DUAL_ARM_MOVEIT_GROUP:
+        return "false"
+    return "true"
+
+
+def _resolve_end_effector_parent_link(custom_model: str, arm_tip_frame: str) -> str:
+    if custom_model:
+        return arm_tip_frame
+    return "tcp_link"
+
+
+def _resolve_mount_body_link(custom_model: str) -> str:
+    if custom_model:
+        return "body_base_link"
+    return ""
+
+
 def declare_common_args():
     return [
         DeclareLaunchArgument(
@@ -354,16 +372,20 @@ def build_moveit_config(context):
         "planning_group_name": profile_settings["planning_group_name"],
         "arm_base_frame": arm_base_frame,
         "arm_tip_frame": arm_tip_frame,
+        "end_effector_parent_link": _resolve_end_effector_parent_link(custom_model, arm_tip_frame),
+        "mount_body_link": _resolve_mount_body_link(custom_model),
         "arm_joint_prefix": input_joint_prefix,
         "arm_link_prefix": input_joint_prefix,
-        "include_end_effector_groups": "false" if custom_model else "true",
+        "include_end_effector_groups": _resolve_include_end_effector_groups(custom_model, moveit_profile),
         "include_dual_arm_groups": profile_settings["include_dual_arm_groups"],
         "left_arm_base_frame": profile_settings["left_arm_base_frame"],
         "left_arm_tip_frame": profile_settings["left_arm_tip_frame"],
+        "left_mount_body_link": _resolve_mount_body_link(custom_model),
         "left_arm_joint_prefix": profile_settings["left_arm_joint_prefix"],
         "left_arm_link_prefix": profile_settings["left_arm_link_prefix"],
         "right_arm_base_frame": profile_settings["right_arm_base_frame"],
         "right_arm_tip_frame": profile_settings["right_arm_tip_frame"],
+        "right_mount_body_link": _resolve_mount_body_link(custom_model),
         "right_arm_joint_prefix": profile_settings["right_arm_joint_prefix"],
         "right_arm_link_prefix": profile_settings["right_arm_link_prefix"],
     }

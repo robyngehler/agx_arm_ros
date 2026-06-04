@@ -17,7 +17,7 @@ found_artifacts:
 - recorder, playback, wakeword motion-manager, position-hold, compare-gravity, and calibration tools
 - tests covering model metadata, gravity model creation, trajectory buffer/io, and feedforward calibration
 missing_artifacts:
-- explicit payload model extension for OmniHand and AGV-mounted variants
+- dynamic payload adaptation for OmniHand and AGV-mounted variants
 - explicit mount-orientation parameterization for non-default base mounting
 - payload and mounting-pose metadata for future OmniHand and AGV-mounted variants
 interface_notes:
@@ -39,7 +39,7 @@ interface_notes:
 - the wakeword-oriented motion-manager is ongoing application work and should not yet be treated as a frozen Sprint 2 runtime contract
 - default gravity behavior is Pinocchio-based with `gravity_feedforward_sign: -1.0`
 - when `gravity_urdf_path` and `calibration_file` are empty, the controller auto-discovers the canonical Nero URDF and `config/nero_gravity_calibration.json`
-- when `custom_model` is used for a prefixed Duo arm, the launch now resolves a mounted arm-only gravity URDF slice before the controller starts; the current MIT contract still excludes separate OmniHand joints from the Pinocchio model
+- when `custom_model` is used for a prefixed Duo arm, the launch now resolves a mounted gravity URDF slice before the controller starts; for Duo OmniHand profiles the active hand is retained as a fixed-pose payload by freezing its joints inside the derived URDF, so the Pinocchio model stays on the seven Nero arm joints while still accounting for hand mass and inertia
 - the gravity model now prefers the canonical `nero_tool0` frame and falls back to legacy flange names for existing assets
 - the launch file now prefers the source YAML in a colcon workspace so parameter tuning does not require a rebuild
 risks:
