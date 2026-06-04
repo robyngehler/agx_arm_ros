@@ -50,16 +50,23 @@ This keeps the immediate geometry and frame audit small while still proving that
 - The Duo body STL was confirmed to be exported in millimeters and is now scaled into meters in the staging URDF, while the body mesh origin and the initial mount-to-base correction are exposed as top-level arguments for RViz-side alignment.
 - `start_single_agx_arm_rviz.launch.py` now forwards `custom_model`, `custom_model_xacro_args`, and `input_joint_prefix`, so the existing MIT RViz debug path can target staged Duo Xacros without renaming the controller-facing joint contract; that launch now also owns the minimal follow-side adapter routing for the prefixed right-arm path.
 - `display_control.launch.py`, `start_single_agx_arm_rviz.launch.py`, and the new `agx_arm_mit_tools` JointState name adapter now also expose the minimal feedback-side prefix path for the current prefixed Duo right-arm slice: RViz and MoveIt consumers can follow a prefixed topic while the MIT controller remains on the canonical unprefixed `feedback/joint_states` contract, and the right-side `tcp_offset` X correction of `0.005` m is no longer dropped on the custom-model path. A 2026-05-31 live launch without the hardware driver confirmed that the MIT wrapper now keeps its default params file, publishes the custom-model TCP transform from `right_arm_nero_tool0`, and starts the prefixed JointState adapter feeding `feedback/prefixed_joint_states`.
+- `start_multi_agx_arm_rviz.launch.py` now provides the first shared Duo RViz debug surface: one shared Duo description and GUI soft-target JointState topic at the robot level, plus one namespace-scoped MIT controller and one soft-target bridge per arm.
+- `start_agx_arm_components.launch.py mode:=debug_soft_target` now routes `execution_profile:=duo_arm` or `moveit_profile:=both_arms` into that shared Duo RViz debug surface instead of silently falling back to the single-arm wrapper.
+- The current `both_arms` runtime contract is now explicit: keep planning and RViz at the shared robot level, keep execution on one MIT `arm_controller/follow_joint_trajectory` endpoint per arm namespace, and reject hand-aware end-effectors on this surface until the hand-aware SRDF and collision contract are ready.
 - The remaining geometry work is now a visual RViz audit and a physical mount measurement, not a package-discovery or URDF-parsing problem.
 
 ## Immediate Next Steps
 
 1. Run the RViz frame audit for the right-side mount, base, flange, and hand frames with `Fixed Frame := body_base_link`.
 2. Refine the current staging mount-to-base correction and body-mesh origin against the physical body and CAD reference until the plate holes, base-link axis, and real joint-center alignment agree.
-3. Harden the landed prefixed `follow:=true` MoveIt path and the first `right_arm`, `left_arm`, and planning-only `both_arms` profiles into a broader runtime-facing contract.
-4. Generalize `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions while keeping one MIT controller per arm and shared planning above them.
-5. Decide how the planning-only `both_arms` surface should be exposed above the current single-arm wrappers without blurring MIT execution ownership.
+3. Harden the landed prefixed `follow:=true` MoveIt path and the first `right_arm`, `left_arm`, and `both_arms` profiles into a broader runtime-facing contract.
+  Progress: the combined MoveIt wrapper and the new shared Duo RViz debug surface now enforce the current arm-only `both_arms` contract and keep execution split across one MIT controller per arm namespace.
+4. Finish generalizing the remaining `agx_arm_ctrl` launch surfaces away from implicit single-arm assumptions while keeping one MIT controller per arm and shared planning above them.
+  Progress: `mode:=debug_soft_target` now has a shared Duo multi-arm path instead of falling back to the single-arm wrapper; `manual_vendor` remains explicitly one-driver-per-arm.
+5. Decide how the landed `both_arms` surface should be hardened beyond headless bringup into a stable live-runtime contract without blurring MIT execution ownership.
+  Current decision: keep the robot-level `both_arms` planning group, but do not introduce a robot-level combined execution action. Coordinated execution must still decompose into two per-arm MIT action servers until fault handling and safety rules are explicit.
 6. Capture the remaining execution-safety and collision gaps for coordinated dual-arm tasks.
+  Current gaps: dual-arm self-collision matrices, staged-scene clearance calibration, one-arm abort propagation, coordinated stop behavior, and live timing evidence for two active MIT controllers.
 
 ## Near-Term Benchmark Target
 

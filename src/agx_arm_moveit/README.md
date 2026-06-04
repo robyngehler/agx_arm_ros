@@ -17,7 +17,7 @@
 
 - 臂型：`nero`
 - 末端执行器：`none`、`agx_gripper`、`revo2`、`omnihand`
-- 规划组：`nero_arm`、`gripper`、`hand`
+- 规划组：内置单臂模型下的 `nero_arm` 及末端执行器组，以及 staged Duo custom model 路径下的 `right_arm`、`left_arm`、`both_arms`
 - 运动学插件：TRAC-IK（`trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin`）
 
 ## 1 安装
@@ -218,6 +218,8 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 | `omnihand_type` | `left` | OmniHand 左右手类型 | `left`, `right` |
 | `namespace` | 空字符串 | 当前 MoveIt/控制实例命名空间 | 任意合法 ROS 命名空间 |
 | `input_joint_prefix` | 空字符串 | prefixed custom model 中当前受控机械臂的关节前缀；会同时用于控制器 joint 列表和 MIT 轨迹边界适配 | 例如 `right_arm_` |
+| `feedback_joint_prefix` | 空字符串 | 合并后的 follow 侧反馈重新附加的前缀；主要供公共多臂包装启动面使用 | 例如 `left_arm_` |
+| `arm_instances` | 空字符串 | 可选的 YAML 列表，用于描述受管 arm runtime 实例；`moveit_profile:=both_arms` 的公共包装入口需要它 | arm instance 映射组成的 YAML 列表 |
 | `arm_base_frame` | 空字符串 | custom model 下 MoveIt arm chain 的 base link；留空时会按前缀自动推导 | 例如 `right_arm_base_link` |
 | `arm_tip_frame` | 空字符串 | custom model 下 MoveIt arm chain 的 tip link；留空时会按前缀自动推导 | 例如 `right_arm_nero_tool0` |
 | `follow` | `false` | `true` 时订阅 `/feedback/joint_states`，推荐用于真机 / MIT 路径；`false` 时订阅 `/control/joint_states` | `true`, `false` |
@@ -252,7 +254,7 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 ![piper_moveit](./assets/pictures/piper_moveit.png)
 
 - 拖动机械臂末端的交互标记来设定目标位姿。
-- 在左侧 MotionPlanning 面板中切换 `nero_arm`、`gripper`、`hand` 规划组。
+- 在左侧 MotionPlanning 面板中切换内置单臂模型的 `nero_arm`、`gripper`、`hand` 规划组，或 staged Duo custom model 路径下的 `right_arm`、`left_arm`、`both_arms` 规划组。
 - 在 Goal State 中选择 `home`、`gripper_open`、`hand_half_close`、`hand_close` 等预设状态。
 
 ## 3 常见问题

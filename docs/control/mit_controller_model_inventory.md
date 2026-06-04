@@ -32,6 +32,9 @@ interface_notes:
   - service: `~/hold_current`
   - service: `~/cancel_trajectory`
 - prefixed Duo follow-mode consumers now use a separate JointState name adapter in `agx_arm_mit_tools`; the MIT controller itself stays on the canonical unprefixed `feedback/joint_states` contract
+- the first shared Duo RViz debug surface now keeps one MIT controller plus one soft-target bridge per arm namespace, while the shared robot-level Duo description consumes merged prefixed feedback and a shared GUI JointState topic
+- the current `both_arms` runtime contract remains arm-only: coordinated planning stays at the shared robot level, but execution still decomposes into one per-arm `arm_controller/follow_joint_trajectory` action server per MIT controller namespace
+- the current `both_arms` runtime and RViz debug surfaces reject hand-aware end-effectors; dual-arm OmniHand execution remains open work until the SRDF, collision, and ownership semantics stabilize
 - the package now also includes a long-lived motion-manager node that exposes `~/trigger_motion` for external wakeword-triggered playback over a curated trajectory library
 - the wakeword-oriented motion-manager is ongoing application work and should not yet be treated as a frozen Sprint 2 runtime contract
 - default gravity behavior is Pinocchio-based with `gravity_feedforward_sign: -1.0`
@@ -43,6 +46,7 @@ risks:
 - the ignored root legacy description tree can still drift away from the canonical sim-backed package if both copies are edited
 - controller-side model assumptions currently match standalone Nero better than future OmniHand or AGV-mounted variants
 - controller-side use of the canonical `nero_tool0` path is now aligned in code, but the end-to-end real-arm validation of that naming is still pending
+- the staged Duo runtime contract is clearer now, but coordinated dual-arm abort handling, collision validation, and live hardware timing evidence are still not frozen
 recommended_next_action:
 - keep controller URDF discovery aligned with the sim-backed canonical `agx_arm_description` package
 - add a future-facing extension point for payload and mounting-pose metadata before Sprint 5, 8, and 9 work begins

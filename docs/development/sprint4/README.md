@@ -4,9 +4,9 @@
 
 This folder tracks Sprint 4 implementation details for the first Duo body plus Nero plus OmniHand system baseline.
 
-It captures the current right-first system bringup path, the documented `src/duo_body_description` staging package, and the remaining work to generalize the still single-arm RViz, MoveIt, and controller-facing surfaces.
+It captures the current right-first system bringup path, the documented `src/duo_body_description` staging package, the landed prefixed MoveIt and MIT wrapper paths, and the remaining work to finish the graphical, hand-aware, and live multi-arm runtime surfaces.
 
-The current baseline is a staged description-plus-debug slice, not a finished shared runtime or multi-arm MoveIt baseline.
+The current baseline is no longer only a description-plus-debug slice: the first shared prefixed MoveIt and MIT wrapper contract is landed, but it is not yet a finished hand-aware or live dual-hardware baseline.
 
 Program-level coordination lives in:
 
@@ -30,9 +30,9 @@ Do not use this Sprint 4 folder as the cross-sprint source of truth.
 | Duo system staging package | CONFIRMED | `src/duo_body_description` is now the documented staging package for Duo body plus configurable arm-hand system assembly, and the package builds cleanly in the active ROS overlay again. |
 | Right-side description baseline | CONFIRMED | Prefix-safe Nero arm composition, side-selectable OmniHand attachment, and a description-only `display_duo_system.launch.py` bringup path are landed for `body + right arm + right OmniHand`; on 2026-05-28, `xacro`/`check_urdf` and the headless launch both succeeded for the right-side slice, and the Duo display launch now prefers workspace source RViz/Xacro files during local Sprint 4 iteration. |
 | Left-side mirror | PARTIAL | The left arm and left OmniHand now validate structurally through `xacro`/`check_urdf` and the headless launch path, but the visual RViz frame audit is still pending. |
-| Duo-aware MIT RViz debug slice | PARTIAL | The existing single-arm RViz and MIT debug surface can now target staged Duo Xacros via `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, the landed feedback-side JointState prefix adapter, and the custom-model TCP-parent hook; the right-side `tcp_offset` of `0.005` m in X is now preserved on that path, and a 2026-05-31 live launch confirmed the prefixed RViz `follow:=true` path plus adapter wiring without the hardware driver. |
+| Duo-aware MIT RViz debug slice | PARTIAL | The existing single-arm RViz and MIT debug surface can now target staged Duo Xacros via `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, the landed feedback-side JointState prefix adapter, and the custom-model TCP-parent hook; the right-side `tcp_offset` of `0.005` m in X is now preserved on that path, and a 2026-05-31 live launch confirmed the prefixed RViz `follow:=true` path plus adapter wiring without the hardware driver. A new `start_multi_agx_arm_rviz.launch.py` surface now also fans one shared Duo RViz soft-target JointState topic into one MIT controller plus one debug bridge per arm namespace for the first `both_arms` graphical contract. |
 | Prefixed per-arm MoveIt path | CONFIRMED | `agx_arm_moveit start_moveit.launch.py` is now the canonical package-local MoveIt entrypoint, with `demo.launch.py` reduced to a compatibility alias. The package-local and combined `agx_arm_ctrl` wrappers accept prefixed custom body models through `robot_name`, `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, `arm_base_frame`, and `arm_tip_frame`, while the MIT controller strips the same prefix on incoming trajectories. The 2026-06-02 headless right-arm pass reached `You can start planning now!`, and the launch ownership now matches the canonical naming. |
-| MoveIt multi-arm generalization | PARTIAL | The first profile selector is landed through `moveit_profile:=right_arm|left_arm|both_arms`. The staged custom-model path no longer depends on manual prefix/frame wiring, and the combined wrapper now starts one MIT controller per declared `arm_instance`, keeps the per-arm runtimes namespace-scoped, and merges prefixed feedback back into one MoveIt/RViz stream. Hand-aware variants and live dual-hardware validation remain open work. |
+| MoveIt multi-arm generalization | PARTIAL | The first profile selector is landed through `moveit_profile:=right_arm|left_arm|both_arms`. The staged custom-model path no longer depends on manual prefix/frame wiring, and the combined wrapper now starts one MIT controller per declared `arm_instances` entry, keeps the per-arm runtimes namespace-scoped, and merges prefixed feedback back into one MoveIt/RViz stream. The current `both_arms` contract is now explicitly arm-only and stays decomposed into one per-arm MIT action server per namespace; hand-aware variants and live dual-hardware validation remain open work. |
 | Coordinated system demo target | CONFIRMED | The first representative two-arm benchmark is a coordinated Hefeweizen pouring workflow, using one coupled planning group with orchestration above per-arm execution. |
 
 ## Achieved Vs Open Boundary
@@ -47,9 +47,9 @@ Achieved in the current Sprint 4 baseline:
 Still open before Sprint 4 exit:
 
 - the graphical RViz frame audit and physical mount measurement for the staged body geometry
-- the graphical RViz frame audit and physical mount measurement for the staged body geometry
 - hand-aware MoveIt outputs beyond the landed `right_arm`, `left_arm`, and `both_arms` profiles
 - live dual-hardware validation of the namespace-scoped MIT plus agx_arm_ctrl runtime path
+- coordinated-task safety evidence for collision margins, one-arm abort propagation, and staged-scene calibration
 
 ## Scope Adjustments From The Roadmap
 

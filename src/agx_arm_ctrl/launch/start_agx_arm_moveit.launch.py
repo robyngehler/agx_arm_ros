@@ -23,6 +23,7 @@ from _multi_arm_runtime import (  # noqa: E402
     resolve_arm_instances,
 )
 from agx_arm_ctrl.execution_profiles import resolve_execution_profile  # noqa: E402
+from agx_arm_ctrl.duo_runtime_contract import validate_duo_both_arms_contract  # noqa: E402
 
 
 def _bool_string(value: object, default: str) -> str:
@@ -99,8 +100,14 @@ def _instance_runtime_launches(context):
         explicit_joint_prefix,
         explicit_feedback_joint_prefix,
     )
-
     use_mit_controller = LaunchConfiguration("use_mit_controller").perform(context).strip() == "true"
+    validate_duo_both_arms_contract(
+        moveit_profile,
+        effector_type,
+        instances,
+        follow=LaunchConfiguration("follow").perform(context).strip(),
+        use_mit_controller=use_mit_controller,
+    )
     root_namespace = normalize_relative_namespace(LaunchConfiguration("namespace").perform(context))
 
     actions = []

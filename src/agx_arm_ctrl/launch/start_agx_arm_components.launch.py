@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
@@ -7,7 +7,29 @@ from ament_index_python.packages import get_package_share_directory
 import os
 from pathlib import Path
 
+from agx_arm_ctrl.execution_profiles import resolve_execution_profile
+
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
+
+
+def _resolved_moveit_profile(context) -> str:
+    profile_values = resolve_execution_profile(
+        LaunchConfiguration("execution_profile").perform(context).strip()
+    )
+    return profile_values.get("moveit_profile") or LaunchConfiguration("moveit_profile").perform(context).strip()
+
+
+def _validate_mode_contract(context):
+    mode = LaunchConfiguration("mode").perform(context).strip()
+    moveit_profile = _resolved_moveit_profile(context)
+
+    if mode == "manual_vendor" and moveit_profile == "both_arms":
+        raise ValueError(
+            "mode 'manual_vendor' remains a one-driver-per-arm surface; "
+            "use mode:=moveit_mit or mode:=debug_soft_target for the current Duo both_arms bringup"
+        )
+
+    return []
 
 
 def _default_mit_params_file() -> str:
@@ -245,6 +267,18 @@ def generate_launch_description():
 
     mode_is_moveit = PythonExpression(["'", LaunchConfiguration("mode"), "' == 'moveit_mit'"])
     mode_is_debug = PythonExpression(["'", LaunchConfiguration("mode"), "' == 'debug_soft_target'"])
+    debug_is_multi_arm = PythonExpression([
+        "('", LaunchConfiguration("mode"),
+        "' == 'debug_soft_target') and (('", LaunchConfiguration("execution_profile"),
+        "' == 'duo_arm') or ('", LaunchConfiguration("moveit_profile"),
+        "' == 'both_arms'))",
+    ])
+    debug_is_single_arm = PythonExpression([
+        "('", LaunchConfiguration("mode"),
+        "' == 'debug_soft_target') and not (('", LaunchConfiguration("execution_profile"),
+        "' == 'duo_arm') or ('", LaunchConfiguration("moveit_profile"),
+        "' == 'both_arms'))",
+    ])
 
     manual_vendor_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -317,7 +351,50 @@ def generate_launch_description():
             "tcp_offset": LaunchConfiguration("tcp_offset"),
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
         }.items(),
-        condition=IfCondition(mode_is_debug),
+        condition=IfCondition(debug_is_single_arm),
+    )
+
+    debug_soft_target_multi_arm_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("agx_arm_ctrl"),
+                "launch",
+                "start_multi_agx_arm_rviz.launch.py",
+            )
+        ),
+        launch_arguments={
+            "log_level": LaunchConfiguration("log_level"),
+            "namespace": LaunchConfiguration("namespace"),
+            "can_port": LaunchConfiguration("can_port"),
+            "arm_type": LaunchConfiguration("arm_type"),
+            "execution_profile": LaunchConfiguration("execution_profile"),
+            "moveit_profile": LaunchConfiguration("moveit_profile"),
+            "custom_model": LaunchConfiguration("custom_model"),
+            "custom_model_xacro_args": LaunchConfiguration("custom_model_xacro_args"),
+            "arm_instances": LaunchConfiguration("arm_instances"),
+            "effector_type": LaunchConfiguration("effector_type"),
+            "revo2_type": LaunchConfiguration("revo2_type"),
+            "omnihand_type": LaunchConfiguration("omnihand_type"),
+            "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
+            "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "auto_enable": LaunchConfiguration("auto_enable"),
+            "pub_rate": LaunchConfiguration("pub_rate"),
+            "follow": LaunchConfiguration("follow"),
+            "use_mit_controller": "true",
+            "mit_control_rate_hz": LaunchConfiguration("mit_control_rate_hz"),
+            "mit_params_file": LaunchConfiguration("mit_params_file"),
+            "mit_joint_target_duration_s": LaunchConfiguration("mit_joint_target_duration_s"),
+            "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
+            "feedback_joint_prefix": LaunchConfiguration("feedback_joint_prefix"),
+            "follow_joint_states_topic": LaunchConfiguration("follow_joint_states_topic"),
+            "tcp_parent_frame": LaunchConfiguration("tcp_parent_frame"),
+            "enable_timeout": LaunchConfiguration("enable_timeout"),
+            "fast_mode": LaunchConfiguration("fast_mode"),
+            "speed_percent": LaunchConfiguration("speed_percent"),
+            "tcp_offset": LaunchConfiguration("tcp_offset"),
+            "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
+        }.items(),
+        condition=IfCondition(debug_is_multi_arm),
     )
 
     moveit_mit_launch = IncludeLaunchDescription(
@@ -409,7 +486,9 @@ def generate_launch_description():
         load_simple_obstacles_arg,
         planning_pipelines_arg,
         simple_obstacles_config_arg,
+        OpaqueFunction(function=_validate_mode_contract),
         manual_vendor_launch,
         debug_soft_target_launch,
+        debug_soft_target_multi_arm_launch,
         moveit_mit_launch,
     ])

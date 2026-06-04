@@ -68,20 +68,37 @@ class PinocchioGravityModel:
         self._pin.updateFramePlacements(self._model, self._data)
 
         frame_candidates = ["nero_tool0", "link7", "gripper_flange", "tool0", "flange"]
+        for frame_name in self._preferred_frame_names(frame_candidates):
+            frame_id = self._model.getFrameId(frame_name)
+            placement = self._data.oMf[frame_id]
+            roll, pitch, yaw = self._pin.rpy.matrixToRpy(placement.rotation)
+            return [
+                float(placement.translation[0]),
+                float(placement.translation[1]),
+                float(placement.translation[2]),
+                float(roll),
+                float(pitch),
+                float(yaw),
+            ]
+        raise GravityModelError("No suitable flange frame found in URDF model")
+
+    def _preferred_frame_names(self, frame_candidates: list[str]) -> list[str]:
+        preferred_names: list[str] = []
         for frame_name in frame_candidates:
             if self._model.existFrame(frame_name):
-                frame_id = self._model.getFrameId(frame_name)
-                placement = self._data.oMf[frame_id]
-                roll, pitch, yaw = self._pin.rpy.matrixToRpy(placement.rotation)
-                return [
-                    float(placement.translation[0]),
-                    float(placement.translation[1]),
-                    float(placement.translation[2]),
-                    float(roll),
-                    float(pitch),
-                    float(yaw),
-                ]
-        raise GravityModelError("No suitable flange frame found in URDF model")
+                preferred_names.append(frame_name)
+
+        frames = getattr(self._model, "frames", [])
+        for frame in frames:
+            resolved_name = getattr(frame, "name", "")
+            if not resolved_name:
+                continue
+            if any(
+                resolved_name.endswith(candidate)
+                for candidate in frame_candidates
+            ) and resolved_name not in preferred_names:
+                preferred_names.append(resolved_name)
+        return preferred_names
 
     @property
     def model_dofs(self) -> int:

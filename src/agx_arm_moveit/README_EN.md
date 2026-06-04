@@ -17,7 +17,7 @@ Current support:
 
 - Arm type: `nero`
 - End effectors: `none`, `agx_gripper`, `revo2`, `omnihand`
-- Planning groups: `nero_arm`, `gripper`, `hand`
+- Planning groups: `nero_arm` plus end-effector groups on the built-in single-arm model, and `right_arm`, `left_arm`, `both_arms` on the staged Duo custom-model path
 - Kinematics plugin: TRAC-IK (`trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin`)
 
 ## 1. Installation
@@ -206,10 +206,18 @@ That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group w
 |-----------|---------|-------------|---------|
 | `arm_type` | `nero` | Arm model | `nero` |
 | `moveit_profile` | `nero_arm` | MoveIt planning profile; `right_arm` and `left_arm` auto-derive the Duo custom-model prefix, group, and arm-chain frames, while `both_arms` emits the first composed dual-arm planning group | `nero_arm`, `right_arm`, `left_arm`, `both_arms` |
+| `robot_name` | `agx_arm` | Robot name used by the generated SRDF; override this when the custom model uses a different robot name. The combined wrappers auto-resolve `duo_nero_system` when `custom_model` is set and `robot_name` is left empty | Any valid robot name |
+| `custom_model` | empty string | Optional custom model path; when set, MoveIt models that xacro/URDF directly instead of the built-in single-arm description | Any readable xacro/URDF |
+| `custom_model_xacro_args` | empty string | Extra xacro argument string forwarded when `custom_model` is set | Any valid xacro arg string |
 | `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2`, `omnihand` |
 | `revo2_type` | `left` | Revo2 hand side | `left`, `right` |
 | `omnihand_type` | `left` | OmniHand side | `left`, `right` |
 | `namespace` | empty string | Namespace for the MoveIt/control instance | Any valid ROS namespace |
+| `input_joint_prefix` | empty string | Joint prefix used by prefixed custom models for the controlled arm joints; `right_arm` and `left_arm` derive this automatically | e.g. `right_arm_` |
+| `feedback_joint_prefix` | empty string | Prefix re-applied on merged follow-side feedback; mainly used by the common multi-arm wrappers | e.g. `left_arm_` |
+| `arm_instances` | empty string | Optional YAML list describing managed arm runtime instances; required by the combined wrapper for `moveit_profile:=both_arms` | YAML list of arm-instance mappings |
+| `arm_base_frame` | empty string | Optional arm base frame override for custom body-mounted models; `right_arm` and `left_arm` derive this automatically | e.g. `right_arm_base_link` |
+| `arm_tip_frame` | empty string | Optional arm tip frame override for custom body-mounted models; `right_arm` and `left_arm` derive this automatically | e.g. `right_arm_nero_tool0` |
 | `follow` | `false` | `true` subscribes to `/feedback/joint_states` and is recommended for real-arm / MIT flows; `false` subscribes to `/control/joint_states` | `true`, `false` |
 | `follow_joint_states_topic` | `feedback/joint_states` | JointState topic consumed when `follow:=true`; point this at an adapted topic for prefixed multi-arm models | Any valid topic |
 | `tcp_offset` | `[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]` | TCP offset [x, y, z, rx, ry, rz] in meters/radians | - |
@@ -243,7 +251,7 @@ That profile emits `left_arm`, `right_arm`, and the composed `both_arms` group w
 ![piper_moveit](./assets/pictures/piper_moveit.png)
 
 - Drag the interactive marker at the arm tip to define a target pose.
-- Use the MotionPlanning panel to switch between `nero_arm`, `gripper`, and `hand`.
+- Use the MotionPlanning panel to switch between `nero_arm`, `gripper`, and `hand` on the built-in single-arm model, or `right_arm`, `left_arm`, and `both_arms` on the staged Duo custom-model path.
 - Pick preset states such as `home`, `gripper_open`, `hand_half_close`, or `hand_close` from Goal State.
 
 ## 3. Troubleshooting

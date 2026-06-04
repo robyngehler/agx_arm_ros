@@ -7,6 +7,9 @@
 - Treat one base with at most two arms as one robot. A future `>2` arm layout should be modeled as another body-level two-arm robot in its own namespace rather than stretching the current Duo system contract.
 - Grow `agx_arm_moveit` in place via prefix-aligned multi-profile outputs. Keep the future `left_*`, `right_*`, and `duo_*` SRDF/config surfaces synchronized instead of forking a second MoveIt package.
 - Keep one MIT controller instance per arm because gravity, tools, and local control limits remain arm-specific. Keep planning, collision checking, and shared tooling such as trajectory playback at the shared robot level.
+- Keep the first shared Duo RViz debug surface as one robot-level Duo description plus one shared soft-target JointState topic, and fan that topic out into one namespace-scoped MIT controller plus one debug bridge per arm.
+- Keep the current `both_arms` execution contract arm-only. Reject dual-arm hand effectors on this surface until the hand-aware SRDF, self-collision matrix, and controller-ownership semantics are ready.
+- Keep coordinated execution decomposed into the two namespace-scoped `arm_controller/follow_joint_trajectory` endpoints. Do not add a robot-level `both_arms/follow_joint_trajectory` action until fault handling and safety rules are explicit.
 - Use shared planning and collision checks as the minimum stable contract for the first coordinated dual-arm task.
 - Use the coordinated Hefeweizen pouring workflow as the reference benchmark. Model it as one coupled planning group with orchestration above per-arm execution; the first executable slice may start with synchronized or sequential recorded per-arm trajectories after merged planning.
 - The first landed change for the MIT-controller RViz path is to preserve the current single-arm launch as a per-arm debug surface, forward `custom_model` and `custom_model_xacro_args` into `display_control.launch.py`, and let the MIT debug bridge strip a per-arm input joint prefix so the staged Duo description can drive the existing controller-facing debug path without moving controller ownership out of the current packages.
@@ -15,5 +18,6 @@
 
 ## Remaining Open Questions
 
-- What is the exact shared-vs-per-arm ROS topic, action, and launch split once a second live arm is added to `agx_arm_ctrl`, `agx_arm_mit_controller`, and `agx_arm_moveit`?
-- Does the landed feedback-side joint-name prefix adapter plus `follow_joint_states_topic` hook fully cover the prefixed Duo `follow:=true` path in RViz and MoveIt, or is a broader shared-state adaptation layer still needed after the first graphical runtime validation?
+- What self-collision matrix, planning-scene exclusions, and staged body clearances are required before `both_arms` can be treated as a real coordinated execution surface instead of only a planning/debug baseline?
+- How should one-arm faults, e-stops, or enable drops propagate across the second arm during coordinated tasks so the shared robot-level planner does not keep executing against a half-live system?
+- Does the shared Duo RViz debug surface still need a broader shared-state adapter after the first real graphical and live dual-hardware validation, or is the landed merged-feedback path sufficient?

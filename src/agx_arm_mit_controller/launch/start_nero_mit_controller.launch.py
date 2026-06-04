@@ -3,11 +3,13 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+from agx_arm_mit_controller.gravity_launch_utils import resolve_gravity_urdf_path
 
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
@@ -27,6 +29,46 @@ def _default_params_file() -> str:
     if source_params_file.is_file():
         return str(source_params_file)
     return str(installed_params_file)
+
+
+def _build_controller_node(context):
+    resolved_gravity_urdf_path = resolve_gravity_urdf_path(
+        custom_model=LaunchConfiguration("custom_model").perform(context),
+        custom_model_xacro_args=LaunchConfiguration("custom_model_xacro_args").perform(context),
+        input_joint_prefix=LaunchConfiguration("input_joint_prefix").perform(context),
+        effector_type=LaunchConfiguration("effector_type").perform(context),
+        explicit_gravity_urdf_path=LaunchConfiguration("gravity_urdf_path").perform(context),
+    )
+
+    return [
+        LogInfo(msg=["MIT controller params_file: ", LaunchConfiguration("params_file")]),
+        LogInfo(
+            msg=(
+                f"MIT controller gravity_urdf_path: {resolved_gravity_urdf_path}"
+                if resolved_gravity_urdf_path
+                else "MIT controller gravity_urdf_path: <auto>"
+            )
+        ),
+        Node(
+            package="agx_arm_mit_controller",
+            executable="agx_arm_mit_controller",
+            name="mit_controller",
+            namespace=LaunchConfiguration("namespace"),
+            output="screen",
+            ros_arguments=["--log-level", LaunchConfiguration("log_level")],
+            parameters=[
+                LaunchConfiguration("params_file"),
+                {
+                    "control_rate_hz": LaunchConfiguration("control_rate_hz"),
+                    "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
+                    "gravity_urdf_path": resolved_gravity_urdf_path,
+                    "enable_debug_joint_trajectory_topic": LaunchConfiguration(
+                        "enable_debug_joint_trajectory_topic"
+                    ),
+                },
+            ],
+        ),
+    ]
 
 
 def generate_launch_description():
@@ -117,10 +159,25 @@ def generate_launch_description():
         default_value="100.0",
         description="MIT controller update rate in hertz.",
     )
+    custom_model_arg = DeclareLaunchArgument(
+        "custom_model",
+        default_value="",
+        description="Optional custom model path used to derive a gravity URDF for mounted-arm slices.",
+    )
+    custom_model_xacro_args_arg = DeclareLaunchArgument(
+        "custom_model_xacro_args",
+        default_value="",
+        description="Optional xacro argument string forwarded when custom_model is set.",
+    )
     input_joint_prefix_arg = DeclareLaunchArgument(
         "input_joint_prefix",
         default_value="",
         description="Optional prefix stripped from incoming trajectory joint names before MIT validation.",
+    )
+    gravity_urdf_path_arg = DeclareLaunchArgument(
+        "gravity_urdf_path",
+        default_value="",
+        description="Optional explicit gravity URDF path override. Empty auto-resolves from custom_model or the canonical Nero URDF.",
     )
     params_file_arg = DeclareLaunchArgument(
         "params_file",
@@ -167,25 +224,6 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("launch_driver")),
     )
 
-    controller_node = Node(
-        package="agx_arm_mit_controller",
-        executable="agx_arm_mit_controller",
-        name="mit_controller",
-        namespace=LaunchConfiguration("namespace"),
-        output="screen",
-        ros_arguments=["--log-level", LaunchConfiguration("log_level")],
-        parameters=[
-            LaunchConfiguration("params_file"),
-            {
-                "control_rate_hz": LaunchConfiguration("control_rate_hz"),
-                "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
-                "enable_debug_joint_trajectory_topic": LaunchConfiguration(
-                    "enable_debug_joint_trajectory_topic"
-                ),
-            },
-        ],
-    )
-
     return LaunchDescription(
         [
             namespace_arg,
@@ -205,12 +243,14 @@ def generate_launch_description():
             gripper_default_effort_arg,
             publish_gripper_joint_arg,
             control_rate_arg,
+            custom_model_arg,
+            custom_model_xacro_args_arg,
             input_joint_prefix_arg,
+            gravity_urdf_path_arg,
             params_file_arg,
             launch_driver_arg,
             enable_debug_joint_trajectory_topic_arg,
-            LogInfo(msg=["MIT controller params_file: ", LaunchConfiguration("params_file")]),
             driver_launch,
-            controller_node,
+            OpaqueFunction(function=_build_controller_node),
         ]
     )
