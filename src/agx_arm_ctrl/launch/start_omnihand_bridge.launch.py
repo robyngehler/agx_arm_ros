@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -24,7 +25,22 @@ def generate_launch_description():
     backend_type_arg = DeclareLaunchArgument(
         "backend_type",
         default_value="mock",
-        description="Backend type. Sprint 2 currently supports only mock.",
+        description="Backend type. Supported values are mock and sdk.",
+    )
+    device_id_arg = DeclareLaunchArgument(
+        "device_id",
+        default_value="1",
+        description="Vendor SDK device_id used when backend_type is sdk.",
+    )
+    canfd_id_arg = DeclareLaunchArgument(
+        "canfd_id",
+        default_value="0",
+        description="Vendor SDK canfd_id used when backend_type is sdk when supported by the local SDK build.",
+    )
+    sdk_cfg_path_arg = DeclareLaunchArgument(
+        "sdk_cfg_path",
+        default_value="",
+        description="Optional vendor SDK config path used when backend_type is sdk.",
     )
     pub_rate_arg = DeclareLaunchArgument(
         "pub_rate",
@@ -52,9 +68,12 @@ def generate_launch_description():
         parameters=[{
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "backend_type": LaunchConfiguration("backend_type"),
-            "pub_rate": LaunchConfiguration("pub_rate"),
+            "device_id": ParameterValue(LaunchConfiguration("device_id"), value_type=int),
+            "canfd_id": ParameterValue(LaunchConfiguration("canfd_id"), value_type=int),
+            "sdk_cfg_path": LaunchConfiguration("sdk_cfg_path"),
+            "pub_rate": ParameterValue(LaunchConfiguration("pub_rate"), value_type=float),
             "joint_states_command_topic": LaunchConfiguration("joint_states_command_topic"),
-            "tactile_sample_count": LaunchConfiguration("tactile_sample_count"),
+            "tactile_sample_count": ParameterValue(LaunchConfiguration("tactile_sample_count"), value_type=int),
         }],
     )
 
@@ -63,6 +82,9 @@ def generate_launch_description():
         namespace_arg,
         omnihand_type_arg,
         backend_type_arg,
+        device_id_arg,
+        canfd_id_arg,
+        sdk_cfg_path_arg,
         pub_rate_arg,
         joint_states_command_topic_arg,
         tactile_sample_count_arg,

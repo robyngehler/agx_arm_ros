@@ -10,6 +10,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogI
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 from agx_arm_ctrl.duo_runtime_contract import validate_duo_both_arms_contract
 from agx_arm_ctrl.execution_profiles import resolve_execution_profile
@@ -68,6 +69,7 @@ def _launch_actions(context):
         LaunchConfiguration("execution_profile").perform(context).strip()
     )
     moveit_profile = _resolved_argument(context, profile_values, "moveit_profile")
+    robot_name = _resolved_argument(context, profile_values, "robot_name") or "agx_arm"
     custom_model = _resolved_argument(context, profile_values, "custom_model")
     custom_model_xacro_args = _resolved_argument(context, profile_values, "custom_model_xacro_args")
     effector_type = _resolved_argument(context, profile_values, "effector_type")
@@ -126,6 +128,8 @@ def _launch_actions(context):
             launch_arguments={
                 "namespace": root_namespace,
                 "arm_type": LaunchConfiguration("arm_type").perform(context),
+                "robot_name": robot_name,
+                "moveit_profile": moveit_profile,
                 "custom_model": custom_model,
                 "custom_model_xacro_args": custom_model_xacro_args,
                 "effector_type": effector_type,
@@ -134,6 +138,9 @@ def _launch_actions(context):
                 "pub_rate": LaunchConfiguration("pub_rate").perform(context),
                 "follow": follow,
                 "follow_joint_states_topic": follow_joint_states_topic,
+                "input_joint_prefix": explicit_joint_prefix,
+                "arm_base_frame": LaunchConfiguration("arm_base_frame").perform(context),
+                "arm_tip_frame": LaunchConfiguration("arm_tip_frame").perform(context),
                 "tcp_offset": LaunchConfiguration("tcp_offset").perform(context),
                 "tcp_parent_frame": LaunchConfiguration("tcp_parent_frame").perform(context),
                 "control": "true",
@@ -164,6 +171,9 @@ def _launch_actions(context):
                     "omnihand_type": _value_or_default(instance["omnihand_type"], omnihand_type),
                     "launch_omnihand_bridge": launch_omnihand_bridge,
                     "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type").perform(context),
+                    "omnihand_device_id": LaunchConfiguration("omnihand_device_id").perform(context),
+                    "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id").perform(context),
+                    "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path").perform(context),
                     "auto_enable": LaunchConfiguration("auto_enable").perform(context),
                     "fast_mode": LaunchConfiguration("fast_mode").perform(context),
                     "speed_percent": LaunchConfiguration("speed_percent").perform(context),
@@ -188,7 +198,10 @@ def _launch_actions(context):
                 parameters=[
                     {
                         "input_topic": shared_control_topic,
-                        "segment_duration_s": LaunchConfiguration("mit_joint_target_duration_s").perform(context),
+                        "segment_duration_s": ParameterValue(
+                            float(LaunchConfiguration("mit_joint_target_duration_s").perform(context)),
+                            value_type=float,
+                        ),
                         "input_joint_prefix": instance["joint_prefix"],
                         "auto_enable": False,
                     }
@@ -284,6 +297,9 @@ def generate_launch_description():
             DeclareLaunchArgument("omnihand_type", default_value="left", choices=["left", "right"]),
             DeclareLaunchArgument("launch_omnihand_bridge", default_value="false", choices=["true", "false"]),
             DeclareLaunchArgument("omnihand_backend_type", default_value="mock"),
+            DeclareLaunchArgument("omnihand_device_id", default_value="1"),
+            DeclareLaunchArgument("omnihand_canfd_id", default_value="0"),
+            DeclareLaunchArgument("omnihand_sdk_cfg_path", default_value=""),
             DeclareLaunchArgument("auto_enable", default_value="true", choices=["true", "false"]),
             DeclareLaunchArgument("fast_mode", default_value="false", choices=["true", "false"]),
             DeclareLaunchArgument("speed_percent", default_value="100"),

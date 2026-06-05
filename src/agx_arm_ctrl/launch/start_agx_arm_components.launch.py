@@ -138,6 +138,21 @@ def generate_launch_description():
         default_value="mock",
         description="Backend type for the repo-owned OmniHand bridge.",
     )
+    omnihand_device_id_arg = DeclareLaunchArgument(
+        "omnihand_device_id",
+        default_value="1",
+        description="Vendor SDK device_id used when omnihand_backend_type is sdk.",
+    )
+    omnihand_canfd_id_arg = DeclareLaunchArgument(
+        "omnihand_canfd_id",
+        default_value="0",
+        description="Vendor SDK canfd_id used when omnihand_backend_type is sdk.",
+    )
+    omnihand_sdk_cfg_path_arg = DeclareLaunchArgument(
+        "omnihand_sdk_cfg_path",
+        default_value="",
+        description="Optional vendor SDK config path used when omnihand_backend_type is sdk.",
+    )
     auto_enable_arg = DeclareLaunchArgument(
         "auto_enable",
         default_value="true",
@@ -302,6 +317,9 @@ def generate_launch_description():
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
+            "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
+            "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path"),
             "tcp_offset": LaunchConfiguration("tcp_offset"),
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
             "publish_gripper_joint": PythonExpression([
@@ -333,6 +351,9 @@ def generate_launch_description():
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
+            "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
+            "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path"),
             "auto_enable": LaunchConfiguration("auto_enable"),
             "pub_rate": LaunchConfiguration("pub_rate"),
             "follow": LaunchConfiguration("follow"),
@@ -377,6 +398,9 @@ def generate_launch_description():
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
+            "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
+            "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path"),
             "auto_enable": LaunchConfiguration("auto_enable"),
             "pub_rate": LaunchConfiguration("pub_rate"),
             "follow": LaunchConfiguration("follow"),
@@ -421,6 +445,9 @@ def generate_launch_description():
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
+            "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
+            "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path"),
             "auto_enable": LaunchConfiguration("auto_enable"),
             "fast_mode": LaunchConfiguration("fast_mode"),
             "speed_percent": LaunchConfiguration("speed_percent"),
@@ -463,6 +490,9 @@ def generate_launch_description():
         omnihand_type_arg,
         launch_omnihand_bridge_arg,
         omnihand_backend_type_arg,
+        omnihand_device_id_arg,
+        omnihand_canfd_id_arg,
+        omnihand_sdk_cfg_path_arg,
         auto_enable_arg,
         fast_mode_arg,
         speed_percent_arg,

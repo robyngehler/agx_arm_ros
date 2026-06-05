@@ -65,6 +65,24 @@ def generate_launch_description():
         description='Backend type for the repo-owned OmniHand bridge.'
     )
 
+    omnihand_device_id_arg = DeclareLaunchArgument(
+        'omnihand_device_id',
+        default_value='1',
+        description='Vendor SDK device_id used when omnihand_backend_type is sdk.'
+    )
+
+    omnihand_canfd_id_arg = DeclareLaunchArgument(
+        'omnihand_canfd_id',
+        default_value='0',
+        description='Vendor SDK canfd_id used when omnihand_backend_type is sdk.'
+    )
+
+    omnihand_sdk_cfg_path_arg = DeclareLaunchArgument(
+        'omnihand_sdk_cfg_path',
+        default_value='',
+        description='Optional vendor SDK config path used when omnihand_backend_type is sdk.'
+    )
+
     auto_enable_arg = DeclareLaunchArgument(
         'auto_enable',
         default_value='true',
@@ -107,6 +125,12 @@ def generate_launch_description():
         'gripper_default_effort',
         default_value='1.0',
         description='Default effort for gripper commands (>= 0.0).'
+    )
+
+    joint_states_command_topic_arg = DeclareLaunchArgument(
+        'joint_states_command_topic',
+        default_value='control/joint_states',
+        description='JointState command topic consumed by the OmniHand bridge.'
     )
 
     publish_gripper_joint_arg = DeclareLaunchArgument(
@@ -181,8 +205,33 @@ def generate_launch_description():
             'namespace': LaunchConfiguration('namespace'),
             'omnihand_type': LaunchConfiguration('omnihand_type'),
             'backend_type': LaunchConfiguration('omnihand_backend_type'),
+            'device_id': LaunchConfiguration('omnihand_device_id'),
+            'canfd_id': LaunchConfiguration('omnihand_canfd_id'),
+            'sdk_cfg_path': LaunchConfiguration('omnihand_sdk_cfg_path'),
             'pub_rate': LaunchConfiguration('pub_rate'),
+            'joint_states_command_topic': LaunchConfiguration('joint_states_command_topic'),
         }.items(),
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('effector_type'), "' == 'omnihand' and '",
+                LaunchConfiguration('launch_omnihand_bridge'), "' == 'true'",
+            ])
+        ),
+    )
+
+    omnihand_follow_joint_trajectory_node = Node(
+        package='agx_arm_ctrl',
+        executable='omnihand_follow_joint_trajectory',
+        name='omnihand_follow_joint_trajectory',
+        namespace=LaunchConfiguration('namespace'),
+        output='screen',
+        ros_arguments=['--log-level', LaunchConfiguration('log_level')],
+        parameters=[{
+            'omnihand_type': LaunchConfiguration('omnihand_type'),
+            'action_name': PythonExpression([
+                "'", LaunchConfiguration('omnihand_type'), "_omnihand_controller/follow_joint_trajectory'",
+            ]),
+        }],
         condition=IfCondition(
             PythonExpression([
                 "'", LaunchConfiguration('effector_type'), "' == 'omnihand' and '",
@@ -201,6 +250,9 @@ def generate_launch_description():
         omnihand_type_arg,
         launch_omnihand_bridge_arg,
         omnihand_backend_type_arg,
+        omnihand_device_id_arg,
+        omnihand_canfd_id_arg,
+        omnihand_sdk_cfg_path_arg,
         auto_enable_arg,
         fast_mode_arg,
         speed_percent_arg,
@@ -208,8 +260,10 @@ def generate_launch_description():
         enable_timeout_arg,
         tcp_offset_arg,
         gripper_default_effort_arg,
+        joint_states_command_topic_arg,
         publish_gripper_joint_arg,
         # node
         agx_arm_node,
         omnihand_bridge_launch,
+        omnihand_follow_joint_trajectory_node,
     ])

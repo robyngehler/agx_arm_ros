@@ -109,6 +109,21 @@ def generate_launch_description():
         default_value="mock",
         description="Backend type for the repo-owned OmniHand bridge.",
     )
+    omnihand_device_id_arg = DeclareLaunchArgument(
+        "omnihand_device_id",
+        default_value="1",
+        description="Vendor SDK device_id forwarded to agx_arm_ctrl when omnihand_backend_type is sdk.",
+    )
+    omnihand_canfd_id_arg = DeclareLaunchArgument(
+        "omnihand_canfd_id",
+        default_value="0",
+        description="Vendor SDK canfd_id forwarded to agx_arm_ctrl when omnihand_backend_type is sdk.",
+    )
+    omnihand_sdk_cfg_path_arg = DeclareLaunchArgument(
+        "omnihand_sdk_cfg_path",
+        default_value="",
+        description="Optional vendor SDK config path forwarded to agx_arm_ctrl when omnihand_backend_type is sdk.",
+    )
     auto_enable_arg = DeclareLaunchArgument(
         "auto_enable",
         default_value="true",
@@ -153,6 +168,11 @@ def generate_launch_description():
         "publish_gripper_joint",
         default_value="true",
         description="Whether agx_arm_ctrl should publish the synthetic gripper joint.",
+    )
+    joint_states_command_topic_arg = DeclareLaunchArgument(
+        "joint_states_command_topic",
+        default_value="control/joint_states",
+        description="JointState command topic consumed by the OmniHand bridge when the driver is launched.",
     )
     control_rate_arg = DeclareLaunchArgument(
         "control_rate_hz",
@@ -211,6 +231,9 @@ def generate_launch_description():
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
+            "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
+            "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
+            "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path"),
             "auto_enable": LaunchConfiguration("auto_enable"),
             "log_level": LaunchConfiguration("log_level"),
             "fast_mode": LaunchConfiguration("fast_mode"),
@@ -220,6 +243,7 @@ def generate_launch_description():
             "tcp_offset": LaunchConfiguration("tcp_offset"),
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
             "publish_gripper_joint": LaunchConfiguration("publish_gripper_joint"),
+            "joint_states_command_topic": LaunchConfiguration("joint_states_command_topic"),
         }.items(),
         condition=IfCondition(LaunchConfiguration("launch_driver")),
     )
@@ -233,6 +257,9 @@ def generate_launch_description():
             omnihand_type_arg,
             launch_omnihand_bridge_arg,
             omnihand_backend_type_arg,
+            omnihand_device_id_arg,
+            omnihand_canfd_id_arg,
+            omnihand_sdk_cfg_path_arg,
             auto_enable_arg,
             log_level_arg,
             fast_mode_arg,
@@ -242,6 +269,7 @@ def generate_launch_description():
             tcp_offset_arg,
             gripper_default_effort_arg,
             publish_gripper_joint_arg,
+            joint_states_command_topic_arg,
             control_rate_arg,
             custom_model_arg,
             custom_model_xacro_args_arg,
