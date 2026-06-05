@@ -96,6 +96,8 @@ class JointStateTrajectoryBridge(Node):
 		self.current_positions: dict[str, float] = {}
 		self.last_target_positions: list[float] | None = None
 		self.enable_requested = False
+		self.has_complete_feedback = False
+		self.warned_waiting_for_feedback = False
 
 		self.trajectory_pub = self.create_publisher(JointTrajectory, output_topic, 10)
 		self.enable_client = self.create_client(SetBool, enable_service)
@@ -108,6 +110,14 @@ class JointStateTrajectoryBridge(Node):
 		self.current_positions.update(
 			{name: float(value) for name, value in zip(msg.name, msg.position)}
 		)
+		if not self.has_complete_feedback and all(
+			joint in self.current_positions for joint in self.joint_names
+		):
+			self.has_complete_feedback = True
+			self.warned_waiting_for_feedback = False
+			self.get_logger().info(
+				f"Received complete arm feedback on '{self.feedback_topic}'; RViz soft targets can now be bridged"
+			)
 
 	def _call_enable(self) -> None:
 		if self.enable_requested or not self.auto_enable:
@@ -140,10 +150,14 @@ class JointStateTrajectoryBridge(Node):
 	def _target_callback(self, msg: JointState) -> None:
 		base_positions = self._base_positions()
 		if base_positions is None:
-			self.get_logger().warn(
-				"Ignoring RViz soft target because no current arm joint state is available yet"
-			)
+			if not self.warned_waiting_for_feedback:
+				self.warned_waiting_for_feedback = True
+				self.get_logger().warn(
+					f"Ignoring RViz soft target until complete arm feedback arrives on '{self.feedback_topic}'"
+				)
 			return
+
+		self.warned_waiting_for_feedback = False
 
 		try:
 			target_positions = select_target_positions(

@@ -92,6 +92,12 @@ def _default_arm_instances(
                 "feedback_joint_prefix": "left_arm_",
                 "controller_name": "arm_controller",
                 "can_port": "",
+                "arm_type": "",
+                "effector_type": "",
+                "omnihand_type": "",
+                "revo2_type": "",
+                "tcp_offset": "",
+                "launch_driver": "",
             },
             {
                 "name": "right_arm",
@@ -100,6 +106,12 @@ def _default_arm_instances(
                 "feedback_joint_prefix": "right_arm_",
                 "controller_name": "arm_controller",
                 "can_port": "",
+                "arm_type": "",
+                "effector_type": "",
+                "omnihand_type": "",
+                "revo2_type": "",
+                "tcp_offset": "",
+                "launch_driver": "",
             },
         ]
 
@@ -114,6 +126,12 @@ def _default_arm_instances(
             "feedback_joint_prefix": default_feedback_prefix,
             "controller_name": "arm_controller",
             "can_port": "",
+            "arm_type": "",
+            "effector_type": "",
+            "omnihand_type": "",
+            "revo2_type": "",
+            "tcp_offset": "",
+            "launch_driver": "",
         }
     ]
 

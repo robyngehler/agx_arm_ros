@@ -7,12 +7,25 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 
+CANONICAL_ARM_JOINTS = {
+	"joint1",
+	"joint2",
+	"joint3",
+	"joint4",
+	"joint5",
+	"joint6",
+	"joint7",
+}
+
+
 def adapt_joint_name(name: str, joint_prefix: str, mode: str) -> str:
 	joint_name = str(name)
 	if not joint_prefix:
 		return joint_name
 	if mode == "prepend":
 		if joint_name.startswith(joint_prefix):
+			return joint_name
+		if joint_name not in CANONICAL_ARM_JOINTS:
 			return joint_name
 		return f"{joint_prefix}{joint_name}"
 	if mode == "strip":
