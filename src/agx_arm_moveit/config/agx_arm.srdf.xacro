@@ -26,6 +26,10 @@
   <xacro:arg name="right_arm_link_prefix" default="right_arm_" />
 
   <xacro:property name="arm_type" value="$(arg arm_type)" />
+  <xacro:property name="effector_type" value="$(arg effector_type)" />
+  <xacro:property name="revo2_type" value="$(arg revo2_type)" />
+  <xacro:property name="omnihand_type" value="$(arg omnihand_type)" />
+  <xacro:property name="include_end_effector_groups" value="$(arg include_end_effector_groups)" />
   <xacro:property name="flange_link" value="${arm_link_prefix}link7" />
   <xacro:property name="planning_group_name" value="$(arg planning_group_name)" />
   <xacro:property name="arm_base_frame" value="$(arg arm_base_frame)" />
@@ -74,6 +78,7 @@
     <disable_collisions link1="${link_prefix}link6" link2="${link_prefix}link7" reason="Adjacent" />
     <xacro:if value="${mount_body_link != ''}">
       <disable_collisions link1="${mount_body_link}" link2="${link_prefix}base_link" reason="Adjacent" />
+      <disable_collisions link1="${mount_body_link}" link2="${link_prefix}link1" reason="Adjacent" />
     </xacro:if>
   </xacro:macro>
 
@@ -171,7 +176,7 @@
   </xacro:unless>
 
   <!-- ======================== GRIPPER GROUP ======================== -->
-  <xacro:if value="$(eval include_end_effector_groups == 'true' and effector_type == 'agx_gripper')">
+  <xacro:if value="${str(include_end_effector_groups).lower() == 'true' and effector_type == 'agx_gripper'}">
     <group name="gripper">
       <link name="gripper_base" />
       <link name="gripper_link1" />
@@ -198,10 +203,10 @@
     <disable_collisions link1="gripper_link1" link2="gripper_link2" reason="Adjacent" />
     <disable_collisions link1="gripper_link1" link2="${flange_link}" reason="Never" />
     <disable_collisions link1="gripper_link2" link2="${flange_link}" reason="Never" />
-    <xacro:unless value="$(eval arm_type == 'nero')">
+    <xacro:unless value="${arm_type == 'nero'}">
       <disable_collisions link1="gripper_base" link2="link5" reason="Never" />
     </xacro:unless>
-    <xacro:if value="$(eval arm_type == 'nero')">
+    <xacro:if value="${arm_type == 'nero'}">
       <disable_collisions link1="gripper_flange" link2="link7" reason="Adjacent" />
       <disable_collisions link1="gripper_flange" link2="gripper_base" reason="Adjacent" />
       <disable_collisions link1="gripper_flange" link2="link6" reason="Never" />
@@ -210,7 +215,7 @@
   </xacro:if>
 
   <!-- ======================== REVO2 LEFT HAND GROUP ======================== -->
-  <xacro:if value="$(eval include_end_effector_groups == 'true' and effector_type == 'revo2' and revo2_type == 'left')">
+  <xacro:if value="${str(include_end_effector_groups).lower() == 'true' and effector_type == 'revo2' and revo2_type == 'left'}">
     <group name="hand">
       <link name="left_base_link" />
       <joint name="left_thumb_metacarpal_joint" />
@@ -356,7 +361,7 @@
   </xacro:if>
 
   <!-- ======================== REVO2 RIGHT HAND GROUP ======================== -->
-  <xacro:if value="$(eval include_end_effector_groups == 'true' and effector_type == 'revo2' and revo2_type == 'right')">
+  <xacro:if value="${str(include_end_effector_groups).lower() == 'true' and effector_type == 'revo2' and revo2_type == 'right'}">
     <group name="hand">
       <link name="right_base_link" />
       <joint name="right_thumb_metacarpal_joint" />
@@ -502,10 +507,10 @@
   </xacro:if>
 
   <!-- ======================== OMNIHAND GROUP ======================== -->
-  <xacro:if value="$(eval include_end_effector_groups == 'true' and effector_type == 'omnihand' and omnihand_type == 'left')">
+  <xacro:if value="${str(include_end_effector_groups).lower() == 'true' and effector_type == 'omnihand' and omnihand_type == 'left'}">
     <xacro:omnihand_group side="left" />
   </xacro:if>
-  <xacro:if value="$(eval include_end_effector_groups == 'true' and effector_type == 'omnihand' and omnihand_type == 'right')">
+  <xacro:if value="${str(include_end_effector_groups).lower() == 'true' and effector_type == 'omnihand' and omnihand_type == 'right'}">
     <xacro:omnihand_group side="right" />
   </xacro:if>
 

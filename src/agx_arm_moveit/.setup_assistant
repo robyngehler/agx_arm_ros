@@ -1,0 +1,10 @@
+moveit_setup_assistant_config:
+  URDF:
+    package: agx_arm_moveit
+    relative_path: config/agx_arm.urdf.xacro
+  SRDF:
+    relative_path: config/agx_arm.srdf.xacro
+  CONFIG:
+    author_name: GitHub Copilot
+    author_email: root@todo.todo
+    generated_timestamp: 1780588800
