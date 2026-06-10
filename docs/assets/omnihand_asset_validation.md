@@ -5,8 +5,8 @@ promotion_date: 2026-05-12
 
 component: OmniHand Pro SDK, model, and integration surfaces
 repository_or_source: current workspace (`agx_arm_ros`, `pyAgxArm`, `vendor/Omnihand-2025-SDK`)
-inspection_date: 2026-05-13
-status: SIMULATION_READY_HARDWARE_OPEN
+inspection_date: 2026-06-04
+status: SIMULATION_READY_DEVICE_ENUM_CONFIRMED
 integration_decision: WRAPPER_FIRST
 found_artifacts:
 - vendored SDK repository at `vendor/Omnihand-2025-SDK`
@@ -21,10 +21,11 @@ found_artifacts:
 - repo-owned OmniHand bridge node and launch surface under `src/agx_arm_ctrl`
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `agx_arm_msgs/OmniHandTactileRaw`
 - validated mock-hardware launch path through `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
+- validated Jetson `aarch64` hardware-info probe through the socket-backed vendor SDK using `OMNIHAND_SOCKETCAN_IFACE=can0`
 missing_artifacts:
-- non-mock backend support behind the repo-owned OmniHand bridge plus a validated live device path
+- non-mock backend support behind the repo-owned OmniHand bridge
+- validated safe active-joint command and readback loop on the current live device path
 - validated runtime evidence for the combined arm-plus-hand path beyond the current mock bridge surface
-- vendor-supported `aarch64` runtime support or a validated `x86_64` bring-up environment for first hardware access
 - a documented upstream-sync and patch-submission workflow for the workspace-owned GitHub fork
 interface_notes:
 - the vendor README describes OmniHand 2025 as `10 active + 6 passive DOF` with `400+` tactile points
@@ -37,22 +38,23 @@ interface_notes:
 - the vendor ROS2 API doc exposes left/right topic families under `/agihand/omnihand/{left,right}/...`
 - current local hand messages are Revo2-specific and should not be reused as the OmniHand long-term interface
 - a local vendor patch now allows a socket-backed Python build/import path on `aarch64` for isolated testing, and the unpacked Python package can be refreshed without local wheel tooling
+- the current host now also validates live OmniHand hardware-info retrieval over SocketCAN on `can0`, including model, serial, firmware, supply voltage, and `1 Mbps / 5 Mbps` CAN FD timing
 risks:
 - the vendor README documents Ubuntu 22.04 `x86_64`, while this workspace host is `aarch64`
 - the vendored `thirdParty/` tree only ships the `usbcanfd_libusb_x64` userspace bundle locally, so the stock vendor ZLG path remains x64-only even though the repo now has a socket-backed workaround for build/import
 - the vendor asset set itself is still not drop-in ready: `assets/urdf/omnihand_right.urdf` contains absolute local mesh paths, `assets/urdf/xacro/finger.xacro` contains a stray literal `y`, and multiple asset files reference `package://omnihand_description/...`; the repo-owned description package avoids those defects for simulation, but the vendor tree still requires normalization
 - pulling the vendor ROS2 packages straight into `src/` would couple the workspace to a transport and topic layout that is not yet validated on this host and does not match the current wrapper-oriented repo structure
-- even with the local socket-backed build path enabled, the current isolated runtime probe still returns incomplete/default runtime data when the live CAN path does not answer, so safe device enumeration still cannot be claimed
+- even though device enumeration is now validated on the current host, the repo-owned OmniHand bridge remains mock-only and the first safe command/readback loop is still not captured in repo-owned runtime evidence
 - the workspace fork now exists at `https://github.com/robyngehler/Omnihand-2025-SDK.git` and `.gitmodules` can track it, but upstream-sync discipline is still required to avoid long-lived vendor drift
 recommended_next_action:
-- keep the vendor SDK vendored and validate isolated bring-up through the repo-owned Phase 1 smoke test plus the local socket-backed build path first
-- if the socket-backed runtime still returns incomplete/default data without a responsive hand, treat that as a live runtime blocker rather than a mere packaging blocker
+- keep using the validated vendor SDK hardware-info probe as the first live-hand preflight step on Jetson
+- validate the first safe active-joint command and readback loop on the same SocketCAN path before promoting ROS-side runtime claims
 - keep using the landed agx_arm-native simulation contract: `effector_type:=omnihand`, `omnihand_type:=left|right`, normalized local joint names, repo-owned description assets, and MoveIt/mock-controller support
 - keep the OmniHand adapter below ROS; let a repo-owned ROS bridge expose the hand to the agx_arm stack and later switch between mock, direct-SDK, or optional vendor-ROS backends
 - use standard `sensor_msgs/JointState` plus `trajectory_msgs/JointTrajectory` and controller conventions for kinematics and motion, with new repo-owned messages only for OmniHand-specific diagnostics and tactile data
 - keep `.gitmodules` pointed at the workspace fork and keep the upstream Agibot repository available as the sync and review source
 open_questions:
-- Does Agibot support the current `aarch64` host for live hardware bring-up, or should first validated device access move to an `x86_64` machine?
+- What is the first safe joint-space command/readback probe that should be captured as the Phase 1 motion baseline on the now-working `can0` path?
 - Should the repo keep an optional vendor-ROS backend adapter as a fallback behind the repo-owned bridge, or target direct SDK access only for the first hardware backend?
 - Should `vendor/Omnihand-2025-SDK` permanently keep the workspace fork as the default submodule URL while maintaining `AgibotTech/Omnihand-2025-SDK` as an explicit `upstream` remote?
 related_sprint: 1

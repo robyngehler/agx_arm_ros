@@ -1,7 +1,46 @@
-# Overview of different Launch Entry Points
+# Basic Control Scripts
 
-## RViz
-Body + right arm + hand
+These are the current entry points after the launch-surface simplification.
+
+For day-to-day work, prefer the `agx_arm_ctrl` wrapper launches plus `execution_profile` over manually wiring `custom_model`, prefixes, and Duo xacro arguments each time.
+
+Recommended test order:
+
+1. validate the real OmniHand below ROS on the CAN FD interface,
+2. validate the Duo model in RViz,
+3. validate single-arm debug or MoveIt with the simplified wrappers,
+4. only then widen to the staged right-hand or dual-arm paths.
+
+## Quick conventions
+
+- `execution_profile:=right_arm` resolves the staged Duo right-arm model and `right_arm_` prefixes.
+- `execution_profile:=right_hand` resolves the staged Duo right-arm plus right-OmniHand model and bridge defaults.
+- `execution_profile:=duo_arm` resolves the staged Duo dual-arm planning model.
+- `can_port` configures the Nero arm driver.
+- the current real OmniHand CAN FD check is still done below ROS via the vendor SDK and `OMNIHAND_SOCKETCAN_IFACE`.
+
+## 1. OmniHand hardware preflight on the real CAN FD path
+
+Use this first for all remaining live-hand tests.
+
+```bash
+cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
+PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
+LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+OMNIHAND_SOCKETCAN_IFACE=can0 \
+python3.10 python/example/demo_get_hardware_info.py
+```
+
+If your hand is on a different CAN FD netdevice, replace `can0` with that interface.
+
+This remains the lowest-risk hardware proof point before ROS-side tests.
+
+The repo-owned bridge now also has a first `omnihand_backend_type:=sdk` path with active 10-joint command support: it publishes hand joint states, status, and tactile data while accepting active joint targets on the repo-owned ROS surfaces.
+
+## 2. RViz and model-only validation
+
+Body + right arm + right hand:
+
 ```bash
 ros2 launch duo_body_description display_duo_system.launch.py \
   use_left_arm:=false \
@@ -12,7 +51,8 @@ ros2 launch duo_body_description display_duo_system.launch.py \
   use_rviz:=true
 ```
 
-Body + dual arm no hands
+Body + both arms, no hands:
+
 ```bash
 ros2 launch duo_body_description display_duo_system.launch.py \
   use_left_arm:=true \
@@ -23,7 +63,8 @@ ros2 launch duo_body_description display_duo_system.launch.py \
   use_rviz:=true
 ```
 
-Explicit mount offsets
+Explicit mount offsets:
+
 ```bash
 ros2 launch duo_body_description display_duo_system.launch.py \
   use_left_arm:=false \
@@ -38,59 +79,140 @@ ros2 launch duo_body_description display_duo_system.launch.py \
   use_rviz:=true
 ```
 
-## MoveIt standalone
-```bash
-ros2 launch agx_arm_moveit start_moveit.launch.py \
-  arm_type:=nero \
-  moveit_profile:=right_arm \
-  robot_name:=duo_nero_system \
-  custom_model:=$DUO_MODEL \
-  custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
-  use_mit_controller:=false \
-  follow:=false \
-  use_rviz:=true \
-  planning_pipelines:=ompl \
-  load_simple_obstacles:=false
-```
+## 3. Single-arm debug in RViz with MIT soft targets
 
-## MIT-RViz-MoveIt 
-Debug Path
+Current canonical debug path for the mounted right-arm setup:
+
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=debug_soft_target \
+  execution_profile:=right_arm \
   can_port:=can_nero \
-  arm_type:=nero \
-  custom_model:=$DUO_MODEL \
-  custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true' \
-  input_joint_prefix:=right_arm_ \
   follow:=true \
-  tcp_parent_frame:=right_arm_nero_tool0 \
   tcp_offset:='[0.005, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
-One-Arm OMPL profile
+Staged right-arm plus OmniHand debug path:
+
+```bash
+PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg:$PYTHONPATH \
+LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+OMNIHAND_SOCKETCAN_IFACE=can0 \
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=debug_soft_target \
+  execution_profile:=right_hand \
+  can_port:=can_nero \
+  follow:=true \
+  omnihand_backend_type:=sdk \
+  omnihand_device_id:=1 \
+  omnihand_canfd_id:=0 \
+  tcp_offset:='[0.005, 0.0, 0.0, 0.0, 0.0, 0.0]'
+```
+
+Use the `right_hand` profile when you want the current staged Duo arm-plus-hand model and prefixed follow path without manually passing `custom_model` and `input_joint_prefix`.
+
+At the current stage, this bringup should produce `feedback/omnihand/joint_states`, `feedback/omnihand/status`, and `feedback/omnihand/tactile_raw`. In the hand-aware debug path, the RViz soft-target JointState stream now reaches the OmniHand bridge as well, so the staged sliders and the SDK-backed hand use the same 10 active joint names.
+
+## 4. Current one-command MoveIt plus MIT bringup
+
+Right-arm OMPL profile:
+
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
+  execution_profile:=right_arm \
   can_port:=can_nero \
-  arm_type:=nero \
-  moveit_profile:=right_arm \
-  custom_model:=$DUO_MODEL \
-  custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
   follow:=true \
   use_rviz:=true \
   planning_pipelines:=ompl
 ```
 
-Duo-Arm OMPL profile
+Staged right-arm plus OmniHand profile:
+
+```bash
+PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg:$PYTHONPATH \
+LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+OMNIHAND_SOCKETCAN_IFACE=can0 \
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+  execution_profile:=right_hand \
+  can_port:=can_nero \
+  follow:=true \
+  use_rviz:=true \
+  planning_pipelines:=ompl \
+  omnihand_backend_type:=sdk \
+  omnihand_device_id:=1 \
+  omnihand_canfd_id:=0
+```
+
+The `sdk` bridge backend now actuates the hand through the vendor `set_all_active_joint_angles(...)` path and reads back the same 10 active joints for RViz and MoveIt. Use `execution_profile:=right_hand` when you want the staged Duo arm-plus-hand model and actual hand control together; `right_arm` remains the arm-only profile.
+
+If you want the direct wrapper instead of the mode multiplexer, the equivalent simplified MoveIt launch is:
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
+  execution_profile:=right_arm \
+  can_port:=can_nero \
+  follow:=true \
+  use_rviz:=true \
+  planning_pipelines:=ompl
+```
+
+## 5. Duo-arm planning and staged dual-arm runtime
+
+Simplest Duo planning entry point:
+
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
-  arm_type:=nero \
-  moveit_profile:=both_arms \
-  custom_model:=$DUO_MODEL \
-  custom_model_xacro_args:='use_left_arm:=true use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
-  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: true}, {name: right_arm, namespace: right_arm, can_port: can_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: true}]' \
+  execution_profile:=duo_arm \
+  follow:=true \
+  use_rviz:=true \
+  planning_pipelines:=ompl
+```
+
+The `duo_arm` profile is the simplest starting point for both-arms planning. By default it keeps `arm_instances` in planning-only mode with `launch_driver: false`.
+
+For staged live dual-arm runtime, promote the same launch to managed drivers by overriding `arm_instances`:
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+  execution_profile:=duo_arm \
+  follow:=true \
+  use_rviz:=true \
+  planning_pipelines:=ompl \
+  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: true}, {name: right_arm, namespace: right_arm, can_port: can_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: true}]'
+```
+
+## 6. When you need explicit overrides instead of profiles
+
+Use the lower-level wrappers only when the preset profiles are not enough.
+
+Direct RViz debug wrapper with an explicit custom Duo model slice:
+
+```bash
+ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py \
+  can_port:=can_nero \
+  custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
+  custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true' \
+  input_joint_prefix:=right_arm_ \
+  follow:=true \
+  control:=true \
+  use_mit_controller:=true \
+  tcp_offset:='[0.005, 0.0, 0.0, 0.0, 0.0, 0.0]'
+```
+
+Direct MoveIt wrapper with explicit custom-model control:
+
+```bash
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
+  can_port:=can_nero \
+  moveit_profile:=right_arm \
+  robot_name:=duo_nero_system \
+  custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
+  custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
+  input_joint_prefix:=right_arm_ \
   follow:=true \
   use_rviz:=true \
   planning_pipelines:=ompl

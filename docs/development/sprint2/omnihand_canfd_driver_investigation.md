@@ -6,20 +6,63 @@ This note records the current Sprint 2 evidence for bringing up the real OmniHan
 
 It separates:
 
-- what is already verified on this machine,
-- what is blocked by the currently attached adapter,
-- and what installation path is now realistic for a supported CAN FD adapter.
+- what is now verified on this machine,
+- what remains only a historical or fallback path,
+- and what still blocks promotion into the repo-owned ROS runtime.
 
 ## Verified Findings
 
-### Current OmniHand dongle is not on a verified SocketCAN FD path
+### Real hardware information can now be fetched below ROS over CAN FD
+
+The current validated probe on this host is:
+
+```bash
+cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
+PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
+LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+OMNIHAND_SOCKETCAN_IFACE=can0 \
+python3.10 python/example/demo_get_hardware_info.py
+```
+
+Observed live output summary:
+
+- `Product Model: OmniHand Pro`
+- `Serial Number: R302602032030`
+- `Hardware Version: 1.1.1`
+- `Software Version: 1.2.15`
+- `Supply Voltage: 24000mV`
+- `Active Degrees of Freedom: 12`
+- `Device ID: 1`
+- `Arbitration Bitrate: 1Mbps`
+- `Arbitration Sample Point: 80.0%`
+- `Data Bitrate: 5Mbps`
+- `Data Sample Point: 80.0%`
+
+Interpretation:
+
+- the current Jetson SocketCAN path on `can0` is no longer blocked at the Linux transport or device-enumeration layer,
+- the vendor Python example can reach the real hand on this host,
+- and the repo-local `aarch64` socket-backed SDK path is now validated for hardware-info retrieval.
+
+### The repo-local low-risk runtime path remains the patched SocketCAN backend
+
+The vendor SocketCAN backend in this repo honors `OMNIHAND_SOCKETCAN_IFACE` instead of assuming `can0`.
+
+That remains the cleanest local host path on Jetson:
+
+1. expose or configure a real CAN FD-capable Linux `canX` interface,
+2. verify it accepts `fd on` and reports `mtu 72`,
+3. point the SDK at that interface with `OMNIHAND_SOCKETCAN_IFACE`,
+4. validate with `demo_get_hardware_info.py` before any ROS-side testing.
+
+### Historical note: the forced `gs_usb` path for `a8fa:8598` is still not a baseline path
 
 - The currently attached OmniHand dongle enumerates as `a8fa:8598`.
 - `lsusb -v` reports a vendor-specific USB interface class, not a standard gs_usb-style CAN device.
 - Forcing `a8fa:8598` into `gs_usb` creates a `canX` interface, but only as classic CAN.
 - On this host the forced interface reports `mtu 16`, exposes no `dbitrate`, and rejects `ip link set ... fd on ...` with `Operation not supported`.
 
-That means the current forced `gs_usb` path is not suitable for the OmniHand CAN FD SDK path.
+That old forced `gs_usb` path is still not suitable as the repo-local CAN FD baseline.
 
 ### The vendored ZLG kernel module does build on this Jetson
 
@@ -55,19 +98,30 @@ Local `file` checks show:
 
 So the packaged userspace ZLG stack is mixed-architecture and is not a trustworthy repo-local install path for Jetson/aarch64.
 
-### The repo-local low-risk runtime path is now the patched SocketCAN backend
-
-The vendor SocketCAN backend in this repo now honors `OMNIHAND_SOCKETCAN_IFACE` instead of assuming `can0`.
-
-That means the cleanest host path is:
-
-1. expose a real CAN FD-capable `canX` interface on Linux,
-2. verify it accepts `fd on` and reports `mtu 72`,
-3. point the SDK at that interface with `OMNIHAND_SOCKETCAN_IFACE`.
-
 ## Decision
 
-### Current adapter `a8fa:8598`
+### Current local bring-up path
+
+The current recommended local path on Jetson is now:
+
+1. keep using the socket-backed vendor build on `aarch64`,
+2. keep the hand on a real CAN FD SocketCAN interface such as `can0`,
+3. validate first with `OMNIHAND_SOCKETCAN_IFACE=<iface> python/example/demo_get_hardware_info.py`,
+4. only then promote the same path into repo-owned adapter or ROS-backend work.
+
+What is no longer blocked:
+
+- local build and import of the patched vendor SDK on `aarch64`,
+- device enumeration and hardware-info retrieval on the current host,
+- confirmation of the live hand's reported `1 Mbps / 5 Mbps` CAN FD timings.
+
+What is still open:
+
+- a safe active-joint command and readback loop on the same validated interface,
+- a repo-owned non-mock OmniHand backend in `agx_arm_ctrl`,
+- ROS launch validation against the real hand instead of the staged mock bridge.
+
+### Historical fallback path: current adapter `a8fa:8598`
 
 There is no verified repo-local driver installation path for this exact USB ID on Jetson.
 
@@ -91,7 +145,43 @@ This avoids the x86-only bundled userspace library and keeps the runtime on Linu
 
 ## Installation Paths
 
-## Path A: Keep the current `a8fa:8598` adapter
+## Path A: Current validated Jetson SocketCAN path
+
+Use this path first for local hardware work.
+
+### 1. Confirm the interface is real CAN FD
+
+```bash
+ip -details link show can0
+```
+
+The interface should report a real CAN FD state such as:
+
+- `mtu 72`
+- `bitrate 1000000`
+- `dbitrate 5000000`
+- `sample-point 0.800`
+- `dsample-point 0.800`
+
+### 2. Run the validated hardware-info probe
+
+```bash
+cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
+PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
+LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+OMNIHAND_SOCKETCAN_IFACE=can0 \
+python3.10 python/example/demo_get_hardware_info.py
+```
+
+If this succeeds and returns real model, serial, firmware, voltage, and bitrate information, the host transport path is good enough to proceed to the next below-ROS validation step.
+
+### 3. Keep the next validation below ROS
+
+The next useful discriminator is a safe joint command and readback loop on the same interface.
+
+Do not treat the staged repo-owned ROS bridge as a real-hardware validation path yet; the current ROS bridge remains mock-oriented and is not the proof point for the live hand.
+
+## Path B: Keep the historical `a8fa:8598` adapter
 
 This path is blocked until the supplier provides the correct Linux support package.
 
@@ -122,7 +212,7 @@ or with the supplier's own diagnostic sample.
 
 If the supplier path does not expose a Linux CAN FD netdevice, keep ROS work blocked and validate the supplier SDK below ROS first.
 
-## Path B: Use a supported ZLG-style CAN FD adapter
+## Path C: Use a supported ZLG-style CAN FD adapter
 
 This is the current recommended bring-up path on Jetson.
 
@@ -221,7 +311,7 @@ That is the lowest-risk arrangement because:
 
 Do not move to ROS launch validation until all of the following are true:
 
-- the OmniHand adapter is on a verified driver path,
-- the Linux interface accepts CAN FD configuration,
-- `ip -details link show` confirms `mtu 72`,
-- the SDK can fetch live hardware info over the intended interface.
+- the intended Linux interface is on a verified CAN FD path,
+- `ip -details link show` confirms `mtu 72` plus the expected live bitrate state,
+- the SDK can fetch live hardware info over that interface,
+- and at least one safe hand-side command and readback loop has succeeded below ROS.

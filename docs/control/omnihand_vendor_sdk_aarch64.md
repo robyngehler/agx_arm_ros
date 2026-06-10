@@ -29,6 +29,11 @@ Why:
 - the bundled `libusbcanfd.so` is x86_64,
 - and the repo-local Jetson bring-up already succeeds through the SocketCAN backend.
 
+Current validated live reference on this host:
+
+- `OMNIHAND_SOCKETCAN_IFACE=can0 python3.10 python/example/demo_get_hardware_info.py`
+- the hand returns live hardware info on Jetson `aarch64`, including model, serial, firmware, supply voltage, and `1 Mbps / 5 Mbps` CAN FD timing.
+
 ## Backend Policy
 
 ### SocketCAN backend
@@ -55,8 +60,10 @@ Build command:
 Runtime selector:
 
 ```bash
-export OMNIHAND_SOCKETCAN_IFACE=can_omnihand
+export OMNIHAND_SOCKETCAN_IFACE=can0
 ```
+
+`can_omnihand` remains fine when you rename or prepare a dedicated interface. The current validated host path simply happens to use `can0`.
 
 The repo-local SocketCAN backend now enables CAN FD bit-rate switching on transmit so that the SocketCAN path matches the vendor ZLG backend's CAN FD send semantics more closely.
 
@@ -97,6 +104,7 @@ Repo-local Jetson status:
 
 | Adapter family | Current Jetson/aarch64 status | Notes |
 | --- | --- | --- |
+| Jetson native `mttcan` on `can0`/`can1` | VERIFIED_FOR_HARDWARE_INFO | The current host can retrieve live OmniHand hardware info via SocketCAN on `can0`. The validated output reports model, serial, firmware, supply voltage, and `1 Mbps / 5 Mbps` CAN FD timing. |
 | `USBCANFD-100U-mini` | UNVERIFIED | Vendor recommends it, but the repo-local bundled ZLG userspace package is x86_64-only. No verified SocketCAN FD path is recorded here yet. |
 | `USBCANFD-100U` | UNVERIFIED | Same status as `100U-mini`: recommended upstream, but no verified native `aarch64` userspace path is bundled in this repo. |
 | `USBCANFD-200U` | PARTIALLY VERIFIED | The vendored `usbcanfd200_400u_2.10` kernel module builds on Jetson `5.15.122-tegra` and advertises supported USB IDs `04cc:1240` and `3068:0009`. This is the cleanest current vendor-family option for the repo-local SocketCAN baseline. |
@@ -129,6 +137,7 @@ An adapter is acceptable for the repo-local SocketCAN baseline only when all of 
 - Linux creates a `canX` interface for it,
 - `sudo ip link set <iface> type can bitrate <arb> dbitrate <data> fd on` succeeds,
 - `ip -details link show <iface>` reports `mtu 72`,
-- the OmniHand SDK can open that interface through `OMNIHAND_SOCKETCAN_IFACE`.
+- the OmniHand SDK can open that interface through `OMNIHAND_SOCKETCAN_IFACE`,
+- and `demo_get_hardware_info.py` can retrieve live hardware information through that interface.
 
 If any of those fail, stay below ROS and do not treat the adapter as part of the local supported baseline.

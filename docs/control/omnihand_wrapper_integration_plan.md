@@ -18,12 +18,12 @@ simulation_track_status: SHARED_COMMAND_SURFACE_LANDED
 	- the built Python package imports successfully on this host
 	- the repo smoke test can probe that built package directly
 	- the repo-local SDK baseline is now fixed to a SocketCAN build on `aarch64`, with ZLG userspace treated as opt-in only when a native `aarch64` SDK exists
-- The remaining Phase 1 blocker is the live runtime/device layer:
-	- the isolated probe reaches CAN request traffic
-	- failed request traffic now yields a clean `runtime_probe_incomplete` result instead of a process crash
-	- the current probe still does not return a complete active-joint vector or validated device identity
+	- the current host can now retrieve live OmniHand hardware information through `OMNIHAND_SOCKETCAN_IFACE=can0`
+- The remaining Phase 1 blocker is now narrower:
+	- device enumeration is no longer blocked on the current host
 	- no safe command-response loop has been validated yet
-- Result: Phase 1 repo preparation and local build enablement are complete, but the runtime exit criteria remain blocked on actual device-path stability and hardware response
+	- the repo-owned ROS bridge now has a first non-mock `backend_type:=sdk` path with active 10-joint command support and live readback
+- Result: Phase 1 build/import, device-enumeration, ROS-side readback, and the first guarded command path are now complete on the current host, while broader motion hardening and production safety promotion into the agx_arm runtime remain open
 
 ## Current Simulation Slice
 
@@ -36,10 +36,11 @@ The repo has already landed the first simulation-oriented OmniHand integration s
 - MoveIt fake `ros2_control`, controller YAML, SRDF groups, and initial positions now cover the 10 active OmniHand joints
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `OmniHandTactileRaw` messages now exist
 - a first repo-owned `omnihand_bridge` mock backend and launch surface now exist in `src/agx_arm_ctrl`
+- the bridge now also supports a first `backend_type:=sdk` active-control backend behind the same repo-owned ROS topics
 - the bridge now consumes the shared `control/joint_states` surface used by the rest of `agx_arm_ctrl`
 - `control/omnihand/joint_trajectory` remains as a bridge-specific compatibility input
 - `agx_arm_ctrl` can now merge bridge joint state into combined `feedback/joint_states` when `effector_type:=omnihand`
-- the shared `start_single_agx_arm*` launch wrappers now pass OmniHand bridge arguments through to the runtime layer
+- the shared `start_single_agx_arm*`, MIT, and component wrapper launches now pass OmniHand bridge arguments through to the runtime layer
 - the bridge remains in `src/agx_arm_ctrl` as the active Sprint 2 package boundary
 - Sprint 2 workspace-policy docs now exist under `docs/project`
 - the current validated smoke path is:
@@ -47,7 +48,7 @@ The repo has already landed the first simulation-oriented OmniHand integration s
 
 What is still missing from the simulation-first track:
 
-- the first non-mock hardware backend,
+- broader hardening around the new active SDK backend,
 - a non-mock command and action surface for the hand bridge that can eventually supersede the current shared JointState plus compatibility trajectory inputs,
 - and continued upstream-sync and patch discipline around the workspace-owned fork of the vendor repository.
 
@@ -140,7 +141,8 @@ Current state:
 - the smoke-test entrypoint exists
 - the vendor-declared 10-joint naming map is recorded in the repo
 - a socket-backed local build/import path now works on `aarch64`
-- the current-host runtime probe now fails cleanly with incomplete/default data when the device path does not answer, rather than crashing the process
+- the current host can now retrieve live hardware information from the hand through `OMNIHAND_SOCKETCAN_IFACE=can0`
+- the earlier incomplete probe remains useful as error-handling evidence, but it no longer represents the best-known bring-up state on this host
 
 ## Phase 2: Repo-Owned Adapter Layer
 
