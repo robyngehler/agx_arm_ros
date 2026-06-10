@@ -25,7 +25,7 @@
       <parent link="body_base_link"/>
       <child link="left_arm_mount_link"/>
       <!--<origin xyz="-0.137511 0.104055 0.070000" rpy="0 1.570796 -0.837758"/>-->
-      <origin xyz="-0.154602 0.110059 0.078262" rpy="0 1.570796 -0.837758"/>
+      <origin xyz="-0.154602 0.110059 0.078262" rpy="0 -1.570796 -0.837758"/>
     </joint>
 
     <link name="right_arm_mount_link"/>

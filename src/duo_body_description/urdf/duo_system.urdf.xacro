@@ -13,7 +13,7 @@
   <!--<xacro:arg name="left_arm_base_xyz" default="0.01 0.02 0"/>-->
   <xacro:arg name="left_arm_base_xyz" default="0.0 0.0 0.0"/>
   <!--<xacro:arg name="left_arm_base_rpy" default="0 0 3.1415926"/>-->
-  <xacro:arg name="left_arm_base_rpy" default="0 0 1.570796"/>
+  <xacro:arg name="left_arm_base_rpy" default="0 0 -1.570796"/>
   <!--<xacro:arg name="right_arm_base_xyz" default="-0.01 -0.02 0"/>-->
   <xacro:arg name="right_arm_base_xyz" default="0.0 0.0 0.0"/>
   <!--<xacro:arg name="right_arm_base_rpy" default="0 0 3.1415926"/>-->

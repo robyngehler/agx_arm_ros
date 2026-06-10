@@ -168,6 +168,34 @@ def _build_namespaced_moveit_rviz_config(package_path, namespace):
     return tmp.name
 
 
+def _resolved_moveit_rviz_fixed_frame(custom_model: str) -> str:
+    return "body_base_link" if custom_model else "base_link"
+
+
+def _build_moveit_rviz_config(package_path, namespace, fixed_frame):
+    base_rviz = package_path / "config/moveit.rviz"
+    content = base_rviz.read_text(encoding="utf-8")
+
+    ns = namespace.strip("/")
+    move_group_ns = f"/{ns}" if ns else ""
+
+    content = content.replace(
+        'Move Group Namespace: ""',
+        f'Move Group Namespace: "{move_group_ns}"',
+    )
+
+    if fixed_frame != "base_link":
+        content = content.replace("Fixed Frame: base_link", f"Fixed Frame: {fixed_frame}")
+        content = content.replace("Target Frame: base_link", f"Target Frame: {fixed_frame}")
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".rviz", prefix="moveit_", delete=False
+    )
+    tmp.write(content)
+    tmp.close()
+    return tmp.name
+
+
 def _build_moveit(context):
     namespace = LaunchConfiguration("namespace").perform(context)
     arm_type = LaunchConfiguration("arm_type").perform(context)
@@ -227,7 +255,13 @@ def _build_moveit(context):
                 str(package_path / "launch/moveit_rviz.launch.py")
             ),
             launch_arguments={
-                "rviz_config": _build_namespaced_moveit_rviz_config(package_path, namespace),
+                "rviz_config": _build_moveit_rviz_config(
+                    package_path,
+                    namespace,
+                    _resolved_moveit_rviz_fixed_frame(
+                        LaunchConfiguration("custom_model").perform(context)
+                    ),
+                ),
             }.items(),
             condition=IfCondition(LaunchConfiguration("use_rviz")),
         )

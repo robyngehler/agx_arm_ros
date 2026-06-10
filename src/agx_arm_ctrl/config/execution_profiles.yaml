@@ -89,9 +89,11 @@ profiles:
         namespace: left_arm
         joint_prefix: left_arm_
         feedback_joint_prefix: left_arm_
-        launch_driver: false
+        can_port: can_nero_left
+        launch_driver: true
       - name: right_arm
         namespace: right_arm
         joint_prefix: right_arm_
         feedback_joint_prefix: right_arm_
-        launch_driver: false
+        can_port: can_nero_right
+        launch_driver: true

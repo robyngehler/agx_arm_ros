@@ -313,6 +313,8 @@ def generate_launch_description():
                 default_value="feedback/prefixed_joint_states",
                 description="JointState topic consumed by the shared Duo RViz description in follow mode.",
             ),
+            DeclareLaunchArgument("arm_base_frame", default_value=""),
+            DeclareLaunchArgument("arm_tip_frame", default_value=""),
             DeclareLaunchArgument("tcp_parent_frame", default_value=""),
             DeclareLaunchArgument("gripper_default_effort", default_value="1.0"),
             DeclareLaunchArgument("follow", default_value="true", choices=["true", "false"]),
