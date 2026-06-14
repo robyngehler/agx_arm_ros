@@ -9,6 +9,14 @@ USB_PORTS["3-1.2:1.0"]="can_arm2:1000000"
 # Whether to ignore CAN quantity check (default false)
 IGNORE_CHECK=false
 
+# CAN bus hardening (see docs/development/nero_bus_problem_proposal.md):
+# - restart-ms enables automatic recovery from bus-off.
+# - a larger txqueuelen absorbs TX bursts so a brief stall does not immediately
+#   surface as ENOBUFS to the driver.
+# - berr-reporting (best-effort) surfaces bus-error counters for diagnostics.
+RESTART_MS="${RESTART_MS:-100}"
+TX_QUEUE_LEN="${TX_QUEUE_LEN:-1000}"
+
 # Parsing parameters
 for arg in "$@"; do
     if [ "$arg" == "--ignore" ]; then
@@ -140,9 +148,13 @@ for iface in $SYS_INTERFACE; do
             
             # Set the interface bit rate and activate it
             sudo ip link set "$iface" down
-            sudo ip link set "$iface" type can bitrate $TARGET_BITRATE
+            sudo ip link set "$iface" type can bitrate $TARGET_BITRATE restart-ms "$RESTART_MS"
+            # Best-effort diagnostics; not all adapters/drivers support berr-reporting.
+            sudo ip link set "$iface" type can berr-reporting on 2>/dev/null \
+                || echo "[INFO]: berr-reporting not supported on '$iface', skipping."
+            sudo ip link set "$iface" txqueuelen "$TX_QUEUE_LEN"
             sudo ip link set "$iface" up
-            echo "[INFO]: Interface '$iface' has been reset to bitrate $TARGET_BITRATE and activated."
+            echo "[INFO]: Interface '$iface' has been reset to bitrate $TARGET_BITRATE (restart-ms $RESTART_MS, txqueuelen $TX_QUEUE_LEN) and activated."
             
             # Rename the interface to the target name
             if [ "$iface" != "$TARGET_NAME" ]; then

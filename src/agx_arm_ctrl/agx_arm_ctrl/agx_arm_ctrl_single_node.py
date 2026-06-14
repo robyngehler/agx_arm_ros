@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*-coding:utf8-*-
 import time
+import errno
 import rclpy
 import math
 import threading
+import subprocess
 from typing import Optional
 from pyAgxArm import create_agx_arm_config, AgxArmFactory, ArmModel, PiperFW, NeroFW
 from rclpy.node import Node
@@ -90,6 +92,14 @@ class AgxArmRosNode(Node):
         self.declare_parameter("gripper_default_effort", 1.0)
         self.declare_parameter("publish_gripper_joint", True)
         self.declare_parameter("omnihand_joint_states_topic", "feedback/omnihand/joint_states")
+        # CAN bus recovery (P1): detect TX stalls (ENOBUFS slot leak) / stale
+        # feedback and re-establish the link instead of dead-locking until the
+        # whole launch is restarted.
+        self.declare_parameter("bus_recovery_enabled", True)
+        self.declare_parameter("bus_recovery_tx_error_threshold", 1)
+        self.declare_parameter("feedback_timeout", 0.5)
+        self.declare_parameter("bus_recovery_link_reset", False)
+        self.declare_parameter("bus_recovery_max_attempts", 3)
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
@@ -104,6 +114,15 @@ class AgxArmRosNode(Node):
         self.gripper_default_effort = self.get_parameter("gripper_default_effort").value
         self.publish_gripper_joint = self.get_parameter("publish_gripper_joint").value
         self.omnihand_joint_states_topic = self.get_parameter("omnihand_joint_states_topic").value
+        self.bus_recovery_enabled = self.get_parameter("bus_recovery_enabled").value
+        self.bus_recovery_tx_error_threshold = max(
+            1, int(self.get_parameter("bus_recovery_tx_error_threshold").value)
+        )
+        self.feedback_timeout = float(self.get_parameter("feedback_timeout").value)
+        self.bus_recovery_link_reset = self.get_parameter("bus_recovery_link_reset").value
+        self.bus_recovery_max_attempts = max(
+            1, int(self.get_parameter("bus_recovery_max_attempts").value)
+        )
 
         if self.arm_type not in ArmModel.__dict__.values():
             self.get_logger().error(
@@ -123,11 +142,20 @@ class AgxArmRosNode(Node):
         self.is_nero = "nero" in self.arm_type
         self.is_switch_seamlessly = True
         self.is_mit_mode = False
+        self._current_motion_mode = None  # tracks last mode ctrl sent to hardware
         self.enable_flag = False
         self.control_ready = False
         self._control_ready_logged = False
         self.arm_joint_names = list()
         self.arm_joint_count = 0
+        # bus recovery state
+        self._had_control_ready = False
+        self._recovery_in_progress = False
+        self._last_good_feedback_monotonic = time.monotonic()
+        # TX stall is detected node-side from caught send exceptions, so it works
+        # regardless of how the underlying pyAgxArm comm reports ENOBUFS.
+        self._tx_stall_count = 0
+        self._tx_stall_detected = False
 
     def _log_parameters(self):
         self.get_logger().info(f"can_port: {self.can_port}")
@@ -142,6 +170,11 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"gripper_default_effort: {self.gripper_default_effort}")
         self.get_logger().info(f"publish_gripper_joint: {self.publish_gripper_joint}")
         self.get_logger().info(f"omnihand_joint_states_topic: {self.omnihand_joint_states_topic}")
+        self.get_logger().info(f"bus_recovery_enabled: {self.bus_recovery_enabled}")
+        self.get_logger().info(f"bus_recovery_tx_error_threshold: {self.bus_recovery_tx_error_threshold}")
+        self.get_logger().info(f"feedback_timeout: {self.feedback_timeout}")
+        self.get_logger().info(f"bus_recovery_link_reset: {self.bus_recovery_link_reset}")
+        self.get_logger().info(f"bus_recovery_max_attempts: {self.bus_recovery_max_attempts}")
 
     def _init_agx_arm(self):
         config: PiperCanDefaultConfig = create_agx_arm_config(
@@ -391,18 +424,189 @@ class AgxArmRosNode(Node):
 
         # publishing loop
         while rclpy.ok():
+            # P1: detect a stalled bus (TX ENOBUFS slot leak or stale feedback)
+            # and re-establish the link instead of dead-locking until restart.
+            # Never let recovery bookkeeping crash the publish loop.
+            try:
+                if self._should_recover_bus():
+                    self._recover_bus()
+                    rate.sleep()
+                    continue
+            except Exception as e:
+                self.get_logger().error(f"bus recovery check failed: {e}")
+
             if self.agx_arm.is_ok():
-                if not self.control_ready and self._check_arm_ready():
-                    self.control_ready = True
-                    if not self._control_ready_logged:
-                        self.get_logger().info("Agx_arm feedback is ready, control is now enabled")
-                        self._control_ready_logged = True
+                if self._check_arm_ready():
+                    self._last_good_feedback_monotonic = time.monotonic()
+                    if not self.control_ready:
+                        self.control_ready = True
+                        self._had_control_ready = True
+                        if not self._control_ready_logged:
+                            self.get_logger().info("Agx_arm feedback is ready, control is now enabled")
+                            self._control_ready_logged = True
                 self._publish_joint_states()
                 self._publish_pose()
                 self._publish_arm_status()
                 self._publish_effector_status()
                 self._publish_leader_joint_angles()
             rate.sleep()
+
+    ### bus recovery (P1)
+    @staticmethod
+    def _is_recoverable_can_error(exc: Exception) -> bool:
+        """Classify a caught send exception as a recoverable bus stall
+        (ENOBUFS TX-queue/slot exhaustion or the link going down)."""
+        eno = getattr(exc, "errno", None)
+        for err in (exc, getattr(exc, "__cause__", None), getattr(exc, "__context__", None)):
+            if err is None:
+                continue
+            cand = getattr(err, "errno", None)
+            if cand is None:
+                cand = getattr(err, "error_code", None)
+            if cand in (errno.ENOBUFS, errno.ENETDOWN):
+                return True
+        if eno in (errno.ENOBUFS, errno.ENETDOWN):
+            return True
+        text = str(exc).lower()
+        return (
+            "no buffer space available" in text
+            or "transmit buffer full" in text
+            or "error code 105" in text
+            or "network is down" in text
+            or "is not up" in text
+        )
+
+    def _handle_send_failure(self, where: str, exc: Exception) -> None:
+        """Log a send failure and, if it is a recoverable bus stall, arm the
+        recovery watchdog handled by the publish thread."""
+        self.get_logger().error(f"CAN send failed in {where}: {exc}")
+        if self._is_recoverable_can_error(exc):
+            self._tx_stall_count += 1
+            if self._tx_stall_count >= self.bus_recovery_tx_error_threshold:
+                self._tx_stall_detected = True
+
+    def _should_recover_bus(self) -> bool:
+        if not self.bus_recovery_enabled or self._recovery_in_progress:
+            return False
+        # Only arm the watchdog once the bus has been healthy at least once,
+        # so the normal startup warm-up is never mistaken for a stall.
+        if not self._had_control_ready:
+            return False
+        # Path A: an exception propagated out of a send (raise-style comm model).
+        if self._tx_stall_detected:
+            return True
+        # Path B: the comm layer swallowed an ENOBUFS/ENETDOWN and only recorded
+        # it (last_error / swallow-style comm model). Classify so a benign error
+        # never forces a heavyweight reconnect.
+        try:
+            comm_err = self.agx_arm.has_comm_error() and self.agx_arm.get_comm_error()
+        except Exception:
+            comm_err = None
+        if comm_err and self._is_recoverable_can_error(comm_err):
+            return True
+        try:
+            if not self.agx_arm.is_ok():
+                return True
+        except Exception:
+            return True
+        if (time.monotonic() - self._last_good_feedback_monotonic) > self.feedback_timeout:
+            return True
+        return False
+
+    def _recover_bus(self):
+        self._recovery_in_progress = True
+        # Gate every control callback off immediately; the existing
+        # _check_can_control() guard turns this into a hard streaming stop so no
+        # command reaches a half-torn-down bus during recovery.
+        self.control_ready = False
+        self._control_ready_logged = False
+        try:
+            is_ok = self.agx_arm.is_ok()
+        except Exception:
+            is_ok = False
+        self.get_logger().error(
+            f"CAN bus stall detected (tx_stall_count={self._tx_stall_count}, "
+            f"is_ok={is_ok}); starting recovery"
+        )
+        try:
+            recovered = False
+            for attempt in range(1, self.bus_recovery_max_attempts + 1):
+                try:
+                    self.agx_arm.disconnect()
+                except Exception as e:
+                    self.get_logger().warn(f"disconnect during recovery failed: {e}")
+
+                if self.bus_recovery_link_reset:
+                    self._reset_can_link()
+
+                try:
+                    self.agx_arm.connect()
+                except Exception as e:
+                    self.get_logger().warn(
+                        f"reconnect attempt {attempt} failed: {e}"
+                    )
+                    time.sleep(0.2)
+                    continue
+
+                try:
+                    if self.auto_enable:
+                        self._enable_arm(True, self.enable_timeout)
+                    self.agx_arm.set_speed_percent(self.speed_percent)
+                    self.agx_arm.set_tcp_offset(self.tcp_offset)
+                except Exception as e:
+                    self.get_logger().warn(f"re-arm during recovery failed: {e}")
+
+                self._tx_stall_detected = False
+                self._tx_stall_count = 0
+                # Force a fresh motion-mode handshake on the next command.
+                self._current_motion_mode = None
+                self.is_mit_mode = False
+
+                if self._wait_for_feedback(self.enable_timeout):
+                    self.get_logger().info(
+                        f"CAN bus recovery succeeded on attempt {attempt}"
+                    )
+                    recovered = True
+                    break
+                self.get_logger().warn(
+                    f"CAN bus recovery attempt {attempt} did not restore feedback"
+                )
+
+            if not recovered:
+                self.get_logger().error(
+                    "CAN bus recovery exhausted all attempts; arm remains offline"
+                )
+        finally:
+            # Avoid an immediate re-trigger of the feedback watchdog right after
+            # recovery; the publish loop re-arms control_ready on fresh feedback.
+            self._last_good_feedback_monotonic = time.monotonic()
+            self._recovery_in_progress = False
+
+    def _reset_can_link(self) -> bool:
+        """Bring the SocketCAN interface down/up to flush the qdisc and reset
+        gs_usb TX echo slots. Requires privileges; failures are non-fatal and
+        fall back to socket-only recovery."""
+        channel = self.agx_arm.get_channel() or self.can_port
+        for action in ("down", "up"):
+            cmd = ["sudo", "ip", "link", "set", channel, action]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, timeout=5)
+            except Exception as e:
+                self.get_logger().warn(
+                    f"CAN link reset '{' '.join(cmd)}' failed: {e}; "
+                    "continuing with socket-only recovery"
+                )
+                return False
+        self.get_logger().info(f"Reset CAN link {channel} (down/up)")
+        return True
+
+    def _wait_for_feedback(self, timeout: float) -> bool:
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            if self.agx_arm.is_ok() and self._check_arm_ready():
+                return True
+            time.sleep(0.02)
+        return False
     
     ### publish methods
     def _get_gripper_joint_data(self):
@@ -612,12 +816,17 @@ class AgxArmRosNode(Node):
         }
         if arm_joints:
             joints = [arm_joints.get(name, 0) for name in self.arm_joint_names]
-            if self.fast_mode:
-                self.agx_arm.move_js(joints)
-                self.is_mit_mode = True
-            else:
-                self.agx_arm.move_j(joints)
-                self.is_mit_mode = False
+            try:
+                if self.fast_mode:
+                    self.agx_arm.move_js(joints)
+                    self.is_mit_mode = True
+                    self._current_motion_mode = 'js'
+                else:
+                    self.agx_arm.move_j(joints)
+                    self.is_mit_mode = False
+                    self._current_motion_mode = 'j'
+            except Exception as e:
+                self._handle_send_failure("_control_arm_joints", e)
 
     def _control_gripper_joint(self, joint_pos, joint_effort):
         if self.gripper is None:
@@ -698,24 +907,36 @@ class AgxArmRosNode(Node):
         for idx, joint_name in enumerate(msg.name):
             joint_pos[joint_name] = self._safe_get_value(msg.position, idx)
         joints = [joint_pos.get(i, 0) for i in self.arm_joint_names]
-        self.agx_arm.move_j(joints)
-        self.is_mit_mode = False
+        try:
+            self.agx_arm.move_j(joints)
+            self.is_mit_mode = False
+            self._current_motion_mode = 'j'
+        except Exception as e:
+            self._handle_send_failure("_move_j_callback", e)
 
     def _move_p_callback(self, msg: PoseStamped):
         if not self._check_can_control():
             return
 
         pose_cmd = self._create_pose_cmd(msg.pose)
-        self.agx_arm.move_p(pose_cmd)
-        self.is_mit_mode = False
+        try:
+            self.agx_arm.move_p(pose_cmd)
+            self.is_mit_mode = False
+            self._current_motion_mode = 'p'
+        except Exception as e:
+            self._handle_send_failure("_move_p_callback", e)
 
     def _move_l_callback(self, msg: PoseStamped):
         if not self._check_can_control():
             return
 
         pose_cmd = self._create_pose_cmd(msg.pose)
-        self.agx_arm.move_l(pose_cmd)
-        self.is_mit_mode = False
+        try:
+            self.agx_arm.move_l(pose_cmd)
+            self.is_mit_mode = False
+            self._current_motion_mode = 'l'
+        except Exception as e:
+            self._handle_send_failure("_move_l_callback", e)
 
     def _move_c_callback(self, msg: PoseArray):
         if not self._check_can_control():
@@ -729,8 +950,12 @@ class AgxArmRosNode(Node):
         pose_start = self._create_pose_cmd(msg.poses[0])
         pose_mid = self._create_pose_cmd(msg.poses[1])
         pose_end = self._create_pose_cmd(msg.poses[2])
-        self.agx_arm.move_c(pose_start, pose_mid, pose_end)
-        self.is_mit_mode = False
+        try:
+            self.agx_arm.move_c(pose_start, pose_mid, pose_end)
+            self.is_mit_mode = False
+            self._current_motion_mode = 'c'
+        except Exception as e:
+            self._handle_send_failure("_move_c_callback", e)
 
     def _move_js_callback(self, msg: JointState):
         if not self._check_can_control():
@@ -740,34 +965,50 @@ class AgxArmRosNode(Node):
         for idx, joint_name in enumerate(msg.name):
             joint_pos[joint_name] = self._safe_get_value(msg.position, idx)
         joints = [joint_pos.get(i, 0) for i in self.arm_joint_names]
-        self.agx_arm.move_js(joints)
-        self.is_mit_mode = True
+        try:
+            self.agx_arm.move_js(joints)
+            self.is_mit_mode = True
+            self._current_motion_mode = 'js'
+        except Exception as e:
+            self._handle_send_failure("_move_js_callback", e)
 
     def _move_mit_callback(self, msg: MoveMITMsg):
         if not self._check_can_control():
             return
-        
+
         arrays = [msg.joint_index, msg.p_des, msg.v_des, msg.kp, msg.kd, msg.torque]
         if len(set(len(arr) for arr in arrays)) > 1:
             self.get_logger().error("MoveMITMsg arrays have inconsistent lengths")
             return
-        
+
         if not arrays[0]:
             self.get_logger().warn("Received empty MoveMITMsg")
             return
-        
-        for i in range(len(msg.joint_index)):
-            params = {
-                "joint_index": msg.joint_index[i],
-                "p_des": msg.p_des[i],
-                "v_des": msg.v_des[i],
-                "kp": msg.kp[i],
-                "kd": msg.kd[i],
-                "t_ff": msg.torque[i],
-            }
-            
-            self.agx_arm.move_mit(**params)
-        self.is_mit_mode = True
+
+        try:
+            # Send ArmMsgModeCtrl once per mode transition, not once per joint.
+            # Without this, 7 redundant mode-ctrl frames are sent per callback at
+            # 100 Hz, which saturates the CAN TX queue (~700 extra frames/sec/arm).
+            if self._current_motion_mode != 'mit':
+                self.agx_arm.set_motion_mode('mit')
+                self._current_motion_mode = 'mit'
+                self.is_mit_mode = True
+
+            self.agx_arm.set_auto_set_motion_mode_enabled(False)
+            try:
+                for i in range(len(msg.joint_index)):
+                    self.agx_arm.move_mit(
+                        joint_index=msg.joint_index[i],
+                        p_des=msg.p_des[i],
+                        v_des=msg.v_des[i],
+                        kp=msg.kp[i],
+                        kd=msg.kd[i],
+                        t_ff=msg.torque[i],
+                    )
+            finally:
+                self.agx_arm.set_auto_set_motion_mode_enabled(True)
+        except Exception as e:
+            self._handle_send_failure("_move_mit_callback", e)
 
     ### effector control callbacks
     def _hand_position_time_cmd_callback(self, msg: HandPositionTimeCmd):
@@ -896,9 +1137,11 @@ class AgxArmRosNode(Node):
             if not self.is_switch_seamlessly:
                 self.agx_arm.move_js(q)
                 self.is_mit_mode = True
+                self._current_motion_mode = 'js'
             else:
                 self.agx_arm.move_j(q)
                 self.is_mit_mode = False
+                self._current_motion_mode = 'j'
             self.get_logger().info(f"Emergency stop command sent to {self.arm_type}")
         except Exception as e:
             self.get_logger().error(f"Emergency stop failed: {e}")
@@ -946,6 +1189,7 @@ class AgxArmRosNode(Node):
 
             self.agx_arm.set_normal_mode()
             self.is_mit_mode = False
+            self._current_motion_mode = None
             response.success = True
             response.message = "Switched to normal mode"
             self.get_logger().info(response.message)
@@ -973,6 +1217,7 @@ class AgxArmRosNode(Node):
 
             self.agx_arm.set_leader_mode()
             self.is_mit_mode = False
+            self._current_motion_mode = None
             response.success = True
             response.message = "Switched to leader mode"
             self.get_logger().info(response.message)

@@ -8,6 +8,13 @@ DEFAULT_BITRATE="${2:-1000000}"
 
 # USB hardware address (optional parameter)
 USB_ADDRESS="${3}"
+
+# CAN bus hardening (see docs/development/nero_bus_problem_proposal.md):
+# restart-ms enables bus-off auto-recovery; a larger txqueuelen absorbs TX
+# bursts so a brief stall does not immediately surface as ENOBUFS; berr-reporting
+# (best-effort) exposes bus-error counters for diagnostics.
+RESTART_MS="${RESTART_MS:-100}"
+TX_QUEUE_LEN="${TX_QUEUE_LEN:-1000}"
 echo "-------------------START-----------------------"
 # Check if ethtool is installed.
 if ! dpkg -l | grep -q "ethtool"; then
@@ -121,9 +128,13 @@ else
     
     # Set the interface bitrate and activate it.
     sudo ip link set "$INTERFACE_NAME" down
-    sudo ip link set "$INTERFACE_NAME" type can bitrate $DEFAULT_BITRATE
+    sudo ip link set "$INTERFACE_NAME" type can bitrate $DEFAULT_BITRATE restart-ms "$RESTART_MS"
+    # Best-effort diagnostics; not all adapters/drivers support berr-reporting.
+    sudo ip link set "$INTERFACE_NAME" type can berr-reporting on 2>/dev/null \
+        || echo "berr-reporting not supported on $INTERFACE_NAME, skipping."
+    sudo ip link set "$INTERFACE_NAME" txqueuelen "$TX_QUEUE_LEN"
     sudo ip link set "$INTERFACE_NAME" up
-    echo "Interface $INTERFACE_NAME has been reset to bitrate $DEFAULT_BITRATE and activated."
+    echo "Interface $INTERFACE_NAME has been reset to bitrate $DEFAULT_BITRATE (restart-ms $RESTART_MS, txqueuelen $TX_QUEUE_LEN) and activated."
     
     # Rename the interface to the default name.
     if [ "$INTERFACE_NAME" != "$DEFAULT_CAN_NAME" ]; then

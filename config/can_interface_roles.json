@@ -6,7 +6,25 @@
       "mode": "can",
       "bitrate": 1000000,
       "restart_ms": 100,
-      "tx_queue_len": 128,
+      "tx_queue_len": 1000,
+      "usb_bus_info": ""
+    },
+    "nero_left": {
+      "description": "Duo left Nero arm classic CAN adapter (set usb_bus_info to disambiguate the two arm adapters)",
+      "target_name": "can_nero_left",
+      "mode": "can",
+      "bitrate": 1000000,
+      "restart_ms": 100,
+      "tx_queue_len": 1000,
+      "usb_bus_info": ""
+    },
+    "nero_right": {
+      "description": "Duo right Nero arm classic CAN adapter (set usb_bus_info to disambiguate the two arm adapters)",
+      "target_name": "can_nero_right",
+      "mode": "can",
+      "bitrate": 1000000,
+      "restart_ms": 100,
+      "tx_queue_len": 1000,
       "usb_bus_info": ""
     },
     "effector": {
