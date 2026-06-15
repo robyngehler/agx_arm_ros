@@ -1,6 +1,6 @@
 # pyAgxArm Control-Layer Pin & Submodule Migration
 
-**Status:** In progress · **Date:** 2026-06-12
+**Status:** Submodule wired · **Date:** 2026-06-12 (submodule landed 2026-06-15)
 
 The `agx_arm_ros` runtime drives the Nero arms through **pyAgxArm**. This file records exactly
 which pyAgxArm the control layer runs, how it is installed, and the plan to vendor it as a
@@ -18,10 +18,12 @@ cannot even import `rclpy`. See `single_vs_multi_arm_control_chain.md` and
 ## Current control-layer source (the pin)
 
 - Interpreter: **`/usr/bin/python3.10`** (ROS Humble). conda base (3.13) is **not** a ROS runtime.
-- pyAgxArm: editable install (`pyAgxArm.egg-link` → `/home/user/workspace/pyAgxArm`).
+- pyAgxArm: editable install (`pyAgxArm.egg-link` → `vendor/pyAgxArm` **submodule**).
 - Commit: **`37d87e6`** ("Add minimal Nero validation scripts"), 1 local commit on top of
   upstream `agilexrobotics/pyAgxArm@19e28e8`.
-- Tag in the pyAgxArm repo: **`control-layer-pin-2026-06-12`** (pin only — HW validation pending).
+- Tag: **`control-layer-pin-2026-06-12`** → `37d87e6` (pin only — HW validation pending).
+- Submodule: `vendor/pyAgxArm` → fork `github.com/robyngehler/pyAgxArm`, gitlink pinned at the
+  tag. Fork `master` is newer upstream (`97f56a6`); we intentionally pin to `37d87e6`.
 
 ### Reproduce the install (system 3.10, editable)
 
@@ -51,31 +53,22 @@ python3.10 -c "import pyAgxArm, os; print(os.path.dirname(pyAgxArm.__file__))"  
 Goal: vendor pyAgxArm as a pinned submodule at `vendor/pyAgxArm` (mirrors the `vendor/`
 convention), tracking a team-owned fork with `upstream` = agilexrobotics.
 
-**Prerequisite (blocks the submodule):** a team-owned fork remote must exist and contain the
-pinned commit. `origin` today is the read-only upstream `agilexrobotics/pyAgxArm`; our pin
-`37d87e6` is local-only, so a submodule cannot resolve it elsewhere yet.
+Done (2026-06-15):
 
-1. Create the fork (team org or GitHub fork), e.g. `git@<host>:<team>/pyAgxArm.git`.
-2. In the existing checkout, push the pin and tag to the fork:
-   ```bash
-   cd /home/user/workspace/pyAgxArm
-   git remote add fork <fork-url>
-   git remote rename origin upstream        # keep upstream for rebases
-   git push fork master --tags
-   ```
-3. Wire the submodule in agx_arm_ros (pinned at the validated commit):
-   ```bash
-   cd <agx_arm_ros>
-   git submodule add <fork-url> vendor/pyAgxArm
-   git -C vendor/pyAgxArm checkout control-layer-pin-2026-06-12
-   git add .gitmodules vendor/pyAgxArm && git commit -m "vendor: pin pyAgxArm as submodule"
-   ```
-4. Re-point the editable install at the submodule path and re-verify:
-   ```bash
-   python3.10 -m pip uninstall -y pyAgxArm
-   python3.10 -m pip install --user -e <agx_arm_ros>/vendor/pyAgxArm --no-build-isolation
-   ```
-5. After hardware validation, add a `hw-validated-<date>` tag and bump the submodule pin to it.
+1. ✅ Fork created: `github.com/robyngehler/pyAgxArm`; `origin`→`upstream`, `fork` added in
+   `/home/user/workspace/pyAgxArm`. Tag `control-layer-pin-2026-06-12` (commit `37d87e6`) pushed
+   to the fork. (Fork `master` push was rejected as non-fast-forward — it carries newer upstream;
+   the tag carries our commit, which is all the submodule pin needs.)
+2. ✅ Submodule wired: `git submodule add github.com/robyngehler/pyAgxArm vendor/pyAgxArm`,
+   checked out at the tag; gitlink pinned at `37d87e6`.
+3. ✅ Editable install re-pointed: `python3.10 -m pip install --user -e vendor/pyAgxArm
+   --no-build-isolation`; verified `python3.10` imports from `vendor/pyAgxArm` with v112 present.
 
-Until step 1 is done, the control layer stays on the local checkout + the
-`control-layer-pin-2026-06-12` tag recorded above.
+Remaining:
+
+- Optional: push our baseline to a named fork branch (e.g. `control-layer`) for discoverability
+  (`git push fork master:refs/heads/control-layer` — needs GitHub credentials).
+- After hardware validation, tag `hw-validated-<date>` and bump the submodule pin to it.
+- The old loose checkout at `/home/user/workspace/pyAgxArm` is no longer used by the runtime; it
+  still holds the `upstream`/`fork` remotes for rebasing. Develop there, push to the fork, then
+  bump `vendor/pyAgxArm`.

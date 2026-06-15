@@ -2,3 +2,6 @@
 	path = vendor/Omnihand-2025-SDK
 	url = https://github.com/robyngehler/Omnihand-2025-SDK.git
 	branch = main
+[submodule "vendor/pyAgxArm"]
+	path = vendor/pyAgxArm
+	url = https://github.com/robyngehler/pyAgxArm.git
