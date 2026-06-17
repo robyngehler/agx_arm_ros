@@ -12,7 +12,7 @@ Read these first when changing package boundaries or OmniHand integration surfac
 
 - `AGENTS.md`
 - `.github/copilot-instructions.md`
-- `docs/project/ros2_development_practices.md`
+- `.github/instructions/ros2-development.instruction.md`
 - `docs/assets/repository_asset_inventory.md`
 - `docs/assets/nero_asset_validation.md`
 - `docs/assets/omnihand_asset_validation.md`

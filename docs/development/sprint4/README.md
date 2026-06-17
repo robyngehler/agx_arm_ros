@@ -90,7 +90,7 @@ Still open before Sprint 4 exit:
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/omnihand/urdf/omnihand_left_hand.xacro`
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/omnihand/urdf/omnihand_right_hand.xacro`
 - `docs/project/repository_structure.md`
-- `docs/project/package_naming.md`
-- `docs/project/ros2_development_practices.md`
+- `.claude/rules/package-naming.md`
+- `.claude/rules/ros2-development.md`
 - `docs/development/sprint3/README.md`
 - `docs/development/sprint3/checklist.md`

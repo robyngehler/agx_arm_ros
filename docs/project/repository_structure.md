@@ -69,10 +69,10 @@ Treat these directories as generated or runtime-managed:
 
 ## Current Deliverables Anchored To This Structure
 
-- `docs/project/package_naming.md`
-- `docs/project/generated_vs_source_assets.md`
-- `docs/project/local_agent_workflow.md`
-- `docs/project/ros2_development_practices.md`
+- `.claude/rules/package-naming.md`
+- `.claude/rules/generated-vs-source-assets.md`
+- `.claude/rules/local-agent-workflow.md`
+- `.claude/rules/ros2-development.md`
 - `docs/project/repo_interaction_diagrams.md`
 - `AGENTS.md` and the Copilot-native `.github/` guidance mirrors
 - repo-owned OmniHand bridge skeleton and message extensions aligned with the package boundaries above

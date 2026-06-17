@@ -12,12 +12,11 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 1. `README.md` and `README_EN.md` for repository overview.
 2. This file for durable engineering constraints.
-3. `docs/assets/` for stable repository and asset validation.
-4. `docs/control/` for OmniHand and runtime integration decisions.
-5. `docs/project/` for current Sprint 2 package, naming, and workflow policy.
+3. `docs/assets/` for component architecture, validation, and OmniHand/runtime integration docs.
+4. `docs/project/` for human-facing repository structure and architecture.
+5. `.github/instructions/` and `.claude/rules/` for agent workflow, naming, and ROS2-practice rules (these do not live in `docs/`).
 6. `.github/copilot-instructions.md` for the Copilot operating model.
-7. `.github/instructions/` for targeted task guidance.
-8. `.github/skills/` for reusable workflows.
+7. `.github/skills/` for reusable workflows.
 
 ## Workspace Rules
 
@@ -43,9 +42,9 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 ## Documentation And Source Rules
 
-- Treat `.github/` as a concise Copilot-native mirror of the stable policy and integration docs under `docs/project/` and `docs/control/`.
-- Update `docs/control/` when the OmniHand command, feedback, launch, or package contract changes.
-- Update `docs/project/` when package boundaries, naming rules, working workflow, or explicitly allowed staging exceptions change.
+- Treat `.github/instructions/` and `.claude/rules/` as the agent-facing rule layer (workflow, naming, package, ROS2 practice); keep them consistent with the human docs under `docs/project/` and `docs/assets/`.
+- Update `docs/assets/` when an OmniHand or runtime component contract (command, feedback, launch, package) changes.
+- Update `docs/project/` when repository structure or architecture changes; update `.github/instructions/` and `.claude/rules/` when workflow, naming, or package-split rules change.
 - Treat `.github/`, `docs/`, `src/`, `scripts/`, `config/`, and `vendor/` as source-managed.
 - Do not treat `build/`, `install/`, `log/`, or transient run outputs as canonical source.
 

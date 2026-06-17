@@ -17,10 +17,10 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 ## Promoted Stable Sprint 2 Outputs
 
 - `docs/project/repository_structure.md`
-- `docs/project/package_naming.md`
-- `docs/project/generated_vs_source_assets.md`
-- `docs/project/local_agent_workflow.md`
-- `docs/project/ros2_development_practices.md`
+- `.claude/rules/package-naming.md`
+- `.claude/rules/generated-vs-source-assets.md`
+- `.claude/rules/local-agent-workflow.md`
+- `.claude/rules/ros2-development.md`
 - `docs/project/repo_interaction_diagrams.md`
 - `docs/assets/omnihand/omnihand_ros_integration_options.md`
 - `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`

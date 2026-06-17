@@ -20,7 +20,7 @@ It focuses on the currently active ROS2 runtime and launch surfaces:
 Use this document together with:
 
 - `docs/project/repository_structure.md`
-- `docs/project/ros2_development_practices.md`
+- `.claude/rules/ros2-development.md`
 - `docs/assets/omnihand/omnihand_ros_integration_options.md`
 - `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 

@@ -19,7 +19,7 @@ Read these first when changing package boundaries or OmniHand integration surfac
 
 - `AGENTS.md`
 - `CLAUDE.md`
-- `docs/project/ros2_development_practices.md`
+- `.claude/rules/ros2-development.md`
 - `docs/assets/repository_asset_inventory.md`
 - `docs/assets/nero_asset_validation.md`
 - `docs/assets/omnihand_asset_validation.md`

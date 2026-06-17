@@ -919,8 +919,8 @@ This roadmap does not define the current Sprint 2 package names or public ROS2 c
 Treat roadmap role names as architectural aliases only. The stable repo decisions live in:
 
 - `docs/project/repository_structure.md`
-- `docs/project/package_naming.md`
-- `docs/project/ros2_development_practices.md`
+- `.claude/rules/package-naming.md`
+- `.claude/rules/ros2-development.md`
 - `docs/assets/omnihand/omnihand_ros_integration_options.md`
 - `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 
