@@ -15,11 +15,10 @@
 |---|---|
 |SDK|[pyAgxArm](https://github.com/agilexrobotics/pyAgxArm)|
 |官方CAN模块的使用|[can_user](./docs/CAN_USER.md)|
-|TCP偏移设置|[tcp_offset](./docs/tcp_offset/TCP_OFFSET.md)|
+|TCP偏移设置|[tcp_offset](./docs/assets/tcp_offset/TCP_OFFSET.md)|
 |URDF|[agx_arm_description](./src/agx_arm_sim/agx_arm_description/README.md)|
 |Moveit| [Moveit](./src/agx_arm_moveit/README.md) |
 |Nero MIT 软控制|[agx_arm_mit_controller](./src/agx_arm_mit_controller/README.md)|
-|Q&A|[Q&A](./docs/Q&A.md)|
 
 ---
 
@@ -135,7 +134,7 @@ python3 scripts/prepare_can_interfaces.py --roles nero
 > - **`arm_type`**：机械臂的型号，当前工作区示例值 `nero`。
 > - **`effector_type`**：末端执行器类型，示例值 `none` 或 `agx_gripper`。
 > - **`tcp_offset`**：工具中心（TCP）相对法兰盘中心的偏移量，示例值：[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
->   - 注意 ：`tcp_offset` 所有值均需为浮点数；关于 TCP 偏移实际配置示例，请参考 [TCP 设置详解](./docs/tcp_offset/TCP_OFFSET.md)。
+>   - 注意 ：`tcp_offset` 所有值均需为浮点数；关于 TCP 偏移实际配置示例，请参考 [TCP 设置详解](./docs/assets/tcp_offset/TCP_OFFSET.md)。
 >
 > 所有参数的完整说明、默认值及可选值，请参阅下方的 **[启动参数](#启动参数)** 。
 

@@ -15,11 +15,10 @@ This workspace is currently focused on the Nero stack and provides the matching 
 |---|---|
 | SDK | [pyAgxArm](https://github.com/agilexrobotics/pyAgxArm) |
 | CAN module usage | [can_user](./docs/CAN_USER_EN.md) |
-| TCP Offset Configuration | [tcp_offset](./docs/tcp_offset/TCP_OFFSET_EN.md) |
+| TCP Offset Configuration | [tcp_offset](./docs/assets/tcp_offset/TCP_OFFSET_EN.md) |
 | URDF | [agx_arm_description](./src/agx_arm_sim/agx_arm_description/README.md) |
 | Moveit| [Moveit](./src/agx_arm_moveit/README_EN.md) |
 | Nero MIT soft control | [agx_arm_mit_controller](./src/agx_arm_mit_controller/README.md) |
-| Q&A | [Q&A](./docs/Q&A.md) |
 
 ---
 
@@ -136,7 +135,7 @@ You can start the driver using a launch file or by running the node directly.
 > - **`arm_type`**: The arm model. In this workspace the active example is `nero`.
 > - **`effector_type`**: The end-effector type, e.g. `none` or `agx_gripper`.
 > - **`tcp_offset`**: Tool Center Point (TCP) offset relative to the flange center, e.g. [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] 
->   - Note: All values of this parameter must be floating-point numbers; for TCP offset configuration examples, see [TCP Offset Guide](./docs/tcp_offset/TCP_OFFSET_EN.md).
+>   - Note: All values of this parameter must be floating-point numbers; for TCP offset configuration examples, see [TCP Offset Guide](./docs/assets/tcp_offset/TCP_OFFSET_EN.md).
 >
 > For full parameter descriptions, default values and options, see **[Launch Parameters](#launch-parameters)** below.
 

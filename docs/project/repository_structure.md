@@ -28,10 +28,9 @@ It is intentionally based on the repo as it exists today, not on a future rename
 
 | Surface | Current Path | Role |
 | --- | --- | --- |
-| Stable factual inventories | `docs/assets` | Promoted asset and repository state documents |
-| Stable integration/control docs | `docs/control` | OmniHand integration decisions, MIT model notes, and runtime plans |
-| Development coordination and working notes | `docs/development` | Fixed roadmap, progress, and component-routing docs plus sprint logs and working sets |
-| Sprint 2 policy docs | `docs/project` | Workspace structure, naming, and workflow policy |
+| Component, runtime, and integration docs | `docs/assets` | Asset/repo inventories plus OmniHand, MIT, and control component docs |
+| Development coordination and working notes | `docs/development` | Roadmap, progress, component routing, plus per-sprint logs and working sets |
+| Human repository structure | `docs/project` | Workspace structure and architecture (agent workflow/naming rules live in `.claude/rules` and `.github/instructions`) |
 | Copilot-native guidance | `.github` plus `AGENTS.md` | Repo-local Copilot instructions, skills, agents, and the durable engineering contract |
 
 The future `docs/planning`, `docs/simulation`, `docs/hand`, and related trees are still valid targets, but they should be created when there is stable content to promote into them.

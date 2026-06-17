@@ -68,8 +68,8 @@ Do not use this Sprint 3 folder as the cross-sprint source of truth.
 - `src/agx_arm_mit_controller/test/test_follow_joint_trajectory_validation.py`
 - `src/agx_arm_mit_controller/test/test_trajectory_buffer.py`
 - `src/agx_arm_mit_controller/test/test_trajectory_io.py`
-- `docs/tcp_offset/TCP_OFFSET.md`
-- `docs/tcp_offset/TCP_OFFSET_EN.md`
+- `docs/assets/tcp_offset/TCP_OFFSET.md`
+- `docs/assets/tcp_offset/TCP_OFFSET_EN.md`
 - `docs/development/sprint2/README.md`
 - `docs/development/sprint2/checklist.md`
 - `docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md`
