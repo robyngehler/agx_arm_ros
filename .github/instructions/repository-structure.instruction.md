@@ -33,7 +33,7 @@ Use the current workspace layout as the implementation truth during the active S
 ## Documentation Split
 
 - `docs/assets/`: stable factual inventories and validation state
-- `docs/control/`: stable OmniHand and runtime integration decisions
+- `docs/assets/`: stable OmniHand and runtime integration decisions
 - `docs/development/`: fixed roadmap, progress, and component-routing docs plus sprint working folders
 - `docs/project/`: stable package, naming, and workflow policy
 - `.github/`: concise Copilot-native instruction, skill, and agent layer

@@ -21,8 +21,8 @@ Use this document together with:
 
 - `docs/project/repository_structure.md`
 - `docs/project/ros2_development_practices.md`
-- `docs/control/omnihand_ros_integration_options.md`
-- `docs/control/omnihand_wrapper_integration_plan.md`
+- `docs/assets/omnihand/omnihand_ros_integration_options.md`
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 
 ## 1. ROS2 Nodes And Interfaces
 

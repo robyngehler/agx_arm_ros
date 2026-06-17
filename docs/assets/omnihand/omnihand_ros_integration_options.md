@@ -241,7 +241,7 @@ Example active-joint set for the left hand:
 - `left_pinky_abad_joint`
 - `left_pinky_pip_joint`
 
-The backend maps those local names to the vendor-declared active-joint order already recorded in `docs/control/omnihand_phase1_joint_map.md`.
+The backend maps those local names to the vendor-declared active-joint order already recorded in `docs/assets/omnihand/omnihand_phase1_joint_map.md`.
 
 ### Topics, Actions, And Services
 
@@ -387,9 +387,9 @@ Current workspace status:
 
 Use these locations:
 
-- `docs/control/omnihand_ros_integration_options.md`
+- `docs/assets/omnihand/omnihand_ros_integration_options.md`
     - architecture choice, naming strategy, topic and message strategy, and bridge shape
-- `docs/control/omnihand_wrapper_integration_plan.md`
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
     - execution phases, backend order, and simulation-first sequencing
 - `docs/assets/omnihand_asset_validation.md`
     - current factual state, risks, and open gates

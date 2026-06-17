@@ -23,8 +23,8 @@ Read these first when changing package boundaries or OmniHand integration surfac
 - `docs/assets/repository_asset_inventory.md`
 - `docs/assets/nero_asset_validation.md`
 - `docs/assets/omnihand_asset_validation.md`
-- `docs/control/omnihand_ros_integration_options.md`
-- `docs/control/omnihand_wrapper_integration_plan.md`
+- `docs/assets/omnihand/omnihand_ros_integration_options.md`
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 
 ## Preferred Change Order
 

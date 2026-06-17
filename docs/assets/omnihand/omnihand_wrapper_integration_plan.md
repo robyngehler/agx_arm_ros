@@ -10,8 +10,8 @@ simulation_track_status: SHARED_COMMAND_SURFACE_LANDED
 
 - Repo-side Phase 1 artifacts are now in place:
 	- `scripts/omnihand/phase1_smoke_test.py`
-	- `docs/control/omnihand_phase1_run_log.md`
-	- `docs/control/omnihand_phase1_joint_map.md`
+	- `docs/assets/omnihand/omnihand_phase1_run_log.md`
+	- `docs/assets/omnihand/omnihand_phase1_joint_map.md`
 - The current workspace host is no longer blocked at build/import time for isolated testing:
 	- a local socket-backed vendor build now succeeds on `aarch64`
 	- the unpacked Python package refresh now succeeds even when `python -m build` is unavailable locally
@@ -82,9 +82,9 @@ Work that should still wait for a validated live backend:
 - device-specific fault handling, tactile interpretation, and timing guarantees
 - production command limits and calibration tied to a real unit
 
-See `docs/control/omnihand_ros_integration_options.md` for the detailed option analysis, diagrams, and recommended repo-owned ROS contract.
+See `docs/assets/omnihand/omnihand_ros_integration_options.md` for the detailed option analysis, diagrams, and recommended repo-owned ROS contract.
 
-The current `aarch64` local SDK policy and adapter matrix live in `docs/control/omnihand_vendor_sdk_aarch64.md`.
+The current `aarch64` local SDK policy and adapter matrix live in `docs/assets/omnihand/omnihand_vendor_sdk_aarch64.md`.
 
 ## Current Constraints
 
@@ -106,7 +106,7 @@ Tasks:
 - keep `aarch64` as the target runtime for local bring-up
 - treat SocketCAN as the repo-local baseline on Jetson
 - use the ZLG userspace backend only when a native `aarch64` SDK is explicitly supplied
-- keep the adapter and backend decision record current in `docs/control/omnihand_vendor_sdk_aarch64.md`
+- keep the adapter and backend decision record current in `docs/assets/omnihand/omnihand_vendor_sdk_aarch64.md`
 
 Exit criteria:
 

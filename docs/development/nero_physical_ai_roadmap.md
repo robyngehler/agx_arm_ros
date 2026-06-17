@@ -921,8 +921,8 @@ Treat roadmap role names as architectural aliases only. The stable repo decision
 - `docs/project/repository_structure.md`
 - `docs/project/package_naming.md`
 - `docs/project/ros2_development_practices.md`
-- `docs/control/omnihand_ros_integration_options.md`
-- `docs/control/omnihand_wrapper_integration_plan.md`
+- `docs/assets/omnihand/omnihand_ros_integration_options.md`
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 
 ---
 
@@ -951,7 +951,7 @@ Each sprint folder should own at least:
 
 Add optional subfolders such as `assets/`, `control/`, `hand/`, `planning/`, or `simulation/` only when the sprint needs them.
 
-Promote stable outputs into `docs/assets/`, `docs/control/`, or `docs/project/` when they become canonical. Keep `.github/` as the concise agent-facing mirror of those stable docs rather than a competing documentation tree.
+Promote stable outputs into `docs/assets/`, `docs/assets/`, or `docs/project/` when they become canonical. Keep `.github/` as the concise agent-facing mirror of those stable docs rather than a competing documentation tree.
 
 ---
 

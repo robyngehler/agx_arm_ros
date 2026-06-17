@@ -22,8 +22,8 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 - `docs/project/local_agent_workflow.md`
 - `docs/project/ros2_development_practices.md`
 - `docs/project/repo_interaction_diagrams.md`
-- `docs/control/omnihand_ros_integration_options.md`
-- `docs/control/omnihand_wrapper_integration_plan.md`
+- `docs/assets/omnihand/omnihand_ros_integration_options.md`
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 
 ## Current Working Location During Implementation
 
@@ -73,5 +73,5 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 - `src/agx_arm_moveit/config/agx_arm.ros2_control.xacro`
 - `src/agx_arm_moveit/config/initial_positions.yaml`
 - `src/agx_arm_sim/agx_arm_description/launch/display_control.launch.py`
-- `docs/control/omnihand_ros_integration_options.md`
-- `docs/control/omnihand_wrapper_integration_plan.md`
+- `docs/assets/omnihand/omnihand_ros_integration_options.md`
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`

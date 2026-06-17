@@ -14,7 +14,7 @@ This repository is organized so Claude Code loads only the guidance needed for t
 2. `AGENTS.md` is imported by `CLAUDE.md` and carries the durable engineering contract.
 3. Read one file from `.claude/rules/` that matches the task. Path-scoped rules also auto-load when you
    touch matching files.
-4. Read the matching canonical docs under `docs/project/` or `docs/control/` when a public contract or
+4. Read the matching canonical docs under `docs/project/` or `docs/assets/` when a public contract or
    workflow decision is involved.
 5. Use a skill from `.claude/skills/` only when the task needs a repeatable workflow.
 6. Delegate to a subagent in `.claude/agents/` when a narrower persona helps.
@@ -49,6 +49,6 @@ This repository is organized so Claude Code loads only the guidance needed for t
 
 - do not load every `.claude/rules/` file by default
 - prefer the one dominant rule first
-- add the matching `docs/project/` or `docs/control/` file only when the task changes a stable repo decision
+- add the matching `docs/project/` or `docs/assets/` file only when the task changes a stable repo decision
 - when editing code, gather only the files needed to finish the current slice safely
 - path-scoped rules load automatically when you touch matching files; reach for the rest deliberately

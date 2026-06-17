@@ -59,7 +59,7 @@ open_questions:
 - Should `vendor/Omnihand-2025-SDK` permanently keep the workspace fork as the default submodule URL while maintaining `AgibotTech/Omnihand-2025-SDK` as an explicit `upstream` remote?
 related_sprint: 1
 
-See also: `docs/control/omnihand_ros_integration_options.md`
+See also: `docs/assets/omnihand/omnihand_ros_integration_options.md`
 
 ## Current Local Reference Points
 

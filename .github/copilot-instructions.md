@@ -7,7 +7,7 @@ This repository uses `AGENTS.md` as the durable engineering contract and `.githu
 1. Read `README.md` or `README_EN.md` for repository orientation.
 2. Read `AGENTS.md` for the durable rules.
 3. Load the single most relevant file from `.github/instructions/`.
-4. Consult the matching canonical doc under `docs/project/` or `docs/control/` when the task changes package boundaries, naming, public runtime contracts, or ROS2-native development decisions.
+4. Consult the matching canonical doc under `docs/project/` or `docs/assets/` when the task changes package boundaries, naming, public runtime contracts, or ROS2-native development decisions.
 5. Load a skill from `.github/skills/` only when the task needs a reusable workflow.
 
 ## Source Of Truth Order
@@ -15,7 +15,7 @@ This repository uses `AGENTS.md` as the durable engineering contract and `.githu
 - repository overview: `README.md`, `README_EN.md`
 - durable engineering contract: `AGENTS.md`
 - stable package and workflow policy: `docs/project/`
-- stable runtime and OmniHand decisions: `docs/control/`
+- stable runtime and OmniHand decisions: `docs/assets/`
 - Copilot operating model: this file
 - targeted Copilot rules: `.github/instructions/`
 - reusable Copilot workflows: `.github/skills/`
@@ -34,7 +34,7 @@ Do not load every instruction by default. Match context to the task.
 - OmniHand bridge contract and runtime surface: `.github/instructions/omnihand-bridge.instruction.md`
 - current Duo body system working notes: `docs/development/sprint4/`
 
-These instructions are concise Copilot-native mirrors of the current stable docs under `docs/project/` and `docs/control/`.
+These instructions are concise Copilot-native mirrors of the current stable docs under `docs/project/` and `docs/assets/`.
 
 ## Skills
 

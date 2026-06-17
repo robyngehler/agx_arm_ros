@@ -25,7 +25,7 @@ Use the top-level development docs like this:
 
 | Area | Status | Summary |
 | --- | --- | --- |
-| Sprint 1 asset and repo baseline | COMPLETE | Stable outputs were promoted into `docs/assets/` and `docs/control/`; the remaining gaps are external. |
+| Sprint 1 asset and repo baseline | COMPLETE | Stable outputs were promoted into `docs/assets/` and `docs/assets/`; the remaining gaps are external. |
 | Sprint 2 common environment and package structure merge | ACTIVE | Shared ROS2 semantics, package boundaries, Sprint 2 working notes, and stable interaction diagrams are in place; the remaining gate is still the first non-mock OmniHand backend plus runtime validation on a real hand path. |
 | Sprint 3 Nero planning and control hardening | ACTIVE | TRAC-IK, six-profile MoveIt bringup, a live `/compute_ik` call, a repo-owned OMPL pose-plan smoke test, and a non-hardware MIT trajectory audit are now validated locally; the remaining gates are broader planning-path evidence and smaller-scope crash isolation beyond the still-reproduced `move_group` teardown fault. |
 | Sprint 4 Duo body plus OmniHand system baseline | ACTIVE | `src/duo_body_description` is now the documented staging package for the body-mounted system slice; ROS-native `xacro`/`check_urdf`, headless bringup, the first headless `both_arms` MIT path, and a shared Duo RViz debug contract are landed locally. The remaining gates are RViz/physical mount review, hand-aware planning surfaces, coordinated-task collision evidence, and live dual-hardware validation. |
@@ -68,7 +68,7 @@ Use the top-level development docs like this:
 - use the new `custom_model`, `custom_model_xacro_args`, `input_joint_prefix`, and shared Duo RViz debug wrapper as the current controller-facing Sprint 4 slice; feedback-side prefix adaptation plus the shared soft-target fanout are now landed, while hand-aware and live dual-hardware runtime evidence remain open work
 - keep the current `both_arms` execution contract arm-only and per-arm at the MIT action boundary; do not introduce a shared robot-level `FollowJointTrajectory` executor before the collision and safety semantics are documented
 - keep Isaac and broader simulation work sequenced after the first validated Duo body system baseline
-- keep stable repo policy in `docs/project/` and runtime contracts in `docs/control/`
+- keep stable repo policy in `docs/project/` and runtime contracts in `docs/assets/`
 - keep only three cross-sprint coordination docs at the top of `docs/development/`
 - put discovery, checklist, error/fix, and niche implementation details into sprint folders
 - keep the current Duo body integration record in `docs/development/sprint4/`
@@ -91,4 +91,4 @@ Use the top-level development docs like this:
 - update `docs/development/nero_physical_ai_roadmap.md` only when roadmap sequencing or phase intent changes
 - update `docs/development/component_implementation_map.md` when ownership or document routing changes
 - keep sprint evidence in `docs/development/sprintN/`
-- promote stable outputs into `docs/assets/`, `docs/control/`, or `docs/project/`
+- promote stable outputs into `docs/assets/`, `docs/assets/`, or `docs/project/`

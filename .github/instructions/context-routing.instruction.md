@@ -11,7 +11,7 @@ This repository is intentionally organized so Copilot can load only the guidance
 1. Read `README.md` or `README_EN.md` for repository orientation.
 2. Read `AGENTS.md` for the durable engineering contract.
 3. Load one file from `.github/instructions/` that matches the task.
-4. Read the matching canonical docs under `docs/project/` or `docs/control/` when a public contract or workflow decision is involved.
+4. Read the matching canonical docs under `docs/project/` or `docs/assets/` when a public contract or workflow decision is involved.
 5. Load a skill from `.github/skills/` only when the task needs a repeatable workflow.
 
 ## Choose Instructions When
@@ -39,5 +39,5 @@ This repository is intentionally organized so Copilot can load only the guidance
 
 - do not load every `.github/instructions/` file by default
 - prefer the one dominant instruction first
-- add the matching `docs/project/` or `docs/control/` file only when the task changes a stable repo decision
+- add the matching `docs/project/` or `docs/assets/` file only when the task changes a stable repo decision
 - when editing code, gather only the files needed to finish the current slice safely

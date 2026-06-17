@@ -19,8 +19,8 @@ Before changing package structure or OmniHand integration surfaces, read these d
 - `docs/assets/repository_asset_inventory.md`
 - `docs/assets/nero_asset_validation.md`
 - `docs/assets/omnihand_asset_validation.md`
-- `docs/control/omnihand_ros_integration_options.md`
-- `docs/control/omnihand_wrapper_integration_plan.md`
+- `docs/assets/omnihand/omnihand_ros_integration_options.md`
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 - `docs/project/repository_structure.md`
 - `docs/project/package_naming.md`
 - `docs/project/generated_vs_source_assets.md`
@@ -87,5 +87,5 @@ Avoid these in the current baseline:
 - creating a duplicate MoveIt package for the same Nero baseline
 - using vendor ROS topics as the public repo contract
 - treating generated build outputs as source of truth
-- letting `.github/` instructions drift away from `docs/project/` or `docs/control/`
+- letting `.github/` instructions drift away from `docs/project/` or `docs/assets/`
 - reopening already-settled naming decisions without a concrete implementation blocker

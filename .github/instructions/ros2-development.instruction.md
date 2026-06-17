@@ -20,7 +20,7 @@ Load this instruction for ROS2-native questions and decisions.
 ## Value Capture
 
 - `docs/project/` for stable structure, naming, workflow, and ROS2 practice decisions
-- `docs/control/` for stable runtime and bridge contracts
+- `docs/assets/` for stable runtime and bridge contracts
 - `docs/assets/` for stable factual inventories and validation state
 - top-level `docs/development/` docs only for roadmap, progress, and component routing
 - `docs/development/sprintN/` for discovery, checklist, error/fix, and blocker tracking

@@ -2,7 +2,7 @@
 paths:
   - "src/agx_arm_ctrl/**"
   - "src/agx_arm_msgs/**"
-  - "docs/control/**"
+  - "docs/assets/omnihand/**"
 ---
 
 # OmniHand Bridge Contract

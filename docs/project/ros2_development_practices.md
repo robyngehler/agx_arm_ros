@@ -42,7 +42,7 @@ Use it when the task changes topics, services, actions, messages, launch surface
 Capture the result in the narrowest stable place that matches the decision:
 
 - `docs/project/`: stable repo structure, naming, workflow, and ROS2 practice decisions
-- `docs/control/`: stable runtime, bridge, controller, and OmniHand contract decisions
+- `docs/assets/`: stable runtime, bridge, controller, and OmniHand contract decisions
 - `docs/assets/`: stable factual inventories and validation state
 - `docs/development/nero_physical_ai_roadmap.md`: long-horizon roadmap sequencing only
 - `docs/development/nero_physical_ai_progress.md`: cross-sprint status and blockers only
@@ -69,5 +69,5 @@ Before adding a ROS2 surface, answer these questions:
 1. does the change belong to an existing package that already owns the runtime surface?
 2. is this a documented staging surface needed for bringup, or should it stay in the canonical long-term package?
 3. can a standard ROS message type express the contract cleanly?
-4. does the change need to be reflected in `docs/control/` or `docs/project/`?
+4. does the change need to be reflected in `docs/assets/` or `docs/project/`?
 5. should the detailed evidence stay in a sprint folder instead of another top-level document?

@@ -139,13 +139,13 @@ Interpretation:
 | --- | --- | --- |
 | Device enumeration succeeds | VERIFIED | `demo_get_hardware_info.py` now returns live model, serial, firmware, supply-voltage, and bitrate information over `OMNIHAND_SOCKETCAN_IFACE=can0` on this host. |
 | Safe command-response loop succeeds | BLOCKED | Hardware-info retrieval is now validated, but a safe active-joint command and readback loop is still pending. |
-| Stable 10-joint naming map exists | BASELINE_CAPTURED | Vendor-declared mapping recorded in `docs/control/omnihand_phase1_joint_map.md`; runtime verification is still pending. |
+| Stable 10-joint naming map exists | BASELINE_CAPTURED | Vendor-declared mapping recorded in `docs/assets/omnihand/omnihand_phase1_joint_map.md`; runtime verification is still pending. |
 
 ## Repo-Side Phase 1 Artifacts Created
 
 - `scripts/omnihand/phase1_smoke_test.py`: repo-owned isolated probe entrypoint
-- `docs/control/omnihand_phase1_joint_map.md`: vendor-declared left/right active-joint index map with limits
-- `docs/control/omnihand_wrapper_integration_plan.md`: updated with the current Phase 1 status
+- `docs/assets/omnihand/omnihand_phase1_joint_map.md`: vendor-declared left/right active-joint index map with limits
+- `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`: updated with the current Phase 1 status
 - local vendor hardening for empty CAN readback handling and optional wheel packaging during socket-backed builds
 
 ## External Step Still Required To Truly Close Phase 1
