@@ -1,6 +1,6 @@
 # Control Chain: Single-Arm vs. Duo Multi-Arm (Method & State Reference)
 
-**Status:** Analysis · **Date:** 2026-06-12 · Companion to `nero_bus_problem_proposal.md`
+**Status:** Analysis · **Date:** 2026-06-12 · Resolution: `../../development/sprint5/`
 
 Purpose: a human-usable map of *which method/topic talks to the `agx_arm_ctrl` driver, how
 often, and in which state* — so we can see exactly where the single-arm path and the Duo
@@ -18,8 +18,9 @@ multi-arm path differ in interaction frequency, and why ENOBUFS shows up almost 
   thread — it issues **no** CAN requests.
 - ENOBUFS is therefore **not** amplified by per-bus traffic or by wrong command routing. It is
   amplified by **shared resources**: one USB host serving two `gs_usb` adapters, and CPU
-  contention starving the RX/echo-consume path. Both accelerate the `gs_usb` TX-echo slot leak
-  (`nero_bus_problem_proposal.md` §2.1).
+  contention starving the RX/echo-consume path. Both accelerate the `gs_usb` TX-echo slot leak.
+  Resolved by migrating the arms to native `mttcan` with `one-shot on` — see
+  `../../development/sprint5/planning/can_transport_decision.md`.
 
 ---
 
