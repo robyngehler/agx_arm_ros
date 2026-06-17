@@ -2,12 +2,20 @@
 
 set -u
 
+# USB CAN FD adapter activation for the OmniHand.
+# NOTE: the current/standard OmniHand transport is the Jetson NATIVE mttcan side
+# bus via scripts/activate_native_can.sh (5 Mbit transceiver, shared with the
+# arm). Use this script only for a separate USB CAN FD adapter. Defaults match
+# the validated vendor timing: 1M/5M, 0.8 sample points, one-shot.
 TARGET_NAME="${1:-can_omnihand}"
 ARBITRATION_BITRATE="${2:-1000000}"
-DATA_BITRATE="${3:-4000000}"
+DATA_BITRATE="${3:-5000000}"
 SELECTOR="${4:-}"
 RESTART_MS="${5:-100}"
 TX_QUEUE_LEN="${6:-256}"
+SAMPLE_POINT="${7:-0.8}"
+DSAMPLE_POINT="${8:-0.8}"
+ONE_SHOT="${9:-on}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -93,7 +101,7 @@ echo "Using CAN interface $INTERFACE_NAME"
 
 sudo ip link set "$INTERFACE_NAME" down
 
-if ! sudo ip link set "$INTERFACE_NAME" type can bitrate "$ARBITRATION_BITRATE" dbitrate "$DATA_BITRATE" fd on restart-ms "$RESTART_MS"; then
+if ! sudo ip link set "$INTERFACE_NAME" type can bitrate "$ARBITRATION_BITRATE" sample-point "$SAMPLE_POINT" dbitrate "$DATA_BITRATE" dsample-point "$DSAMPLE_POINT" fd on restart-ms "$RESTART_MS" one-shot "$ONE_SHOT"; then
     echo "Error: interface '$INTERFACE_NAME' rejected CAN FD configuration."
     echo "This usually means the driver or adapter exposes classic CAN only."
     ip -details link show "$INTERFACE_NAME"

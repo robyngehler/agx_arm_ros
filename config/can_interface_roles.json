@@ -1,7 +1,8 @@
 {
+  "_note": "Roles for the USB-adapter path via scripts/prepare_can_interfaces.py. The Duo arms and OmniHand run on the Jetson NATIVE mttcan side buses via scripts/activate_native_can.sh; use these roles only for USB CAN/CAN-FD adapters.",
   "roles": {
     "nero": {
-      "description": "Nero arm classic CAN adapter",
+      "description": "Nero arm classic CAN USB adapter (legacy/fallback)",
       "target_name": "can_nero",
       "mode": "can",
       "bitrate": 1000000,
@@ -9,26 +10,8 @@
       "tx_queue_len": 1000,
       "usb_bus_info": ""
     },
-    "nero_left": {
-      "description": "Duo left Nero arm classic CAN adapter (set usb_bus_info to disambiguate the two arm adapters)",
-      "target_name": "can_nero_left",
-      "mode": "can",
-      "bitrate": 1000000,
-      "restart_ms": 100,
-      "tx_queue_len": 1000,
-      "usb_bus_info": ""
-    },
-    "nero_right": {
-      "description": "Duo right Nero arm classic CAN adapter (set usb_bus_info to disambiguate the two arm adapters)",
-      "target_name": "can_nero_right",
-      "mode": "can",
-      "bitrate": 1000000,
-      "restart_ms": 100,
-      "tx_queue_len": 1000,
-      "usb_bus_info": ""
-    },
     "effector": {
-      "description": "Generic effector classic CAN adapter",
+      "description": "Generic effector classic CAN USB adapter",
       "target_name": "can_effector",
       "mode": "can",
       "bitrate": 1000000,
@@ -37,11 +20,13 @@
       "usb_bus_info": ""
     },
     "omnihand": {
-      "description": "OmniHand CAN FD adapter",
+      "description": "OmniHand CAN FD USB adapter (vendor timing; native bus is preferred). one-shot is not applied by this tool - use omnihand_canfd_activate.sh if you need it.",
       "target_name": "can_omnihand",
       "mode": "canfd",
       "bitrate": 1000000,
-      "dbitrate": 4000000,
+      "sample_point": 0.8,
+      "dbitrate": 5000000,
+      "dsample_point": 0.8,
       "restart_ms": 100,
       "tx_queue_len": 256,
       "usb_bus_info": ""

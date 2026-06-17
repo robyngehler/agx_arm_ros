@@ -49,7 +49,7 @@ If you see `ip: command not found` when executing the script, install the `ip` c
 
 `sudo apt-get install iproute2`
 
-The legacy `can_activate.sh` and `can_muti_activate.sh` procedures remain below for compatibility with older manual workflows.
+The legacy `can_activate.sh` procedure remains below for compatibility with older manual USB workflows. For the native arms and OmniHand use `scripts/activate_native_can.sh`.
 
 ## 1 Find CAN Modules
 
@@ -129,67 +129,3 @@ bash can_activate.sh can0 1000000
 
 Here, `can0` can be replaced with any name, and `1000000` is the baud rate.
 
-## 3 Activate Multiple CAN Modules Simultaneously (using `can_muti_activate.sh`)
-
-First, check how many official CAN modules are plugged into the computer (we assume 2 in this example).
-
-**Note**: If 5 CAN modules are plugged in, you can activate only the specified ones.
-
-### 3.1 Record the USB port hardware address for each CAN module
-
-Plug and unplug CAN modules one by one, and record the USB port hardware address for each module.
-
-In `can_muti_activate.sh`, the number of elements in the `USB_PORTS` parameter equals the number of CAN modules to be pre-activated (we assume 2 here).
-
-#### (1) Plug in the first CAN module alone
-
-Run:
-
-```shell
-bash find_all_can_port.sh
-```
-
-Record the `USB port` value, e.g., `3-1.4:1.0`.
-
-#### (2) Plug in the next CAN module
-
-**Do not** use the same USB port as the previous one. Run:
-
-```shell
-bash find_all_can_port.sh
-```
-
-Record the `USB port` value for the second CAN module, e.g., `3-1.1:1.0`.
-
-**Note**:
-
-- If no CAN modules have been activated before, the first one plugged in defaults to `can0`, the second to `can1`.
-- If they were activated before, they retain their previously assigned names.
-
-### 3.2 Predefine USB ports, target interface names, and baud rates
-
-Assuming the recorded `USB port` values are `3-1.4:1.0` and `3-1.1:1.0`, replace the values inside the double quotes in `USB_PORTS["1-9:1.0"]="can_left:1000000"` with these addresses.
-
-The final result will be:
-
-```bash
-USB_PORTS["3-1.4:1.0"]="can_left:1000000"
-USB_PORTS["3-1.1:1.0"]="can_right:1000000"
-```
-
-**Explanation**:
-
-- The CAN device on USB port `3-1.4:1.0` is renamed to `can_left` with a baud rate of 1,000,000 and activated.
-- The CAN device on USB port `3-1.1:1.0` is renamed to `can_right` with a baud rate of 1,000,000 and activated.
-
-### 3.3 Activate multiple CAN modules
-
-Run:
-
-```
-bash can_muti_activate.sh
-```
-
-### 3.4 Verify multiple CAN module setup
-
-Run `ifconfig` and check if both `can_left` and `can_right` have CAN data.

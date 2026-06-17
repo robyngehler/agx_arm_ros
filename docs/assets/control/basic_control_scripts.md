@@ -16,8 +16,42 @@ Recommended test order:
 - `execution_profile:=right_arm` resolves the staged Duo right-arm model and `right_arm_` prefixes.
 - `execution_profile:=right_hand` resolves the staged Duo right-arm plus right-OmniHand model and bridge defaults.
 - `execution_profile:=duo_arm` resolves the staged Duo dual-arm planning model.
-- `can_port` configures the Nero arm driver.
-- the current real OmniHand CAN FD check is still done below ROS via the vendor SDK and `OMNIHAND_SOCKETCAN_IFACE`.
+- `can_port` selects the arm's CAN interface — the standard is `can_nero_right` (`can0`) and
+  `can_nero_left` (`can1`).
+- the OmniHand shares its side bus with the arm and is checked below ROS via the vendor SDK and
+  `OMNIHAND_SOCKETCAN_IFACE` (same interface, e.g. `can_nero_right`).
+
+## 0. CAN pre-configure (do this first, before any launch)
+
+**Standard:** the Duo arms and OmniHands run on the Jetson **native `mttcan`** CAN FD side buses
+(40-pin header, 5 Mbit BRS-capable transceiver). One command brings both sides up:
+
+```bash
+sudo bash scripts/activate_native_can.sh          # both sides
+# or: sudo bash scripts/activate_native_can.sh right   (right side only)
+```
+
+This creates `can_nero_right` (`can0`) and `can_nero_left` (`can1`) in CAN FD mode
+(1M/5M, 0.8 sample points, `one-shot on`, `restart-ms 100`). Each side bus carries the arm
+(classic frames) and its OmniHand (FD+BRS frames). Verify:
+
+```bash
+ip -details link show can_nero_right    # expect: mtu 72, fd, one-shot, bitrate 1000000, dbitrate 5000000
+```
+
+Standard and rationale: `../../development/sprint5/planning/can_transport_decision.md` and
+`../omnihand/omnihand_canfd_setup.md`.
+
+## Scripts at a glance
+
+| Script | Use it for | Standard? |
+|---|---|---|
+| `scripts/activate_native_can.sh` | bring up native side buses (arm + hand per side) | **yes — default** |
+| `scripts/omnihand_canfd_activate.sh` | a separate **USB** CAN FD adapter for the hand | only if not on the native bus |
+| `scripts/prepare_can_interfaces.py` + `config/can_interface_roles.json` | role-based bring-up of **USB** CAN adapters | legacy/USB |
+| `scripts/can_activate.sh` | single **USB** classic-CAN adapter, manual | legacy/USB |
+| `scripts/find_all_can_port.sh` | list CAN interfaces and their USB bus-info | helper |
+| `scripts/colcon_build_system_python.sh` | build ROS with system Python (no conda) | build |
 
 ## 1. OmniHand hardware preflight on the real CAN FD path
 
@@ -27,7 +61,7 @@ Use this first for all remaining live-hand tests.
 cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
 PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
 LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
-OMNIHAND_SOCKETCAN_IFACE=can0 \
+OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 python3.10 python/example/demo_get_hardware_info.py
 ```
 
@@ -87,7 +121,7 @@ Current canonical debug path for the mounted right-arm setup:
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=debug_soft_target \
   execution_profile:=right_arm \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   follow:=true \
   tcp_offset:='[0.005, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
@@ -97,11 +131,11 @@ Staged right-arm plus OmniHand debug path:
 ```bash
 PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg:$PYTHONPATH \
 LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
-OMNIHAND_SOCKETCAN_IFACE=can0 \
+OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=debug_soft_target \
   execution_profile:=right_hand \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   follow:=true \
   omnihand_backend_type:=sdk \
   omnihand_device_id:=1 \
@@ -121,7 +155,7 @@ Right-arm OMPL profile:
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
   execution_profile:=right_arm \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   follow:=true \
   use_rviz:=true \
   planning_pipelines:=ompl
@@ -132,11 +166,11 @@ Staged right-arm plus OmniHand profile:
 ```bash
 PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg:$PYTHONPATH \
 LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
-OMNIHAND_SOCKETCAN_IFACE=can0 \
+OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
   execution_profile:=right_hand \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   follow:=true \
   use_rviz:=true \
   planning_pipelines:=ompl \
@@ -152,7 +186,7 @@ If you want the direct wrapper instead of the mode multiplexer, the equivalent s
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
   execution_profile:=right_arm \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   follow:=true \
   use_rviz:=true \
   planning_pipelines:=ompl
@@ -182,7 +216,7 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   follow:=true \
   use_rviz:=true \
   planning_pipelines:=ompl \
-  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: true}, {name: right_arm, namespace: right_arm, can_port: can_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: true}]'
+  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_nero_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: true}, {name: right_arm, namespace: right_arm, can_port: can_nero_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: true}]'
 ```
 
 ## 6. When you need explicit overrides instead of profiles
@@ -193,7 +227,7 @@ Direct RViz debug wrapper with an explicit custom Duo model slice:
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
   custom_model_xacro_args:='use_left_arm:=false use_left_hand:=false use_right_arm:=true use_right_hand:=true' \
   input_joint_prefix:=right_arm_ \
@@ -207,7 +241,7 @@ Direct MoveIt wrapper with explicit custom-model control:
 
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   moveit_profile:=right_arm \
   robot_name:=duo_nero_system \
   custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \

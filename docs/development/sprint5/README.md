@@ -25,14 +25,23 @@ not description or planning work.
 - Control chain & shared-bus analysis: `docs/assets/control/single_vs_multi_arm_control_chain.md`
 - Control-layer source / submodule: `docs/project/control_layer_and_dependencies.md`
 
-## Control Scripts & Commands:
-Set up the jetson native canX ports for downstream usage
+## Control Scripts & Commands
+
+Bring up the native side buses (arm + hand per side) in one command:
+
 ```bash
-sudo ip link set can0 name can_nero_right
-sudo ip link set can1 name can_nero_left
-sudo ip link set can_nero_right type can bitrate 1000000 berr-reporting on restart-ms 100 one-shot on
-sudo ip link set can_nero_left type can  bitrate 1000000 berr-reporting on restart-ms 100 one-shot on
-sudo ip link set can_nero_right up
-sudo ip link set can_nero_left up
+sudo bash scripts/activate_native_can.sh
 ```
-**TODO:** create .sh script like activate_can.sh is used for usb-native usage.
+
+This is the plug&play wrapper for the convention below (CAN FD by default so the OmniHand shares
+the bus; `FD=0` for classic arm-only). See `docs/assets/control/basic_control_scripts.md`
+("Scripts at a glance") for the full script map and `planning/can_transport_decision.md` for the
+standard.
+
+```bash
+# equivalent manual bring-up (one side):
+sudo ip link set can0 type can bitrate 1000000 sample-point 0.8 \
+    dbitrate 5000000 dsample-point 0.8 fd on berr-reporting on restart-ms 100 one-shot on
+sudo ip link set can0 name can_nero_right
+sudo ip link set can_nero_right up
+```

@@ -15,7 +15,7 @@ from pathlib import Path
 DEFAULT_CONFIG_PATH = (
     Path(__file__).resolve().parents[1] / "config" / "can_interface_roles.json"
 )
-ROLE_NAMES = ("nero", "nero_left", "nero_right", "effector", "omnihand")
+ROLE_NAMES = ("nero", "effector", "omnihand")
 
 
 @dataclass(frozen=True)
