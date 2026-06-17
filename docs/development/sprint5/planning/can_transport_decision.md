@@ -2,10 +2,14 @@
 
 ## Decision
 
-- Run each **arm on a dedicated native `mttcan` channel** (`can0`/`can1`, Jetson 40-pin header),
-  brought up with **`one-shot on`** (and `restart-ms` for bus-off recovery).
+- Run one **native `mttcan` side bus per side** (`can0` → `can_nero_right`, `can1` →
+  `can_nero_left`, Jetson 40-pin header), brought up in **CAN FD** mode with `one-shot on` and
+  `restart-ms`. A 5 Mbit BRS-capable transceiver is required.
+- Put the **arm and its own hand on the same side bus**: an `fd on` SocketCAN interface carries
+  both classic (arm) and FD+BRS (hand) frames. See
+  `../../../assets/omnihand/omnihand_canfd_setup.md`.
 - **Do not** put two arms on one CAN bus.
-- **Next step:** evaluate **arm + its own hand on one shared bus**, not two arms per bus.
+- **Open:** confirm the bus-load budget holds when arm + hand share one bus (below).
 
 ## Why native CAN + one-shot
 
@@ -21,13 +25,21 @@ The USB `gs_usb` adapters wedged with permanent ENOBUFS on the Duo path (see
    MIT frame supersedes it) instead of wedging the bus. `mttcan` advertises `one-shot`; the
    `gs_usb` firmware did not — which is why the same mitigation was impossible on USB.
 
+Native `mttcan` is BRS-capable with a proper 5 Mbit transceiver — the earlier "native cannot do
+BRS" Sprint 2 finding was a transceiver limitation, since resolved (see
+`../../../assets/omnihand/omnihand_canfd_setup.md`).
+
 ### Native bringup (reference)
+
+Use `scripts/activate_native_can.sh` (CAN FD side buses by default), equivalent to:
 
 ```bash
 sudo ip link set can0 down
-sudo ip link set can0 type can bitrate 1000000 restart-ms 100 one-shot on
-sudo ip link set can0 up
-# repeat for can1
+sudo ip link set can0 type can bitrate 1000000 sample-point 0.8 \
+    dbitrate 5000000 dsample-point 0.8 fd on restart-ms 100 one-shot on
+sudo ip link set can0 name can_nero_right
+sudo ip link set can_nero_right up
+# repeat: can1 -> can_nero_left
 ```
 
 ## Bus budget (measured)

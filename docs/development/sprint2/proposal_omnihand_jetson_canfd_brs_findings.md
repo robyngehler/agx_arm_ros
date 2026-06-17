@@ -1,5 +1,10 @@
 # Proposal: OmniHand Pro Bring-up on Jetson Native CAN-FD
 
+> ⚠️ **SUPERSEDED (sprint5).** The conclusion below — "native mttcan cannot do CAN FD with BRS" —
+> was a **transceiver/wiring limitation**, not a driver limit. With a BRS-capable 5 Mbit
+> transceiver, native FD+BRS works and drives the OmniHand; the ZLG adapter was dropped. Current
+> setup: `docs/assets/omnihand/omnihand_canfd_setup.md`. Kept for history.
+
 ## Summary
 
 Recent tests moved the OmniHand CAN-FD bring-up from a broad software/SDK problem to a much narrower hardware/driver-layer issue.

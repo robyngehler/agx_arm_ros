@@ -1,5 +1,9 @@
 # OmniHand CAN FD Driver Investigation
 
+> ⚠️ **SUPERSEDED (sprint5).** Historical bring-up evidence (USB gs_usb / ZLG paths). The OmniHand
+> now runs on native `mttcan` CAN FD with a 5 Mbit transceiver; ZLG and USB-CANFD paths were
+> dropped. Current setup: `docs/assets/omnihand/omnihand_canfd_setup.md`.
+
 ## Purpose
 
 This note records the current Sprint 2 evidence for bringing up the real OmniHand Pro on the Jetson host.

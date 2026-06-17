@@ -23,8 +23,8 @@ host/TT and the echo-slot leak entirely. See `planning/can_transport_decision.md
 **Secondary mitigations (now defense-in-depth, not the fix).**
 - Node-side bus-recovery watchdog in `agx_arm_ctrl` (detect a stalled ENOBUFS path, reconnect,
   reset `control_ready`). Kept as a safety net; no longer the primary remedy.
-- `restart-ms` / `txqueuelen` hardening in `can_activate.sh` / `can_muti_activate.sh` now only
-  matters for remaining USB CAN (e.g. OmniHand), not the natively-wired arms.
+- `restart-ms` / `txqueuelen` hardening in the legacy USB `can_activate.sh` now only matters for
+  any remaining USB CAN adapter, not the natively-wired arms or the native OmniHand bus.
 
 ## Control-layer ran a stale, frozen pyAgxArm (resolved by editable install + submodule pin)
 

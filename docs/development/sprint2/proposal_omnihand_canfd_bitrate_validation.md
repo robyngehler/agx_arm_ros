@@ -1,5 +1,9 @@
 # Proposal: OmniHand CAN-FD Bitrate Validation on Jetson Native mttcan
 
+> ⚠️ **SUPERSEDED (sprint5).** The validated standard is now `bitrate 1M / sample-point 0.8 /
+> dbitrate 5M / dsample-point 0.8 / fd on` on native `mttcan` with a 5 Mbit transceiver (FD+BRS
+> works). Current setup: `docs/assets/omnihand/omnihand_canfd_setup.md`. Kept for history.
+
 ## Context
 
 The OmniHand Pro bring-up has progressed from USB-CAN driver blocking issues to a real CAN-FD validation stage on the Jetson Orin native CAN controller.
