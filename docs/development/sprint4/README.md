@@ -1,5 +1,10 @@
 # Sprint 4 Working Notes
 
+> ✅ **COMPLETE.** The Duo baseline is landed: shared macro/xacro URDF, dynamic SRDF, arm-count-aware
+> MoveIt, successful OMPL + TRAC-IK Duo planning, and a joint arm + OmniHand bringup with small live
+> movements. Runtime/CAN-transport stabilization and arm+hand bus sharing continue in
+> `docs/development/sprint5/`. The "not yet" items below are historical sprint-4 framing.
+
 ## Purpose
 
 This folder tracks Sprint 4 implementation details for the first Duo body plus Nero plus OmniHand system baseline.

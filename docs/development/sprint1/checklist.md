@@ -36,7 +36,7 @@ Repo-side Sprint 1 work is complete. The remaining unchecked items depend on ext
 - [x] Drop the legacy root-source MIT URDF fallback and keep auto-discovery aligned with the sim-backed description package.
 - [x] Remove the remaining `agx_arm_urdf` submodule dependency and keep the pruned Nero/Revo2 asset tree directly in-repo.
 - [x] Restrict the active launch/config/documentation surface to Nero-only workspace defaults.
-- [x] Promote stable Sprint 1 outputs from `docs/development/sprint1/` into permanent top-level `docs/assets/` and `docs/assets/`.
+- [x] Promote stable Sprint 1 outputs from `docs/development/sprint1/` into permanent top-level `docs/assets/`.
 - [x] Acquire OmniHand vendor SDK/docs or clone the relevant repo into the workspace.
 - [x] Acquire OmniHand model artifacts or an authoritative kinematics/interface document.
 - [x] Decide the near-term OmniHand integration approach: isolate the vendor SDK first, then integrate through a thin local wrapper; do not overlay the vendor ROS2 packages into `src/` yet.

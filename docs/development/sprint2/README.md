@@ -40,7 +40,7 @@ Do not use this Sprint 2 folder as the cross-sprint source of truth.
 | Shared ROS2 contract | CONFIRMED | The repo-owned contract is centered on shared `control/joint_states`, combined `feedback/joint_states`, and hand-only debug topics under `feedback/omnihand/*`. |
 | OmniHand simulation-first runtime | CONFIRMED | A repo-owned mock `omnihand_bridge` launch and node exist and integrate with the current MoveIt and control path. |
 | Launch and file interaction visibility | CONFIRMED | Stable Mermaid diagrams now live in `docs/project/repo_interaction_diagrams.md`. |
-| Non-mock OmniHand backend | OPEN | The current bridge is still mock-backed; real backend bring-up and live hardware validation remain open. |
+| Non-mock OmniHand backend | DONE | The bridge has a vendor-SDK backend (`omnihand_backend_type:=sdk`) with active 10-joint command, status, and tactile; it ran in a joint arm + hand bringup with small live movements. Sustained coordinated validation continues in sprint5. |
 
 ## Scope Adjustments From The Roadmap
 

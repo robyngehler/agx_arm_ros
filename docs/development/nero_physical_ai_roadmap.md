@@ -264,12 +264,17 @@ Recover
 
 ### Current Local Sequencing Note
 
-The current local repo execution order no longer matches the first-draft split of the early sprints.
+The execution sprints (`docs/development/sprintN/`) are the work iterations and have diverged from
+this roadmap's thematic phase numbering. Current state (see
+`docs/development/nero_physical_ai_progress.md` for detail):
 
-- Sprint 1 is treated as complete for asset audit, source-of-truth ownership, and repo-baseline decisions, aside from hardware-gated checks and AGV assets that are still external to the workspace.
-- Sprint 2 now focuses on the common environment merge: package structure baseline, OmniHand adapter boundary, normalized description assets, and the shared ROS/MoveIt semantics already being used locally.
-- Sprint 3 now focuses on validating and hardening the existing Nero planning and control baseline, while landing only the multi-arm-safe description and naming groundwork needed for the first Duo body system slice.
-- Sprint 4 now focuses on the first body-mounted system baseline: `body + right arm + right OmniHand` first, then the mirrored left side, while keeping descriptions and bringup arm-count-aware from the start.
+- Execution sprints 1–4 are **complete**: asset baseline; common environment + OmniHand bridge with
+  the vendor SDK backend; Nero planning/control hardening (TRAC-IK + OMPL); and the Duo body
+  baseline with shared macro/xacro URDF, dynamic SRDF, arm-count-aware MoveIt, successful OMPL +
+  TRAC-IK Duo planning, and a joint arm + OmniHand bringup with small live movements.
+- Execution **sprint 5 is active**: native `mttcan` CAN FD transport (`one-shot`, arm + hand per
+  side bus), `pyAgxArm` submodule pinning, and preparing the first demo task (Hefeweizen pouring).
+  It sits ahead of this roadmap's thematic phase 5 (AGV/base), which stays external.
 - Simulation and Isaac work stay behind the first validated Duo body system baseline instead of leading it.
 
 ### Adjacent Demo Tooling Note
@@ -951,7 +956,7 @@ Each sprint folder should own at least:
 
 Add optional subfolders such as `assets/`, `control/`, `hand/`, `planning/`, or `simulation/` only when the sprint needs them.
 
-Promote stable outputs into `docs/assets/`, `docs/assets/`, or `docs/project/` when they become canonical. Keep `.github/` as the concise agent-facing mirror of those stable docs rather than a competing documentation tree.
+Promote stable outputs into `docs/assets/` or `docs/project/` when they become canonical. Keep `.github/` as the concise agent-facing mirror of those stable docs rather than a competing documentation tree.
 
 ---
 
