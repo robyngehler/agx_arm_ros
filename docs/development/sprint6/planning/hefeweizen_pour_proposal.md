@@ -31,7 +31,7 @@ The proposal assumes the following baseline is already available or close to ava
 
 The following parts are not assumed to be fully solved yet:
 
-- stable hand skill abstraction above raw vendor gestures
+- stable hand skill abstraction above raw vendor gestures or custom vendor-side skill presets
 - calibrated tactile thresholds for bottle and glass grasps
 - robust coordinated task fault handling
 - sustained bus-load validation for arm + hand per side bus
