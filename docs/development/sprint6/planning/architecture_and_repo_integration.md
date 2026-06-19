@@ -8,25 +8,25 @@ implementation. Companion to `hefeweizen_pour_proposal.md`.
 
 ```
                  ┌──────────────────────────────────────────┐
-   Activity-DAG  │ Coordinator  (agx_arm_coordination)       │  execute_activity action
-   (graph +      │  load graph → validate → frontier →       │
-    resources)   │  resource rules → sync groups → dispatch  │
+   Activity-DAG  │ Coordinator  (agx_arm_coordination)      │  execute_activity action
+   (graph +      │  load graph → validate → frontier →      │
+    resources)   │  resource rules → sync groups → dispatch │
                  └───────────────┬──────────────────────────┘
                                  │ PerformAction (per node)
-                 ┌───────────────▼──────────────────────────┐
+                 ┌───────────────▼───────────────────────────┐
    routing by    │ Performer helper  (agx_arm_coordination)  │
    actiontype/   │  Trajectory+both_arms → arm executor      │
-   robot_id      │  Gripper+left/right_hand → hand skill ctrl │
-                 └───────┬───────────────────────┬──────────┘
-                         │                        │
-        ┌────────────────▼─────────┐   ┌──────────▼────────────────────┐
-        │ both_arms trajectory      │   │ OmniHand skill controller      │
-        │ (existing MoveIt FJT /    │   │ (agx_arm_ctrl)                 │
-        │  per-arm MIT split)       │   │  skill_name → vendor gesture,  │
-        │                           │   │  tactile-confirmed, hold/​fault │
-        └───────────────────────────┘   └──────────┬────────────────────┘
-                                                    │ vendor SDK (below ROS)
-                                                    ▼  OmniHand on native CAN FD side bus
+   robot_id      │  Gripper+left/right_hand → hand skill ctrl│
+                 └───────┬───────────────────────┬───────────┘
+                         │                       │
+        ┌────────────────▼─────────┐   ┌─────────▼─────────────────────┐
+        │ both_arms trajectory     │   │ OmniHand skill controller     │
+        │ (existing MoveIt FJT /   │   │ (agx_arm_ctrl)                │
+        │  per-arm MIT split)      │   │  skill_name → vendor gesture, │
+        │                          │   │  tactile-confirmed, hold/​fault│
+        └──────────────────────────┘   └──────────┬────────────────────┘
+                                                  │ vendor SDK (below ROS)
+                                                  ▼  OmniHand on native CAN FD side bus
 ```
 
 The coordinator never touches a vendor SDK or hardware directly — it only dispatches
