@@ -1,0 +1,293 @@
+################################# SEEMS DEPRICATED !!!!!!! ####################################
+
+
+
+
+
+
+
+############# 0x000 TDCR #############
+~~~
+(base) user@ubuntu:~$ sudo ip link set can0 down
+
+sudo ip link set can0 type can \
+  bitrate 1000000 sample-point 0.8 \
+  dbitrate 5000000 dsample-point 0.8 \
+  fd on loopback off restart-ms 100 berr-reporting on
+
+sudo ip link set can0 up
+
+echo "TDCR:"
+sudo busybox devmem 0xC310048
+
+echo "Before:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+
+cansend can0 123##1551122334455667788
+sleep 0.2
+
+echo "After:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+[sudo] password for user: 
+TDCR:
+0x00000000
+Before:
+    can <BERR-REPORTING,FD> state ERROR-ACTIVE (berr-counter tx 0 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          0          0          0          0          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+             0       0      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+After:
+    can <BERR-REPORTING,FD> state ERROR-PASSIVE (berr-counter tx 128 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          2951       0          1          1          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+         23624    2953   2951       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+
+~~~
+
+
+################# 0x400 TDCR ##########################
+~~~
+(base) user@ubuntu:~$ sudo ip link set can0 down
+
+sudo ip link set can0 type can \
+  bitrate 1000000 sample-point 0.8 \
+  dbitrate 5000000 dsample-point 0.8 \
+  fd on loopback off restart-ms 100 berr-reporting on
+
+sudo ip link set can0 up
+
+echo "TDCR:"
+sudo busybox devmem 0xC310048
+
+echo "Before:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+
+cansend can0 123##1551122334455667788
+sleep 0.2
+
+echo "After:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+[sudo] password for user: 
+TDCR:
+0x00000400
+Before:
+    can <BERR-REPORTING,FD> state ERROR-ACTIVE (berr-counter tx 0 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          0          0          0          0          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+             0       0      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+After:
+    can <BERR-REPORTING,FD> state ERROR-PASSIVE (berr-counter tx 128 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          2906       0          1          1          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+         23264    2908   2906       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+
+~~~
+
+################# 0x500 TDCR ##########################
+(base) user@ubuntu:~$ sudo ip link set can0 down
+
+sudo ip link set can0 type can \
+  bitrate 1000000 sample-point 0.8 \
+  dbitrate 5000000 dsample-point 0.8 \
+  fd on loopback off restart-ms 100 berr-reporting on
+
+sudo ip link set can0 up
+
+echo "TDCR:"
+sudo busybox devmem 0xC310048
+
+echo "Before:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+
+cansend can0 123##1551122334455667788
+sleep 0.2
+
+echo "After:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+[sudo] password for user: 
+TDCR:
+0x00000500
+Before:
+    can <BERR-REPORTING,FD> state ERROR-ACTIVE (berr-counter tx 0 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          0          0          0          0          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+             0       0      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+After:
+    can <BERR-REPORTING,FD> state ERROR-PASSIVE (berr-counter tx 128 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          2927       0          1          1          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+         23432    2929   2927       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+
+################# 0x700 TDCR ##########################
+(base) user@ubuntu:~$ sudo ip link set can0 down
+
+sudo ip link set can0 type can \
+  bitrate 1000000 sample-point 0.8 \
+  dbitrate 5000000 dsample-point 0.8 \
+  fd on loopback off restart-ms 100 berr-reporting on
+
+sudo ip link set can0 up
+
+echo "TDCR:"
+sudo busybox devmem 0xC310048
+
+echo "Before:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+
+cansend can0 123##1551122334455667788
+sleep 0.2
+
+echo "After:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+[sudo] password for user: 
+TDCR:
+0x00000700
+Before:
+    can <BERR-REPORTING,FD> state ERROR-ACTIVE (berr-counter tx 0 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          0          0          0          0          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+             0       0      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+After:
+    can <BERR-REPORTING,FD> state ERROR-PASSIVE (berr-counter tx 128 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          2949       0          1          1          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+         23608    2951   2949       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+
+
+################# 0x800 TDCR ##########################
+(base) user@ubuntu:~$ sudo ip link set can0 down
+
+sudo ip link set can0 type can \
+  bitrate 1000000 sample-point 0.8 \
+  dbitrate 5000000 dsample-point 0.8 \
+  fd on loopback off restart-ms 100 berr-reporting on
+
+sudo ip link set can0 up
+
+echo "TDCR:"
+sudo busybox devmem 0xC310048
+
+echo "Before:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+
+cansend can0 123##1551122334455667788
+sleep 0.2
+
+echo "After:"
+ip -details -statistics link show can0 | sed -n '/can </,$p'
+[sudo] password for user: 
+TDCR:
+0x00000800
+Before:
+    can <BERR-REPORTING,FD> state ERROR-ACTIVE (berr-counter tx 0 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          0          0          0          0          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+             0       0      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+After:
+    can <BERR-REPORTING,FD> state ERROR-PASSIVE (berr-counter tx 128 rx 0) restart-ms 100 
+	  bitrate 1000000 sample-point 0.800 
+	  tq 20 prop-seg 19 phase-seg1 20 phase-seg2 10 sjw 1
+	  mttcan: tseg1 2..255 tseg2 0..127 sjw 1..127 brp 1..511 brp-inc 1
+	  dbitrate 5000000 dsample-point 0.800 
+	  dtq 20 dprop-seg 3 dphase-seg1 4 dphase-seg2 2 dsjw 1
+	  mttcan: dtseg1 1..31 dtseg2 0..15 dsjw 1..15 dbrp 1..15 dbrp-inc 1
+	  clock 50000000 
+	  re-started bus-errors arbit-lost error-warn error-pass bus-off
+	  0          2904       0          1          1          0         numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 parentbus platform parentdev c310000.mttcan 
+    RX:  bytes packets errors dropped  missed   mcast           
+         23248    2906   2904       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+             0       0      0       0       0       0 
+
+################ 0x900 TDCR ##################
+
