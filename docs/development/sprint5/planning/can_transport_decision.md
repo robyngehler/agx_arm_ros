@@ -31,16 +31,23 @@ BRS" Sprint 2 finding was a transceiver limitation, since resolved (see
 
 ### Native bringup (reference)
 
-Use `scripts/activate_native_can.sh` (CAN FD side buses by default), equivalent to:
+Use `scripts/activate_native_can.sh` (CAN FD side buses by default). The script sets the
+**TDCR sysfs offset** before bringing each interface up — this is required for BRS at 5 Mbit/s
+with the TJA1051T/3 (Adafruit CAN Pal) transceiver. Equivalent manual sequence:
 
 ```bash
 sudo ip link set can0 down
+# Set TDC offset while interface is DOWN (0x800 for TJA1051T/3; sysfs is the only working path)
+echo "0x800" | sudo tee /sys/devices/platform/bus@0/c310000.mttcan/net/can0/tdc_offset
 sudo ip link set can0 type can bitrate 1000000 sample-point 0.8 \
     dbitrate 5000000 dsample-point 0.8 fd on restart-ms 100 one-shot on
 sudo ip link set can0 name can_nero_right
 sudo ip link set can_nero_right up
-# repeat: can1 -> can_nero_left
+# repeat: can1 (c320000.mttcan) -> can_nero_left
 ```
+
+See `docs/assets/omnihand/omnihand_canfd_setup.md` for the full TDCR background and dead-end
+alternatives (devmem and DTB/extlinux were both confirmed not to work).
 
 ## Bus budget (measured)
 

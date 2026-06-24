@@ -1,29 +1,40 @@
-######### How to set TDCR according Docs ########
-### set to TDCR rate:
+######### TDC offset — validated sysfs approach ########
+#
+# Set TDCR before bringing up the mttcan interfaces.
+# Value 0x800 is validated for the TJA1051T/3 (Adafruit CAN Pal).
+# Must be applied while the interface is DOWN.
+#
+# This is handled automatically by scripts/activate_native_can.sh.
+# See docs/assets/omnihand/omnihand_canfd_setup.md for the full context.
+
+### set TDC offset:
 ```bash
-echo "0x800" | sudo tee /sys/devices/platform/bus@0/c310000.mttcan/net/can0/tdc_offset;
-echo "0x800" | sudo tee /sys/devices/platform/bus@0/c320000.mttcan/net/can1/tdc_offset;
+echo "0x800" | sudo tee /sys/devices/platform/bus@0/c310000.mttcan/net/can0/tdc_offset
+echo "0x800" | sudo tee /sys/devices/platform/bus@0/c320000.mttcan/net/can1/tdc_offset
 ```
 
-### check:
+### verify:
 ```bash
 cat /sys/devices/platform/bus@0/c310000.mttcan/net/can0/tdc_offset
-cat /sys/devices/platform/bus@0/c320000.mttcan/net/can1/tdc_offset 
+cat /sys/devices/platform/bus@0/c320000.mttcan/net/can1/tdc_offset
 ```
 
-### set up can0/can1 device
-script:
+### bring up can0/can1 (right/left side bus):
 ```bash
-cd ~/workspace/agx_arm_ros/scripts/ && sudo ./activate_native_can.sh 
+cd ~/workspace/agx_arm_ros/scripts/ && sudo ./activate_native_can.sh
 ```
 
-or manual:
+or manually (right side):
 ```bash
-sudo ip link set can0 type can   bitrate 1000000 sample-point 0.8   dbitrate 5000000 dsample-point 0.8   fd on loopback off restart-ms 100 berr-reporting on one-shot on
-sudo ip link set can0 type can   bitrate 1000000 sample-point 0.8   dbitrate 5000000 dsample-point 0.8   fd on loopback off restart-ms 100 berr-reporting on one-shot on
+sudo ip link set can0 down
+echo "0x800" | sudo tee /sys/devices/platform/bus@0/c310000.mttcan/net/can0/tdc_offset
+sudo ip link set can0 type can bitrate 1000000 sample-point 0.8 \
+    dbitrate 5000000 dsample-point 0.8 fd on restart-ms 100 one-shot on
+sudo ip link set can0 name can_nero_right
+sudo ip link set can_nero_right up
 ```
 
-### check Omnihand:
+### verify OmniHand:
 ```bash
 cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
 PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
@@ -33,254 +44,22 @@ python3.10 python/example/demo_get_hardware_info.py
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-########################################## SEEMS DEPRECATED !!! ###########################################################
-
-
-############# create entries: ###############
-cd ~/dtb_can_patch
-
-for V in 0000 0400 0500 0600 0700 0800 0900 0a00; do
-  echo "=== Building TDCR 0x$V ==="
-
-  cp tegra234_can_patch.dts tegra234_can_tdcr_${V}.dts
-
-  python3 - "$V" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-value = sys.argv[1].lower()
-p = Path(f"tegra234_can_tdcr_{value}.dts")
-s = p.read_text()
-
-# IMPORTANT:
-# Patch ONLY the CAN0 5 Mbps prod-setting:
-#   mttcan@c310000 -> prod_c_can_5m -> board -> prod
+######### Dead-end approaches — do not use ########
 #
-# Do NOT replace the first matching
-#   prod = <0x00 0x48 0x7f00 ...>
-# entry globally, because that can accidentally patch prod_c_can_2m_1m
-# while leaving prod_c_can_5m stuck at the old value.
-pattern = re.compile(
-    r'(mttcan@c310000\s*\{.*?'
-    r'prod_c_can_5m\s*\{\s*'
-    r'board\s*\{\s*'
-    r'prod\s*=\s*)'
-    r'<0x00\s+0x48\s+0x7f00\s+0x[0-9a-fA-F]+>'
-    r'(;\s*\};\s*\};)',
-    re.S
-)
-
-replacement = rf'\1<0x00 0x48 0x7f00 0x{value}>\2'
-
-s2, n = pattern.subn(replacement, s, count=1)
-
-if n != 1:
-    raise SystemExit(
-        f"Expected exactly one CAN0 prod_c_can_5m entry to patch, patched {n}. "
-        "Check that the DTS contains mttcan@c310000/prod_c_can_5m."
-    )
-
-p.write_text(s2)
-print(f"Patched CAN0 prod_c_can_5m to 0x{value}")
-PY
-
-  dtc -I dts -O dtb \
-    -o tegra234_can_tdcr_${V}.dtb \
-    tegra234_can_tdcr_${V}.dts
-
-  sudo cp tegra234_can_tdcr_${V}.dtb /boot/dtb/
-done
-
-sync
-
-################ check generated DTBs: ###############
-ls -lh /boot/dtb/tegra234_can_tdcr_*.dtb
-
-################ verify that CAN0 prod_c_can_5m really varies: ###############
-for V in 0000 0400 0500 0600 0700 0800 0900 0a00; do
-  echo "===== $V ====="
-  dtc -I dtb -O dts /boot/dtb/tegra234_can_tdcr_${V}.dtb 2>/dev/null \
-    | awk '
-      /mttcan@c310000/ {in_can0=1}
-      in_can0 && /prod_c_can_5m/ {in_5m=1; print; next}
-      in_5m && /prod =/ {print; in_5m=0}
-      in_can0 && /^\t\t};/ {in_can0=0}
-    '
-done
-
-# Expected:
-# 0000 -> prod_c_can_5m prod = <0x00 0x48 0x7f00 0x00>;
-# 0400 -> prod_c_can_5m prod = <0x00 0x48 0x7f00 0x400>;
-# ...
-# 0a00 -> prod_c_can_5m prod = <0x00 0x48 0x7f00 0xa00>;
-
-################ create extlinux.conf backup: ###############
-sudo cp /boot/extlinux/extlinux.conf \
-  /boot/extlinux/extlinux.conf.backup.$(date +%F_%H%M%S)
-
-################ attach boot entries to extlinux.conf ###############
-sudo tee -a /boot/extlinux/extlinux.conf > /dev/null <<'EOF'
-
-LABEL JetsonIO-CAN-TDCR-0000
-	MENU LABEL Custom Header Config + CAN TDCR 0x0000
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0000.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-
-LABEL JetsonIO-CAN-TDCR-0400
-	MENU LABEL Custom Header Config + CAN TDCR 0x0400
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0400.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-
-LABEL JetsonIO-CAN-TDCR-0500
-	MENU LABEL Custom Header Config + CAN TDCR 0x0500
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0500.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-
-LABEL JetsonIO-CAN-TDCR-0600
-	MENU LABEL Custom Header Config + CAN TDCR 0x0600
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0600.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-
-LABEL JetsonIO-CAN-TDCR-0700
-	MENU LABEL Custom Header Config + CAN TDCR 0x0700
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0700.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-
-LABEL JetsonIO-CAN-TDCR-0800
-	MENU LABEL Custom Header Config + CAN TDCR 0x0800
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0800.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-
-LABEL JetsonIO-CAN-TDCR-0900
-	MENU LABEL Custom Header Config + CAN TDCR 0x0900
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0900.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-
-LABEL JetsonIO-CAN-TDCR-0A00
-	MENU LABEL Custom Header Config + CAN TDCR 0x0A00
-	LINUX /boot/Image
-	FDT /boot/dtb/tegra234_can_tdcr_0a00.dtb
-	INITRD /boot/initrd
-	APPEND ${cbootargs} root=PARTUUID=ece22634-bcf8-4b31-bf76-b373d70f1bca rw rootwait rootfstype=ext4 mminit_loglevel=4 console=ttyTCU0,115200 console=ttyAMA0,115200 firmware_class.path=/etc/firmware fbcon=map:0 net.ifnames=0 nospectre_bhb video=efifb:off console=tty0 nv-auto-config
-	OVERLAYS /boot/kernel_tegra234-p3737-0000+p3701-0005-nv-hdr40-user-custom.dtbo
-EOF
-
-################ set ONE of those entries: ###############
-# IMPORTANT:
-# Run exactly ONE of the following sed lines for the TDCR value you want to test.
-# They are intentionally listed together as selectable commands.
-# If you execute all of them as a block, the last one wins and DEFAULT becomes 0A00.
+# The following two approaches were thoroughly investigated and confirmed not to work.
+# They are documented here only to save future effort.
 #
-# Example for testing 0x000:
-# sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0000/' /boot/extlinux/extlinux.conf
+# 1. devmem via register 0xC310048:
+#    Writes complete without error but have no observable effect on BRS behavior.
+#    Example: sudo busybox devmem 0xC310048 32 0x800
+#    Result: TDCR reads back as set, but BRS at 5 Mbit/s still fails. Dead end.
 #
-# Example for testing 0x900:
-# sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0900/' /boot/extlinux/extlinux.conf
-
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0000/' /boot/extlinux/extlinux.conf
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0400/' /boot/extlinux/extlinux.conf
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0500/' /boot/extlinux/extlinux.conf
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0600/' /boot/extlinux/extlinux.conf
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0700/' /boot/extlinux/extlinux.conf
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0800/' /boot/extlinux/extlinux.conf
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0900/' /boot/extlinux/extlinux.conf
-sudo sed -i 's/^DEFAULT .*/DEFAULT JetsonIO-CAN-TDCR-0A00/' /boot/extlinux/extlinux.conf
-
-################ check and reboot ###############
-grep -n "DEFAULT\|LABEL JetsonIO-CAN-TDCR" /boot/extlinux/extlinux.conf
-sudo reboot
-
-################ after reboot check: ###############
-echo "=== selected boot entry ==="
-grep -n "^DEFAULT" /boot/extlinux/extlinux.conf
-
-echo "=== live CAN0 prod_c_can_5m from /proc/device-tree ==="
-sudo dtc -I fs -O dts /proc/device-tree > ~/live_tdcr_check.dts 2>/dev/null
-grep -n -A8 -B3 "prod_c_can_5m" ~/live_tdcr_check.dts | head -20
-
-sudo ip link set can0 down
-
-sudo ip link set can0 type can \
-  bitrate 1000000 sample-point 0.8 \
-  dbitrate 5000000 dsample-point 0.8 \
-  fd on loopback off restart-ms 100 berr-reporting on
-
-sudo ip link set can0 up
-
-echo "TDCR:"
-sudo busybox devmem 0xC310048
-
-ip -details -statistics link show can0 | sed -n '/can </,$p' | head -25
-
-################ Standard CAN test for each profile ##################
-sudo ip link set can0 down
-
-sudo ip link set can0 type can \
-  bitrate 1000000 sample-point 0.8 \
-  dbitrate 5000000 dsample-point 0.8 \
-  fd on loopback off restart-ms 100 berr-reporting on
-
-sudo ip link set can0 up
-
-echo "TDCR:"
-sudo busybox devmem 0xC310048
-
-echo "Before:"
-ip -details -statistics link show can0 | sed -n '/can </,$p'
-
-cansend can0 123##1551122334455667788
-sleep 0.2
-
-echo "After:"
-ip -details -statistics link show can0 | sed -n '/can </,$p'
+# 2. Custom DTB + extlinux.conf boot entries (JetsonIO-CAN-TDCR-*):
+#    Approach: patch prod_c_can_5m in the device tree DTS, compile to DTB,
+#    copy to /boot/dtb/, add LABEL entries to /boot/extlinux/extlinux.conf,
+#    switch DEFAULT to e.g. JetsonIO-CAN-TDCR-0800, reboot.
+#    Reference: https://forums.developer.nvidia.com/t/canfd-transmission-failure-at-5mbps-on-orin-nx-16gb-module-tdc-offset-issue/367473
+#    Result: the boot-time DTB TDCR value does not carry through to runtime
+#    interface behavior. Dead end.
+#
+# The sysfs tdc_offset write is the only confirmed working method.

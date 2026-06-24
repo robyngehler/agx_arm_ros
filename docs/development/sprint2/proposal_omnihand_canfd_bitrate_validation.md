@@ -1,8 +1,11 @@
 # Proposal: OmniHand CAN-FD Bitrate Validation on Jetson Native mttcan
 
-> ⚠️ **SUPERSEDED (sprint5).** The validated standard is now `bitrate 1M / sample-point 0.8 /
-> dbitrate 5M / dsample-point 0.8 / fd on` on native `mttcan` with a 5 Mbit transceiver (FD+BRS
-> works). Current setup: `docs/assets/omnihand/omnihand_canfd_setup.md`. Kept for history.
+> ⚠️ **SUPERSEDED (sprint5).** The validated standard is `bitrate 1M / sample-point 0.8 /
+> dbitrate 5M / dsample-point 0.8 / fd on` on native `mttcan` with the TJA1051T/3 (Adafruit CAN
+> Pal) transceiver. FD+BRS works once the TDC offset is set via sysfs before bring-up:
+> `echo "0x800" | sudo tee .../tdc_offset`. The bitrate sweeps in this document never resolved
+> BRS failures because the missing TDCR step was the actual blocker, not the data bitrate.
+> Current setup: `docs/assets/omnihand/omnihand_canfd_setup.md`. Kept for history.
 
 ## Context
 

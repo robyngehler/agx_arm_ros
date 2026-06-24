@@ -12,7 +12,17 @@
 # (1 Mbit arbitration / 5 Mbit data, 0.8 sample points). A CAN FD SocketCAN
 # interface transmits BOTH classic frames (to the Nero arm) and FD+BRS frames
 # (to the OmniHand), so one side bus can carry the arm and its hand together.
-# Requires a BRS-capable 5 Mbit transceiver on the header (confirmed working).
+#
+# Transceiver: Adafruit CAN Pal (TJA1051T/3), confirmed BRS-capable at 5 Mbit.
+# Both the Nero arm (classic CAN 1M) and the OmniHand (CAN FD 5M BRS) run over
+# this same transceiver on the 40-pin header.
+#
+# TDCR (Transmitter Delay Compensation): the TJA1051T/3 requires the TDC offset
+# to be set via the mttcan sysfs attribute BEFORE bringing the interface up.
+# The validated value is 0x800 for this transceiver. This must be done while the
+# interface is DOWN. The devmem/register approach (0xC310048) and the custom
+# DTB/extlinux.conf boot-entry approach were both investigated and do not work —
+# the sysfs path is the only confirmed method.
 #
 #   one-shot on : every frame is a single attempt; an unacknowledged frame is
 #                 dropped instead of retransmitted forever (this is what removed
@@ -25,6 +35,7 @@
 #   sudo bash activate_native_can.sh right           # right side only
 #   sudo bash activate_native_can.sh left            # left side only
 #   FD=0 sudo bash activate_native_can.sh            # classic-only (arm, no hand)
+#   TDCR_VALUE=0x900 sudo bash activate_native_can.sh  # override TDCR for a different transceiver
 #
 # Idempotent: an interface already renamed to its target is reconfigured in place.
 
@@ -35,8 +46,9 @@ SAMPLE_POINT="${SAMPLE_POINT:-0.8}"
 DBITRATE="${DBITRATE:-5000000}"
 DSAMPLE_POINT="${DSAMPLE_POINT:-0.8}"
 RESTART_MS="${RESTART_MS:-100}"
-ONE_SHOT="${ONE_SHOT:-on}"   # set to "off" to allow retransmission
-FD="${FD:-1}"                # 1 = CAN FD (arm+hand), 0 = classic only (arm)
+ONE_SHOT="${ONE_SHOT:-on}"      # set to "off" to allow retransmission
+FD="${FD:-1}"                   # 1 = CAN FD (arm+hand), 0 = classic only (arm)
+TDCR_VALUE="${TDCR_VALUE:-0x800}" # TJA1051T/3 (Adafruit CAN Pal) validated value
 SIDE="${1:-both}"
 
 # side -> "source_iface:target_name"
@@ -46,6 +58,21 @@ declare -A ARM_MAP=(
 )
 
 iface_exists() { ip link show "$1" >/dev/null 2>&1; }
+
+# Set mttcan TDC offset via sysfs while the interface is down.
+# Must be called with the current (pre-rename) interface name.
+set_tdc_offset() {
+    local iface="$1"
+    local tdc_path
+    tdc_path=$(find /sys/devices/platform/bus@0 -path "*/net/$iface/tdc_offset" 2>/dev/null | head -1)
+    if [ -n "$tdc_path" ]; then
+        echo "$TDCR_VALUE" | tee "$tdc_path" >/dev/null \
+            && echo "  TDCR: $tdc_path = $TDCR_VALUE" \
+            || echo "  warning: could not write TDCR to $tdc_path" >&2
+    else
+        echo "  note: tdc_offset sysfs entry not found for '$iface' — TDCR skipped." >&2
+    fi
+}
 
 build_type_cmd() {
     local work="$1"
@@ -72,6 +99,12 @@ activate_one() {
     local mode; [ "$FD" = "1" ] && mode="CAN FD 1M/5M" || mode="classic 1M"
     echo "Configuring '$work' -> '$target' ($mode, sample-point=$SAMPLE_POINT, restart-ms=$RESTART_MS, one-shot=$ONE_SHOT)"
     ip link set "$work" down || return 1
+
+    # Set TDC offset before configuring and bringing up the interface.
+    # Required for BRS at 5 Mbit with the TJA1051T/3 (Adafruit CAN Pal).
+    if [ "$FD" = "1" ]; then
+        set_tdc_offset "$work"
+    fi
 
     # berr-reporting is best-effort: not every controller exposes it.
     local type_cmd; type_cmd="$(build_type_cmd "$work")"

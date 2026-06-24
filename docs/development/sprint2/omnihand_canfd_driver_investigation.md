@@ -1,8 +1,9 @@
 # OmniHand CAN FD Driver Investigation
 
 > ⚠️ **SUPERSEDED (sprint5).** Historical bring-up evidence (USB gs_usb / ZLG paths). The OmniHand
-> now runs on native `mttcan` CAN FD with a 5 Mbit transceiver; ZLG and USB-CANFD paths were
-> dropped. Current setup: `docs/assets/omnihand/omnihand_canfd_setup.md`.
+> now runs on native `mttcan` CAN FD with the TJA1051T/3 (Adafruit CAN Pal) transceiver plus a
+> mandatory sysfs TDCR step (`echo "0x800" | sudo tee .../tdc_offset`); ZLG and USB-CANFD paths
+> were dropped. Current setup: `docs/assets/omnihand/omnihand_canfd_setup.md`.
 
 ## Purpose
 
