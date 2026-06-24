@@ -123,16 +123,30 @@ Based on the hand skill backend mapping (section 2 of `hand_skill_backend_mappin
 
 ### Phase 1: Backend Constants (This Sprint)
 
-Define `GESTURE_PRESETS` in `omnihand_skill_controller.py`:
+**Single source of truth:** the named presets now live in
+`src/agx_arm_ctrl/config/omnihand_gestures.yaml`. Do **not** define a second
+`GESTURE_PRESETS` copy in the skill controller; load them via
+`agx_arm_ctrl.omnihand_bridge_node.resolve_gesture_presets(side)`:
 
 ```python
-# omnihand/gesture_presets.py (or embedded in controller)
-GESTURE_PRESETS = {
-    "open": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    "grasp_glass": [0.43, -0.3, 0.66, 0.0, 1.48, 1.48, 0.0, 1.48, 0.0, 1.48],
-    "grasp_bottle": [0.5, -1.0, 0.75, 0.0, 1.48, 1.48, 0.0, 1.48, 0.0, 1.48],
-}
+from agx_arm_ctrl.omnihand_bridge_node import resolve_gesture_presets
+
+presets = resolve_gesture_presets(hand_side)   # right = canonical, left = mirrored
+target_positions = presets["open"]
 ```
+
+Two corrections captured while wiring this up:
+
+- **Convention is RIGHT-hand, not left.** The vendor `demo_set_motion.py` menu
+  claims the presets are "only for the left hand", but the demo calls
+  `create_hand(EHandType.RIGHT)` and every preset value fits the right-hand
+  limits while falling out of range for the left. The config stores the
+  canonical right-hand vectors; `resolve_gesture_presets("left")` mirrors them
+  via `SDK_LEFT_POS_DIRECTION` so there is no second left-hand copy to maintain.
+- **`open` ≠ all zeros.** The all-zeros pose (vendor RESET, exposed as `zero`) is
+  the motor reference: fingers extend but the thumb rolls in and adducts across
+  the palm and looks bent. The genuinely flat open palm is the vendor PAPER
+  vector, now exposed as `open`.
 
 ### Phase 2: Hardware Calibration
 
