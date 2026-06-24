@@ -22,6 +22,11 @@ def generate_launch_description():
         default_value="left",
         description="OmniHand side (left or right).",
     )
+    hand_model_arg = DeclareLaunchArgument(
+        "hand_model",
+        default_value="o12_pro",
+        description="OmniHand hardware model: o12_pro (OmniHand Pro 2025, 12 DoF) or o10 (mock only).",
+    )
     backend_type_arg = DeclareLaunchArgument(
         "backend_type",
         default_value="mock",
@@ -35,12 +40,30 @@ def generate_launch_description():
     canfd_id_arg = DeclareLaunchArgument(
         "canfd_id",
         default_value="0",
-        description="Vendor SDK canfd_id used when backend_type is sdk when supported by the local SDK build.",
+        description="Vendor SDK canfd_id for the ZLG USB adapter path only; ignored by the native SocketCAN backend.",
+    )
+    can_interface_arg = DeclareLaunchArgument(
+        "can_interface",
+        default_value="",
+        description=(
+            "Native SocketCAN interface for the hand (e.g. can_nero_right). Leave "
+            "empty to resolve it from omnihand_type via "
+            "config/omnihand_can_interfaces.yaml."
+        ),
     )
     sdk_cfg_path_arg = DeclareLaunchArgument(
         "sdk_cfg_path",
         default_value="",
         description="Optional vendor SDK config path used when backend_type is sdk.",
+    )
+    sdk_python_dir_arg = DeclareLaunchArgument(
+        "sdk_python_dir",
+        default_value="",
+        description=(
+            "Optional path to the built omnihand_2025 package. Leave empty to "
+            "auto-locate the repo's vendor build; no PYTHONPATH/LD_LIBRARY_PATH "
+            "export is needed (the compiled .so uses an $ORIGIN runpath)."
+        ),
     )
     pub_rate_arg = DeclareLaunchArgument(
         "pub_rate",
@@ -67,10 +90,13 @@ def generate_launch_description():
         ros_arguments=["--log-level", LaunchConfiguration("log_level")],
         parameters=[{
             "omnihand_type": LaunchConfiguration("omnihand_type"),
+            "hand_model": LaunchConfiguration("hand_model"),
             "backend_type": LaunchConfiguration("backend_type"),
             "device_id": ParameterValue(LaunchConfiguration("device_id"), value_type=int),
             "canfd_id": ParameterValue(LaunchConfiguration("canfd_id"), value_type=int),
             "sdk_cfg_path": LaunchConfiguration("sdk_cfg_path"),
+            "sdk_python_dir": LaunchConfiguration("sdk_python_dir"),
+            "can_interface": LaunchConfiguration("can_interface"),
             "pub_rate": ParameterValue(LaunchConfiguration("pub_rate"), value_type=float),
             "joint_states_command_topic": LaunchConfiguration("joint_states_command_topic"),
             "tactile_sample_count": ParameterValue(LaunchConfiguration("tactile_sample_count"), value_type=int),
@@ -81,10 +107,13 @@ def generate_launch_description():
         log_level_arg,
         namespace_arg,
         omnihand_type_arg,
+        hand_model_arg,
         backend_type_arg,
         device_id_arg,
         canfd_id_arg,
+        can_interface_arg,
         sdk_cfg_path_arg,
+        sdk_python_dir_arg,
         pub_rate_arg,
         joint_states_command_topic_arg,
         tactile_sample_count_arg,

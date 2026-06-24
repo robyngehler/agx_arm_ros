@@ -1,0 +1,58 @@
+# Single source of truth for OmniHand named active-joint presets.
+#
+# Loaded by agx_arm_ctrl.omnihand_bridge_node.load_gesture_presets(); the
+# exerciser node and any future skill controller read from here instead of
+# defining their own copies. Keep all gesture vectors in ONE place: this file.
+#
+# Each preset is a vector of active-joint angles in radians, ordered to match
+# `omnihand_active_joint_order` below (which must equal JOINT_SUFFIXES in
+# omnihand_bridge_node.py).
+#
+# CONVENTION: these are the canonical RIGHT-hand vectors. Despite the vendor
+# demo menu claiming the presets are "only for the left hand", demo_set_motion.py
+# actually calls create_hand(EHandType.RIGHT) and every value here fits the
+# right-hand limits while falling out of range for the left. The LEFT hand is
+# derived automatically by mirroring (resolve_gesture_presets("left") in
+# omnihand_bridge_node.py), so there is no second left-hand copy to maintain.
+# Edit values here only; the bridge also clamps every target to the selected
+# side's joint limits as a final safety net.
+#
+# Joint angle conventions that matter for "open":
+#   - finger *_pip:  0.0 = extended (straight), ~1.48 = fully flexed (fist)
+#   - thumb_roll:    0.0 = rolled in toward the palm, larger = rolled out
+#   - thumb_abad:    0.0 = adducted (across palm), negative = abducted (spread)
+# => the all-zeros pose ("zero") is the motor reference, NOT a flat open hand:
+#    its thumb sits rolled-in and adducted across the palm and looks bent.
+#    The genuinely flat, open palm is "open" (vendor PAPER) below.
+
+omnihand_active_joint_order:
+  - thumb_roll_joint
+  - thumb_abad_joint
+  - thumb_mcp_joint
+  - index_abad_joint
+  - index_pip_joint
+  - middle_pip_joint
+  - ring_abad_joint
+  - ring_pip_joint
+  - pinky_abad_joint
+  - pinky_pip_joint
+
+omnihand_gestures:
+  # Flat, open palm with the thumb rolled out and spread (vendor PAPER). This is
+  # the safe default "open" pose; all fingers extended, thumb clear of the palm.
+  open: [0.58, -0.21, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  # Motor zero / mechanical reference (vendor RESET). Fingers extended but the
+  # thumb rolls in and adducts across the palm, so it looks knuckled/bent.
+  zero: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  # Loose fist (vendor FIST1).
+  fist: [0.43, -0.3, 0.66, 0.0, 1.48, 1.48, 0.0, 1.48, 0.0, 1.48]
+  # Tight fist (vendor FIST2).
+  fist_tight: [0.5, -1.0, 0.75, 0.0, 1.48, 1.48, 0.0, 1.48, 0.0, 1.48]
+  # OK sign (vendor OK).
+  ok: [0.03, -1.51, 0.7, -0.16, 0.85, 0.21, 0.07, 0.153, 0.107, 0.1]
+  # Thumbs up (vendor LIKE).
+  like: [0.27, 0.0, 0.0, 0.0, 1.48, 1.48, 0.0, 1.48, 0.0, 1.48]
+  # Index pointing, others curled (vendor NUM1).
+  point: [0.32, -1.12, 0.79, -0.06, 0.0, 1.48, 0.0, 1.48, 0.0, 1.48]
+  # Opposed thumb-finger pinch / clasping (vendor CLASPING).
+  pinch: [0.5, -0.8, 0.2, -0.16, 0.6, 0.6, 0.17, 0.6, 0.17, 0.6]

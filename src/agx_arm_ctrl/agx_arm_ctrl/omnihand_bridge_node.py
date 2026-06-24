@@ -4,16 +4,48 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+import os
+from pathlib import Path
+import sys
 import time
 from typing import Any
 
+from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory
+import yaml
 
 from agx_arm_msgs.msg import OmniHandStatus, OmniHandTactileRaw
+
+from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
+
+
+# Side -> native SocketCAN interface. The authoritative mapping lives in
+# config/omnihand_can_interfaces.yaml (installed to the package share); this dict
+# is only a last-resort fallback if that file cannot be read. Keep both in sync.
+CAN_INTERFACE_CONFIG = "omnihand_can_interfaces.yaml"
+FALLBACK_CAN_INTERFACES = {"right": "can_nero_right", "left": "can_nero_left"}
+
+
+def resolve_can_interface(hand_side: str) -> tuple[str, str]:
+    """Return (interface_name, source) for the side, preferring the config file."""
+    try:
+        config_path = (
+            Path(get_package_share_directory("agx_arm_ctrl"))
+            / "config"
+            / CAN_INTERFACE_CONFIG
+        )
+        data = yaml.safe_load(config_path.read_text()) or {}
+        mapping = data.get("omnihand_can_interfaces", {})
+        interface = str(mapping.get(hand_side, "")).strip()
+        if interface:
+            return interface, str(config_path)
+    except Exception:
+        pass
+    return FALLBACK_CAN_INTERFACES.get(hand_side, ""), "built-in fallback"
 
 
 JOINT_SUFFIXES = [
@@ -80,7 +112,145 @@ def build_joint_names(hand_side: str) -> list[str]:
     return [f"{prefix}{suffix}" for suffix in JOINT_SUFFIXES]
 
 
-def _load_sdk_symbols() -> tuple[type[Any], Any, Any]:
+# Named active-joint presets live in config/omnihand_gestures.yaml (installed to
+# the package share); that file is the single source of truth. This dict is only
+# a last-resort fallback if the file cannot be read. Keep both in sync.
+GESTURE_CONFIG = "omnihand_gestures.yaml"
+FALLBACK_GESTURE_PRESETS: dict[str, list[float]] = {
+    "open": [0.58, -0.21, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "zero": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+}
+
+
+def load_gesture_presets() -> dict[str, list[float]]:
+    """Return named OmniHand active-joint presets from the package config.
+
+    config/omnihand_gestures.yaml is the single source of truth; callers (the
+    exerciser, future skill controllers) read from here instead of carrying their
+    own copies. Every preset is validated to carry exactly len(JOINT_SUFFIXES)
+    values, ordered to match JOINT_SUFFIXES. Falls back to a small built-in set
+    only if the config file cannot be read.
+    """
+    try:
+        config_path = (
+            Path(get_package_share_directory("agx_arm_ctrl"))
+            / "config"
+            / GESTURE_CONFIG
+        )
+        data = yaml.safe_load(config_path.read_text()) or {}
+    except Exception:
+        return {name: list(values) for name, values in FALLBACK_GESTURE_PRESETS.items()}
+
+    declared_order = data.get("omnihand_active_joint_order")
+    if declared_order is not None and list(declared_order) != JOINT_SUFFIXES:
+        raise RuntimeError(
+            f"omnihand_active_joint_order in {GESTURE_CONFIG} does not match "
+            "JOINT_SUFFIXES; gesture vectors would be misordered"
+        )
+
+    raw_gestures = data.get("omnihand_gestures") or {}
+    presets: dict[str, list[float]] = {}
+    for name, values in raw_gestures.items():
+        vector = [float(value) for value in values]
+        if len(vector) != len(JOINT_SUFFIXES):
+            raise RuntimeError(
+                f"gesture '{name}' in {GESTURE_CONFIG} has {len(vector)} values, "
+                f"expected {len(JOINT_SUFFIXES)}"
+            )
+        presets[str(name)] = vector
+
+    if not presets:
+        return {name: list(values) for name, values in FALLBACK_GESTURE_PRESETS.items()}
+    return presets
+
+
+def mirror_active_joint_vector(values: list[float]) -> list[float]:
+    """Mirror a right-hand active-joint vector into the left-hand convention.
+
+    The vendor presets are calibrated for the right hand (every value fits the
+    right-hand limits and is out of range for the left). The left hand uses the
+    mirrored sign convention captured by SDK_LEFT_POS_DIRECTION, the same
+    direction vector _mirror_joint_limits uses for the joint limits, so a
+    component-wise multiply maps a right-hand pose to the matching left-hand pose.
+    """
+    return [
+        direction * float(value)
+        for direction, value in zip(SDK_LEFT_POS_DIRECTION, values, strict=True)
+    ]
+
+
+def resolve_gesture_presets(hand_side: str) -> dict[str, list[float]]:
+    """Return the named presets in the convention of the selected hand side.
+
+    The config file is the single source of truth and stores the canonical
+    right-hand vectors; the left hand is derived by mirroring so there is no
+    second copy to keep in sync. The bridge still clamps every target to the
+    side's joint limits as a final safety net.
+    """
+    presets = load_gesture_presets()
+    if hand_side == "left":
+        return {name: mirror_active_joint_vector(vec) for name, vec in presets.items()}
+    return {name: list(vec) for name, vec in presets.items()}
+
+
+# Built vendor package, relative to the repo root. It carries the compiled
+# omnihand_2025_core .so, whose RUNPATH is $ORIGIN, so no LD_LIBRARY_PATH is
+# needed — getting this directory onto sys.path is sufficient to import the SDK.
+_VENDOR_PKG_REL = Path("vendor") / "Omnihand-2025-SDK" / "build_phase1_socket" / "omnihand_2025_pkg"
+
+
+def _locate_builtin_vendor_pkg() -> str | None:
+    """Search upward from this file for the repo's built omnihand_2025 package."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / _VENDOR_PKG_REL
+        if (candidate / "omnihand_2025" / "__init__.py").exists():
+            return str(candidate)
+    return None
+
+
+def _ensure_omnihand_importable(sdk_python_dir: str = "") -> None:
+    """Make omnihand_2025 importable, locating the built package if needed.
+
+    Tries the ambient environment first (an already-set PYTHONPATH wins), then
+    an explicit dir, the AGX_ARM_OMNIHAND_SDK_DIR env var, and finally an upward
+    search for the repo's built package. This lets `ros2 launch ... backend_type:=sdk`
+    work without manually exporting PYTHONPATH/LD_LIBRARY_PATH.
+    """
+    try:
+        import_module("omnihand_2025")
+        return
+    except ImportError:
+        pass
+
+    candidates = [
+        sdk_python_dir,
+        os.environ.get("AGX_ARM_OMNIHAND_SDK_DIR", ""),
+        _locate_builtin_vendor_pkg() or "",
+    ]
+    last_error: ImportError | None = None
+    for candidate in candidates:
+        if not candidate or not Path(candidate).is_dir():
+            continue
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+        sys.modules.pop("omnihand_2025", None)
+        try:
+            import_module("omnihand_2025")
+            return
+        except ImportError as exc:
+            last_error = exc
+
+    raise RuntimeError(
+        "backend_type=sdk requires the omnihand_2025 vendor package, which was not "
+        "on PYTHONPATH and could not be located automatically. Set the bridge "
+        "'sdk_python_dir' parameter or the AGX_ARM_OMNIHAND_SDK_DIR env var to the "
+        "built package (vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg)."
+    ) from last_error
+
+
+def _load_sdk_symbols(sdk_python_dir: str = "") -> tuple[type[Any], Any, Any]:
+    _ensure_omnihand_importable(sdk_python_dir)
     try:
         module = import_module("omnihand_2025")
     except ImportError as exc:
@@ -272,7 +442,12 @@ class OmniHandTactileSnapshot:
 
 class MockOmniHandBackend:
 
-    def __init__(self, hand_side: str, tactile_sample_count: int) -> None:
+    def __init__(
+        self,
+        hand_side: str,
+        tactile_sample_count: int,
+        joint_names: list[str] | None = None,
+    ) -> None:
         self.hand_side = hand_side
         self.backend_name = "mock_backend"
         self.control_mode = "idle"
@@ -281,7 +456,9 @@ class MockOmniHandBackend:
         self.is_mock = True
         self.communication_fault = False
         self.status_text = "mock backend ready"
-        self.joint_names = build_joint_names(hand_side)
+        # Model-aware joint set when provided (e.g. 12 joints for o12_pro);
+        # falls back to the O10 joint set for backward compatibility.
+        self.joint_names = list(joint_names) if joint_names is not None else build_joint_names(hand_side)
         self.positions = [0.0] * len(self.joint_names)
         self.temperatures_c = [25.0] * len(self.joint_names)
         self.currents_a = [0.0] * len(self.joint_names)
@@ -354,11 +531,18 @@ class MockOmniHandBackend:
 
 class SdkOmniHandBackend:
 
-    def __init__(self, hand_side: str, device_id: int, canfd_id: int, cfg_path: str) -> None:
+    def __init__(self, hand_side: str, device_id: int, canfd_id: int, cfg_path: str, sdk_python_dir: str = "", can_interface: str = "") -> None:
         self.hand_side = hand_side
         self.device_id = device_id
         self.canfd_id = canfd_id
         self.cfg_path = cfg_path
+        self.sdk_python_dir = sdk_python_dir
+        self.can_interface = can_interface
+        # The vendor SocketCAN backend reads the interface ONLY from this env var
+        # (default "can0"). Export it before create_hand so the hand opens on the
+        # native side bus (e.g. can_nero_right) instead of can0.
+        if can_interface:
+            os.environ["OMNIHAND_SOCKETCAN_IFACE"] = can_interface
         self.backend_name = "vendor_sdk"
         self.control_mode = "active_joint_control"
         self.connected = False
@@ -381,7 +565,7 @@ class SdkOmniHandBackend:
         self._temperature_reports_supported = False
         self._current_reports_supported = False
 
-        sdk_class, finger_enum, hand_type_enum = _load_sdk_symbols()
+        sdk_class, finger_enum, hand_type_enum = _load_sdk_symbols(sdk_python_dir)
         hand_type = getattr(hand_type_enum, hand_side.upper())
         self._tactile_finger_entries = [
             (layout_name, getattr(finger_enum, enum_name))
@@ -400,7 +584,8 @@ class SdkOmniHandBackend:
         self.connected = True
         self.initialized = True
         self.status_text = (
-            f"sdk backend ready (active joint control, device_id={device_id}, canfd_id={canfd_id})"
+            f"sdk backend ready (active joint control, can_interface={can_interface or 'can0(default)'}, "
+            f"device_id={device_id}, canfd_id={canfd_id})"
         )
         try:
             self.positions = self.read_joint_state()
@@ -636,6 +821,7 @@ class OmniHandBridgeNode(Node):
         super().__init__("omnihand_bridge_node")
 
         self.declare_parameter("omnihand_type", "right")
+        self.declare_parameter("hand_model", DEFAULT_HAND_MODEL)
         self.declare_parameter("backend_type", "mock")
         self.declare_parameter("pub_rate", 50.0)
         self.declare_parameter("tactile_sample_count", 32)
@@ -643,8 +829,11 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("device_id", 1)
         self.declare_parameter("canfd_id", 0)
         self.declare_parameter("sdk_cfg_path", "")
+        self.declare_parameter("sdk_python_dir", "")
+        self.declare_parameter("can_interface", "")
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
+        self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
         self.backend_type = str(self.get_parameter("backend_type").value)
         self.pub_rate = float(self.get_parameter("pub_rate").value)
         self.tactile_sample_count = int(self.get_parameter("tactile_sample_count").value)
@@ -654,16 +843,47 @@ class OmniHandBridgeNode(Node):
         self.device_id = int(self.get_parameter("device_id").value)
         self.canfd_id = int(self.get_parameter("canfd_id").value)
         self.sdk_cfg_path = str(self.get_parameter("sdk_cfg_path").value)
+        self.sdk_python_dir = str(self.get_parameter("sdk_python_dir").value)
         if self.hand_side not in ("left", "right"):
             raise ValueError("omnihand_type must be 'left' or 'right'")
 
+        # Resolve the native SocketCAN interface: explicit param wins, else the
+        # side -> interface mapping from config/omnihand_can_interfaces.yaml.
+        self.can_interface = str(self.get_parameter("can_interface").value).strip()
+        interface_source = "can_interface parameter"
+        if not self.can_interface:
+            self.can_interface, interface_source = resolve_can_interface(self.hand_side)
+
         if self.backend_type == "sdk":
-            self.backend = SdkOmniHandBackend(
-                hand_side=self.hand_side,
-                device_id=self.device_id,
-                canfd_id=self.canfd_id,
-                cfg_path=self.sdk_cfg_path,
+            if not self.can_interface:
+                raise ValueError(
+                    "backend_type=sdk needs a SocketCAN interface. Set 'can_interface' "
+                    f"or add '{self.hand_side}' to config/{CAN_INTERFACE_CONFIG}."
+                )
+            self.get_logger().info(
+                f"OmniHand SocketCAN interface: {self.can_interface} (from {interface_source})"
             )
+            if self.hand_model.name == "o12_pro":
+                # Lazy import: only pull in the agibot_hand SDK when actually
+                # driving the Pro hand over SDK.
+                from agx_arm_ctrl.omnihand.sdk_o12_pro import O12ProSdkBackend
+
+                self.backend = O12ProSdkBackend(
+                    model=self.hand_model,
+                    hand_side=self.hand_side,
+                    device_id=self.device_id,
+                    sdk_python_dir=self.sdk_python_dir,
+                    can_interface=self.can_interface,
+                )
+            else:
+                self.backend = SdkOmniHandBackend(
+                    hand_side=self.hand_side,
+                    device_id=self.device_id,
+                    canfd_id=self.canfd_id,
+                    cfg_path=self.sdk_cfg_path,
+                    sdk_python_dir=self.sdk_python_dir,
+                    can_interface=self.can_interface,
+                )
         else:
             if self.backend_type != "mock":
                 self.get_logger().warn(
@@ -672,6 +892,7 @@ class OmniHandBridgeNode(Node):
             self.backend = MockOmniHandBackend(
                 hand_side=self.hand_side,
                 tactile_sample_count=self.tactile_sample_count,
+                joint_names=self.hand_model.build_joint_names(self.hand_side),
             )
 
         self.backend_type = self.backend.backend_name
@@ -706,7 +927,8 @@ class OmniHandBridgeNode(Node):
 
         self.get_logger().info(
             "OmniHand bridge started with "
-            f"hand_side={self.hand_side}, backend_type={self.backend_type}, "
+            f"hand_side={self.hand_side}, hand_model={self.hand_model.name} "
+            f"({len(self.joint_names)} joints), backend_type={self.backend_type}, "
             f"joint_states_command_topic={self.joint_states_command_topic}"
         )
 

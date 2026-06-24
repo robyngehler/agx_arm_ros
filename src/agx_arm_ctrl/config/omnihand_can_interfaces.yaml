@@ -1,0 +1,18 @@
+# OmniHand SocketCAN interface per side.
+#
+# These are the Jetson native mttcan side-bus names created by
+# scripts/activate_native_can.sh:
+#   can0 -> can_nero_right   (right arm + right OmniHand)
+#   can1 -> can_nero_left    (left  arm + left  OmniHand)
+#
+# The OmniHand vendor SDK selects its CAN interface ONLY via the
+# OMNIHAND_SOCKETCAN_IFACE environment variable (default "can0"); its numeric
+# canfd_id applies to the ZLG USB adapter path, not native SocketCAN. The bridge
+# node reads the value below for the selected omnihand_type and exports it as
+# OMNIHAND_SOCKETCAN_IFACE before opening the hand.
+#
+# Change these names here if your bring-up renames the side buses; override per
+# launch with the `can_interface:=<name>` argument.
+omnihand_can_interfaces:
+  right: can_nero_right
+  left: can_nero_left
