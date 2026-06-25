@@ -21,8 +21,9 @@ the roadmap's pouring reference task.
 ## What already exists (foundation)
 
 - Arm control via the MIT controller; `both_arms` MoveIt planning (OMPL + TRAC-IK).
-- OmniHand vendor-SDK bridge backend (`omnihand_backend_type:=sdk`, active 10-joint command, status,
-  tactile) — but the hands have not been exercised individually as *skills* yet.
+- OmniHand vendor-SDK bridge backend (`backend_type:=sdk hand_model:=o12_pro`, active **12-joint**
+  OmniHand Pro command, status, tactile; `o10` remains as a mock-only fallback) — but the hands have
+  not been exercised individually as *skills* yet.
 
 ## What this sprint adds
 

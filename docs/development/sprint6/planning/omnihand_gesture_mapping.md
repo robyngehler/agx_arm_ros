@@ -3,6 +3,26 @@
 **Status:** Sprint 6 discovery — gesture inventory and backend preset selection  
 **Target:** Finalize gesture presets for the hand skill controller (`omnihand_skill_controller`)
 
+> [!WARNING]
+> **O10-era document — partially superseded by the OmniHand Pro (O12) migration.**
+> The hardware we own and the live bridge default is now **`o12_pro` (12 active
+> joints)**, not the O10 10-joint hand this inventory was written for. The 18
+> vendor gestures and 10-element vectors below are **O10-only** and must not be
+> reused for the Pro as-is — the Pro adds real `thumb_pip` and `*_mcp` curl joints
+> and drops `ring_abad`/`pinky_abad`. See
+> [proposal_omnihand_pro_migration.md](../../../assets/omnihand/proposal_omnihand_pro_migration.md)
+> §5.4 (joint order) and §9 (skill-layer migration).
+>
+> Source of truth for live presets:
+> - `o12_pro`: `src/agx_arm_ctrl/config/omnihand_pro_gestures.yaml` (12 joints;
+>   currently only the `zero` + `fist_vendor_demo` vendor bootstrap — calibrated
+>   `open`/grasp poses still pending hardware measurement)
+> - `o10` (mock only): `src/agx_arm_ctrl/config/omnihand_gestures.yaml`
+>
+> Load them model-aware: `resolve_gesture_presets(side, get_hand_model("o12_pro"))`.
+> A calibrated O12 grasp/skill table still needs to be produced on the Pro
+> hardware (proposal §9.2) before the skill controller can use named grasp poses.
+
 ---
 
 ## 1. Vendor SDK Gesture Library
@@ -129,10 +149,13 @@ Based on the hand skill backend mapping (section 2 of `hand_skill_backend_mappin
 `agx_arm_ctrl.omnihand_bridge_node.resolve_gesture_presets(side)`:
 
 ```python
+from agx_arm_ctrl.omnihand.models import get_hand_model
 from agx_arm_ctrl.omnihand_bridge_node import resolve_gesture_presets
 
-presets = resolve_gesture_presets(hand_side)   # right = canonical, left = mirrored
-target_positions = presets["open"]
+# Pass the model so the right per-model preset file + mirror convention are used.
+model = get_hand_model("o12_pro")
+presets = resolve_gesture_presets(hand_side, model)  # right = canonical, left = mirrored
+target_positions = presets["zero"]                   # o12_pro has no calibrated "open" yet
 ```
 
 Two corrections captured while wiring this up:

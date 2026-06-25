@@ -5,6 +5,44 @@ the hand skill controller, performer routing, and coordinator come up — e.g. t
 grasp-threshold miscalibration, `both_arms` joint-ordering issues, coordinator resource deadlocks, or
 sync-group dispatch problems.
 
+## 2026-06-25
+
+### OmniHand Pro (O12) migration left the exerciser + gesture/trajectory helpers on the O10 layout
+
+- Symptom (live Pro hand, `hand_model:=o12_pro`): `omnihand_exerciser --model o12_pro …` failed with
+  `unrecognized arguments: --model`; without `--model`, `fist` curled only index + middle, the thumb
+  did not move, `zero` opened the hand and `open` did nothing. `feedback/omnihand/joint_states` looked
+  mostly dead (only index_pip/middle_pip ever changed).
+- Cause: the Pro migration (proposal §5–§7) was only carried through Phase 2 (model-aware `models.py`,
+  `O12ProSdkBackend`, `hand_model` bridge/launch param). Phase 3 was never wired: the exerciser and the
+  shared helpers `build_joint_names` / `load_gesture_presets` / `resolve_gesture_presets` in
+  `omnihand_bridge_node.py` were hardcoded to the O10 10-joint layout and `omnihand_gestures.yaml`. The
+  new `omnihand_pro_gestures.yaml` existed but **no code loaded it** (0 references). So the exerciser
+  published O10 joint names; only `index_pip`/`middle_pip` overlap the O12 set, and O10 thumb values
+  (`thumb_roll≈0.43`, `thumb_mcp≈0.66`) fall outside the O12 limits (`[-0.73,0]` / `[-0.86,0]`) and were
+  clamped to 0 — hence "only two fingers, no thumb". `zero`/`open` only nudged those two overlapping
+  joints, explaining the confusing open/no-op behavior.
+- Fix: made the helpers model-aware (`build_joint_names(side, model)`,
+  `load_gesture_presets(model)`, `resolve_gesture_presets(side, model)`, `mirror_active_joint_vector(v,
+  model)`) keyed off a new `HandModel.gesture_config_file`; added `--model` to the exerciser (default
+  `o12_pro`, validates the pose against the model's set instead of crashing in argparse); and removed
+  the duplicate O10 `JOINT_SUFFIXES` from `omnihand_follow_joint_trajectory.py` in favor of the shared
+  model-aware `build_joint_names` plus a `hand_model` parameter. `model=None` keeps the legacy O10
+  behavior so the O10 mock/SDK path is unchanged. Validated with `colcon build` + a mock load of both
+  models: o12_pro → 12 joints + `omnihand_pro_gestures.yaml`, o10 → 10 joints + legacy file; left mirror
+  flips only thumb_roll/thumb_abad on the Pro.
+- Not bugs (verified, documented so they are not chased): `tactile_raw` reading 0 except a leading 1 is
+  correct — the 1 is `online_state`, the 0s are `normal_force`/`tangent_force` with no contact; status
+  `active_joint_temperatures_c`/`active_joint_currents_a` are `[]` because the Pro SDK returns empty
+  temperature/current report lists on this firmware.
+- Follow-ups: `omnihand_pro_gestures.yaml` still only carries the vendor bootstrap (`zero`,
+  `fist_vendor_demo`); calibrated `open`/grasp poses must be measured on the Pro hardware (proposal
+  §7.1, §9.2) before the skill controller names grasp poses. Doc drift corrected alongside this fix:
+  `sprint6/planning/omnihand_gesture_mapping.md` (O10-era banner), `sprint6/README.md` (12-joint Pro),
+  `config/omnihand_gestures.yaml` header (legacy/mock-only). Remaining stable-doc drift still to
+  reconcile against an actual hardware sign-off: `docs/assets/omnihand_asset_validation.md`
+  ("mock-only" claim) and `docs/assets/control/basic_control_scripts.md` ("10 active joints").
+
 ## 2026-06-24
 
 ### OmniHand vendor load test failed to import the SDK (PYTHONPATH shadowing)
