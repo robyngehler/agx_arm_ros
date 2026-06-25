@@ -33,6 +33,10 @@ class HandModel:
     name: str
     sdk_import_package: str
     sdk_class_name: str
+    # Named active-joint preset file for this model, installed under the package
+    # share/config. Each model carries its own gesture vectors because the joint
+    # order and count differ (o10: 10 values, o12_pro: 12 values).
+    gesture_config_file: str
     joint_suffixes: tuple[str, ...]
     # Active-joint command limits for the RIGHT hand, ordered to match
     # joint_suffixes. The LEFT hand is derived by sign-mirroring per
@@ -90,6 +94,7 @@ O10 = HandModel(
     name="o10",
     sdk_import_package="omnihand_2025",
     sdk_class_name="AgibotHandO10",
+    gesture_config_file="omnihand_gestures.yaml",
     joint_suffixes=(
         "thumb_roll_joint",
         "thumb_abad_joint",
@@ -124,6 +129,7 @@ O12_PRO = HandModel(
     name="o12_pro",
     sdk_import_package="agibot_hand",
     sdk_class_name="AgibotHandO12",
+    gesture_config_file="omnihand_pro_gestures.yaml",
     joint_suffixes=(
         "thumb_roll_joint",
         "thumb_abad_joint",

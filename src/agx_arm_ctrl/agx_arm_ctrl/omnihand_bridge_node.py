@@ -20,7 +20,7 @@ import yaml
 
 from agx_arm_msgs.msg import OmniHandStatus, OmniHandTactileRaw
 
-from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
+from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HandModel, get_hand_model
 
 
 # Side -> native SocketCAN interface. The authoritative mapping lives in
@@ -107,7 +107,15 @@ SDK_STATUS_READ_INTERVAL_S = 1.0
 SDK_TACTILE_READ_INTERVAL_S = 1.0
 
 
-def build_joint_names(hand_side: str) -> list[str]:
+def build_joint_names(hand_side: str, model: HandModel | None = None) -> list[str]:
+    """Return prefixed active-joint names for the side.
+
+    Model-aware: when a HandModel is given, its joint_suffixes win (e.g. the 12
+    o12_pro joints). model=None keeps the legacy O10 module layout for backward
+    compatibility (the O10 SDK backend and older callers).
+    """
+    if model is not None:
+        return model.build_joint_names(hand_side)
     prefix = f"{hand_side}_"
     return [f"{prefix}{suffix}" for suffix in JOINT_SUFFIXES]
 
@@ -122,74 +130,96 @@ FALLBACK_GESTURE_PRESETS: dict[str, list[float]] = {
 }
 
 
-def load_gesture_presets() -> dict[str, list[float]]:
+def load_gesture_presets(model: HandModel | None = None) -> dict[str, list[float]]:
     """Return named OmniHand active-joint presets from the package config.
 
-    config/omnihand_gestures.yaml is the single source of truth; callers (the
-    exerciser, future skill controllers) read from here instead of carrying their
-    own copies. Every preset is validated to carry exactly len(JOINT_SUFFIXES)
-    values, ordered to match JOINT_SUFFIXES. Falls back to a small built-in set
-    only if the config file cannot be read.
+    Model-aware: each model carries its own preset file (model.gesture_config_file,
+    e.g. omnihand_pro_gestures.yaml for o12_pro) and its own active-joint order and
+    count. model=None keeps the legacy O10 file/layout for backward compatibility.
+    The matching config file is the single source of truth; callers (the exerciser,
+    future skill controllers) read from here instead of carrying their own copies.
+    Every preset is validated to carry exactly the model's active-joint count,
+    ordered to match its joint_suffixes. Falls back to a small built-in set only if
+    the config file cannot be read.
     """
+    config_file = model.gesture_config_file if model is not None else GESTURE_CONFIG
+    expected_order = list(model.joint_suffixes) if model is not None else list(JOINT_SUFFIXES)
+
     try:
         config_path = (
             Path(get_package_share_directory("agx_arm_ctrl"))
             / "config"
-            / GESTURE_CONFIG
+            / config_file
         )
         data = yaml.safe_load(config_path.read_text()) or {}
     except Exception:
+        # The built-in fallback only covers the legacy O10 layout; for any other
+        # model an unreadable config is a hard error rather than a wrong-shape pose.
+        if model is not None and len(expected_order) != len(JOINT_SUFFIXES):
+            raise RuntimeError(
+                f"could not read gesture config {config_file} for model "
+                f"'{model.name}'; no safe built-in fallback for its joint layout"
+            )
         return {name: list(values) for name, values in FALLBACK_GESTURE_PRESETS.items()}
 
     declared_order = data.get("omnihand_active_joint_order")
-    if declared_order is not None and list(declared_order) != JOINT_SUFFIXES:
+    if declared_order is not None and list(declared_order) != expected_order:
         raise RuntimeError(
-            f"omnihand_active_joint_order in {GESTURE_CONFIG} does not match "
-            "JOINT_SUFFIXES; gesture vectors would be misordered"
+            f"omnihand_active_joint_order in {config_file} does not match the "
+            "model's joint order; gesture vectors would be misordered"
         )
 
     raw_gestures = data.get("omnihand_gestures") or {}
     presets: dict[str, list[float]] = {}
     for name, values in raw_gestures.items():
         vector = [float(value) for value in values]
-        if len(vector) != len(JOINT_SUFFIXES):
+        if len(vector) != len(expected_order):
             raise RuntimeError(
-                f"gesture '{name}' in {GESTURE_CONFIG} has {len(vector)} values, "
-                f"expected {len(JOINT_SUFFIXES)}"
+                f"gesture '{name}' in {config_file} has {len(vector)} values, "
+                f"expected {len(expected_order)}"
             )
         presets[str(name)] = vector
 
-    if not presets:
+    if not presets and model is None:
         return {name: list(values) for name, values in FALLBACK_GESTURE_PRESETS.items()}
     return presets
 
 
-def mirror_active_joint_vector(values: list[float]) -> list[float]:
+def mirror_active_joint_vector(
+    values: list[float], model: HandModel | None = None
+) -> list[float]:
     """Mirror a right-hand active-joint vector into the left-hand convention.
 
     The vendor presets are calibrated for the right hand (every value fits the
     right-hand limits and is out of range for the left). The left hand uses the
-    mirrored sign convention captured by SDK_LEFT_POS_DIRECTION, the same
-    direction vector _mirror_joint_limits uses for the joint limits, so a
-    component-wise multiply maps a right-hand pose to the matching left-hand pose.
+    mirrored sign convention captured by the model's left_pos_direction (the same
+    direction vector its joint limits mirror with), so a component-wise multiply
+    maps a right-hand pose to the matching left-hand pose. model=None keeps the
+    legacy O10 direction vector for backward compatibility.
     """
+    direction_vector = (
+        list(model.left_pos_direction) if model is not None else SDK_LEFT_POS_DIRECTION
+    )
     return [
         direction * float(value)
-        for direction, value in zip(SDK_LEFT_POS_DIRECTION, values, strict=True)
+        for direction, value in zip(direction_vector, values, strict=True)
     ]
 
 
-def resolve_gesture_presets(hand_side: str) -> dict[str, list[float]]:
+def resolve_gesture_presets(
+    hand_side: str, model: HandModel | None = None
+) -> dict[str, list[float]]:
     """Return the named presets in the convention of the selected hand side.
 
     The config file is the single source of truth and stores the canonical
     right-hand vectors; the left hand is derived by mirroring so there is no
     second copy to keep in sync. The bridge still clamps every target to the
-    side's joint limits as a final safety net.
+    side's joint limits as a final safety net. Pass the HandModel to resolve the
+    correct per-model preset file and mirror convention.
     """
-    presets = load_gesture_presets()
+    presets = load_gesture_presets(model)
     if hand_side == "left":
-        return {name: mirror_active_joint_vector(vec) for name, vec in presets.items()}
+        return {name: mirror_active_joint_vector(vec, model) for name, vec in presets.items()}
     return {name: list(vec) for name, vec in presets.items()}
 
 

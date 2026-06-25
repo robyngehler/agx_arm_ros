@@ -10,24 +10,10 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-
-JOINT_SUFFIXES = [
-    "thumb_roll_joint",
-    "thumb_abad_joint",
-    "thumb_mcp_joint",
-    "index_abad_joint",
-    "index_pip_joint",
-    "middle_pip_joint",
-    "ring_abad_joint",
-    "ring_pip_joint",
-    "pinky_abad_joint",
-    "pinky_pip_joint",
-]
-
-
-def build_joint_names(hand_side: str) -> list[str]:
-    prefix = f"{hand_side}_"
-    return [f"{prefix}{suffix}" for suffix in JOINT_SUFFIXES]
+from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
+# Shared, model-aware joint naming — do NOT keep a second JOINT_SUFFIXES copy here
+# (proposal §6/§11.3): a stale O10 list would flag every Pro-only joint as unknown.
+from agx_arm_ctrl.omnihand_bridge_node import build_joint_names
 
 
 def _trajectory_duration_s(msg: JointTrajectory) -> float:
@@ -42,6 +28,7 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         super().__init__("omnihand_follow_joint_trajectory")
 
         self.declare_parameter("omnihand_type", "right")
+        self.declare_parameter("hand_model", DEFAULT_HAND_MODEL)
         self.declare_parameter(
             "action_name",
             "right_omnihand_controller/follow_joint_trajectory",
@@ -61,7 +48,8 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         if hand_side not in ("left", "right"):
             raise ValueError("omnihand_type must be 'left' or 'right'")
 
-        self.joint_names = build_joint_names(hand_side)
+        self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
+        self.joint_names = build_joint_names(hand_side, self.hand_model)
         action_name = str(self.get_parameter("action_name").value)
         trajectory_topic = str(self.get_parameter("trajectory_topic").value)
         feedback_topic = str(self.get_parameter("feedback_topic").value)

@@ -1,8 +1,15 @@
-# Single source of truth for OmniHand named active-joint presets.
+# Single source of truth for the LEGACY OmniHand 2025 (O10, 10 active joints)
+# named active-joint presets.
 #
-# Loaded by agx_arm_ctrl.omnihand_bridge_node.load_gesture_presets(); the
+# NOTE: O10 is mock-only now — the hardware we own is the OmniHand Pro (o12_pro),
+# whose presets live in omnihand_pro_gestures.yaml (12 joints). This file is only
+# loaded for hand_model=o10, i.e. load_gesture_presets(get_hand_model("o10")) or
+# the legacy default load_gesture_presets() with no model. See
+# docs/assets/omnihand/proposal_omnihand_pro_migration.md.
+#
+# Loaded by agx_arm_ctrl.omnihand_bridge_node.load_gesture_presets(model); the
 # exerciser node and any future skill controller read from here instead of
-# defining their own copies. Keep all gesture vectors in ONE place: this file.
+# defining their own copies. Keep all O10 gesture vectors in ONE place: this file.
 #
 # Each preset is a vector of active-joint angles in radians, ordered to match
 # `omnihand_active_joint_order` below (which must equal JOINT_SUFFIXES in
