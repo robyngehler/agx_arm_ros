@@ -439,6 +439,16 @@ def build_moveit_config(context):
             profile_settings["planning_group_name"]
         )
 
+    # Single-arm OmniHand bring-up carries the effector at the top level, not on the
+    # (lone) arm instance, so propagate it before building the controllers — otherwise
+    # no hand controller is registered and MoveIt cannot actuate the finger joints.
+    # Multi-arm instances declare their own omnihand_type via arm_instances.
+    if effector_type == "omnihand" and omnihand_type and len(arm_instances) == 1:
+        only = dict(arm_instances[0])
+        if not only.get("omnihand_type"):
+            only["omnihand_type"] = omnihand_type
+            arm_instances = [only]
+
     if use_mit_controller:
         moveit_config.trajectory_execution = _build_mit_trajectory_execution(arm_instances)
 
