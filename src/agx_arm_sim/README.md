@@ -35,7 +35,7 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero
 ## 说明
 
 - 本目录下的 `Moveit2/` 子目录保留为历史资料，不代表当前推荐或默认的规划入口。
-- 当前仓库不再依赖 `agx_arm_urdf` 独立子模块；唯一保留的子模块是顶层 `vendor/Omnihand-2025-SDK`。
+- 当前仓库不再依赖 `agx_arm_urdf` 独立子模块；唯一保留的子模块是顶层 `vendor/OmniHand-Pro-2025`。
 
 ## License
 

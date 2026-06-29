@@ -1,14 +1,14 @@
 # OmniHand SDK Integration Start
 
 component: OmniHand 2025 vendor SDK onboarding
-repository_or_source: `vendor/Omnihand-2025-SDK`
+repository_or_source: `vendor/OmniHand-Pro-2025`
 inspection_date: 2026-05-13
 status: PARTIALLY_AVAILABLE
 integration_decision: WRAPPER_FIRST
 found_artifacts:
-- vendored git submodule at `vendor/Omnihand-2025-SDK`
+- vendored git submodule at `vendor/OmniHand-Pro-2025`
 - root SDK build system: `CMakeLists.txt`, `build.sh`, `src/`, `python/`, `examples/`
-- Python binding package scaffold under `python/omnihand_2025/`
+- Python binding package scaffold under `python/agibot_hand/`
 - ROS2 package `node/package.xml` with package name `omnihand_node`
 - ROS2 message package under `node/node_msg/`
 - ROS2 API documentation in `document/zh_cn/API_ROS2.md`
@@ -18,7 +18,7 @@ interface_notes:
 - vendor README describes OmniHand 2025 as `10 active + 6 passive DOF`
 - vendor README documents CANFD transport with ZLG USBCANFD adapters as the primary supported interface
 - ROS2 API doc exposes left/right topic families under `/agihand/omnihand/{left,right}/...`
-- Python API exposes `AgibotHandO10.create_hand(...)`, active-joint angle APIs, tactile sensor reads, and control-mode APIs
+- Python API exposes `AgibotHandO12.create_hand(...)`, active-joint angle APIs, tactile sensor reads, and control-mode APIs
 constraints:
 - vendor README documents Ubuntu 22.04 `x86_64`, gcc 11.4+, and Python 3.10+
 - current workspace host is `aarch64`, so vendor-supported local build/run validation is not yet confirmed here

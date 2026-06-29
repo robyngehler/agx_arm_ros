@@ -1,17 +1,17 @@
 # OmniHand Asset Validation
 
 component: OmniHand Pro SDK, model, and integration surfaces
-repository_or_source: current workspace (`agx_arm_ros`, `pyAgxArm`, `vendor/Omnihand-2025-SDK`)
+repository_or_source: current workspace (`agx_arm_ros`, `pyAgxArm`, `vendor/OmniHand-Pro-2025`)
 inspection_date: 2026-05-13
 status: SIMULATION_READY_HARDWARE_OPEN
 integration_decision: WRAPPER_FIRST
 found_artifacts:
-- vendored SDK repository at `vendor/Omnihand-2025-SDK`
+- vendored SDK repository at `vendor/OmniHand-Pro-2025`
 - C++ and Python SDK surfaces documented in `README.md`, `document/en/API_CPP.md`, and `document/en/API_PYTHON.md`
-- ROS2 package `vendor/Omnihand-2025-SDK/node/package.xml` with package name `omnihand_node`
-- ROS2 message package under `vendor/Omnihand-2025-SDK/node/node_msg`
-- ROS2 topic/message documentation in `vendor/Omnihand-2025-SDK/document/zh_cn/API_ROS2.md`
-- model assets in `vendor/Omnihand-2025-SDK/assets/urdf/omnihand_left.urdf`, `vendor/Omnihand-2025-SDK/assets/urdf/omnihand_right.urdf`, and `vendor/Omnihand-2025-SDK/assets/meshes/*.STL`
+- ROS2 package `vendor/OmniHand-Pro-2025/node/package.xml` with package name `omnihand_node`
+- ROS2 message package under `vendor/OmniHand-Pro-2025/node/node_msg`
+- ROS2 topic/message documentation in `vendor/OmniHand-Pro-2025/document/zh_cn/API_ROS2.md`
+- model assets in `vendor/OmniHand-Pro-2025/assets/urdf/omnihand_left.urdf`, `vendor/OmniHand-Pro-2025/assets/urdf/omnihand_right.urdf`, and `vendor/OmniHand-Pro-2025/assets/meshes/*.STL`
 - normalized repo-owned OmniHand assets under `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/omnihand`
 - Nero attachment xacros for `nero_with_left_omnihand_description.xacro` and `nero_with_right_omnihand_description.xacro`
 - MoveIt support for `effector_type:=omnihand` and `omnihand_type:=left|right` under `src/agx_arm_moveit`
@@ -37,7 +37,7 @@ risks:
 - the vendor asset set itself is still not drop-in ready: `assets/urdf/omnihand_right.urdf` contains absolute local mesh paths, `assets/urdf/xacro/finger.xacro` contains a stray literal `y`, and multiple asset files reference `package://omnihand_description/...`; the repo-owned description package avoids those defects for simulation, but the vendor tree still requires normalization
 - pulling the vendor ROS2 packages straight into `src/` would couple the workspace to a transport and topic layout that is not yet validated on this host and does not match the current wrapper-oriented repo structure
 - even with the local socket-backed build path enabled, the current isolated runtime probe still returns incomplete/default runtime data when the live CAN path does not answer, so safe device enumeration still cannot be claimed
-- the workspace fork now exists at `https://github.com/robyngehler/Omnihand-2025-SDK.git` and `.gitmodules` can track it, but upstream-sync discipline is still required to avoid long-lived vendor drift
+- the workspace fork now exists at `https://github.com/robyngehler/OmniHand-Pro-2025.git` and `.gitmodules` can track it, but upstream-sync discipline is still required to avoid long-lived vendor drift
 recommended_next_action:
 - keep the vendor SDK vendored and validate isolated bring-up through the repo-owned Phase 1 smoke test plus the local socket-backed build path first
 - if the socket-backed runtime still returns incomplete/default data without a responsive hand, treat that as a live runtime blocker rather than a mere packaging blocker
@@ -48,7 +48,7 @@ recommended_next_action:
 open_questions:
 - Does Agibot support the current `aarch64` host for live hardware bring-up, or should first validated device access move to an `x86_64` machine?
 - Should the repo keep an optional vendor-ROS backend adapter as a fallback behind the repo-owned bridge, or target direct SDK access only for the first hardware backend?
-- Should `vendor/Omnihand-2025-SDK` permanently keep the workspace fork as the default submodule URL while maintaining `AgibotTech/Omnihand-2025-SDK` as an explicit `upstream` remote?
+- Should `vendor/OmniHand-Pro-2025` permanently keep the workspace fork as the default submodule URL while maintaining `AgibotTech/OmniHand-Pro-2025` as an explicit `upstream` remote?
 related_sprint: 1
 
 ## Current Local Reference Points

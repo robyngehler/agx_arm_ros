@@ -4,8 +4,8 @@ status: VENDOR_DECLARED_BASELINE
 runtime_verification: PENDING
 last_updated: 2026-05-12
 source_documents:
-- `vendor/Omnihand-2025-SDK/document/en/API_CPP.md`
-- `vendor/Omnihand-2025-SDK/document/en/API_PYTHON.md`
+- `vendor/OmniHand-Pro-2025/document/en/API_CPP.md`
+- `vendor/OmniHand-Pro-2025/document/en/API_PYTHON.md`
 
 ## Purpose
 

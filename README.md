@@ -65,7 +65,7 @@ pip3 install .
     git submodule update --remote --recursive
     ```
 
-    > 当前仓库仅保留 `vendor/Omnihand-2025-SDK` 作为子模块；Nero/Revo2 描述资产已经直接提交在仓库内。
+    > 当前仓库仅保留 `vendor/OmniHand-Pro-2025` 作为子模块；Nero/Revo2 描述资产已经直接提交在仓库内。
 
 ### 3. 安装依赖
 

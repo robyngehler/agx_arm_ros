@@ -24,7 +24,7 @@ Use the current workspace layout as the implementation truth during the active S
 - `src/agx_arm_mit_tools`: debug bridges, hold validation, and calibration helpers around the MIT stack
 - `src/agx_arm_msgs`: repo-owned ROS messages
 - `src/agx_arm_coordination`: Sprint 6 Activity-DAG coordinator, coordinator-internal performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks
-- `vendor/Omnihand-2025-SDK`: upstream SDK input, not the public repo contract
+- `vendor/OmniHand-Pro-2025`: upstream SDK input, not the public repo contract
 
 ## Current Placement Rules
 

@@ -2,7 +2,7 @@
 
 This directory contains the canonical OmniHand description assets owned by this repository.
 
-- Source provenance: normalized from `vendor/Omnihand-2025-SDK/assets/urdf` and `vendor/Omnihand-2025-SDK/assets/meshes`.
+- Source provenance: normalized from `vendor/OmniHand-Pro-2025/assets/urdf` and `vendor/OmniHand-Pro-2025/assets/meshes`.
 - Current scope: display, `display_control.launch.py`, and MoveIt simulation.
 - Explicitly open for later: hardware ROS bridge, CAN transport, and runtime device validation.
 

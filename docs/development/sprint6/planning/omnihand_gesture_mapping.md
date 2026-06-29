@@ -194,7 +194,7 @@ If additional object types are needed:
 
 ## 6. Vendor Gesture Source
 
-**Location:** `vendor/Omnihand-2025-SDK/python/example/demo_set_motion.py`  
+**Location:** `vendor/OmniHand-Pro-2025/python/example/demo_set_motion.py`  
 **Enum:** `class Gesture(Enum)` (lines 8–27)  
 **Presets:** `get_gesture_positions(gesture)` (lines 52–73)
 
@@ -247,5 +247,5 @@ trajectory_pub.publish(msg)  # Triggers bridge motion
 
 - [Hand Skill Backend Mapping](./hand_skill_backend_mapping.md) — Skill state machine and tactile-confirmed completion
 - [OmniHand Asset Validation](../../assets/omnihand_asset_validation.md) — Hardware and firmware inventory
-- `vendor/Omnihand-2025-SDK/document/en/API_PYTHON.md` — Full SDK API reference
+- `vendor/OmniHand-Pro-2025/document/en/API_PYTHON.md` — Full SDK API reference
 - `src/agx_arm_ctrl/agx_arm_ctrl/omnihand_bridge_node.py` — Bridge implementation

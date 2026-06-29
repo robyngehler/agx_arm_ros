@@ -65,7 +65,7 @@ pip3 install .
     git submodule update --remote --recursive
     ```
 
-    > The only remaining submodule is `vendor/Omnihand-2025-SDK`; Nero/Revo2 description assets are committed directly in this repository.
+    > The only remaining submodule is `vendor/OmniHand-Pro-2025`; Nero/Revo2 description assets are committed directly in this repository.
 
 ### 3. Install Dependencies
 

@@ -22,9 +22,9 @@ latency, so you can capture the bus alongside it, e.g.:
     sudo tcpdump -i can_nero_right -w ~/omnihand_load.pcap
 
     # terminal 2 — run the sustained load
-    cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-    PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-    LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+    cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+    PYTHONPATH=$PWD/build/agibot_hand_pkg \
+    LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
     OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
     python3.10 ~/workspace/agx_arm_ros/scripts/omnihand/omnihand_load_test.py \
         --hand-type right --duration 30
@@ -45,10 +45,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-VENDOR_ROOT = Path(__file__).resolve().parents[2] / "vendor" / "Omnihand-2025-SDK"
-# The BUILT package carries the compiled omnihand_2025_core .so; the source tree
+VENDOR_ROOT = Path(__file__).resolve().parents[2] / "vendor" / "OmniHand-Pro-2025"
+# The BUILT package carries the compiled agibot_hand_core .so; the source tree
 # under python/ does NOT. Only the built package can actually talk to the hand.
-VENDOR_BUILT_PKG = VENDOR_ROOT / "build_phase1_socket" / "omnihand_2025_pkg"
+VENDOR_BUILT_PKG = VENDOR_ROOT / "build" / "agibot_hand_pkg"
 
 # The OmniHand exposes 10 active joints. The SDK sometimes returns a padded
 # 12-value vector (the bridge trims it the same way); set_all_active_joint_angles
@@ -146,9 +146,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Explicit built omnihand_2025_pkg directory to prepend to sys.path. "
+            "Explicit built agibot_hand_pkg directory to prepend to sys.path. "
             "By default the existing PYTHONPATH is respected (do not point this at "
-            "the source python/ tree — it lacks the compiled omnihand_2025_core)."
+            "the source python/ tree — it lacks the compiled agibot_hand_core)."
         ),
     )
     return parser.parse_args()
@@ -157,27 +157,27 @@ def parse_args() -> argparse.Namespace:
 def load_sdk(sdk_python_dir: Path | None) -> Any:
     """Import the vendor SDK, respecting an already-set PYTHONPATH.
 
-    The built package (build_phase1_socket/omnihand_2025_pkg) carries the
-    compiled omnihand_2025_core .so; the source python/ tree does not. We must
-    NOT shadow the user's PYTHONPATH with the source tree, or the import resolves
-    to a core-less package and fails. So: only an explicit --sdk-python-dir is
+    The built package (build/agibot_hand_pkg) carries the compiled
+    agibot_hand_core .so; the source python/ tree does not. We must NOT shadow
+    the user's PYTHONPATH with the source tree, or the import resolves to a
+    core-less package and fails. So: only an explicit --sdk-python-dir is
     prepended; otherwise we trust PYTHONPATH and fall back to the built package.
     """
     if sdk_python_dir is not None:
         sys.path.insert(0, str(sdk_python_dir))
 
     try:
-        import omnihand_2025  # type: ignore
+        import agibot_hand  # type: ignore
     except ModuleNotFoundError as exc:
         # Two recoverable cases: the package is not on the path at all, or
         # PYTHONPATH points at the source tree (package present but no compiled
         # core). Either way, retry with the built package prepended.
-        recoverable = exc.name in ("omnihand_2025", "omnihand_2025.omnihand_2025_core")
+        recoverable = exc.name in ("agibot_hand", "agibot_hand.agibot_hand_core")
         if recoverable and VENDOR_BUILT_PKG.is_dir():
-            sys.modules.pop("omnihand_2025", None)
+            sys.modules.pop("agibot_hand", None)
             sys.path.insert(0, str(VENDOR_BUILT_PKG))
             try:
-                import omnihand_2025  # type: ignore  # noqa: F811
+                import agibot_hand  # type: ignore  # noqa: F811
             except Exception as retry_exc:  # noqa: BLE001
                 raise SystemExit(_import_hint(retry_exc))
         else:
@@ -185,45 +185,32 @@ def load_sdk(sdk_python_dir: Path | None) -> Any:
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(_import_hint(exc))
 
-    if not hasattr(omnihand_2025, "AgibotHandO10"):
+    if not hasattr(agibot_hand, "AgibotHandO12"):
         raise SystemExit(
-            "Imported omnihand_2025 is missing AgibotHandO10 — PYTHONPATH is "
+            "Imported agibot_hand is missing AgibotHandO12 — PYTHONPATH is "
             "probably pointing at the source python/ tree instead of the built "
             f"package ({VENDOR_BUILT_PKG})."
         )
-    return omnihand_2025
+    return agibot_hand
 
 
 def _import_hint(exc: Exception) -> str:
     return (
-        f"Failed to import omnihand_2025: {type(exc).__name__}: {exc}\n"
+        f"Failed to import agibot_hand: {type(exc).__name__}: {exc}\n"
         "The compiled SDK lives in the BUILT package, not the source python/ tree.\n"
         "Set the environment to the built package (note: PYTHONPATH must point at\n"
-        "the package ROOT, LD_LIBRARY_PATH at the omnihand_2025 subdir):\n\n"
+        "the package ROOT, LD_LIBRARY_PATH at the agibot_hand subdir):\n\n"
         f"  cd {VENDOR_ROOT}\n"
-        "  PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \\\n"
-        "  LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \\\n"
+        "  PYTHONPATH=$PWD/build/agibot_hand_pkg \\\n"
+        "  LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \\\n"
         "  OMNIHAND_SOCKETCAN_IFACE=can_nero_right \\\n"
         "  python3.10 <this-script> --hand-type right"
     )
 
 
 def create_hand(sdk: Any, device_id: int, canfd_id: int, hand_type: Any) -> Any:
-    """Create a hand, tolerating differences in the vendor create_hand signature."""
-    attempts = (
-        {"device_id": device_id, "canfd_id": canfd_id, "hand_type": hand_type},
-        {"device_id": device_id, "hand_type": hand_type},
-        {"hand_type": hand_type},
-    )
-    last_error: Exception | None = None
-    for kwargs in attempts:
-        try:
-            return sdk.AgibotHandO10.create_hand(**kwargs)
-        except TypeError as exc:
-            last_error = exc
-    raise SystemExit(
-        f"Unsupported create_hand signature for this vendor build: {last_error}"
-    )
+    """Create a hand instance using the O12 Pro SDK constructor."""
+    return sdk.AgibotHandO12(device_id=device_id, hand_type=hand_type)
 
 
 def timed(stats: CallStats, fn: Callable[[], Any]) -> Any:

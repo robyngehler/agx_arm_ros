@@ -94,9 +94,9 @@ frames; if the hand needs retransmission, bring the bus up with `ONE_SHOT=off`.
 ## Hardware preflight (below ROS)
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 python3.10 python/example/demo_get_hardware_info.py
 ```

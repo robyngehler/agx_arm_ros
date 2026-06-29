@@ -31,10 +31,10 @@ However, the OmniHand SDK smoke test still cannot retrieve live hardware informa
 After configuring the interface and running the SDK smoke test with the patched SocketCAN backend:
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
 
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_omnihand \
 python3.10 python/example/demo_get_hardware_info.py
 ```
@@ -231,10 +231,10 @@ candump -tz -x can_omnihand
 Run in terminal 2:
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
 
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_omnihand \
 python3.10 python/example/demo_get_hardware_info.py
 ```
@@ -257,7 +257,7 @@ cd ~/workspace/agx_arm_ros
 
 grep -Rni \
   "4000000\|4M\|4mbps\|dbitrate\|data.*bitrate\|bitrate\|CANFD\|canfd\|125K\|1000K\|1000000" \
-  vendor/Omnihand-2025-SDK
+  vendor/OmniHand-Pro-2025
 ```
 
 Also search generated and build directories:
@@ -265,10 +265,10 @@ Also search generated and build directories:
 ```bash
 grep -Rni \
   "4000000\|3846153\|1000000\|125000\|CANFD\|dbitrate" \
-  vendor/Omnihand-2025-SDK/build_phase1_socket \
-  vendor/Omnihand-2025-SDK/python \
-  vendor/Omnihand-2025-SDK/src \
-  vendor/Omnihand-2025-SDK/include 2>/dev/null
+  vendor/OmniHand-Pro-2025/build \
+  vendor/OmniHand-Pro-2025/python \
+  vendor/OmniHand-Pro-2025/src \
+  vendor/OmniHand-Pro-2025/include 2>/dev/null
 ```
 
 ### 3. Search SocketCAN backend implementation
@@ -276,7 +276,7 @@ grep -Rni \
 ```bash
 grep -Rni \
   "socketcan\|PF_CAN\|AF_CAN\|CAN_RAW\|CANFD_MTU\|setsockopt\|bind(" \
-  vendor/Omnihand-2025-SDK
+  vendor/OmniHand-Pro-2025
 ```
 
 Relevant findings would include:

@@ -60,7 +60,7 @@ def generate_launch_description():
         "sdk_python_dir",
         default_value="",
         description=(
-            "Optional path to the built omnihand_2025 package. Leave empty to "
+            "Optional path to the built agibot_hand package. Leave empty to "
             "auto-locate the repo's vendor build; no PYTHONPATH/LD_LIBRARY_PATH "
             "export is needed (the compiled .so uses an $ORIGIN runpath)."
         ),

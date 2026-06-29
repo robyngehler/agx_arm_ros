@@ -224,23 +224,23 @@ def resolve_gesture_presets(
 
 
 # Built vendor package, relative to the repo root. It carries the compiled
-# omnihand_2025_core .so, whose RUNPATH is $ORIGIN, so no LD_LIBRARY_PATH is
+# agibot_hand_core .so, whose RUNPATH is $ORIGIN, so no LD_LIBRARY_PATH is
 # needed — getting this directory onto sys.path is sufficient to import the SDK.
-_VENDOR_PKG_REL = Path("vendor") / "Omnihand-2025-SDK" / "build_phase1_socket" / "omnihand_2025_pkg"
+_VENDOR_PKG_REL = Path("vendor") / "OmniHand-Pro-2025" / "build" / "agibot_hand_pkg"
 
 
 def _locate_builtin_vendor_pkg() -> str | None:
-    """Search upward from this file for the repo's built omnihand_2025 package."""
+    """Search upward from this file for the repo's built agibot_hand package."""
     here = Path(__file__).resolve()
     for parent in here.parents:
         candidate = parent / _VENDOR_PKG_REL
-        if (candidate / "omnihand_2025" / "__init__.py").exists():
+        if (candidate / "agibot_hand" / "__init__.py").exists():
             return str(candidate)
     return None
 
 
 def _ensure_omnihand_importable(sdk_python_dir: str = "") -> None:
-    """Make omnihand_2025 importable, locating the built package if needed.
+    """Make agibot_hand importable, locating the built package if needed.
 
     Tries the ambient environment first (an already-set PYTHONPATH wins), then
     an explicit dir, the AGX_ARM_OMNIHAND_SDK_DIR env var, and finally an upward
@@ -248,7 +248,7 @@ def _ensure_omnihand_importable(sdk_python_dir: str = "") -> None:
     work without manually exporting PYTHONPATH/LD_LIBRARY_PATH.
     """
     try:
-        import_module("omnihand_2025")
+        import_module("agibot_hand")
         return
     except ImportError:
         pass
@@ -264,94 +264,51 @@ def _ensure_omnihand_importable(sdk_python_dir: str = "") -> None:
             continue
         if candidate not in sys.path:
             sys.path.insert(0, candidate)
-        sys.modules.pop("omnihand_2025", None)
+        sys.modules.pop("agibot_hand", None)
         try:
-            import_module("omnihand_2025")
+            import_module("agibot_hand")
             return
         except ImportError as exc:
             last_error = exc
 
     raise RuntimeError(
-        "backend_type=sdk requires the omnihand_2025 vendor package, which was not "
+        "backend_type=sdk requires the agibot_hand vendor package, which was not "
         "on PYTHONPATH and could not be located automatically. Set the bridge "
         "'sdk_python_dir' parameter or the AGX_ARM_OMNIHAND_SDK_DIR env var to the "
-        "built package (vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg)."
+        "built package (vendor/OmniHand-Pro-2025/build/agibot_hand_pkg)."
     ) from last_error
 
 
 def _load_sdk_symbols(sdk_python_dir: str = "") -> tuple[type[Any], Any, Any]:
     _ensure_omnihand_importable(sdk_python_dir)
     try:
-        module = import_module("omnihand_2025")
+        module = import_module("agibot_hand")
     except ImportError as exc:
         raise RuntimeError(
-            "backend_type=sdk requires omnihand_2025 on PYTHONPATH and the vendor library path to be set"
+            "backend_type=sdk requires agibot_hand on PYTHONPATH and the vendor library path to be set"
         ) from exc
 
     missing = [
         symbol_name
-        for symbol_name in ("AgibotHandO10", "EFinger", "EHandType")
+        for symbol_name in ("AgibotHandO12", "EFinger", "EHandType")
         if not hasattr(module, symbol_name)
     ]
     if missing:
         raise RuntimeError(
-            "Installed omnihand_2025 package is missing required symbols: "
+            "Installed agibot_hand package is missing required symbols: "
             + ", ".join(missing)
         )
 
-    return module.AgibotHandO10, module.EFinger, module.EHandType
+    return module.AgibotHandO12, module.EFinger, module.EHandType
 
 
 def _create_sdk_hand(
     sdk_class: type[Any],
     *,
     device_id: int,
-    canfd_id: int,
     hand_type: Any,
-    cfg_path: str,
 ) -> Any:
-    attempts: list[dict[str, Any]] = []
-    if cfg_path:
-        attempts.append(
-            {
-                "device_id": device_id,
-                "canfd_id": canfd_id,
-                "hand_type": hand_type,
-                "cfg_path": cfg_path,
-            }
-        )
-    attempts.append(
-        {
-            "device_id": device_id,
-            "canfd_id": canfd_id,
-            "hand_type": hand_type,
-        }
-    )
-    if cfg_path:
-        attempts.append(
-            {
-                "device_id": device_id,
-                "hand_type": hand_type,
-                "cfg_path": cfg_path,
-            }
-        )
-    attempts.append(
-        {
-            "device_id": device_id,
-            "hand_type": hand_type,
-        }
-    )
-
-    last_error: TypeError | None = None
-    for kwargs in attempts:
-        try:
-            return sdk_class.create_hand(**kwargs)
-        except TypeError as exc:
-            last_error = exc
-
-    raise RuntimeError(
-        "Unsupported omnihand_2025 create_hand signature for the current vendor package"
-    ) from last_error
+    return sdk_class(device_id=device_id, hand_type=hand_type)
 
 
 def _coerce_float_list(values: object, expected_count: int, value_label: str) -> list[float]:
@@ -569,7 +526,7 @@ class SdkOmniHandBackend:
         self.sdk_python_dir = sdk_python_dir
         self.can_interface = can_interface
         # The vendor SocketCAN backend reads the interface ONLY from this env var
-        # (default "can0"). Export it before create_hand so the hand opens on the
+        # (default "can0"). Export it before the constructor so the hand opens on the
         # native side bus (e.g. can_nero_right) instead of can0.
         if can_interface:
             os.environ["OMNIHAND_SOCKETCAN_IFACE"] = can_interface
@@ -604,9 +561,7 @@ class SdkOmniHandBackend:
         self.hand = _create_sdk_hand(
             sdk_class,
             device_id=device_id,
-            canfd_id=canfd_id,
             hand_type=hand_type,
-            cfg_path=cfg_path,
         )
         if hasattr(self.hand, "show_data_details"):
             self.hand.show_data_details(False)
@@ -615,7 +570,7 @@ class SdkOmniHandBackend:
         self.initialized = True
         self.status_text = (
             f"sdk backend ready (active joint control, can_interface={can_interface or 'can0(default)'}, "
-            f"device_id={device_id}, canfd_id={canfd_id})"
+            f"device_id={device_id})"
         )
         try:
             self.positions = self.read_joint_state()

@@ -27,9 +27,9 @@ candump -l can_nero_right                       # candump-*.log
 sudo tcpdump -i can_nero_right -w ~/omnihand_load.pcap
 
 # terminal 2 — sustained load (read-only by default)
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 python3.10 ~/workspace/agx_arm_ros/scripts/omnihand/omnihand_load_test.py \
     --hand-type right --duration 10
@@ -73,7 +73,7 @@ ros2 launch agx_arm_ctrl start_omnihand_bridge.launch.py backend_type:=mock
 Do **not** prefix the launch with `PYTHONPATH=...`: the inline form *replaces*
 ROS's own `PYTHONPATH` and breaks `ros2` itself (`PackageNotFoundError: ros2cli`).
 The bridge finds the vendor SDK on its own (upward search for the repo's
-`build_phase1_socket/omnihand_2025_pkg`; the compiled `.so` uses an `$ORIGIN`
+`build/agibot_hand_pkg`; the compiled `.so` uses an `$ORIGIN`
 runpath, so no `LD_LIBRARY_PATH` is required). Override with the
 `sdk_python_dir:=<path>` launch arg or `AGX_ARM_OMNIHAND_SDK_DIR` env var only if
 the SDK lives outside the repo.
@@ -135,7 +135,7 @@ ROS-side command-traffic generator for combined load tests.
 ## Notes
 
 - The compiled SDK lives in the **built** package
-  (`build_phase1_socket/omnihand_2025_pkg`), not the source `python/` tree. Its
+  (`build/agibot_hand_pkg`), not the source `python/` tree. Its
   `.so` uses an `$ORIGIN` runpath, so once that directory is on `sys.path` the
   import works — **no `LD_LIBRARY_PATH` is actually required**.
 - The **ROS launch** auto-locates the built package; run it with no manual env.

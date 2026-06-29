@@ -15,7 +15,7 @@ from typing import Any
 
 
 VENDOR_PYTHON_DIR = (
-    Path(__file__).resolve().parents[2] / "vendor" / "Omnihand-2025-SDK" / "python"
+    Path(__file__).resolve().parents[2] / "vendor" / "OmniHand-Pro-2025" / "build" / "agibot_hand_pkg"
 )
 
 DECLARED_JOINTS: dict[str, list[dict[str, float | int | str]]] = {
@@ -95,7 +95,7 @@ def parse_args() -> argparse.Namespace:
         "--sdk-python-dir",
         type=Path,
         default=VENDOR_PYTHON_DIR,
-        help="Python package root to probe. Point this at a built omnihand_2025_pkg directory when testing a local build.",
+        help="Python package root to probe. Point this at the built agibot_hand_pkg directory.",
     )
     parser.add_argument(
         "--print-declared-joint-map",
@@ -225,27 +225,17 @@ def compute_target_angles(
 def load_vendor_sdk(sdk_python_dir: Path) -> tuple[Any | None, str | None, str | None]:
     sys.path.insert(0, str(sdk_python_dir))
     try:
-        import omnihand_2025  # type: ignore
+        import agibot_hand  # type: ignore
     except Exception as exc:  # noqa: BLE001
         return None, f"{type(exc).__name__}: {exc}", None
 
-    if hasattr(omnihand_2025, "AgibotHandO10"):
-        return omnihand_2025, None, "source_package"
+    if hasattr(agibot_hand, "AgibotHandO12"):
+        return agibot_hand, None, "built_package"
 
-    try:
-        from omnihand_2025 import omnihand_2025_core  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        return None, f"{type(exc).__name__}: {exc}", None
-
-    compat_sdk = SimpleNamespace(
-        AgibotHandO10=omnihand_2025_core.AgibotHandO10,
-        EFinger=SimpleNamespace(THUMB=1, INDEX=2, MIDDLE=3, RING=4, LITTLE=5),
-        EHandType=SimpleNamespace(LEFT=0, RIGHT=1),
-    )
-    return compat_sdk, None, "core_only_package"
+    return None, "agibot_hand imported but AgibotHandO12 symbol is missing", None
 
 
-def collect_runtime_data(args: argparse.Namespace, omnihand_2025: Any, hand: Any) -> dict[str, Any]:
+def collect_runtime_data(args: argparse.Namespace, agibot_hand: Any, hand: Any) -> dict[str, Any]:
     result: dict[str, Any] = {}
     baseline_angles: list[float] | None = None
 
@@ -269,7 +259,7 @@ def collect_runtime_data(args: argparse.Namespace, omnihand_2025: Any, hand: Any
     tactile_summary: dict[str, Any] = {}
     if not args.skip_tactile:
         for finger_name in ("THUMB", "INDEX", "MIDDLE", "RING", "LITTLE"):
-            finger_enum = getattr(omnihand_2025.EFinger, finger_name)
+            finger_enum = getattr(agibot_hand.EFinger, finger_name)
             tactile_result = safe_call(hand, "get_tactile_sensor_data", finger_enum)
             if tactile_result["ok"]:
                 tactile_summary[finger_name.lower()] = {
@@ -337,7 +327,7 @@ def collect_runtime_data(args: argparse.Namespace, omnihand_2025: Any, hand: Any
 
 def run_child_runtime_probe(args: argparse.Namespace) -> int:
     result: dict[str, Any] = {}
-    omnihand_2025, import_error, sdk_layout = load_vendor_sdk(args.sdk_python_dir)
+    agibot_hand, import_error, sdk_layout = load_vendor_sdk(args.sdk_python_dir)
     result["sdk_layout"] = sdk_layout
     if import_error is not None:
         result["status"] = "blocked_before_runtime"
@@ -347,18 +337,17 @@ def run_child_runtime_probe(args: argparse.Namespace) -> int:
         return 3
 
     hand_type_enum = (
-        omnihand_2025.EHandType.LEFT
+        agibot_hand.EHandType.LEFT
         if args.hand_type == "left"
-        else omnihand_2025.EHandType.RIGHT
+        else agibot_hand.EHandType.RIGHT
     )
     hand = None
     try:
-        hand = omnihand_2025.AgibotHandO10.create_hand(
+        hand = agibot_hand.AgibotHandO12(
             device_id=args.device_id,
-            canfd_id=args.canfd_id,
             hand_type=hand_type_enum,
         )
-        result.update(collect_runtime_data(args, omnihand_2025, hand))
+        result.update(collect_runtime_data(args, agibot_hand, hand))
     except Exception as exc:  # noqa: BLE001
         result["status"] = "runtime_probe_failed"
         result["runtime_error"] = f"{type(exc).__name__}: {exc}"
@@ -431,7 +420,7 @@ def main() -> int:
     if args.print_declared_joint_map:
         print_declared_joint_map(args.hand_type)
 
-    omnihand_2025, import_error, sdk_layout = load_vendor_sdk(args.sdk_python_dir)
+    agibot_hand, import_error, sdk_layout = load_vendor_sdk(args.sdk_python_dir)
     result["sdk_layout"] = sdk_layout
     if import_error is not None:
         result["status"] = "blocked_before_runtime"
@@ -448,16 +437,15 @@ def main() -> int:
         return 3
 
     hand_type_enum = (
-        omnihand_2025.EHandType.LEFT
+        agibot_hand.EHandType.LEFT
         if args.hand_type == "left"
-        else omnihand_2025.EHandType.RIGHT
+        else agibot_hand.EHandType.RIGHT
     )
 
     hand = None
     try:
-        hand = omnihand_2025.AgibotHandO10.create_hand(
+        hand = agibot_hand.AgibotHandO12(
             device_id=args.device_id,
-            canfd_id=args.canfd_id,
             hand_type=hand_type_enum,
         )
         result["status"] = "runtime_probe_started"

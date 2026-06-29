@@ -58,9 +58,9 @@ Standard and rationale: `../../development/sprint5/planning/can_transport_decisi
 Use this first for all remaining live-hand tests.
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 python3.10 python/example/demo_get_hardware_info.py
 ```
@@ -129,8 +129,8 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 Staged right-arm plus OmniHand debug path:
 
 ```bash
-PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg:$PYTHONPATH \
-LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025/build/agibot_hand_pkg:$PYTHONPATH \
+LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=debug_soft_target \
@@ -164,8 +164,8 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 Staged right-arm plus OmniHand profile:
 
 ```bash
-PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg:$PYTHONPATH \
-LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+PYTHONPATH=$HOME/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025/build/agibot_hand_pkg:$PYTHONPATH \
+LD_LIBRARY_PATH=$HOME/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \

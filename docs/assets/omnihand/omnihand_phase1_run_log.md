@@ -20,18 +20,18 @@ Capture the first isolated SDK bring-up result before any repo-owned wrapper or 
 
 ### Userspace CAN Library Provenance
 
-- Vendored userspace library path: `vendor/Omnihand-2025-SDK/thirdParty/usbcanfd_libusb_x64_1.0.10_250328/libusbcanfd.so`
+- Vendored userspace library path: `vendor/OmniHand-Pro-2025/thirdParty/usbcanfd_libusb_x64_1.0.10_250328/libusbcanfd.so`
 - Local file inspection result: `ELF 64-bit LSB shared object, x86-64`
-- Packaging path: `vendor/Omnihand-2025-SDK/python/CMakeLists.txt` copies that same x64 userspace library into the Python package build output
+- Packaging path: `vendor/OmniHand-Pro-2025/python/CMakeLists.txt` copies that same x64 userspace library into the Python package build output
 
 ### Current successful hardware-info probe on this host
 
 Command used:
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can0 \
 python3.10 python/example/demo_get_hardware_info.py
 ```
@@ -61,15 +61,15 @@ Interpretation:
 Command used:
 
 ```bash
-cd vendor/Omnihand-2025-SDK/python
-python3 -c "import sys, platform; print(platform.machine()); sys.path.insert(0, '.'); import omnihand_2025; print('py package import ok')"
+cd vendor/OmniHand-Pro-2025/python
+python3 -c "import sys, platform; print(platform.machine()); sys.path.insert(0, '.'); import agibot_hand; print('py package import ok')"
 ```
 
 Observed result:
 
 ```text
 aarch64
-ModuleNotFoundError: No module named 'omnihand_2025.omnihand_2025_core'
+ModuleNotFoundError: No module named 'agibot_hand.agibot_hand_core'
 ```
 
 Interpretation:
@@ -99,13 +99,13 @@ Local repo changes were applied to continue Phase 1 on `aarch64`:
 
 - the vendored build can now be configured with `-DOMNIHAND_CAN_DRIVER=socket`
 - the x64-only ZLG userspace library is no longer linked or copied in that socket-backed mode
-- the repo smoke test can target a built `omnihand_2025_pkg` directory directly
+- the repo smoke test can target a built `agibot_hand_pkg` directory directly
 
 Build result:
 
-- socket-backed `omnihand_2025_core` built successfully on `aarch64`
-- the unpacked `omnihand_2025_pkg` refresh no longer hard-fails when Python wheel tooling is absent; wheel generation is skipped in that case
-- the built package imported successfully from `vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg`
+- socket-backed `agibot_hand_core` built successfully on `aarch64`
+- the unpacked `agibot_hand_pkg` refresh no longer hard-fails when Python wheel tooling is absent; wheel generation is skipped in that case
+- the built package imported successfully from `vendor/OmniHand-Pro-2025/build/agibot_hand_pkg`
 
 ### Earlier runtime probe after local socket build
 
@@ -115,7 +115,7 @@ Command used:
 python3 scripts/omnihand/phase1_smoke_test.py \
 	--hand-type left \
 	--canfd-id 0 \
-	--sdk-python-dir vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg \
+	--sdk-python-dir vendor/OmniHand-Pro-2025/build/agibot_hand_pkg \
 	--json-output /tmp/omnihand_phase1_socket_probe.json
 ```
 

@@ -22,9 +22,9 @@ It separates:
 The current validated probe on this host is:
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can0 \
 python3.10 python/example/demo_get_hardware_info.py
 ```
@@ -73,12 +73,12 @@ That old forced `gs_usb` path is still not suitable as the repo-local CAN FD bas
 
 The repo contains a vendored CAN FD kernel module source at:
 
-- `vendor/Omnihand-2025-SDK/thirdParty/usbcanfd200_400u_2.10/`
+- `vendor/OmniHand-Pro-2025/thirdParty/usbcanfd200_400u_2.10/`
 
 It builds successfully against the current Jetson kernel headers:
 
 ```bash
-cd vendor/Omnihand-2025-SDK/thirdParty/usbcanfd200_400u_2.10
+cd vendor/OmniHand-Pro-2025/thirdParty/usbcanfd200_400u_2.10
 make module
 ```
 
@@ -94,7 +94,7 @@ This is a real Jetson-usable path for supported ZLG-style hardware.
 
 The bundled directory is explicitly:
 
-- `vendor/Omnihand-2025-SDK/thirdParty/usbcanfd_libusb_x64_1.0.10_250328/`
+- `vendor/OmniHand-Pro-2025/thirdParty/usbcanfd_libusb_x64_1.0.10_250328/`
 
 Local `file` checks show:
 
@@ -171,9 +171,9 @@ The interface should report a real CAN FD state such as:
 ### 2. Run the validated hardware-info probe
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can0 \
 python3.10 python/example/demo_get_hardware_info.py
 ```
@@ -231,7 +231,7 @@ sudo apt install -y build-essential can-utils ethtool linux-headers-$(uname -r)
 ### 2. Build the vendored kernel module
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/thirdParty/usbcanfd200_400u_2.10
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025/thirdParty/usbcanfd200_400u_2.10
 make module
 ```
 
@@ -252,7 +252,7 @@ If it does not, stop there. Do not force-bind an unsupported USB ID into this dr
 ### 4. Load the CAN FD module
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK/thirdParty/usbcanfd200_400u_2.10
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025/thirdParty/usbcanfd200_400u_2.10
 sudo modprobe can-dev
 sudo insmod ./usbcanfd.ko cfg_term_res=1
 ```
@@ -288,9 +288,9 @@ The interface is acceptable only if this succeeds and `ip -details link show can
 ### 6. Run the SocketCAN-based OmniHand smoke test
 
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
-PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg \
-LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH \
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+PYTHONPATH=$PWD/build/agibot_hand_pkg \
+LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
 OMNIHAND_SOCKETCAN_IFACE=can_omnihand \
 python3.10 python/example/demo_get_hardware_info.py
 ```

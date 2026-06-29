@@ -29,7 +29,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - Keep MIT debug bridges, hold checks, and calibration helpers in `src/agx_arm_mit_tools`.
 - Keep the OmniHand bridge in `src/agx_arm_ctrl` for now; only revisit a package split after a non-mock backend proves a separate boundary is useful.
 - Extend `src/agx_arm_msgs` for repo-owned OmniHand messages instead of creating a second message package.
-- Treat `vendor/Omnihand-2025-SDK` as upstream input, not as the public ROS contract.
+- Treat `vendor/OmniHand-Pro-2025` as upstream input, not as the public ROS contract.
 - Generalize description and launch surfaces to be arm-count-aware from the start; the first executable Duo target is `body + right arm + right OmniHand`, then mirror to the left side.
 
 ## ROS Contract Rules

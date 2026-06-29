@@ -72,17 +72,17 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
 ### OmniHand vendor load test failed to import the SDK (PYTHONPATH shadowing)
 
 - Symptom: `python3.10 scripts/omnihand/omnihand_load_test.py` failed with
-  `ModuleNotFoundError: No module named 'omnihand_2025.omnihand_2025_core'`, even though
-  `PYTHONPATH` was correctly set to the built package `build_phase1_socket/omnihand_2025_pkg`.
-- Cause: the script defaulted `--sdk-python-dir` to the **source** tree `vendor/Omnihand-2025-SDK/python`
-  and did `sys.path.insert(0, ...)`, prepending the source `omnihand_2025` package ahead of the
-  user's `PYTHONPATH`. The source tree has `__init__.py` but no compiled `omnihand_2025_core` .so, so
+  `ModuleNotFoundError: No module named 'agibot_hand.agibot_hand_core'`, even though
+  `PYTHONPATH` was correctly set to the built package `build/agibot_hand_pkg`.
+- Cause: the script defaulted `--sdk-python-dir` to the **source** tree `vendor/OmniHand-Pro-2025/python`
+  and did `sys.path.insert(0, ...)`, prepending the source `agibot_hand` package ahead of the
+  user's `PYTHONPATH`. The source tree has `__init__.py` but no compiled `agibot_hand_core` .so, so
   the import resolved to a core-less package. Same class as the `python_environment_workflow.md`
   "PYTHONPATH replaced instead of appended" pattern.
 - Fix: the load test now respects an already-set `PYTHONPATH` (no default source-tree insert) and only
   prepends an explicit `--sdk-python-dir`. If the import still fails because the package is absent or
   points at the source tree, it self-heals by appending the built package
-  (`build_phase1_socket/omnihand_2025_pkg`) and retrying. `LD_LIBRARY_PATH` must still be exported
+  (`build/agibot_hand_pkg`) and retrying. `LD_LIBRARY_PATH` must still be exported
   before launch for the native library to load.
 - Validated on the Jetson against the live right hand: 50 Hz `get_joint_positions` (~0.4 ms/call),
   1 Hz `get_all_error_reports` (~10 ms/call).
@@ -90,17 +90,17 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
 ### OmniHand ROS bridge `backend_type:=sdk` could not find the vendor SDK on launch
 
 - Symptom: `ros2 launch agx_arm_ctrl start_omnihand_bridge.launch.py backend_type:=sdk` died with
-  `ModuleNotFoundError: No module named 'omnihand_2025'` →
-  `RuntimeError: backend_type=sdk requires omnihand_2025 on PYTHONPATH`. Prefixing the launch with
-  `PYTHONPATH=.../omnihand_2025_pkg ros2 launch ...` then broke `ros2` itself with
+  `ModuleNotFoundError: No module named 'agibot_hand'` →
+  `RuntimeError: backend_type=sdk requires agibot_hand on PYTHONPATH`. Prefixing the launch with
+  `PYTHONPATH=.../agibot_hand_pkg ros2 launch ...` then broke `ros2` itself with
   `PackageNotFoundError: No package metadata was found for ros2cli`, because the inline `PYTHONPATH=`
   *replaced* ROS's own `PYTHONPATH` (which carries `ros2cli`) instead of appending.
 - Cause: the bridge relied on an ambient `PYTHONPATH` for the vendor SDK, which is incompatible with
   `ros2 launch` (you cannot set a launch-only PYTHONPATH without clobbering ROS's).
 - Fix: the bridge now self-locates the built vendor package. `_ensure_omnihand_importable()` tries the
   ambient import first, then an explicit `sdk_python_dir` param, then `AGX_ARM_OMNIHAND_SDK_DIR`, then
-  an upward search for `vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg`, and adds it to
-  `sys.path`. No `LD_LIBRARY_PATH` is needed: the compiled `omnihand_2025_core.so` has `RUNPATH=$ORIGIN`,
+  an upward search for `vendor/OmniHand-Pro-2025/build/agibot_hand_pkg`, and adds it to
+  `sys.path`. No `LD_LIBRARY_PATH` is needed: the compiled `agibot_hand_core.so` has `RUNPATH=$ORIGIN`,
   so it finds `libomnihand2025.so` next to it. `ros2 launch ... backend_type:=sdk` now works with no
   manual env. Validated on the Jetson: bridge starts with `backend_type=vendor_sdk` against the live
   right hand.
@@ -129,7 +129,7 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   `can_nero_right` (from `scripts/activate_native_can.sh`).
 - Cause: the vendor SocketCAN backend selects its interface ONLY from the `OMNIHAND_SOCKETCAN_IFACE`
   env var, defaulting to `can0` (confirmed in
-  `vendor/Omnihand-2025-SDK/src/can_bus_device/socket_can/c_can_bus_device_socket_can.cc`). The numeric
+  `vendor/OmniHand-Pro-2025/src/can_bus_device/socket_can/c_can_bus_device_socket_can.cc`). The numeric
   `canfd_id` only applies to the ZLG USB path. The bridge passed `canfd_id` but never set the env var,
   so the SDK always tried `can0`.
 - Fix: added a visible side->interface mapping in `agx_arm_ctrl/config/omnihand_can_interfaces.yaml`

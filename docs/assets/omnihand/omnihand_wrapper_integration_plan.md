@@ -95,7 +95,7 @@ The current `aarch64` local SDK policy and adapter matrix live in `docs/assets/o
 - `assets/urdf/xacro/finger.xacro` contains a stray literal `y` before one joint declaration.
 - Multiple asset files reference `package://omnihand_description/...`, but the vendor tree does not provide a matching ROS package.
 - The normalized repo-owned description assets avoid those vendor asset defects for the simulation path, but the vendor tree itself is still not a drop-in ROS description package.
-- The vendored submodule now tracks the workspace fork `https://github.com/robyngehler/Omnihand-2025-SDK.git`; keep `https://github.com/AgibotTech/Omnihand-2025-SDK.git` as the canonical upstream for sync and review.
+- The vendored submodule now tracks the workspace fork `https://github.com/robyngehler/OmniHand-Pro-2025.git`; keep `https://github.com/AgibotTech/OmniHand-Pro-2025.git` as the canonical upstream for sync and review.
 
 ## Phase 0: Platform Gate
 

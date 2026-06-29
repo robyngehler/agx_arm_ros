@@ -1,7 +1,7 @@
 # Working Plan for real Hardware Integration into ROS Stack and first Demo Usecase
 
 ## SDK Details
-- minimal path is python centered around `AgibotHandO10.create_hand()`
+- minimal path is python centered around `AgibotHandO12.create_hand()`
 - sub-methods which are useful: `set/get_all_active_joint_angles, get_tactile_sensor_data, get_all_current_reports, set_all_current_threasholds`
 - joint mappings:
 ```bash
@@ -146,7 +146,7 @@ import os
 import time
 from dataclasses import dataclass
 
-from omnihand_2025 import AgibotHandO10, EFinger, EHandType
+from agibot_hand import AgibotHandO12, EFinger, EHandType
 
 
 LEFT_OPEN = [
@@ -196,7 +196,7 @@ def lerp_vec(start, end, alpha):
     return [s + (e - s) * alpha for s, e in zip(start, end)]
 
 
-def read_contact_snapshot(hand: AgibotHandO10) -> ContactSnapshot:
+def read_contact_snapshot(hand: AgibotHandO12) -> ContactSnapshot:
     thumb = hand.get_tactile_sensor_data(EFinger.THUMB)
     index = hand.get_tactile_sensor_data(EFinger.INDEX)
     middle = hand.get_tactile_sensor_data(EFinger.MIDDLE)
@@ -232,13 +232,13 @@ def print_snapshot(label: str, snap: ContactSnapshot) -> None:
     )
 
 
-def open_hand(hand: AgibotHandO10, pose, settle_s=1.0):
+def open_hand(hand: AgibotHandO12, pose, settle_s=1.0):
     hand.set_all_active_joint_angles(pose)
     time.sleep(settle_s)
 
 
 def close_until_contact(
-    hand: AgibotHandO10,
+    hand: AgibotHandO12,
     open_pose,
     closed_pose,
     tactile_stop_threshold: int = 180,
@@ -270,7 +270,7 @@ def main():
     if "OMNIHAND_SOCKETCAN_IFACE" not in os.environ:
         raise RuntimeError("OMNIHAND_SOCKETCAN_IFACE is not set")
 
-    hand = AgibotHandO10.create_hand(
+    hand = AgibotHandO12.create_hand(
         device_id=1,
         canfd_id=0,
         hand_type=EHandType.LEFT,
@@ -313,10 +313,10 @@ if __name__ == "__main__":
 
 Shell Structures:
 ```bash
-cd ~/workspace/agx_arm_ros/vendor/Omnihand-2025-SDK
+cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
 
-export PYTHONPATH=$PWD/build_phase1_socket/omnihand_2025_pkg
-export LD_LIBRARY_PATH=$PWD/build_phase1_socket/omnihand_2025_pkg/omnihand_2025:$LD_LIBRARY_PATH
+export PYTHONPATH=$PWD/build/agibot_hand_pkg
+export LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH
 export OMNIHAND_SOCKETCAN_IFACE=can0
 
 python3.10 /path/to/your/omnihand_grasp_probe.py
@@ -330,7 +330,7 @@ import os
 import math
 from dataclasses import dataclass
 
-from omnihand_2025 import AgibotHandO10, EFinger, EHandType
+from agibot_hand import AgibotHandO12, EFinger, EHandType
 
 
 LEFT_JOINT_NAMES = [
@@ -412,7 +412,7 @@ class SdkOmniHandBackend:
         self.joint_names = LEFT_JOINT_NAMES if hand_side == "left" else RIGHT_JOINT_NAMES
         self.last_commanded_positions = [0.0] * 10
 
-        self.hand = AgibotHandO10.create_hand(
+        self.hand = AgibotHandO12.create_hand(
             device_id=device_id,
             canfd_id=canfd_id,
             hand_type=hand_type,

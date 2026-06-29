@@ -120,7 +120,7 @@ Interpretation:
 
 The following vendored driver source builds successfully on the current Jetson host:
 
-- `vendor/Omnihand-2025-SDK/thirdParty/usbcanfd200_400u_2.10/`
+- `vendor/OmniHand-Pro-2025/thirdParty/usbcanfd200_400u_2.10/`
 
 Observed properties after build:
 

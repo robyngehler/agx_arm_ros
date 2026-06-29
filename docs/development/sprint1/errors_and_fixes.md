@@ -40,7 +40,7 @@
 
 ### OmniHand vendor SDK is documented for `x86_64`, but this host is `aarch64`
 
-- Symptom: `vendor/Omnihand-2025-SDK/README.md` documents Ubuntu 22.04 `x86_64`, while `uname -m` on this machine reports `aarch64`.
+- Symptom: `vendor/OmniHand-Pro-2025/README.md` documents Ubuntu 22.04 `x86_64`, while `uname -m` on this machine reports `aarch64`.
 - Impact: the vendor SDK can be vendored and inspected locally, but a supported local build/run result cannot be claimed yet on this host.
 - Fix: added the SDK as a git submodule for inspection and planning, but deferred build validation until Agibot's `aarch64` support is confirmed or an `x86_64` bring-up host is chosen.
 
@@ -85,7 +85,7 @@
 ### Socket-backed vendor rebuild still failed when Python wheel tooling was absent
 
 - Symptom: the root vendor CMake warned that `build`, `setuptools`, or `wheel` were missing, but `python/CMakeLists.txt` still unconditionally ran `python -m build --wheel`.
-- Impact: the socket-backed rebuild failed after the native module linked even though the repo only needed the unpacked `omnihand_2025_pkg` directory for the Phase 1 probe.
+- Impact: the socket-backed rebuild failed after the native module linked even though the repo only needed the unpacked `agibot_hand_pkg` directory for the Phase 1 probe.
 - Fix: keep the unpacked package refresh target, but make wheel generation conditional on those Python packaging modules actually being available.
 
 ### MIT controller defaults drifted across code and config

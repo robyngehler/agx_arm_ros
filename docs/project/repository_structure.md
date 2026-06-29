@@ -22,7 +22,7 @@ It is intentionally based on the repo as it exists today, not on a future rename
 | MIT tools | `src/agx_arm_mit_tools` | Debug bridges, hold validation, gravity comparison/calibration, and other non-production helpers | Keep bridge/debug/calibration entry points here so runtime ownership stays narrow. |
 | Custom ROS messages | `src/agx_arm_msgs` | Repo-owned message layer for controller and future OmniHand-specific diagnostics | Extend here for OmniHand-specific status and tactile messages. |
 | Activity coordination | `src/agx_arm_coordination` | Sprint 6 Activity-DAG coordinator, coordinator-internal performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks | Keep orchestration here; the OmniHand skill controller stays in `src/agx_arm_ctrl` and arm execution reuses the existing `both_arms`/per-arm FollowJointTrajectory path. |
-| Vendored OmniHand SDK | `vendor/Omnihand-2025-SDK` | Third-party SDK, vendor ROS examples, and upstream asset source | Keep vendored; treat as upstream input, not as the public repo contract. |
+| Vendored OmniHand SDK | `vendor/OmniHand-Pro-2025` | Third-party SDK, vendor ROS examples, and upstream asset source | Keep vendored; treat as upstream input, not as the public repo contract. |
 | Python reference workspace | `pyAgxArm` | Nero SDK, MDH tooling, and end-effector driver examples | Reuse as reference or backend support, not as the canonical ROS integration surface. |
 
 ## Documentation Layout

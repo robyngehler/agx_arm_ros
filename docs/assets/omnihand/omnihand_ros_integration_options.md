@@ -377,8 +377,8 @@ Recommended policy:
 
 Current workspace status:
 
-- the vendored submodule now tracks the workspace fork in `.gitmodules`: `https://github.com/robyngehler/Omnihand-2025-SDK.git`,
-- the canonical upstream remains `https://github.com/AgibotTech/Omnihand-2025-SDK.git` and should stay available as an `upstream` remote for sync and review,
+- the vendored submodule now tracks the workspace fork in `.gitmodules`: `https://github.com/robyngehler/OmniHand-Pro-2025.git`,
+- the canonical upstream remains `https://github.com/AgibotTech/OmniHand-Pro-2025.git` and should stay available as an `upstream` remote for sync and review,
 - local portability and runtime-safety patches should continue to land in the workspace fork first and be proposed upstream selectively.
 
 ## Documentation And Sprint Placement

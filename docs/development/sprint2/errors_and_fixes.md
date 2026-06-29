@@ -4,10 +4,10 @@
 
 ### Isolated OmniHand socket bring-up was pinned to `can0`
 
-- Symptom: the current host enumerates the attached USB CANFD adapter as `can2`, but the vendored SocketCAN path in `vendor/Omnihand-2025-SDK` bound unconditionally to `can0`.
+- Symptom: the current host enumerates the attached USB CANFD adapter as `can2`, but the vendored SocketCAN path in `vendor/OmniHand-Pro-2025` bound unconditionally to `can0`.
 - Impact: even the lowest-risk Phase 1 SDK smoke test could not target the attached adapter without renaming interfaces or patching vendor code first.
 - Fix: patched the local SocketCAN backend to honor `OMNIHAND_SOCKETCAN_IFACE` and fall back to `can0` only when the environment variable is unset.
-- Follow-up: bring the intended CANFD interface up with the correct bitrate and dbitrate, then run the vendor-info/device-info smoke test through the existing `build_phase1_socket` Python package before attempting any ROS2 bridge integration.
+- Follow-up: bring the intended CANFD interface up with the correct bitrate and dbitrate, then run the vendor-info/device-info smoke test through the `agibot_hand_pkg` built package before attempting any ROS2 bridge integration.
 
 ### Forced `gs_usb` binding created `can3`, but still not CAN FD
 
@@ -20,7 +20,7 @@
 
 - Symptom: the repo needed a concrete answer on whether the current Jetson can host a supported CAN FD driver path for real OmniHand bring-up.
 - Impact: without that answer, Sprint 2 could not distinguish between a host limitation and a current-adapter limitation.
-- Fix: built `vendor/Omnihand-2025-SDK/thirdParty/usbcanfd200_400u_2.10/usbcanfd.ko` successfully against `5.15.122-tegra` and inspected the resulting module aliases.
+- Fix: built `vendor/OmniHand-Pro-2025/thirdParty/usbcanfd200_400u_2.10/usbcanfd.ko` successfully against `5.15.122-tegra` and inspected the resulting module aliases.
 - Result: the Jetson host can build and load the vendored ZLG-style CAN FD kernel module, but the module only matches `04cc:1240` and `3068:0009`, not the currently attached `a8fa:8598` adapter.
 - Follow-up: either obtain a supplier-provided aarch64 Linux package for `a8fa:8598`, or switch the hand to a supported ZLG-style adapter and use the repo's SocketCAN path.
 

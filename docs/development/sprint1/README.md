@@ -43,7 +43,7 @@ Do not use this Sprint 1 folder as the cross-sprint source of truth.
 | Unified MoveIt config | CONFIRMED | `src/agx_arm_moveit` now exposes a single Nero-focused MoveIt package with `none` / `agx_gripper` / `revo2`. |
 | MIT controller model path | CONFIRMED | `src/agx_arm_mit_controller` auto-discovers `nero_description.urdf` and `config/nero_gravity_calibration.json`. |
 | Isaac/USD assets | PARTIALLY_AVAILABLE | Canonical `src/agx_arm_sim/agx_arm_description` contains a confirmed `nero_gripper_d435.usd`, but the promoted Isaac asset set is still incomplete. |
-| OmniHand assets and SDK | PARTIALLY_AVAILABLE | Vendor SDK is now vendored at `vendor/Omnihand-2025-SDK` with Python/C++ APIs, ROS2 node/message packages, and URDF/mesh assets; repo-side `aarch64` socket build/import and isolated probing now work, but live hardware validation is still blocked on device response. |
+| OmniHand assets and SDK | PARTIALLY_AVAILABLE | Vendor SDK is now vendored at `vendor/OmniHand-Pro-2025` with Python/C++ APIs, ROS2 node/message packages, and URDF/mesh assets; repo-side `aarch64` socket build/import and isolated probing now work, but live hardware validation is still blocked on device response. |
 | AGV/base CAD | MISSING | No STEP, STL, OBJ, or MJCF assets and no AGV description packages were found locally. |
 
 ## Relevant Changes Already In Repo
@@ -93,8 +93,8 @@ Do not use this Sprint 1 folder as the cross-sprint source of truth.
 - `src/agx_arm_mit_controller/agx_arm_mit_controller/gravity_model.py`
 - `src/agx_arm_sim/README.md`
 - `src/agx_arm_sim/agx_arm_description/README.md`
-- `vendor/Omnihand-2025-SDK/README.md`
-- `vendor/Omnihand-2025-SDK/document/zh_cn/API_ROS2.md`
+- `vendor/OmniHand-Pro-2025/README.md`
+- `vendor/OmniHand-Pro-2025/document/zh_cn/API_ROS2.md`
 - `pyAgxArm/README.md`
 - `pyAgxArm/docs/nero/nero_api.md`
 - recent git history in `agx_arm_ros`

@@ -15,7 +15,7 @@ promotion_date: 2026-05-12
 | Hardware bridge | `src/agx_arm_ctrl` | CONFIRMED | ROS2 control node, launch entry points, and the repo-owned OmniHand bridge surface used by the rest of the workspace. |
 | Removed root description path | `src/agx_arm_description` | REMOVED | Legacy duplicate package removed after canonicalizing the sim-backed package and bundling the Nero/Revo2 asset tree there. |
 | Python SDK workspace | `pyAgxArm` | CONFIRMED | Nero SDK, MDH kinematics, demos, effector support for AgileX gripper and Revo2. |
-| OmniHand-specific repo/package | `vendor/Omnihand-2025-SDK` | PARTIALLY_AVAILABLE | Vendored SDK with C++/Python APIs, ROS2 node/message packages, and URDF/mesh assets; the repo-owned bridge exists separately and the vendor ROS surface is not the public contract. |
+| OmniHand-specific repo/package | `vendor/OmniHand-Pro-2025` | PARTIALLY_AVAILABLE | Vendored SDK with C++/Python APIs, ROS2 node/message packages, and URDF/mesh assets; the repo-owned bridge exists separately and the vendor ROS surface is not the public contract. |
 | AGV/base description or CAD | workspace-wide | MISSING | No local AGV repo, CAD export, or mount package found. |
 
 ## Local Package Map
@@ -60,7 +60,7 @@ promotion_date: 2026-05-12
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf` is the canonical ROS package and package-share source for planning, control-adjacent launch flows, and simulation-oriented description assets.
 - `src/duo_body_description` is the current staging package for body-mounted Duo system assembly and description-only bringup; promote stable outputs back into the canonical packages instead of treating it as a second long-term description source.
 - The asset tree at that path is now committed directly in-repo and pruned to `nero/`, `revo2/`, and README/license material.
-- The only remaining git submodule in this workspace is `vendor/Omnihand-2025-SDK`.
+- The only remaining git submodule in this workspace is `vendor/OmniHand-Pro-2025`.
 
 ### Controller Model Source Candidate
 

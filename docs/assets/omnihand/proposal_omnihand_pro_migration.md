@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-24  
 **Target repository:** `AgibotTech/OmniHand-Pro-2025` → fork under `robyngehler/OmniHand-Pro-2025`  
-**Current repository in stack:** `robyngehler/Omnihand-2025-SDK`  
+**Current repository in stack:** `robyngehler/OmniHand-Pro-2025`  
 **Target hardware:** AGIBOT OmniHand Pro 2025 on Jetson AGX Orin, ROS 2 Humble, native SocketCAN/CAN-FD side buses
 
 ---
@@ -13,8 +13,8 @@ The current ROS bridge and helper tooling were built around the **OmniHand 2025 
 
 This is not a small rename. The target SDK changes the Python package, main SDK class, joint/motor count, tactile payload, CMake build assumptions, and likely the supported low-level CAN path. The current stack assumes:
 
-- Python import package: `omnihand_2025`
-- SDK class: `AgibotHandO10`
+- Python import package: `agibot_hand`
+- SDK class: `AgibotHandO12`
 - active command vector: 10 values
 - old joint order:
   `[thumb_roll, thumb_abad, thumb_mcp, index_abad, index_pip, middle_pip, ring_abad, ring_pip, pinky_abad, pinky_pip]`
@@ -62,9 +62,9 @@ The current bridge hardcodes the O10 shape in several places:
 - 10 active joint suffixes.
 - O10-specific right/left joint limits.
 - O10 actuator-to-active-angle conversion polynomials.
-- import package `omnihand_2025`.
-- required SDK symbols `AgibotHandO10`, `EFinger`, `EHandType`.
-- built vendor path: `vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg`.
+- import package `agibot_hand`.
+- required SDK symbols `AgibotHandO12`, `EFinger`, `EHandType`.
+- built vendor path: `vendor/OmniHand-Pro-2025/build/agibot_hand_pkg`.
 - O10-specific workaround for padded 12-value readback vectors trimmed to 10 active channels.
 - `OMNIHAND_SOCKETCAN_IFACE` environment variable is already used in our patched bridge to select `can_nero_right` / `can_nero_left`.
 
@@ -190,14 +190,14 @@ cd <agx_arm_ctrl_repo>
 git submodule status || true
 git ls-files vendor | sed -n '1,120p'
 git remote -v
-git grep -n "Omnihand-2025-SDK\|omnihand_2025\|AgibotHandO10\|build_phase1_socket"
+git grep -n "OmniHand-Pro-2025\|agibot_hand\|AgibotHandO12"
 ```
 
 #### If current SDK is a Git submodule
 
 ```bash
-git submodule deinit -f vendor/Omnihand-2025-SDK
-git rm -f vendor/Omnihand-2025-SDK
+git submodule deinit -f vendor/OmniHand-Pro-2025
+git rm -f vendor/OmniHand-Pro-2025
 
 git submodule add -b jetson-orin-socketcan \
   git@github.com:robyngehler/OmniHand-Pro-2025.git \
@@ -209,7 +209,7 @@ git submodule update --init --recursive
 #### If current SDK is vendored as normal files
 
 ```bash
-git rm -r vendor/Omnihand-2025-SDK
+git rm -r vendor/OmniHand-Pro-2025
 
 git clone git@github.com:robyngehler/OmniHand-Pro-2025.git \
   vendor/OmniHand-Pro-2025
@@ -431,7 +431,7 @@ ros2 launch agx_arm_ctrl start_omnihand_bridge.launch.py \
 Current O10 logic searches for:
 
 ```text
-vendor/Omnihand-2025-SDK/build_phase1_socket/omnihand_2025_pkg
+vendor/OmniHand-Pro-2025/build/agibot_hand_pkg
 ```
 
 Target O12-Pro logic should search for:
@@ -460,7 +460,7 @@ def _ensure_o12_pro_importable(sdk_python_dir: str = "") -> None:
     # try import agibot_hand
 ```
 
-Do not reuse the `omnihand_2025` package name.
+Do not reuse the `agibot_hand` package name.
 
 ### 5.4 Replace active joint order and limits
 
@@ -769,7 +769,7 @@ Run this before implementation, because the local stack may contain launch/confi
 cd <agx_arm_ctrl_repo>
 
 git grep -n \
-  "Omnihand-2025-SDK\|omnihand_2025\|AgibotHandO10\|omnihand_2025_pkg\|build_phase1_socket\|SDK_ACTIVE_JOINT_COUNT\|JOINT_SUFFIXES\|omnihand_gestures"
+  "OmniHand-Pro-2025\|agibot_hand\|AgibotHandO12\|agibot_hand_pkg\|SDK_ACTIVE_JOINT_COUNT\|JOINT_SUFFIXES\|omnihand_gestures"
 ```
 
 Every hit must be classified:
@@ -1297,7 +1297,7 @@ Online sources checked on 2026-06-24:
 - `https://raw.githubusercontent.com/AgibotTech/OmniHand-Pro-2025/main/src/CMakeLists.txt`
 - `https://raw.githubusercontent.com/AgibotTech/OmniHand-Pro-2025/main/python/CMakeLists.txt`
 - `https://raw.githubusercontent.com/AgibotTech/OmniHand-Pro-2025/main/src/can_bus_device/socket_can/c_can_bus_device_socket_can.cc`
-- `https://github.com/AgibotTech/Omnihand-2025-SDK`
+- `https://github.com/AgibotTech/OmniHand-Pro-2025`
 
 Uploaded local context used:
 

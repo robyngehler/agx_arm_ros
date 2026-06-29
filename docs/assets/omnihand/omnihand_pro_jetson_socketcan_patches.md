@@ -20,8 +20,8 @@ gh repo fork AgibotTech/OmniHand-Pro-2025 --clone=false
 
 # 2) In the agx_arm_ros workspace, remove the old O10 submodule
 cd ~/workspace/agx_arm_ros
-git submodule deinit -f vendor/Omnihand-2025-SDK
-git rm -f vendor/Omnihand-2025-SDK
+git submodule deinit -f vendor/OmniHand-Pro-2025
+git rm -f vendor/OmniHand-Pro-2025
 
 # 3) Add the Pro fork submodule tracking its DEFAULT branch (main).
 #    Do NOT pass -b jetson-orin-socketcan here: that branch does not exist on the
