@@ -29,13 +29,19 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   joints) for any arm_instance carrying an omnihand, namespaced like its arm controller. Shared
   `OMNIHAND_O12_ACTIVE_JOINT_SUFFIXES` + helpers in `_multi_arm_runtime`; also replaced the stale
   O10 list in `start_moveit`'s generated hand JointTrajectoryController.
-- **Architecture note (not a bug):** the controller `start_moveit` spawns under `ros2_control_node`
-  uses `mock_components/GenericSystem`, so MoveIt hand execution moves the **simulated/RViz** hand,
-  not the physical hand. The real OmniHand is driven by the bridge + `omnihand_skill_controller`
-  (semantic grasp/open/release), not by MoveIt FJT. To drive the *real* hand from MoveIt instead,
-  launch the `omnihand_follow_joint_trajectory` FJT→bridge adapter at
-  `<side>_omnihand_controller/follow_joint_trajectory` (deliberate choice; skill controller is the
-  intended real-hand path).
+- **Real hand from MoveIt (chosen path, works with the fix above):** the per-arm driver chain in the
+  MIT/duo path (`start_nero_mit_controller` → `start_single_agx_arm`) already launches the
+  `omnihand_follow_joint_trajectory` FJT→bridge adapter at
+  `<ns>/<side>_omnihand_controller/follow_joint_trajectory` when `effector_type:=omnihand` and
+  `launch_omnihand_bridge:=true`. The adapter defaults to `hand_model=o12_pro` and accepts the 12
+  active joints. Because the trajectory-execution controller name is derived from the same arm-instance
+  namespace, it matches the adapter by construction — so once move_group knows the controller (the fix
+  above), MoveIt finger plans drive the **physical** hand via the bridge. **Two runtime conditions:**
+  (1) launch with the bridge on (`launch_omnihand_bridge:=true omnihand_backend_type:=sdk`), and
+  (2) keep fake execution OFF — otherwise `start_moveit`'s mock `mock_components/GenericSystem` JTC
+  also claims `<side>_omnihand_controller/follow_joint_trajectory` and competes with the adapter.
+  The `omnihand_skill_controller` (semantic grasp/open/release) remains the higher-level real-hand path
+  used by the coordinator; both share the same bridge.
 
 ## 2026-06-29 (arm64 host validation)
 
