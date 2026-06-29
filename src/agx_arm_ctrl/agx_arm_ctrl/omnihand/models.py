@@ -122,9 +122,17 @@ O10 = HandModel(
 
 # --- OmniHand Pro 2025 (O12) -------------------------------------------------
 # Joint order and limits from the OmniHand Pro 2025 manual (§2.4) and the
-# AgibotHandO12 Python API. Limits are the documented RIGHT-hand ranges in
-# radians; only thumb_roll and thumb_abad differ between left/right (sign flip),
-# everything else is symmetric. PROVISIONAL — verify on hardware.
+# AgibotHandO12 Python API. Limits are the RIGHT-hand ranges in radians; only
+# thumb_roll and thumb_abad differ between left/right (sign flip), everything
+# else is symmetric.
+#
+# thumb_roll / thumb_abad SIGN FIX (2026-06-29): the original provisional values
+# were sign-flipped (thumb_roll [-42,0], thumb_abad [0,+54]). The bridge clamps
+# SDK targets to these limits, so positive thumb_roll commands clamped to 0 and the
+# thumb never rolled toward the palm (observed on hardware). The official vendor
+# URDF (o12_hand_description) and the vendor demo fist preset both use thumb_roll
+# [0,+42] and thumb_abad [-54,0]; aligned here so command clamps match the hand.
+# The remaining ranges are PROVISIONAL — verify on hardware.
 O12_PRO = HandModel(
     name="o12_pro",
     sdk_import_package="agibot_hand",
@@ -145,8 +153,8 @@ O12_PRO = HandModel(
         "pinky_mcp_joint",
     ),
     active_joint_min_right=(
-        _rad(-42.0),  # thumb_roll
-        _rad(0.0),    # thumb_abad
+        _rad(0.0),    # thumb_roll  (vendor URDF: [0, +42]); see note below
+        _rad(-54.0),  # thumb_abad  (vendor URDF: [-54, 0]); see note below
         _rad(-49.0),  # thumb_mcp
         _rad(-74.0),  # thumb_pip
         _rad(-15.0),  # index_abad
@@ -159,8 +167,8 @@ O12_PRO = HandModel(
         _rad(0.0),    # pinky_mcp
     ),
     active_joint_max_right=(
-        _rad(0.0),    # thumb_roll
-        _rad(54.0),   # thumb_abad
+        _rad(42.0),   # thumb_roll  (vendor URDF: [0, +42]); see note below
+        _rad(0.0),    # thumb_abad  (vendor URDF: [-54, 0]); see note below
         _rad(0.0),    # thumb_mcp
         _rad(0.0),    # thumb_pip
         _rad(15.0),   # index_abad
