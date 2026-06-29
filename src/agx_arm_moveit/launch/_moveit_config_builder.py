@@ -5,7 +5,13 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
-from _multi_arm_runtime import controller_joint_names, controller_path, resolve_arm_instances
+from _multi_arm_runtime import (
+    controller_joint_names,
+    controller_path,
+    omnihand_controller_joint_names,
+    omnihand_controller_path,
+    resolve_arm_instances,
+)
 
 ALL_ARM_TYPES = ["nero"]
 ALL_EFFECTOR_TYPES = ["none", "agx_gripper", "revo2", "omnihand"]
@@ -131,6 +137,22 @@ def _build_mit_trajectory_execution(arm_instances: list[dict[str, str]]) -> dict
             "action_ns": "follow_joint_trajectory",
             "default": len(arm_instances) == 1,
         }
+
+        # When the instance carries an OmniHand, register its FollowJointTrajectory
+        # controller too, so MoveIt can actuate the 12 active hand joints (without
+        # this, executing a hand-group plan fails with "Unable to identify any set
+        # of controllers that can actuate the specified joints"). The action server
+        # is provided by the hand's JointTrajectoryController / FJT bridge under the
+        # same `<side>_omnihand_controller/follow_joint_trajectory` name.
+        hand_controller = omnihand_controller_path(instance)
+        if hand_controller:
+            controller_names.append(hand_controller)
+            controllers[hand_controller] = {
+                "type": "FollowJointTrajectory",
+                "joints": omnihand_controller_joint_names(instance["omnihand_type"].strip()),
+                "action_ns": "follow_joint_trajectory",
+                "default": False,
+            }
 
     return {
         "moveit_controller_manager": "moveit_simple_controller_manager/MoveItSimpleControllerManager",

@@ -20,6 +20,12 @@ for entry in "${path_entries[@]}"; do
     if [[ "${entry}" == *"/conda/"* || "${entry}" == *"/miniforge"* || "${entry}" == *"/miniforge3"* || "${entry}" == *"/mambaforge"* ]]; then
         continue
     fi
+    # Drop the Python user-site bin. With PYTHONNOUSERSITE=1 (set below) a pip
+    # "cmake"/"colcon" shim in ~/.local/bin can no longer import its own module
+    # (it lives in the now-disabled user-site), so it must not shadow /usr/bin.
+    if [[ "${entry}" == "${HOME}/.local/bin" ]]; then
+        continue
+    fi
     if [[ -n "${filtered_path}" ]]; then
         filtered_path+=":"
     fi

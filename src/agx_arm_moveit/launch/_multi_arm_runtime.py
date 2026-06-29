@@ -18,6 +18,22 @@ CANONICAL_ARM_JOINTS = [
     "joint6",
     "joint7",
 ]
+# OmniHand Pro O12 active (controllable) joints, side-prefixed at use. Must match
+# agx_arm_ctrl/omnihand/models.py O12_PRO and the MoveIt SRDF omnihand_group.
+OMNIHAND_O12_ACTIVE_JOINT_SUFFIXES = [
+    "thumb_roll_joint",
+    "thumb_abad_joint",
+    "thumb_mcp_joint",
+    "thumb_pip_joint",
+    "index_abad_joint",
+    "index_mcp_joint",
+    "index_pip_joint",
+    "middle_abad_joint",
+    "middle_mcp_joint",
+    "middle_pip_joint",
+    "ring_mcp_joint",
+    "pinky_mcp_joint",
+]
 PROFILE_PREFIX_DEFAULTS = {
     DEFAULT_MOVEIT_GROUP: "",
     "right_arm": "right_arm_",
@@ -63,6 +79,24 @@ def controller_path(instance: Mapping[str, object]) -> str:
     namespace = normalize_relative_namespace(instance.get("namespace", ""))
     controller_name = _trim_string(instance.get("controller_name") or "arm_controller") or "arm_controller"
     return join_relative_namespaces(namespace, controller_name)
+
+
+def omnihand_controller_joint_names(side: str) -> list[str]:
+    """Side-prefixed O12 active hand joints (e.g. right_thumb_roll_joint)."""
+    return [f"{side}_{suffix}" for suffix in OMNIHAND_O12_ACTIVE_JOINT_SUFFIXES]
+
+
+def omnihand_controller_path(instance: Mapping[str, object]) -> str:
+    """`<ns>/<side>_omnihand_controller` for an instance carrying an OmniHand.
+
+    Empty when the instance has no ``omnihand_type``. Namespaced like the arm
+    controller so MoveIt's controller list matches the hand FJT action server.
+    """
+    side = _trim_string(instance.get("omnihand_type"))
+    if not side:
+        return ""
+    namespace = normalize_relative_namespace(instance.get("namespace", ""))
+    return join_relative_namespaces(namespace, f"{side}_omnihand_controller")
 
 
 def parse_arm_instances(raw_value: object) -> list[Mapping[str, object]]:

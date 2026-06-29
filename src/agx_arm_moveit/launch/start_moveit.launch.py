@@ -28,6 +28,7 @@ from _moveit_config_builder import (
     ALL_REVO2_TYPES,
     build_moveit_config,
 )
+from _multi_arm_runtime import omnihand_controller_joint_names
 
 
 def _build_ros2_controllers_file(
@@ -123,18 +124,7 @@ def _build_ros2_controllers_file(
         config[cm_node]["ros__parameters"].update(cm_controllers)
         config[(f"/{ns}/{ctrl_name}" if ns else f"/{ctrl_name}")] = {
             "ros__parameters": {
-                "joints": [
-                    f"{side}_thumb_roll_joint",
-                    f"{side}_thumb_abad_joint",
-                    f"{side}_thumb_mcp_joint",
-                    f"{side}_index_abad_joint",
-                    f"{side}_index_pip_joint",
-                    f"{side}_middle_pip_joint",
-                    f"{side}_ring_abad_joint",
-                    f"{side}_ring_pip_joint",
-                    f"{side}_pinky_abad_joint",
-                    f"{side}_pinky_pip_joint",
-                ],
+                "joints": omnihand_controller_joint_names(side),
                 "command_interfaces": ["position"],
                 "state_interfaces": ["position", "velocity"],
             },
