@@ -23,20 +23,24 @@ initial_positions:
   left_thumb_roll_joint: 0.0
   left_thumb_abad_joint: 0.0
   left_thumb_mcp_joint: 0.0
+  left_thumb_pip_joint: 0.0
   left_index_abad_joint: 0.0
+  left_index_mcp_joint: 0.0
   left_index_pip_joint: 0.0
+  left_middle_abad_joint: 0.0
+  left_middle_mcp_joint: 0.0
   left_middle_pip_joint: 0.0
-  left_ring_abad_joint: 0.0
-  left_ring_pip_joint: 0.0
-  left_pinky_abad_joint: 0.0
-  left_pinky_pip_joint: 0.0
+  left_ring_mcp_joint: 0.0
+  left_pinky_mcp_joint: 0.0
   right_thumb_roll_joint: 0.0
   right_thumb_abad_joint: 0.0
   right_thumb_mcp_joint: 0.0
+  right_thumb_pip_joint: 0.0
   right_index_abad_joint: 0.0
+  right_index_mcp_joint: 0.0
   right_index_pip_joint: 0.0
+  right_middle_abad_joint: 0.0
+  right_middle_mcp_joint: 0.0
   right_middle_pip_joint: 0.0
-  right_ring_abad_joint: 0.0
-  right_ring_pip_joint: 0.0
-  right_pinky_abad_joint: 0.0
-  right_pinky_pip_joint: 0.0
+  right_ring_mcp_joint: 0.0
+  right_pinky_mcp_joint: 0.0

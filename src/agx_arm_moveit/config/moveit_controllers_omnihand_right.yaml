@@ -23,12 +23,14 @@ moveit_simple_controller_manager:
       - right_thumb_roll_joint
       - right_thumb_abad_joint
       - right_thumb_mcp_joint
+      - right_thumb_pip_joint
       - right_index_abad_joint
+      - right_index_mcp_joint
       - right_index_pip_joint
+      - right_middle_abad_joint
+      - right_middle_mcp_joint
       - right_middle_pip_joint
-      - right_ring_abad_joint
-      - right_ring_pip_joint
-      - right_pinky_abad_joint
-      - right_pinky_pip_joint
+      - right_ring_mcp_joint
+      - right_pinky_mcp_joint
     action_ns: follow_joint_trajectory
     default: true

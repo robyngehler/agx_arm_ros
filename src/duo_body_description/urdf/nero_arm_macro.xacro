@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/omnihand/urdf/xacro/hand.xacro"/>
+  <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/omnihand/urdf/xacro_pro/hand.xacro"/>
 
   <xacro:macro name="nero_arm" params="prefix">
     <link name="${prefix}base_link">
