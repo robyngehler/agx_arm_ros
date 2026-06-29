@@ -4,6 +4,39 @@ Record concrete errors and their fixes here as the hand skill controller, perfor
 coordinator come up — e.g. tactile stream gaps, grasp-threshold miscalibration, `both_arms`
 joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch problems.
 
+## 2026-06-29 (O12 MoveIt execution + build env)
+
+### `colcon build` wrapper still failed `agx_arm_msgs` with "No module named 'cmake'"
+
+- Symptom: even via `scripts/colcon_build_system_python.sh`, `agx_arm_msgs` died at
+  `/home/user/.local/bin/cmake` → `ModuleNotFoundError: No module named 'cmake'`. A bare
+  `colcon build` instead failed the *python* packages with `option --editable not recognized`.
+- Cause: one root, two faces. The wrapper sets `PYTHONNOUSERSITE=1` (fixes the too-new `~/.local`
+  setuptools that breaks `develop --editable`), but a pip `cmake` shim in `~/.local/bin` was still
+  first on PATH and, with user-site disabled, could no longer import its own `cmake` module → it
+  shadowed `/usr/bin/cmake` and crashed. Bare colcon had the opposite halves (cmake shim worked,
+  setuptools broke the python packages).
+- Fix: the wrapper now also drops `$HOME/.local/bin` from PATH (alongside conda/miniforge), so
+  `/usr/bin/cmake` wins. All of msgs/ctrl/coordination/mit_controller/mit_demos build clean.
+
+### MoveIt hand execution: "Unable to identify any set of controllers that can actuate ... [right_*_mcp_joint]"
+
+- Symptom (duo, after the O12 description migration): planning the hand group succeeds, but
+  execution aborts — move_group's only known controller is `arm_controller` (right_arm_joint1..7).
+- Cause: the MIT/duo trajectory-execution config (`_build_mit_trajectory_execution`) registered
+  only the per-arm controllers; no controller covered the 12 hand joints.
+- Fix: register a `<ns>/<side>_omnihand_controller` FollowJointTrajectory controller (12 active O12
+  joints) for any arm_instance carrying an omnihand, namespaced like its arm controller. Shared
+  `OMNIHAND_O12_ACTIVE_JOINT_SUFFIXES` + helpers in `_multi_arm_runtime`; also replaced the stale
+  O10 list in `start_moveit`'s generated hand JointTrajectoryController.
+- **Architecture note (not a bug):** the controller `start_moveit` spawns under `ros2_control_node`
+  uses `mock_components/GenericSystem`, so MoveIt hand execution moves the **simulated/RViz** hand,
+  not the physical hand. The real OmniHand is driven by the bridge + `omnihand_skill_controller`
+  (semantic grasp/open/release), not by MoveIt FJT. To drive the *real* hand from MoveIt instead,
+  launch the `omnihand_follow_joint_trajectory` FJT→bridge adapter at
+  `<side>_omnihand_controller/follow_joint_trajectory` (deliberate choice; skill controller is the
+  intended real-hand path).
+
 ## 2026-06-29 (arm64 host validation)
 
 ### `colcon build` fails with `option --uninstall not recognized`
