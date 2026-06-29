@@ -1,0 +1,48 @@
+# OmniHand semantic skill catalogue — single source of truth for the
+# skill_name -> backend motion + target preset mapping used by the
+# omnihand_skill_controller. The PUBLIC layer (activity graph, action metadata)
+# only ever names skill_name; this file owns the vendor-side mapping, so the
+# vendor preset can be recalibrated without touching any activity graph.
+#
+# target_preset names a pose in the model's gesture config
+# (config/omnihand_pro_gestures.yaml for o12_pro). MVP NOTE: the only calibrated
+# O12 presets today are `zero` and `fist_vendor_demo`, so open/release go to
+# `zero` and grasps close toward `fist_vendor_demo` until tactile contact stops
+# them. Once a flat `open` and calibrated glass/bottle grasp poses are measured
+# on hardware, point the skills at those names here — the skill_name stays the
+# same end to end. See docs/development/sprint6/planning/hand_skill_backend_mapping.md.
+
+omnihand_skills:
+  open_hand:
+    motion: open
+    target_preset: zero
+  release_glass:
+    motion: open
+    target_preset: zero
+  release_bottle:
+    motion: open
+    target_preset: zero
+  grasp_glass_until_contact:
+    motion: close_until_contact
+    target_preset: fist_vendor_demo
+  grasp_bottle_until_contact:
+    motion: close_until_contact
+    target_preset: fist_vendor_demo
+  stop_hand:
+    motion: freeze
+    target_preset: null
+
+# Loop + monitoring tunables. Per-object contact_threshold / stable_samples /
+# timeout_sec come from the action metadata, NOT from here. All values below are
+# placeholders to calibrate on the Pro hardware (proposal §9.2).
+defaults:
+  control_rate_hz: 20.0
+  close_step_rad: 0.05        # bounded per-cycle step toward the close target
+  open_step_rad: 0.08         # bounded per-cycle step toward the open target
+  open_tolerance_rad: 0.06    # joints within this of the open preset => open reached
+  open_settle_timeout_sec: 3.0
+  contact_aggregation: mean   # mean | max | min over the matched contact_sensors
+  normal_force_offset: 1      # per-finger tactile block index of normal force
+  tactile_stale_sec: 1.0      # tactile older than this during a grasp => fault
+  slip_warn_factor: 0.5       # warn when held contact drops below factor*confirmed
+  slip_critical_factor: 0.2   # on_contact_loss: abort when below factor*confirmed

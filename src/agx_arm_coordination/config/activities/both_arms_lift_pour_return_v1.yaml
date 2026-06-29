@@ -1,0 +1,13 @@
+# Mini graph (proposal §9 Step 4): functional-trajectory slice. Assumes the arms
+# already hold the objects at Init_Working. Cap-opener (right arm only), align,
+# pour, separate -- all recorded trajectories, run sequentially. These must be
+# taught on hardware first (their catalogue metadata has no waypoints yet), so
+# this graph reports a clean NotTaught failure until taught (or runs with
+# arm_dry_run:=true to validate ordering).
+activity: both_arms_lift_pour_return_v1
+nodes:
+  - { action_no: 10, action_id: right_arm_open_bottle }
+  - { action_no: 20, action_id: both_arms_align_glass_bottle }
+  - { action_no: 30, action_id: both_arms_pour_profile_v1 }
+  - { action_no: 40, action_id: both_arms_separate_glass_bottle }
+edges: [ [10,20],[20,30],[30,40] ]

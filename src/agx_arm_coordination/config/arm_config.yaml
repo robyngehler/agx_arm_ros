@@ -1,0 +1,77 @@
+# Arm executor config — joint sets / action servers per planning group, named
+# anchor poses, and timing defaults. Used by ArmTrajectoryPlanner to turn a
+# Trajectory catalogue action into a FollowJointTrajectory goal.
+#
+# PLACEHOLDERS to confirm on the Duo runtime (proposal §9 Step 3):
+#   - action_server names must match the duo both_arms / per-arm controllers.
+#   - joint_names must match those controllers' joint order (Nero arm = 7 DoF,
+#     prefixed left_arm_/right_arm_ per the SRDF both_arms group). both_arms is
+#     left joints then right joints, and the to_pose list order [..._L, ..._R]
+#     must match that concatenation.
+#   - every anchor pose below is all-zeros today; measure the real joint vectors
+#     on hardware and record them in hefeweizen_validation_log.md before running
+#     with objects. Until then, run the coordinator with arm_dry_run:=true to
+#     exercise scheduling/routing without moving the arms.
+
+arm_executor:
+  groups:
+    both_arms:
+      action_server: both_arms_controller/follow_joint_trajectory
+      joint_names:
+        - left_arm_joint1
+        - left_arm_joint2
+        - left_arm_joint3
+        - left_arm_joint4
+        - left_arm_joint5
+        - left_arm_joint6
+        - left_arm_joint7
+        - right_arm_joint1
+        - right_arm_joint2
+        - right_arm_joint3
+        - right_arm_joint4
+        - right_arm_joint5
+        - right_arm_joint6
+        - right_arm_joint7
+    left_arm:
+      action_server: left_arm_controller/follow_joint_trajectory
+      joint_names:
+        - left_arm_joint1
+        - left_arm_joint2
+        - left_arm_joint3
+        - left_arm_joint4
+        - left_arm_joint5
+        - left_arm_joint6
+        - left_arm_joint7
+    right_arm:
+      action_server: right_arm_controller/follow_joint_trajectory
+      joint_names:
+        - right_arm_joint1
+        - right_arm_joint2
+        - right_arm_joint3
+        - right_arm_joint4
+        - right_arm_joint5
+        - right_arm_joint6
+        - right_arm_joint7
+
+  defaults:
+    base_move_time_sec: 4.0    # nominal move duration at velocity_scaling 1.0
+    min_move_time_sec: 1.5     # floor so slow-scaled moves stay safe
+
+  # Named anchor poses (per-arm 7-DoF vectors). ALL ZEROS = placeholder.
+  poses:
+    Idle_L:         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Idle_R:         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Pre_Grip_L:     [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Pre_Grip_R:     [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    grasp_L:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    grasp_R:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Post_Grip_L:    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Post_Grip_R:    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Init_Working_L: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Init_Working_R: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Pre_Place_L:    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Pre_Place_R:    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    place_L:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    place_R:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Post_Place_L:   [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    Post_Place_R:   [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

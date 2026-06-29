@@ -1,0 +1,14 @@
+# Mini graph (proposal §9 Step 4): hands only — open, tactile grasp, release,
+# as sync_flag barrier pairs on the two independent hands. No arm motion.
+# NOTE: the grasp nodes (20/21) need real tactile contact to confirm, so this
+# graph completes only against the SDK backend on hardware; with the mock
+# backend the grasp times out (use hands_open_release_v1 for a mock smoke test).
+activity: hands_open_close_release_v1
+nodes:
+  - { action_no: 10, action_id: left_hand_open,            sync_flag: 1 }
+  - { action_no: 11, action_id: right_hand_open,           sync_flag: 1 }
+  - { action_no: 20, action_id: left_hand_grasp_glass,     sync_flag: 2 }
+  - { action_no: 21, action_id: right_hand_grasp_bottle,   sync_flag: 2 }
+  - { action_no: 30, action_id: left_hand_release_glass,   sync_flag: 3 }
+  - { action_no: 31, action_id: right_hand_release_bottle, sync_flag: 3 }
+edges: [ [10,20],[11,21],[20,30],[21,31] ]

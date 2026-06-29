@@ -20,9 +20,19 @@
 - Safest fallback if a hand loses contact during the pour (warn vs abort)?
 - Pour angle and duration for a visually successful but low-risk first demo?
 
-## Design questions to settle during implementation
+## Design questions settled during implementation (2026-06-29)
 
-- `contact_score` aggregation: mean vs max vs per-sensor min over `contact_sensors`?
-- Does the `both_arms` executor reuse the existing FJT action as-is, or does the performer need a
-  thin adapter for catalogue metadata (velocity/acceleration scaling)?
-- Event schema: reuse one `RobotEvent` for coordinator + executors, or per-layer event types?
+- `contact_score` aggregation → **configurable, default `mean`** over the matched `contact_sensors`
+  (`mean | max | min`), set via `defaults.contact_aggregation` in `config/omnihand_skills.yaml` or
+  per-action `metadata.contact_aggregation`. `min` ("all sensors must touch") is available for a
+  stricter grasp once calibrated.
+- `both_arms` executor → **reuses the existing FollowJointTrajectory path via a thin adapter**
+  (`arm_executor.ArmTrajectoryPlanner`): catalogue metadata (anchor `to_pose` or recorded
+  `waypoints`, `velocity_scaling`) is turned into the FJT goal; no second arm execution path.
+- Event schema → **one shared `RobotEvent`** for the coordinator and every executor (skill
+  controller, arm path), streamed on each node's `~/events`.
+
+### Still open / deferred
+
+- MoveIt collision-aware planning between anchor poses (the MVP commands the endpoint joint vector
+  and lets the controller interpolate; collision-aware anchor-to-anchor planning is a later slice).

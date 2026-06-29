@@ -1,0 +1,11 @@
+# Smallest end-to-end coordinator smoke test: open then release both hands, as
+# sync_flag barrier pairs. No grasp, so it completes against BOTH the mock and
+# SDK backends — use it to validate coordinator load/validate/dispatch, sync
+# barriers, and resource independence of the two hands without hardware contact.
+activity: hands_open_release_v1
+nodes:
+  - { action_no: 10, action_id: left_hand_open,            sync_flag: 1 }
+  - { action_no: 11, action_id: right_hand_open,           sync_flag: 1 }
+  - { action_no: 20, action_id: left_hand_release_glass,   sync_flag: 2 }
+  - { action_no: 21, action_id: right_hand_release_bottle, sync_flag: 2 }
+edges: [ [10,20],[11,21] ]

@@ -1,0 +1,157 @@
+# Shared action catalogue + resources for the Hefeweizen demo (sprint 6).
+# Canonical machine-readable form of docs/development/sprint6/planning/
+# hefeweizen_activity_graph.md. The MVP YAML store behind the db_bridge-style
+# contract (get_action_detail / get_activity_plan / validate_activity).
+#
+# Hand actions carry ONLY the semantic skill_name (never a vendor gesture_id);
+# the omnihand_skill_controller owns skill_name -> backend preset. Arm actions
+# are either MoveIt-planned anchor transitions (to_pose) or recorded functional
+# trajectories (source: recorded, taught on hardware).
+#
+# Resources are documented here for reference; conflict serialization is encoded
+# in graph_model.ROBOT_UNITS (both_arms conflicts with left_arm and right_arm).
+resources:
+  R_LEFT_ARM:   { robots: [left_arm] }
+  R_RIGHT_ARM:  { robots: [right_arm] }
+  R_BOTH_ARMS:  { robots: [both_arms] }
+  R_LEFT_HAND:  { robots: [left_hand] }
+  R_RIGHT_HAND: { robots: [right_hand] }
+  # CAN-bus tokens deferred until sprint-5 bus-load validation shows contention.
+
+actions:
+  # --- Hand skills (Gripper) ------------------------------------------------
+  left_hand_open:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: open_hand
+      timeout_sec: 3.0
+      completion_policy: { on_success: finish_when_open }
+  right_hand_open:
+    actiontype_id: Gripper
+    robot_id: right_hand
+    metadata:
+      skill_name: open_hand
+      timeout_sec: 3.0
+      completion_policy: { on_success: finish_when_open }
+
+  left_hand_grasp_glass:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: grasp_glass_until_contact
+      object: glass
+      contact_sensors: [thumb, index, middle]
+      contact_threshold: 0.35       # placeholder, calibrate on hardware
+      stable_samples: 5
+      timeout_sec: 4.0
+      completion_policy: { on_success: hold_internal, passive_contact_monitoring: true }
+      fallback_policy:   { on_cancel: stop_and_hold, on_timeout: stop_and_hold, on_contact_loss: abort_activity }
+
+  right_hand_grasp_bottle:
+    actiontype_id: Gripper
+    robot_id: right_hand
+    metadata:
+      skill_name: grasp_bottle_until_contact
+      object: bottle
+      contact_sensors: [thumb, index, middle, ring]
+      contact_threshold: 0.35       # placeholder, calibrate on hardware
+      stable_samples: 5
+      timeout_sec: 4.0
+      completion_policy: { on_success: hold_internal, passive_contact_monitoring: true }
+      fallback_policy:   { on_cancel: stop_and_hold, on_timeout: stop_and_hold, on_contact_loss: abort_activity }
+
+  left_hand_release_glass:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: release_glass
+      object: glass
+      timeout_sec: 3.0
+      completion_policy: { on_success: finish_when_open }
+      fallback_policy:   { on_cancel: stop_motion, on_timeout: report_failure }
+  right_hand_release_bottle:
+    actiontype_id: Gripper
+    robot_id: right_hand
+    metadata:
+      skill_name: release_bottle
+      object: bottle
+      timeout_sec: 3.0
+      completion_policy: { on_success: finish_when_open }
+      fallback_policy:   { on_cancel: stop_motion, on_timeout: report_failure }
+
+  # --- Arm transitions (Trajectory, MoveIt-planned anchor endpoints) --------
+  both_arms_home_to_pregrasp:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [Idle_L, Idle_R], to_pose: [Pre_Grip_L, Pre_Grip_R],
+                velocity_scaling: 0.15, acceleration_scaling: 0.15 }
+  both_arms_pregrasp_to_grasp:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [Pre_Grip_L, Pre_Grip_R], to_pose: [grasp_L, grasp_R],
+                velocity_scaling: 0.10, acceleration_scaling: 0.10 }
+  both_arms_lift_to_post_grip:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [grasp_L, grasp_R], to_pose: [Post_Grip_L, Post_Grip_R],
+                velocity_scaling: 0.10, acceleration_scaling: 0.10 }
+  both_arms_to_init_working:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [Post_Grip_L, Post_Grip_R], to_pose: [Init_Working_L, Init_Working_R],
+                velocity_scaling: 0.15, acceleration_scaling: 0.15 }
+  both_arms_working_to_preplace:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [Init_Working_L, Init_Working_R], to_pose: [Pre_Place_L, Pre_Place_R],
+                velocity_scaling: 0.15, acceleration_scaling: 0.15 }
+  both_arms_preplace_to_place:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [Pre_Place_L, Pre_Place_R], to_pose: [place_L, place_R],
+                velocity_scaling: 0.10, acceleration_scaling: 0.10 }
+  both_arms_retract_to_post_place:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [place_L, place_R], to_pose: [Post_Place_L, Post_Place_R],
+                velocity_scaling: 0.10, acceleration_scaling: 0.10 }
+  both_arms_retract_home:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: moveit_planned,
+                from_pose: [Post_Place_L, Post_Place_R], to_pose: [Idle_L, Idle_R],
+                velocity_scaling: 0.15, acceleration_scaling: 0.15 }
+
+  # --- Arm functional trajectories (Trajectory, recorded; teach on hardware) -
+  right_arm_open_bottle:
+    actiontype_id: Trajectory
+    robot_id: right_arm
+    metadata: { planning_group: right_arm, source: recorded,
+                entry_pose: Init_Working_R,
+                velocity_scaling: 0.10, acceleration_scaling: 0.10,
+                description: Bottle cap opener engagement -- fixed station trajectory }
+  both_arms_align_glass_bottle:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: recorded,
+                entry_pose: [Init_Working_L, Init_Working_R],
+                velocity_scaling: 0.10, acceleration_scaling: 0.10 }
+  both_arms_pour_profile_v1:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: recorded,
+                velocity_scaling: 0.10, acceleration_scaling: 0.10,
+                description: Coordinated bottle tilt and glass stabilization }
+  both_arms_separate_glass_bottle:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata: { planning_group: both_arms, source: recorded,
+                velocity_scaling: 0.10, acceleration_scaling: 0.10 }

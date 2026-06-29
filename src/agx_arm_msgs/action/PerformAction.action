@@ -1,0 +1,26 @@
+# Run one catalogue action (the unit the coordinator's performer dispatches).
+#
+# Repo-owned, agx_arm-centric. Both hand skills (actiontype_id=Gripper) and arm
+# trajectories (actiontype_id=Trajectory) ride on this single action; the
+# semantic detail lives in metadata_json so the public contract stays stable
+# while skill/trajectory parameters are calibrated. Hand skills carry only the
+# semantic skill_name in metadata_json (never a vendor gesture_id); the OmniHand
+# skill controller owns the skill_name -> backend preset mapping.
+
+# --- Goal ---
+string action_id          # catalogue action id, e.g. left_hand_grasp_glass
+string actiontype_id      # Gripper | Trajectory
+string robot_id           # left_hand | right_hand | both_arms | left_arm | right_arm
+string activity_id        # owning activity (for events/diagnostics; may be empty)
+string metadata_json      # JSON object: skill_name, contact_*, *_policy, poses, scaling, ...
+---
+# --- Result ---
+bool success
+string message
+string final_state        # controller end state, e.g. GRASP_HOLDING / IDLE / FAILED
+float32 final_contact_score
+---
+# --- Feedback ---
+string state              # current executor state
+float32 progress          # 0.0 .. 1.0 best-effort
+float32 contact_score     # current aggregated tactile contact score (hand skills)

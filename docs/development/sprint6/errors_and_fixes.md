@@ -1,9 +1,33 @@
 # Sprint 6 — Errors & Fixes
 
-Implementation has not started yet (planning sprint). Record concrete errors and their fixes here as
-the hand skill controller, performer routing, and coordinator come up — e.g. tactile stream gaps,
-grasp-threshold miscalibration, `both_arms` joint-ordering issues, coordinator resource deadlocks, or
-sync-group dispatch problems.
+Record concrete errors and their fixes here as the hand skill controller, performer routing, and
+coordinator come up — e.g. tactile stream gaps, grasp-threshold miscalibration, `both_arms`
+joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch problems.
+
+## 2026-06-29
+
+### Sprint-6 orchestration + hand-skill layer landed (development host only)
+
+- Implemented the full sprint-6 functionality slice: `agx_arm_msgs`
+  PerformAction/PerformActivity/RobotEvent; `omnihand_skill_controller` (+ `omnihand/skills.py`,
+  `config/omnihand_skills.yaml`) in `agx_arm_ctrl`; and the new `agx_arm_coordination` package
+  (graph model, scheduler, resource model, YAML loader, performer routing, arm executor, coordinator
+  node, configs, launch, tests).
+- Validation boundary (no ROS / no arm64 host here): `py_compile` clean on all new files; the
+  graph/scheduler/resource/sync logic was exercised directly on the full `hefeweizen_pour_v1` graph
+  (drains in 15 ticks, sync pairs dispatch together, no in-batch resource clash). `colcon
+  build/test` and the `pytest` suites must still run on the Jetson/Duo host (PyYAML + pytest are
+  absent on the Windows dev host). Tracked in `planning/hefeweizen_validation_log.md`.
+- Gotcha for the next person — **mock backend tactile is all zeros**, so a tactile-confirmed grasp
+  (`grasp_*_until_contact`) cannot reach its threshold and will time out under `backend_type:=mock`.
+  For dev/CI without hardware, use `hands_open_release_v1` (no grasp) and `arm_dry_run:=true` to
+  exercise the coordinator end to end; real grasps need the SDK backend on the Pro hand.
+- Determinism choices (per the sprint direction): skills map to the only calibrated O12 presets today
+  (`open`/release → `zero`, grasps close toward `fist_vendor_demo` until contact); arm transitions
+  command the named anchor-pose endpoint and let the controller interpolate (collision-aware MoveIt
+  between anchors deferred); functional trajectories are recorded and start only from their designated
+  anchor entry pose. Presets, thresholds, anchor poses, and recorded waypoints are placeholders to
+  calibrate/teach on hardware.
 
 ## 2026-06-25
 

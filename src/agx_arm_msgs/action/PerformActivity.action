@@ -1,0 +1,24 @@
+# Run a named activity graph end to end (the coordinator's public entry point).
+#
+# Repo-owned, agx_arm-centric. The coordinator loads the named activity graph
+# (YAML-backed for the MVP), validates it, then schedules and dispatches each
+# node as a PerformAction through its internal performer, enforcing resource
+# tokens and sync-flag barrier groups.
+
+# --- Goal ---
+string activity_id        # e.g. hefeweizen_pour_v1
+string metadata_json      # optional run-time overrides as a JSON object; may be empty
+---
+# --- Result ---
+bool success
+string message
+int32 completed_nodes
+int32 total_nodes
+string failed_action_id   # empty on success; the catalogue action that aborted the run
+---
+# --- Feedback ---
+int32 action_no           # most recent node that changed state
+string action_id
+string state              # running | completed | failed
+int32 completed_nodes
+int32 total_nodes

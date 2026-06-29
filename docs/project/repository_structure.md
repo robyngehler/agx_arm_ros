@@ -1,7 +1,7 @@
 # Repository Structure
 
 status: ACTIVE_SPRINT3_4_DUO_SYSTEM_STAGING
-last_updated: 2026-05-28
+last_updated: 2026-06-29
 
 ## Purpose
 
@@ -21,6 +21,7 @@ It is intentionally based on the repo as it exists today, not on a future rename
 | MIT demos | `src/agx_arm_mit_demos` | Interactive leader recording, saved-trajectory playback, and wakeword teach-and-trigger workflows | Keep app-layer demo entry points here instead of the controller runtime package. |
 | MIT tools | `src/agx_arm_mit_tools` | Debug bridges, hold validation, gravity comparison/calibration, and other non-production helpers | Keep bridge/debug/calibration entry points here so runtime ownership stays narrow. |
 | Custom ROS messages | `src/agx_arm_msgs` | Repo-owned message layer for controller and future OmniHand-specific diagnostics | Extend here for OmniHand-specific status and tactile messages. |
+| Activity coordination | `src/agx_arm_coordination` | Sprint 6 Activity-DAG coordinator, coordinator-internal performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks | Keep orchestration here; the OmniHand skill controller stays in `src/agx_arm_ctrl` and arm execution reuses the existing `both_arms`/per-arm FollowJointTrajectory path. |
 | Vendored OmniHand SDK | `vendor/Omnihand-2025-SDK` | Third-party SDK, vendor ROS examples, and upstream asset source | Keep vendored; treat as upstream input, not as the public repo contract. |
 | Python reference workspace | `pyAgxArm` | Nero SDK, MDH tooling, and end-effector driver examples | Reuse as reference or backend support, not as the canonical ROS integration surface. |
 
@@ -64,7 +65,8 @@ Treat these directories as generated or runtime-managed:
 5. Keep the integrated MIT action server and `/control/move_mit` ownership in `src/agx_arm_mit_controller`.
 6. Put demo applications and workflow tooling under `src/agx_arm_mit_demos` or `src/agx_arm_mit_tools` rather than widening the controller runtime package.
 7. Generalize description and launch surfaces to be arm-count-aware from the start; the first executable Duo target is `body + right arm + right OmniHand`, then mirror to the left side.
-8. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
+8. Keep Sprint 6 task orchestration in `src/agx_arm_coordination` (coordinator + performer routing + YAML graph/catalogue loader); do not move the OmniHand skill controller out of `src/agx_arm_ctrl` or fork a second arm execution path for it.
+9. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
 
 ## Current Deliverables Anchored To This Structure
 

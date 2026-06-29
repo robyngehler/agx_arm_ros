@@ -1,0 +1,34 @@
+# Canonical full demo graph (hefeweizen_activity_graph.md §Activity).
+# Hands open/grasp/release run as sync_flag barrier pairs (independent hands);
+# arm transitions are MoveIt-planned anchor moves; phase-3 functional motions are
+# recorded (teach on hardware before running with objects).
+activity: hefeweizen_pour_v1
+nodes:
+  # Phase 1: position to grasp
+  - { action_no: 10, action_id: both_arms_home_to_pregrasp }
+  - { action_no: 20, action_id: left_hand_open,           sync_flag: 1 }
+  - { action_no: 21, action_id: right_hand_open,          sync_flag: 1 }
+  - { action_no: 30, action_id: both_arms_pregrasp_to_grasp }
+  # Phase 2: grasp and lift
+  - { action_no: 40, action_id: left_hand_grasp_glass,    sync_flag: 2 }
+  - { action_no: 41, action_id: right_hand_grasp_bottle,  sync_flag: 2 }
+  - { action_no: 50, action_id: both_arms_lift_to_post_grip }
+  - { action_no: 55, action_id: both_arms_to_init_working }
+  # Phase 3: functional trajectories (recorded)
+  - { action_no: 60, action_id: right_arm_open_bottle }
+  - { action_no: 70, action_id: both_arms_align_glass_bottle }
+  - { action_no: 80, action_id: both_arms_pour_profile_v1 }
+  - { action_no: 90, action_id: both_arms_separate_glass_bottle }
+  # Phase 4: place and retract
+  - { action_no: 100, action_id: both_arms_working_to_preplace }
+  - { action_no: 110, action_id: both_arms_preplace_to_place }
+  - { action_no: 120, action_id: left_hand_release_glass,   sync_flag: 3 }
+  - { action_no: 121, action_id: right_hand_release_bottle, sync_flag: 3 }
+  - { action_no: 130, action_id: both_arms_retract_to_post_place }
+  - { action_no: 140, action_id: both_arms_retract_home }
+edges:
+  [ [10,20],[10,21],[20,30],[21,30],
+    [30,40],[30,41],[40,50],[41,50],
+    [50,55],[55,60],[60,70],[70,80],[80,90],
+    [90,100],[100,110],[110,120],[110,121],[120,130],[121,130],
+    [130,140] ]

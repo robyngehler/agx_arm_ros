@@ -16,11 +16,13 @@ Use the current workspace layout as the implementation truth during the active S
 - `src/agx_arm_mit_demos`: interactive recorder, playback, and wakeword demo workflows around the MIT stack
 - `src/agx_arm_mit_tools`: debug bridges, hold validation, and calibration helpers around the MIT stack
 - `src/agx_arm_msgs`: repo-owned ROS messages
+- `src/agx_arm_coordination`: Sprint 6 Activity-DAG coordinator, coordinator-internal performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks
 - `vendor/Omnihand-2025-SDK`: upstream SDK input, not the public repo contract
 
 ## Current Placement Rules
 
-- keep the OmniHand bridge in `src/agx_arm_ctrl` for now
+- keep the OmniHand bridge and the OmniHand skill controller in `src/agx_arm_ctrl` for now
+- keep Sprint 6 task orchestration (coordinator, performer routing, YAML graph/catalogue loader) in `src/agx_arm_coordination`; route `Trajectory+both_arms` through the existing FollowJointTrajectory path rather than forking arm execution
 - keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface
 - do not fork a second MoveIt package for the same Nero or Duo baseline
 - keep production MIT execution ownership in `src/agx_arm_mit_controller`

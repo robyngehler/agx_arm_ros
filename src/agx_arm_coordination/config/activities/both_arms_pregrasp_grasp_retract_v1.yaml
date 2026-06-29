@@ -1,0 +1,14 @@
+# Mini graph (proposal §9 Step 4): arm + hand grasp slice. Home->Pre_Grip, open
+# hands, linear approach, tactile grasp pair, linear lift. Exercises arm/hand
+# resource serialization (both_arms serializes against the per-arm tokens) and
+# the grasp barrier. Run with arm_dry_run:=true to test scheduling without arms.
+activity: both_arms_pregrasp_grasp_retract_v1
+nodes:
+  - { action_no: 10, action_id: both_arms_home_to_pregrasp }
+  - { action_no: 20, action_id: left_hand_open,           sync_flag: 1 }
+  - { action_no: 21, action_id: right_hand_open,          sync_flag: 1 }
+  - { action_no: 30, action_id: both_arms_pregrasp_to_grasp }
+  - { action_no: 40, action_id: left_hand_grasp_glass,    sync_flag: 2 }
+  - { action_no: 41, action_id: right_hand_grasp_bottle,  sync_flag: 2 }
+  - { action_no: 50, action_id: both_arms_lift_to_post_grip }
+edges: [ [10,20],[10,21],[20,30],[21,30],[30,40],[30,41],[40,50],[41,50] ]

@@ -1,0 +1,604 @@
+#!/usr/bin/env python3
+"""OmniHand skill controller — semantic hand skills above the bridge.
+
+This node (one per side, launched as ``/left_hand/omnihand_skill_controller`` /
+``/right_hand/...``) turns a *semantic* ``skill_name`` into a vendor-agnostic
+motion confirmed by tactile feedback, and holds/releases according to policy.
+It is sprint 6 "missing piece 1+2" and the bottom of the coordinator stack.
+
+Contract (see docs/development/sprint6/planning/hand_skill_backend_mapping.md):
+
+- the public layer carries only ``skill_name``; the ``skill_name -> backend
+  motion + target preset`` mapping lives in ``config/omnihand_skills.yaml`` and
+  in :mod:`agx_arm_ctrl.omnihand.skills`. Swapping the vendor mapping must not
+  change any activity graph.
+- behaviour is data: ``completion_policy`` / ``fallback_policy`` are interpreted
+  here, never sent to the SDK.
+- the controller does NOT open its own SDK session. It commands the existing
+  OmniHand bridge over the shared ``control/joint_states`` topic and consumes
+  ``feedback/omnihand/{tactile_raw,status,joint_states}`` — so it works against
+  both the mock and the SDK backend, per the bridge contract.
+- after a confirmed grasp the controller holds INTERNALLY (a background timer
+  republishes the grasp target and watches for slip); hold is not a coordinator
+  action, so it never blocks arm+hand resources on the same side bus.
+
+Transport: hand skills ride on ``agx_arm_msgs/action/PerformAction`` (no
+dedicated HandSkill.action for the MVP). The goal's ``metadata_json`` carries
+``skill_name``, ``contact_sensors``, ``contact_threshold``, ``stable_samples``,
+``timeout_sec``, ``completion_policy`` and ``fallback_policy``.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+
+from ament_index_python.packages import get_package_share_directory
+import rclpy
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+
+from agx_arm_msgs.action import PerformAction
+from agx_arm_msgs.msg import OmniHandStatus, OmniHandTactileRaw, RobotEvent
+
+from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
+from agx_arm_ctrl.omnihand.skills import (
+    MOTION_CLOSE_UNTIL_CONTACT,
+    MOTION_FREEZE,
+    MOTION_OPEN,
+    STATE_CLOSING_UNTIL_CONTACT,
+    STATE_FAILED,
+    STATE_GRASP_HOLDING,
+    STATE_IDLE,
+    STATE_OPENING,
+    STATE_RELEASING,
+    contact_score,
+    load_skill_catalogue,
+    parse_tactile,
+    step_toward,
+    within_tolerance,
+)
+from agx_arm_ctrl.omnihand_bridge_node import build_joint_names, resolve_gesture_presets
+
+
+def _skill_config_share_path() -> str:
+    """Best-effort path to the installed skill catalogue YAML."""
+    from pathlib import Path
+
+    try:
+        return str(
+            Path(get_package_share_directory("agx_arm_ctrl"))
+            / "config"
+            / "omnihand_skills.yaml"
+        )
+    except Exception:
+        return ""
+
+
+class OmniHandSkillController(Node):
+
+    def __init__(self) -> None:
+        super().__init__("omnihand_skill_controller")
+
+        self.declare_parameter("omnihand_type", "right")
+        self.declare_parameter("hand_model", DEFAULT_HAND_MODEL)
+        self.declare_parameter("skill_config_path", "")
+        self.declare_parameter("command_topic", "control/joint_states")
+        self.declare_parameter("action_name", "perform")
+
+        self.hand_side = str(self.get_parameter("omnihand_type").value)
+        if self.hand_side not in ("left", "right"):
+            raise ValueError("omnihand_type must be 'left' or 'right'")
+        self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
+        command_topic = str(self.get_parameter("command_topic").value)
+        action_name = str(self.get_parameter("action_name").value)
+
+        skill_config_path = str(self.get_parameter("skill_config_path").value).strip()
+        if not skill_config_path:
+            skill_config_path = _skill_config_share_path() or None
+        self.catalogue = load_skill_catalogue(skill_config_path)
+        self.defaults = self.catalogue.defaults
+
+        self.joint_names = build_joint_names(self.hand_side, self.hand_model)
+        self.presets = resolve_gesture_presets(self.hand_side, self.hand_model)
+
+        # Latest feedback, written by subscription callbacks (reentrant group),
+        # read by the action loop on its own thread.
+        self._lock = threading.Lock()
+        self._feedback_positions: dict[str, float] = {}
+        self._tactile_layout = ""
+        self._tactile_values: list[float] = []
+        self._tactile_stamp_s = 0.0
+        self._hand_fault = False
+        self._last_command: list[float] | None = None
+
+        # Internal-hold state (set after a confirmed grasp).
+        self._holding = False
+        self._hold_target: list[float] | None = None
+        self._hold_confirmed_score = 0.0
+        self._hold_sensors: list[str] = []
+        self._hold_aggregation = self.defaults.contact_aggregation
+        self._hold_on_contact_loss = "warn"
+        self._hold_warned = False
+        self._state = STATE_IDLE
+
+        callback_group = ReentrantCallbackGroup()
+        self.command_pub = self.create_publisher(JointState, command_topic, 10)
+        self.event_pub = self.create_publisher(RobotEvent, "events", 10)
+
+        self.create_subscription(
+            OmniHandTactileRaw,
+            "feedback/omnihand/tactile_raw",
+            self._tactile_callback,
+            10,
+            callback_group=callback_group,
+        )
+        self.create_subscription(
+            OmniHandStatus,
+            "feedback/omnihand/status",
+            self._status_callback,
+            10,
+            callback_group=callback_group,
+        )
+        self.create_subscription(
+            JointState,
+            "feedback/omnihand/joint_states",
+            self._joint_state_callback,
+            10,
+            callback_group=callback_group,
+        )
+
+        hold_period = 1.0 / self.defaults.control_rate_hz if self.defaults.control_rate_hz > 0 else 0.05
+        self.create_timer(hold_period, self._hold_tick, callback_group=callback_group)
+
+        self.action_server = ActionServer(
+            self,
+            PerformAction,
+            action_name,
+            execute_callback=self._execute,
+            goal_callback=self._goal_callback,
+            cancel_callback=self._cancel_callback,
+            callback_group=callback_group,
+        )
+
+        self.get_logger().info(
+            f"OmniHand skill controller up: side={self.hand_side}, "
+            f"model={self.hand_model.name} ({len(self.joint_names)} joints), "
+            f"command_topic={command_topic}, action={action_name}, "
+            f"skills={sorted(self.catalogue.skills)}"
+        )
+
+    # --- subscriptions -------------------------------------------------------
+
+    def _tactile_callback(self, msg: OmniHandTactileRaw) -> None:
+        with self._lock:
+            self._tactile_layout = msg.layout_name
+            self._tactile_values = list(msg.values)
+            self._tactile_stamp_s = time.monotonic()
+
+    def _status_callback(self, msg: OmniHandStatus) -> None:
+        with self._lock:
+            self._hand_fault = bool(msg.communication_fault) or not bool(msg.connected)
+
+    def _joint_state_callback(self, msg: JointState) -> None:
+        with self._lock:
+            for name, position in zip(msg.name, msg.position):
+                self._feedback_positions[name] = float(position)
+
+    # --- helpers -------------------------------------------------------------
+
+    def _current_positions(self) -> list[float]:
+        """Best available current pose, ordered to joint_names.
+
+        Prefers the last command (so the ramp is smooth and deterministic), then
+        the bridge feedback, then zeros.
+        """
+        with self._lock:
+            if self._last_command is not None:
+                return list(self._last_command)
+            feedback = dict(self._feedback_positions)
+        if all(name in feedback for name in self.joint_names):
+            return [feedback[name] for name in self.joint_names]
+        return [0.0] * len(self.joint_names)
+
+    def _feedback_pose(self) -> list[float] | None:
+        with self._lock:
+            feedback = dict(self._feedback_positions)
+        if all(name in feedback for name in self.joint_names):
+            return [feedback[name] for name in self.joint_names]
+        return None
+
+    def _publish_command(self, target: list[float]) -> None:
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = list(self.joint_names)
+        msg.position = [float(value) for value in target]
+        self.command_pub.publish(msg)
+        with self._lock:
+            self._last_command = list(target)
+
+    def _read_contact(self, sensors: list[str], aggregation: str) -> tuple[float, float]:
+        """Return (contact_score, tactile_age_s)."""
+        with self._lock:
+            layout = self._tactile_layout
+            values = list(self._tactile_values)
+            stamp = self._tactile_stamp_s
+        reading = parse_tactile(layout, values, self.defaults.normal_force_offset)
+        score = contact_score(reading, sensors, aggregation)
+        age = time.monotonic() - stamp if stamp > 0.0 else float("inf")
+        return score, age
+
+    def _emit_event(
+        self,
+        event_type: str,
+        *,
+        activity_id: str = "",
+        action_id: str = "",
+        state: str = "",
+        score: float = 0.0,
+        message: str = "",
+    ) -> None:
+        event = RobotEvent()
+        event.header.stamp = self.get_clock().now().to_msg()
+        event.source = "omnihand_skill_controller"
+        event.robot_id = f"{self.hand_side}_hand"
+        event.activity_id = activity_id
+        event.action_id = action_id
+        event.event_type = event_type
+        event.state = state
+        event.contact_score = float(score)
+        event.message = message
+        self.event_pub.publish(event)
+
+    def _resolve_preset(self, preset_name: str) -> list[float]:
+        try:
+            return list(self.presets[preset_name])
+        except KeyError:
+            raise ValueError(
+                f"preset '{preset_name}' not defined for model {self.hand_model.name}; "
+                f"available: {sorted(self.presets)}"
+            ) from None
+
+    # --- action plumbing -----------------------------------------------------
+
+    def _goal_callback(self, goal_request: PerformAction.Goal) -> GoalResponse:
+        del goal_request
+        return GoalResponse.ACCEPT
+
+    def _cancel_callback(self, goal_handle) -> CancelResponse:
+        del goal_handle
+        return CancelResponse.ACCEPT
+
+    def _execute(self, goal_handle) -> PerformAction.Result:
+        goal = goal_handle.request
+        result = PerformAction.Result()
+        try:
+            metadata = json.loads(goal.metadata_json) if goal.metadata_json else {}
+            if not isinstance(metadata, dict):
+                raise ValueError("metadata_json must encode a JSON object")
+        except (ValueError, json.JSONDecodeError) as exc:
+            return self._fail(goal_handle, result, f"bad metadata_json: {exc}")
+
+        skill_name = str(metadata.get("skill_name", "")).strip()
+        if not skill_name:
+            return self._fail(goal_handle, result, "metadata_json missing skill_name")
+
+        try:
+            skill = self.catalogue.resolve(skill_name)
+        except ValueError as exc:
+            return self._fail(goal_handle, result, str(exc))
+
+        self.get_logger().info(
+            f"[{self.hand_side}] perform {goal.action_id or skill_name} "
+            f"(skill={skill_name}, motion={skill.motion})"
+        )
+        self._emit_event(
+            "started",
+            activity_id=goal.activity_id,
+            action_id=goal.action_id,
+            state=self._state,
+            message=f"skill={skill_name}",
+        )
+
+        if skill.motion == MOTION_OPEN:
+            return self._run_open(goal_handle, goal, metadata, skill, result)
+        if skill.motion == MOTION_CLOSE_UNTIL_CONTACT:
+            return self._run_close_until_contact(goal_handle, goal, metadata, skill, result)
+        if skill.motion == MOTION_FREEZE:
+            return self._run_freeze(goal_handle, goal, result)
+        return self._fail(goal_handle, result, f"unhandled motion '{skill.motion}'")
+
+    def _publish_feedback(self, goal_handle, state: str, progress: float, score: float) -> None:
+        feedback = PerformAction.Feedback()
+        feedback.state = state
+        feedback.progress = float(max(0.0, min(1.0, progress)))
+        feedback.contact_score = float(score)
+        goal_handle.publish_feedback(feedback)
+
+    def _fail(self, goal_handle, result: PerformAction.Result, message: str) -> PerformAction.Result:
+        self._state = STATE_FAILED
+        result.success = False
+        result.message = message
+        result.final_state = STATE_FAILED
+        self.get_logger().warn(f"[{self.hand_side}] skill failed: {message}")
+        self._emit_event("failed", state=STATE_FAILED, message=message)
+        goal_handle.abort()
+        return result
+
+    # --- motions -------------------------------------------------------------
+
+    def _run_open(self, goal_handle, goal, metadata, skill, result) -> PerformAction.Result:
+        # Opening / releasing clears any internal hold first.
+        self._clear_hold()
+        opening_state = STATE_RELEASING if "release" in skill.skill_name else STATE_OPENING
+        self._state = opening_state
+
+        target = self._resolve_preset(skill.target_preset)
+        timeout = float(metadata.get("timeout_sec", self.defaults.open_settle_timeout_sec))
+        period = 1.0 / self.defaults.control_rate_hz if self.defaults.control_rate_hz > 0 else 0.05
+        deadline = time.monotonic() + max(timeout, period)
+
+        current = self._current_positions()
+        while rclpy.ok():
+            if goal_handle.is_cancel_requested:
+                return self._handle_cancel(goal_handle, metadata, result, hold_ok=False)
+
+            current = step_toward(current, target, self.defaults.open_step_rad)
+            self._publish_command(current)
+
+            reached_command = within_tolerance(current, target, 1e-6)
+            feedback_pose = self._feedback_pose()
+            reached_feedback = (
+                feedback_pose is not None
+                and within_tolerance(feedback_pose, target, self.defaults.open_tolerance_rad)
+            )
+            progress = 0.5 if not reached_command else (1.0 if reached_feedback else 0.8)
+            self._publish_feedback(goal_handle, opening_state, progress, 0.0)
+
+            if reached_command and (reached_feedback or feedback_pose is None):
+                self._state = STATE_IDLE
+                result.success = True
+                result.message = f"{skill.skill_name}: open reached"
+                result.final_state = STATE_IDLE
+                self._emit_event(
+                    "completed",
+                    activity_id=goal.activity_id,
+                    action_id=goal.action_id,
+                    state=STATE_IDLE,
+                )
+                goal_handle.succeed()
+                return result
+
+            if time.monotonic() > deadline:
+                # Command ramp done but feedback never confirmed open: treat the
+                # commanded-open as good enough (bridge clamps to limits) unless
+                # the hand is faulted.
+                if reached_command and not self._hand_fault:
+                    self._state = STATE_IDLE
+                    result.success = True
+                    result.message = f"{skill.skill_name}: open commanded (feedback unconfirmed)"
+                    result.final_state = STATE_IDLE
+                    self._emit_event(
+                        "completed", action_id=goal.action_id, state=STATE_IDLE,
+                        message="open commanded; feedback unconfirmed",
+                    )
+                    goal_handle.succeed()
+                    return result
+                return self._fail(goal_handle, result, f"{skill.skill_name}: open timed out")
+
+            time.sleep(period)
+        return self._fail(goal_handle, result, "shutdown during open")
+
+    def _run_close_until_contact(self, goal_handle, goal, metadata, skill, result) -> PerformAction.Result:
+        self._clear_hold()
+        self._state = STATE_CLOSING_UNTIL_CONTACT
+
+        target = self._resolve_preset(skill.target_preset)
+        sensors = [str(s) for s in metadata.get("contact_sensors", [])]
+        aggregation = str(metadata.get("contact_aggregation", self.defaults.contact_aggregation))
+        threshold = float(metadata.get("contact_threshold", 0.0))
+        stable_samples = int(metadata.get("stable_samples", 1))
+        timeout = float(metadata.get("timeout_sec", 4.0))
+        completion = metadata.get("completion_policy", {}) or {}
+        fallback = metadata.get("fallback_policy", {}) or {}
+        passive_monitoring = bool(completion.get("passive_contact_monitoring", True))
+        on_success = str(completion.get("on_success", "hold_internal"))
+
+        period = 1.0 / self.defaults.control_rate_hz if self.defaults.control_rate_hz > 0 else 0.05
+        deadline = time.monotonic() + max(timeout, period)
+        current = self._current_positions()
+        stable_count = 0
+        last_score = 0.0
+
+        while rclpy.ok():
+            if goal_handle.is_cancel_requested:
+                return self._handle_cancel(goal_handle, metadata, result, hold_ok=True)
+
+            if self._hand_fault:
+                return self._fail(goal_handle, result, "hand reported fault during grasp")
+
+            score, tactile_age = self._read_contact(sensors, aggregation)
+            last_score = score
+            if tactile_age > self.defaults.tactile_stale_sec:
+                return self._fail(
+                    goal_handle, result,
+                    f"tactile stale ({tactile_age:.2f}s > {self.defaults.tactile_stale_sec}s)",
+                )
+
+            if threshold > 0.0 and score >= threshold:
+                stable_count += 1
+            else:
+                stable_count = 0
+
+            if stable_count >= max(1, stable_samples):
+                return self._confirm_grasp(
+                    goal_handle, goal, result, current, score, sensors,
+                    aggregation, on_success, passive_monitoring, fallback,
+                )
+
+            current = step_toward(current, target, self.defaults.close_step_rad)
+            self._publish_command(current)
+            progress = min(score / threshold, 1.0) if threshold > 0.0 else 0.0
+            self._publish_feedback(goal_handle, STATE_CLOSING_UNTIL_CONTACT, progress, score)
+
+            if time.monotonic() > deadline:
+                on_timeout = str(fallback.get("on_timeout", "report_failure"))
+                if on_timeout == "stop_and_hold":
+                    self.get_logger().warn(
+                        f"[{self.hand_side}] grasp timed out; stop_and_hold per fallback_policy"
+                    )
+                    return self._confirm_grasp(
+                        goal_handle, goal, result, current, last_score, sensors,
+                        aggregation, "hold_internal", passive_monitoring, fallback,
+                        success=False, message="grasp timed out; holding per fallback_policy",
+                    )
+                return self._fail(goal_handle, result, "grasp did not reach contact before timeout")
+
+            time.sleep(period)
+        return self._fail(goal_handle, result, "shutdown during grasp")
+
+    def _confirm_grasp(
+        self, goal_handle, goal, result, hold_target, score, sensors,
+        aggregation, on_success, passive_monitoring, fallback,
+        *, success: bool = True, message: str = "",
+    ) -> PerformAction.Result:
+        # Stop motion: hold the current commanded pose.
+        self._publish_command(hold_target)
+        if on_success == "hold_internal":
+            with self._lock:
+                self._holding = True
+                self._hold_target = list(hold_target)
+                self._hold_confirmed_score = float(score)
+                self._hold_sensors = list(sensors)
+                self._hold_aggregation = aggregation
+                self._hold_on_contact_loss = str(fallback.get("on_contact_loss", "warn"))
+                self._hold_warned = False
+            self._state = STATE_GRASP_HOLDING
+            final_state = STATE_GRASP_HOLDING
+        else:
+            self._state = STATE_IDLE
+            final_state = STATE_IDLE
+        if not passive_monitoring:
+            with self._lock:
+                self._hold_on_contact_loss = "warn"  # still warn, never auto-abort
+
+        result.success = success
+        result.message = message or f"grasp confirmed (contact_score={score:.3f})"
+        result.final_state = final_state
+        result.final_contact_score = float(score)
+        self._emit_event(
+            "completed" if success else "warning",
+            activity_id=goal.activity_id, action_id=goal.action_id,
+            state=final_state, score=score, message=result.message,
+        )
+        self.get_logger().info(
+            f"[{self.hand_side}] {result.message}; state={final_state}"
+        )
+        if success:
+            goal_handle.succeed()
+        else:
+            goal_handle.succeed()  # held, not a hard failure; coordinator decides on score
+        return result
+
+    def _run_freeze(self, goal_handle, goal, result) -> PerformAction.Result:
+        hold = self._feedback_pose() or self._current_positions()
+        self._publish_command(hold)
+        # Freeze does not clear an existing grasp hold; it just pins the pose.
+        self._state = STATE_GRASP_HOLDING if self._holding else STATE_IDLE
+        result.success = True
+        result.message = "stop_hand: pose frozen"
+        result.final_state = self._state
+        self._emit_event(
+            "completed", activity_id=goal.activity_id, action_id=goal.action_id,
+            state=self._state, message="freeze",
+        )
+        goal_handle.succeed()
+        return result
+
+    def _handle_cancel(self, goal_handle, metadata, result, *, hold_ok: bool) -> PerformAction.Result:
+        fallback = metadata.get("fallback_policy", {}) or {}
+        on_cancel = str(fallback.get("on_cancel", "stop_motion"))
+        hold = self._feedback_pose() or self._current_positions()
+        self._publish_command(hold)
+        if hold_ok and on_cancel == "stop_and_hold":
+            with self._lock:
+                self._holding = True
+                self._hold_target = list(hold)
+            self._state = STATE_GRASP_HOLDING
+            result.final_state = STATE_GRASP_HOLDING
+        else:
+            self._state = STATE_IDLE
+            result.final_state = STATE_IDLE
+        result.success = False
+        result.message = f"canceled ({on_cancel})"
+        self._emit_event("warning", state=result.final_state, message=result.message)
+        goal_handle.canceled()
+        return result
+
+    # --- internal hold + slip monitoring -------------------------------------
+
+    def _clear_hold(self) -> None:
+        with self._lock:
+            self._holding = False
+            self._hold_target = None
+            self._hold_confirmed_score = 0.0
+            self._hold_warned = False
+
+    def _hold_tick(self) -> None:
+        with self._lock:
+            if not self._holding or self._hold_target is None:
+                return
+            target = list(self._hold_target)
+            confirmed = self._hold_confirmed_score
+            sensors = list(self._hold_sensors)
+            aggregation = self._hold_aggregation
+            on_contact_loss = self._hold_on_contact_loss
+            already_warned = self._hold_warned
+
+        # Keep the grasp pose commanded so the bridge maintains the hold.
+        self._publish_command(target)
+
+        if confirmed <= 0.0 or not sensors:
+            return  # no calibrated baseline to compare slip against
+        score, _ = self._read_contact(sensors, aggregation)
+        warn_level = confirmed * self.defaults.slip_warn_factor
+        critical_level = confirmed * self.defaults.slip_critical_factor
+
+        if score < critical_level and on_contact_loss == "abort_activity":
+            self._emit_event(
+                "contact_lost", state=STATE_GRASP_HOLDING, score=score,
+                message=f"contact_score {score:.3f} < critical {critical_level:.3f}",
+            )
+        elif score < warn_level and not already_warned:
+            with self._lock:
+                self._hold_warned = True
+            self._emit_event(
+                "slip_warning", state=STATE_GRASP_HOLDING, score=score,
+                message=f"contact_score {score:.3f} < warn {warn_level:.3f}",
+            )
+        elif score >= warn_level and already_warned:
+            with self._lock:
+                self._hold_warned = False
+
+
+def main(args: list[str] | None = None) -> None:
+    rclpy.init(args=args)
+    node = OmniHandSkillController()
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
