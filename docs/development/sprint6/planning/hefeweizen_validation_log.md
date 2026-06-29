@@ -60,6 +60,24 @@ the working tree, builds clean, but is **not committed** and **not yet exercised
 The O12 description migration (now vendor-grounded — official URDF available) is the next blocker
 to a clean `components.launch`. See `session_handoff_2026-06-29.md`.
 
+## 2026-06-29 — O12 description migration + teach tooling (arm64 host)
+
+- **OmniHand description migrated O10 → O12 Pro** using the official vendor URDF
+  (`o12_hand_description-o12_t3`), imported into `agx_arm_description`
+  (`omnihand/urdf/xacro_pro` + `meshes_pro`). MoveIt surfaces updated to the 12
+  active joints: SRDF `omnihand_group`, `moveit_controllers_omnihand_{right,left}`,
+  `initial_positions`, `ros2_control`. **Validated:** description + moveit build
+  clean; standalone and duo URDFs expand; offline SRDF-vs-URDF cross-check reports
+  0 missing joints/links → the `components.launch` "Joint 'right_*_mcp_joint' not
+  found in model 'duo_nero_system'" error is resolved. Live RViz render + the duo
+  `components.launch` clean-log confirmation still owed on hardware.
+- **Pose-capture tool added** (`agx_arm_capture_anchor_pose`, `agx_arm_mit_demos`):
+  snapshots the live arm joint vector into a named `arm_config.yaml` anchor pose,
+  comment-preserving. Offline-tested (update + insert). Completes the teach loop with
+  the existing leader recorder + performer. See `teach_and_run_right_side.md`.
+- Still NOT run on hardware here: live arm motion, the skill controller against the
+  Pro hand, RViz. Those are the right-side bring-up steps in `teach_and_run_right_side.md`.
+
 ## Hardware bring-up checklist (to fill on the Jetson/Duo)
 
 ### Step 1 — skill controller standalone (proposal §9 Step 1)

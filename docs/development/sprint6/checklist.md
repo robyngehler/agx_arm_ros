@@ -34,6 +34,12 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
 
 - [x] catalogue + arm executor for the `both_arms_*` trajectories (anchor-pose endpoints now;
       recorded waypoints teach-on-hardware via `arm_executor.py` + `config/arm_config.yaml`).
+- [x] teach tooling for anchor poses: `agx_arm_capture_anchor_pose` (`agx_arm_mit_demos`) snapshots
+      the live joint vector into `arm_config.yaml`, reusing the leader recorder + performer.
+      Right-side runbook in `planning/teach_and_run_right_side.md`.
+- [x] OmniHand MoveIt description migrated O10 → **O12 Pro** (vendor URDF) so `components.launch`
+      no longer errors on missing `*_mcp_joint`; SRDF/controllers/initial_positions/ros2_control
+      all on the 12 active joints (offline SRDF-vs-URDF cross-check clean).
 - [ ] each executes independently; correct joint ordering; multiple cycles without launch restart;
       slow scaling respected; safe cancel/stop. *(hardware-pending — anchor poses + recorded
       waypoints are placeholders; confirm controller/action-server names on the Duo runtime.)*
