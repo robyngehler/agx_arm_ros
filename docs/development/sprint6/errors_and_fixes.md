@@ -4,6 +4,39 @@ Record concrete errors and their fixes here as the hand skill controller, perfor
 coordinator come up — e.g. tactile stream gaps, grasp-threshold miscalibration, `both_arms`
 joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch problems.
 
+## 2026-06-29 (arm64 host validation)
+
+### `colcon build` fails with `option --uninstall not recognized`
+
+- Symptom (arm64 Duo host): a bare `colcon build --packages-select agx_arm_ctrl` aborts with
+  `error: option --uninstall not recognized`, and a setuptools `Unknown distribution option:
+  'tests_require'` warning, sourced from `/home/user/.local/.../setuptools`.
+- Cause: Python-env drift — the bare build picks up the user-site (`~/.local`) setuptools, whose
+  `setup.py develop --uninstall` cleanup step (run by colcon on a prior install) is unsupported.
+  Same class as `docs/project/python_environment_workflow.md` "Common Failure Pattern".
+- Fix: build through the repo wrapper, which filters conda/miniforge from PATH, sets
+  `PYTHONNOUSERSITE=1`, and forces `/usr/bin/python3`:
+  `bash ./scripts/colcon_build_system_python.sh --packages-select agx_arm_ctrl agx_arm_coordination`.
+  Validated: both Python packages build clean; `agx_arm_coordination` tests 32/32 pass.
+- Side note: the C++ `agx_arm_msgs` build additionally needs a working cmake; a broken
+  `~/.local/bin/cmake` shim (`ModuleNotFoundError: No module named 'cmake'`) can shadow the
+  system cmake. Only relevant when the messages change (it is already installed clean).
+
+### O10/O12 description drift is the `components.launch` MoveIt error
+
+- Symptom: `move_group` loops `Joint 'right_index_mcp_joint' not found in model 'duo_nero_system'`
+  (also middle/ring/pinky). Arm planning still succeeds.
+- Cause: hand URDF + SRDF group + MoveIt controllers + initial_positions are still the O10 layout
+  (`*_abad`/`*_pip`), while `models.py`/skills/SDK are O12 Pro (`*_mcp`, `thumb_pip` active). The
+  exact error came from the crashed attempt's partial O12 SRDF over an O10 URDF (state not on disk
+  now). Not a coordinator bug; the hand is skill-controlled, not MoveIt-planned, so it is log noise
+  that does not block `both_arms` planning.
+- Fix (planned next session, now vendor-grounded): the official O12 URDF is available at
+  `vendor/OmniHand-Pro-2025/description/urdf/o12_hand_description-o12_t3/` (visual+collision meshes,
+  both sides, mimic ratios that match `models.py`). Integrate it (reprefix `R_`/`L_`→`right_`/`left_`)
+  and update SRDF/controllers/initial_positions/ros2_control to the 12 active joints. See
+  `planning/session_handoff_2026-06-29.md`.
+
 ## 2026-06-29
 
 ### Sprint-6 orchestration + hand-skill layer landed (development host only)

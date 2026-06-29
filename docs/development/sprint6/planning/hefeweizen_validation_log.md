@@ -37,6 +37,29 @@ Windows dev host), and any live hand/arm motion. Run on the Jetson/Duo host:
 `colcon build --packages-select agx_arm_msgs agx_arm_ctrl agx_arm_coordination`
 then `colcon test --packages-select agx_arm_ctrl agx_arm_coordination`.
 
+## 2026-06-29 — arm64 Duo host, toolchain validation (right side live)
+
+First run of the real toolchain on the hardware host (previous entry was a Windows
+`py_compile` slice only). Right side live: `can_nero_right` UP, hand + right arm via
+`nero_right_arm`; left side / `can_nero_left` not connected.
+
+**Validated here:**
+
+- `colcon build` of `agx_arm_msgs`, `agx_arm_ctrl`, `agx_arm_coordination` — clean, via
+  `scripts/colcon_build_system_python.sh` (a bare `colcon build` fails with
+  `option --uninstall not recognized` due to `~/.local` setuptools — see errors_and_fixes).
+- `agx_arm_coordination` unit tests — 32 passed (graph_model, graph_loader, arm_executor,
+  performer) under system Python.
+- Vendor SDK import OK: `agibot_hand.AgibotHandO12` present from
+  `vendor/OmniHand-Pro-2025/build/agibot_hand_pkg`.
+- Sprint-6 catalogue/skill/pose names cross-checked consistent.
+
+**Could NOT run here yet:** any live hand/arm motion, the skill controller against the Pro
+hand, the coordinator end-to-end. The SDK-path migration (bridge + load/smoke scripts) is in
+the working tree, builds clean, but is **not committed** and **not yet exercised on hardware**.
+The O12 description migration (now vendor-grounded — official URDF available) is the next blocker
+to a clean `components.launch`. See `session_handoff_2026-06-29.md`.
+
 ## Hardware bring-up checklist (to fill on the Jetson/Duo)
 
 ### Step 1 — skill controller standalone (proposal §9 Step 1)
