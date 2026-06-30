@@ -151,11 +151,10 @@ existing MIT FJT bridge with `right_arm` joints; mirror to `both_arms` when the 
 
 ## 6. Cleanups / smaller follow-ups
 
-- `models.py` still carries the legacy `o10` entry (`sdk_import_package="omnihand_2025"`,
-  `sdk_class_name="AgibotHandO10"`); the bridge now hardcodes `agibot_hand`/`AgibotHandO12` in
-  `_load_sdk_symbols`/`_ensure_omnihand_importable` rather than reading those registry fields.
-  Either drive the SDK import from the model registry, or drop the dead O10 SDK fields and keep
-  o10 as mock-only (the docstring already says the O10 SDK submodule was swapped out).
+- ~~`models.py` still carries the legacy `o10` SDK registry fields~~ **DONE (2026-06-30):** the
+  dead `sdk_import_package` / `sdk_class_name` fields were dropped from `HandModel` and both model
+  entries. The bridge hardcodes `agibot_hand`/`AgibotHandO12` in
+  `_ensure_omnihand_importable`/`_load_sdk_symbols`; `o10` stays mock-only.
 - Reconcile remaining stable-doc drift flagged on 2026-06-25:
   `docs/assets/omnihand_asset_validation.md` ("mock-only") and
   `docs/assets/control/basic_control_scripts.md` ("10 active joints").

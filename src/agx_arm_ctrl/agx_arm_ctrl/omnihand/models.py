@@ -31,8 +31,6 @@ class HandModel:
     """Static description of one OmniHand hardware generation."""
 
     name: str
-    sdk_import_package: str
-    sdk_class_name: str
     # Named active-joint preset file for this model, installed under the package
     # share/config. Each model carries its own gesture vectors because the joint
     # order and count differ (o10: 10 values, o12_pro: 12 values).
@@ -92,8 +90,6 @@ class HandModel:
 # Mirrors the original constants in omnihand_bridge_node.py.
 O10 = HandModel(
     name="o10",
-    sdk_import_package="omnihand_2025",
-    sdk_class_name="AgibotHandO10",
     gesture_config_file="omnihand_gestures.yaml",
     joint_suffixes=(
         "thumb_roll_joint",
@@ -135,8 +131,6 @@ O10 = HandModel(
 # The remaining ranges are PROVISIONAL — verify on hardware.
 O12_PRO = HandModel(
     name="o12_pro",
-    sdk_import_package="agibot_hand",
-    sdk_class_name="AgibotHandO12",
     gesture_config_file="omnihand_pro_gestures.yaml",
     joint_suffixes=(
         "thumb_roll_joint",

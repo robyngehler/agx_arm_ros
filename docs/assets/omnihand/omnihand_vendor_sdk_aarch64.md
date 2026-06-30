@@ -14,6 +14,16 @@ It exists to keep the local runtime path explicit and to avoid mixing:
 - partial ZLG-only assumptions,
 - and the repo-local SocketCAN-based Jetson bring-up path.
 
+## Upstream Naming
+
+The upstream SDK repository has been renamed to `AgibotTech/agillink_omnihand_sdk`
+(formerly the `OmniHand-Pro-2025` repo). This is a **GitHub-name change only**: the local
+vendor directory stays `vendor/OmniHand-Pro-2025/`, the built package is still
+`build/agibot_hand_pkg`, and the imported Python module is still `agibot_hand` — nothing in the
+runtime path depends on the upstream repo name. A local rename to `vendor/agillink_omnihand_sdk/`
+is deferred as a separate, deliberate cleanup (many code + doc refs). Pin and record the exact
+SDK commit/tag the local `agibot_hand_pkg` was built against when refreshing the vendor tree.
+
 ## Local SDK Baseline
 
 The repo-local OmniHand SDK baseline on Jetson is:

@@ -69,7 +69,7 @@ If your hand is on a different CAN FD netdevice, replace `can0` with that interf
 
 This remains the lowest-risk hardware proof point before ROS-side tests.
 
-The repo-owned bridge now also has a first `omnihand_backend_type:=sdk` path with active 10-joint command support: it publishes hand joint states, status, and tactile data while accepting active joint targets on the repo-owned ROS surfaces.
+The repo-owned bridge now also has a validated `omnihand_backend_type:=sdk` path: it publishes hand joint states, status, and tactile data while accepting active joint targets on the repo-owned ROS surfaces. The live default is OmniHand Pro (`hand_model:=o12_pro`, 12 active joints) on the `AgibotHandO12` SDK; the legacy `o10` (10 active joints) remains as a mock-only fallback.
 
 ## 2. RViz and model-only validation
 

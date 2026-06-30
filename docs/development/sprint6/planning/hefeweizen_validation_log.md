@@ -78,6 +78,54 @@ to a clean `components.launch`. See `session_handoff_2026-06-29.md`.
 - Still NOT run on hardware here: live arm motion, the skill controller against the
   Pro hand, RViz. Those are the right-side bring-up steps in `teach_and_run_right_side.md`.
 
+## 2026-06-30 — central teach tool + cleanup (development host)
+
+- **Central teach manager added** (`agx_arm_teach_manager`, `agx_arm_mit_demos`): one keyboard UI
+  for the whole teach loop — idle/freedrive, record (leader), playback (MIT), anchor-pose capture
+  into `arm_config.yaml` (`a`), and recorded→catalogue waypoint conversion (`w`). Reuses the leader
+  recorder, saved-trajectory executor, `capture_anchor_pose.update_pose_in_config`, and the new
+  converter; no new motion code. Modelled on `wakeword_motion_manager`.
+- **Waypoint converter added** (`agx_arm_recorded_to_catalogue`): downsamples a `RecordedTrajectory`
+  JSON to N timed waypoints and emits a paste-ready `waypoints:` block (sidecar + stdout). Closes
+  the manual-transcription follow-up. Does not auto-rewrite the comment/flow-style `catalogue.yaml`.
+- **Dead code dropped:** removed the unused `sdk_import_package` / `sdk_class_name` registry fields
+  from `omnihand/models.py` (the bridge hardcodes `agibot_hand`/`AgibotHandO12`); `o10` stays
+  mock-only.
+- **Stable-doc drift reconciled:** `omnihand_asset_validation.md` and `basic_control_scripts.md` no
+  longer say "mock-only" / "10 active joints" (the `backend_type:=sdk` O12 path is validated on the
+  Jetson); vendor repo-rename note (`agillink_omnihand_sdk`) added to `omnihand_vendor_sdk_aarch64.md`;
+  `teach_and_run_right_side.md` now states the arm-execution seam honestly (per-arm via `action_name`
+  override; `both_arms` is planning-only with no execution controller yet).
+- **Validated here (no ROS/hardware):** `py_compile` clean on the new modules + `models.py`; the
+  converter downsampling exercised directly (endpoints preserved, monotone, ≤ max_points).
+- **Could NOT run here:** `colcon build`/`colcon test`, the teach manager against live arm/hand
+  (needs leader mode + MIT services + Duo host). Run on the Jetson/Duo via
+  `scripts/colcon_build_system_python.sh --packages-select agx_arm_mit_demos`.
+
+## 2026-06-30 — both_arms execution seam + profile resolution (development host)
+
+- **`both_arms` execution path wired.** New fan-out FollowJointTrajectory bridge
+  `agx_arm_both_arms_trajectory_bridge` (`agx_arm_mit_tools`) owns
+  `both_arms_controller/follow_joint_trajectory`, splits the combined 14-joint goal by
+  `left_arm_`/`right_arm_` prefix, and forwards a sub-goal to each namespaced per-arm controller
+  (`/<side>_arm/arm_controller/follow_joint_trajectory`), aggregating results (both must succeed;
+  one failure cancels the other). New bring-up launch
+  `agx_arm_mit_controller/launch/start_both_arms_execution.launch.py` starts both per-arm MIT
+  controllers + the bridge. `arm_config.yaml` now points its three groups at these real providers.
+- **Profile resolution corrected (chosen over editing the test):** `duo_arm` is back to a
+  planning-only profile (arm instances `launch_driver: false`, no `can_port`) — driver/controller
+  bring-up moved to `start_both_arms_execution.launch.py`, keeping planning and execution separate.
+  `test_resolve_duo_arm_profile_provides_planning_only_instances` passes again (4/4 in
+  `test_execution_profiles.py`). **Behaviour change:** `start_multi_agx_arm_rviz` with `duo_arm` is
+  now visualization/planning-only and no longer auto-launches the arm drivers (no crash —
+  `resolve_arm_instances` defaults the missing `can_port`); bring drivers up via the execution launch.
+- **Validated here (no ROS/hardware):** `agx_arm_mit_tools`, `agx_arm_mit_controller`,
+  `agx_arm_ctrl` build clean via the system-python wrapper; the trajectory-split unit tests pass
+  (3/3, `test_both_arms_trajectory_bridge.py`); `start_both_arms_execution.launch.py` generates
+  cleanly (2 per-arm includes + 1 bridge node); `test_execution_profiles.py` 4/4.
+- **Could NOT run here:** the live both_arms split against two real per-arm controllers, multi-cycle
+  execution, and cancel/abort propagation on hardware — Duo-host bring-up steps.
+
 ## Hardware bring-up checklist (to fill on the Jetson/Duo)
 
 ### Step 1 — skill controller standalone (proposal §9 Step 1)

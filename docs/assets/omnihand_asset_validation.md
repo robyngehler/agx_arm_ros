@@ -30,7 +30,7 @@ missing_artifacts:
 interface_notes:
 - the vendor README describes OmniHand 2025 as `10 active + 6 passive DOF` with `400+` tactile points
 - the vendor SDK documents CANFD with ZLG USBCANFD adapters as the primary supported transport
-- the current non-mock hardware-backed effector path in `src/agx_arm_ctrl` still only has validated arm-side support for `agx_gripper` and `revo2`; the repo-owned OmniHand bridge is landed there too, but remains mock-only until a real backend is validated
+- the current non-mock hardware-backed effector path in `src/agx_arm_ctrl` has validated arm-side support for `agx_gripper` and `revo2`; the repo-owned OmniHand bridge now also has a validated `backend_type:=sdk` path against the live OmniHand Pro (O12) over native SocketCAN (`backend_type=vendor_sdk`, command + status + tactile readback on the Jetson right hand), with the mock backend retained for off-hardware development
 - the current agx_arm stack already switches planning, description, and fake-controller profiles by `effector_type`, so OmniHand can be introduced as another repo-owned effector profile without exposing vendor ROS topics as the public contract
 - the local launch and naming contract is now frozen for the simulation slice: `effector_type:=omnihand`, `omnihand_type:=left|right`, and normalized `left_*` / `right_*` joint names
 - the repo-owned mock bridge already publishes `feedback/omnihand/joint_states`, `feedback/omnihand/status`, and `feedback/omnihand/tactile_raw`, and it exposes `control/omnihand/stop` plus the compatibility `control/omnihand/joint_trajectory` input
@@ -44,7 +44,7 @@ risks:
 - the vendored `thirdParty/` tree only ships the `usbcanfd_libusb_x64` userspace bundle locally, so the stock vendor ZLG path remains x64-only even though the repo now has a socket-backed workaround for build/import
 - the vendor asset set itself is still not drop-in ready: `assets/urdf/omnihand_right.urdf` contains absolute local mesh paths, `assets/urdf/xacro/finger.xacro` contains a stray literal `y`, and multiple asset files reference `package://omnihand_description/...`; the repo-owned description package avoids those defects for simulation, but the vendor tree still requires normalization
 - pulling the vendor ROS2 packages straight into `src/` would couple the workspace to a transport and topic layout that is not yet validated on this host and does not match the current wrapper-oriented repo structure
-- even though device enumeration is now validated on the current host, the repo-owned OmniHand bridge remains mock-only and the first safe command/readback loop is still not captured in repo-owned runtime evidence
+- device enumeration and the first safe SDK command/readback loop are now validated on the current host (`backend_type:=sdk` against the live OmniHand Pro right hand over native SocketCAN); the remaining gaps are the coordinated arm-plus-hand runtime path and per-object tactile grasp calibration
 - the workspace fork now exists at `https://github.com/robyngehler/OmniHand-Pro-2025.git` and `.gitmodules` can track it, but upstream-sync discipline is still required to avoid long-lived vendor drift
 recommended_next_action:
 - keep using the validated vendor SDK hardware-info probe as the first live-hand preflight step on Jetson

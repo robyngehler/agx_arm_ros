@@ -37,12 +37,20 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
 - [x] teach tooling for anchor poses: `agx_arm_capture_anchor_pose` (`agx_arm_mit_demos`) snapshots
       the live joint vector into `arm_config.yaml`, reusing the leader recorder + performer.
       Right-side runbook in `planning/teach_and_run_right_side.md`.
+- [x] central teach tool `agx_arm_teach_manager` (`agx_arm_mit_demos`): one keyboard UI for
+      freedrive/record/playback + anchor capture (`a`) + recorded→catalogue waypoint conversion
+      (`w`), modelled on the wakeword motion manager. Standalone converter:
+      `agx_arm_recorded_to_catalogue` (downsamples a recording to a paste-ready `waypoints:` block).
 - [x] OmniHand MoveIt description migrated O10 → **O12 Pro** (vendor URDF) so `components.launch`
       no longer errors on missing `*_mcp_joint`; SRDF/controllers/initial_positions/ros2_control
       all on the 12 active joints (offline SRDF-vs-URDF cross-check clean).
+- [x] `both_arms` execution seam wired: fan-out FJT bridge `agx_arm_both_arms_trajectory_bridge`
+      (`agx_arm_mit_tools`) owns `both_arms_controller/follow_joint_trajectory` and splits to the two
+      namespaced per-arm controllers; bring-up via `start_both_arms_execution.launch.py`. Trajectory
+      split unit-tested; `arm_config.yaml` groups point at the real providers.
 - [ ] each executes independently; correct joint ordering; multiple cycles without launch restart;
       slow scaling respected; safe cancel/stop. *(hardware-pending — anchor poses + recorded
-      waypoints are placeholders; confirm controller/action-server names on the Duo runtime.)*
+      waypoints are placeholders; confirm the live split against two per-arm controllers on the Duo.)*
 
 ## Step 4 — Coordinator + mini graphs
 

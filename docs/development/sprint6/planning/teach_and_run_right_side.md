@@ -15,14 +15,36 @@ dual-arm; the left side mirrors this once it is connected.
 | arm execution via FollowJointTrajectory | MIT controller's built-in FJT action (`action_name` param) | `agx_arm_mit_controller` |
 | hand grasp/open/release as a skill | `omnihand_skill_controller` | `agx_arm_ctrl` |
 | order arm + hand actions (DAG) | coordinator | `agx_arm_coordination` |
+| recorded JSON → catalogue `waypoints` | `agx_arm_recorded_to_catalogue` *(new)* | `agx_arm_mit_demos` |
+| **all of the above from one keyboard UI** | `agx_arm_teach_manager` *(new)* | `agx_arm_mit_demos` |
 
-## The execution seam (why the config already fits)
+## Central teach tool (one process for the whole loop)
 
-- The MIT controller node exposes a `control_msgs/FollowJointTrajectory` action server whose
-  name is the `action_name` parameter (default `arm_controller/follow_joint_trajectory`).
-  For the Duo, launch one MIT controller per side with
-  `action_name:=right_arm_controller/follow_joint_trajectory` (and the right-arm joint names),
-  later a second with `left_arm_controller/...`.
+Instead of juggling the separate CLIs, `agx_arm_teach_manager` runs the full teach loop —
+freedrive, record, capture anchor pose, playback, and waypoint conversion — from one keyboard UI
+(modelled on the wakeword motion manager):
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_teach_manager \
+  --source-joints right_arm_joint1,right_arm_joint2,right_arm_joint3,right_arm_joint4,right_arm_joint5,right_arm_joint6,right_arm_joint7 \
+  --arm-config src/agx_arm_coordination/config/arm_config.yaml
+```
+
+Keys: `i` idle/freedrive · `r` record (`n` to record) · `p` playback (`f` to play, `c` cancel) ·
+`a` capture current pose → named anchor in `arm_config.yaml` · `w` convert the selected recording →
+catalogue `waypoints` · `[`/`]` select recording · `s`/`h`/`q`. The individual CLIs below still
+work for scripted/one-shot use; the manager just wires them together with the MIT/leader mode
+switching.
+
+## The execution seam (config → real providers)
+
+- The MIT controller node exposes a `control_msgs/FollowJointTrajectory` action server named by
+  the `action_name` parameter (default `arm_controller/follow_joint_trajectory`). For the Duo, each
+  per-arm MIT controller runs under its own `namespace` (`left_arm` / `right_arm`), so the servers
+  are `/<side>_arm/arm_controller/follow_joint_trajectory`. The combined
+  `both_arms_controller/follow_joint_trajectory` is provided by the fan-out bridge (see the
+  execution-seam note below); `start_both_arms_execution.launch.py` brings up both per-arm
+  controllers and the bridge together.
 - The coordinator's `arm_executor` reads `agx_arm_coordination/config/arm_config.yaml`:
   groups → `action_server` + `joint_names`, and named `poses`. It is already structured
   dual-arm (`both_arms`, `right_arm`, `left_arm`). **No arm_executor code change is needed** —
@@ -30,6 +52,23 @@ dual-arm; the left side mirrors this once it is connected.
 - The hand is driven by `omnihand_skill_controller` (semantic skill → vendor preset → SDK),
   **not** by MoveIt. MoveIt only models the arm; the O12 hand description was migrated so the
   model is clean, but the demo does not MoveIt-plan the fingers.
+
+> **Execution seam (wired).** Planning and execution are separate surfaces. MoveIt's `both_arms`
+> profile stays *planning-only* (`start_moveit` skips fake ros2_control; the `duo_arm` execution
+> profile carries planning-only, driver-off arm instances). Execution is owned by
+> `agx_arm_mit_controller/launch/start_both_arms_execution.launch.py`, which brings up one per-arm
+> MIT controller per side (namespaced `/<side>_arm/arm_controller/follow_joint_trajectory`) plus the
+> `both_arms` fan-out FJT bridge (`agx_arm_mit_tools`) that owns
+> `both_arms_controller/follow_joint_trajectory` and splits the 14-joint goal by prefix to the two
+> per-arm servers. `arm_config.yaml` already points the three groups at those real providers:
+>
+> ```bash
+> ros2 launch agx_arm_mit_controller start_both_arms_execution.launch.py \
+>   left_effector_type:=omnihand right_effector_type:=omnihand omnihand_backend_type:=sdk
+> ```
+>
+> Use `arm_dry_run:=true` on the coordinator until anchor poses + recorded waypoints are taught;
+> the joint vectors below are still placeholders.
 
 ## Step A — bring up the right side
 
@@ -78,11 +117,21 @@ ros2 run agx_arm_mit_demos agx_arm_record_leader_trajectory --name pour_profile_
 # -> ~/agx_arm_trajectories/pour_profile_right.json (RecordedTrajectory)
 ```
 
-Then transcribe its sampled points into the matching catalogue action's `waypoints:`
+Then turn its sampled points into the matching catalogue action's `waypoints:`
 (`positions` + `time_from_start_sec`) in `agx_arm_coordination/config/catalogue.yaml`. The
-`arm_executor` replays `waypoints` as a FollowJointTrajectory goal.
-*Follow-up:* a small `RecordedTrajectory.json → catalogue waypoints` converter would remove the
-manual transcription (not yet built — keep minimal for now).
+`arm_executor` replays `waypoints` as a FollowJointTrajectory goal. Use the converter (or the
+teach manager's `w` key) instead of transcribing by hand:
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_recorded_to_catalogue \
+  ~/agx_arm_trajectories/pour_profile_right.json \
+  --action-id both_arms_pour_profile_v1 --max-points 8
+```
+
+It downsamples to a few timed waypoints and writes a paste-ready `waypoints:` block (sidecar
+`<action_id>.waypoints.yaml` + stdout). It deliberately does **not** rewrite `catalogue.yaml`
+in place (flow-style metadata + comments would be clobbered); paste the block under the action's
+`metadata` and confirm the echoed recorded joint order matches the group's `joint_names`.
 
 ## Step D — dry-run, then live
 
@@ -90,9 +139,9 @@ manual transcription (not yet built — keep minimal for now).
 # scheduling/routing only, no arm motion (hand open/release still safe to exercise)
 ros2 launch agx_arm_coordination start_hefeweizen_demo.launch.py arm_dry_run:=true
 
-# right-side live once Pre_Grip_R/grasp_R etc. are taught and a right MIT controller is up
-#   ros2 run agx_arm_mit_controller agx_arm_mit_controller \
-#     --ros-args -p action_name:=right_arm_controller/follow_joint_trajectory
+# live once anchors/waypoints are taught: bring up the arm execution seam, then drop arm_dry_run
+#   ros2 launch agx_arm_mit_controller start_both_arms_execution.launch.py omnihand_backend_type:=sdk
+#   ros2 launch agx_arm_coordination start_hefeweizen_demo.launch.py   # arm_dry_run defaults false
 ```
 
 ## Calibration still owed on hardware (see hefeweizen_validation_log.md)
