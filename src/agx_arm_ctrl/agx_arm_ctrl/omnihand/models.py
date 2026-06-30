@@ -20,10 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from pathlib import Path
 
-from ament_index_python.packages import get_package_share_directory
-import yaml
+from agx_arm_ctrl.motion_registry import omnihand_model
 
 
 def _rad(degrees: float) -> float:
@@ -102,31 +100,6 @@ _GESTURE_CONFIG_FILE: dict[str, str] = {
     "o12_pro": "omnihand_pro_gestures.yaml",
 }
 
-_REGISTRY_RELATIVE_PATH = Path("config") / "duo_motion_registry.yaml"
-
-
-def _find_motion_registry() -> Path:
-    """Locate duo_motion_registry.yaml in agx_arm_description (share, then source)."""
-    try:
-        share_dir = Path(get_package_share_directory("agx_arm_description"))
-        candidate = share_dir / _REGISTRY_RELATIVE_PATH
-        if candidate.is_file():
-            return candidate
-    except Exception:
-        pass
-    source_rel = Path("src") / "agx_arm_sim" / "agx_arm_description" / _REGISTRY_RELATIVE_PATH
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / source_rel
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(
-        "duo_motion_registry.yaml not found in agx_arm_description (share or source tree)"
-    )
-
-
-def _load_motion_registry() -> dict:
-    return yaml.safe_load(_find_motion_registry().read_text(encoding="utf-8")) or {}
-
 
 def _hand_model_from_registry(name: str, entry: dict) -> HandModel:
     joints = entry.get("active_joints", [])
@@ -143,10 +116,8 @@ def _hand_model_from_registry(name: str, entry: dict) -> HandModel:
     )
 
 
-_OMNIHAND_REGISTRY = _load_motion_registry().get("omnihand", {})
-
-O10 = _hand_model_from_registry("o10", _OMNIHAND_REGISTRY["o10"])
-O12_PRO = _hand_model_from_registry("o12_pro", _OMNIHAND_REGISTRY["o12_pro"])
+O10 = _hand_model_from_registry("o10", omnihand_model("o10"))
+O12_PRO = _hand_model_from_registry("o12_pro", omnihand_model("o12_pro"))
 
 HAND_MODELS: dict[str, HandModel] = {O10.name: O10, O12_PRO.name: O12_PRO}
 # o12_pro is the live default: it is the hardware we own, and the O10 SDK vendor

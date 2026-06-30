@@ -15,7 +15,7 @@
 #
 # schema_version bumps when the structure changes; consumers should tolerate
 # additive fields.
-schema_version: 1
+schema_version: 2
 
 # --- Arm (Nero, 7-DoF) -------------------------------------------------------
 arm:
@@ -26,30 +26,54 @@ arm:
       prefix: left_arm_
       namespace: left_arm
       can_port: can_nero_left
+      base_frame: left_arm_base_link
+      tip_frame: left_arm_nero_tool0
     right:
       prefix: right_arm_
       namespace: right_arm
       can_port: can_nero_right
+      base_frame: right_arm_base_link
+      tip_frame: right_arm_nero_tool0
   # Per-arm runtime controller (namespaced at use: /<namespace>/<controller_name>).
   controller_name: arm_controller
 
 # --- Motion profiles (MoveIt planning groups) --------------------------------
-# group -> the MoveIt planning group and which arm sides it spans. Single-arm
-# profiles carry one side; both_arms spans left then right (joint concatenation
-# order for combined trajectories).
+# Each profile is the geometric ground truth for one MoveIt planning group:
+# the group name, which arm sides it spans (single-arm profiles carry one side;
+# both_arms spans left then right = joint concatenation order), the input joint
+# prefix, and the arm base/tip frames. Execution presets (agx_arm_ctrl
+# execution_profiles.yaml) reference these by name and only add composition
+# (effector, xacro use_* flags); the frames/prefix/group live ONLY here.
+# restrictions encode runtime contracts enforced by duo_runtime_contract.py.
 motion_profiles:
   nero_arm:
     moveit_group: nero_arm
-    sides: []          # unprefixed single arm (standalone Nero)
+    sides: []                       # unprefixed single arm (standalone Nero)
+    input_joint_prefix: ""
+    base_frame: base_link
+    tip_frame: tcp_link
   left_arm:
     moveit_group: left_arm
     sides: [left]
+    input_joint_prefix: left_arm_
+    base_frame: left_arm_base_link
+    tip_frame: left_arm_nero_tool0
   right_arm:
     moveit_group: right_arm
     sides: [right]
+    input_joint_prefix: right_arm_
+    base_frame: right_arm_base_link
+    tip_frame: right_arm_nero_tool0
   both_arms:
     moveit_group: both_arms
     sides: [left, right]
+    input_joint_prefix: ""          # per-side prefixes come from arm.sides
+    base_frame: ""
+    tip_frame: ""
+    restrictions:
+      # Enforced by agx_arm_ctrl/duo_runtime_contract.py.
+      allowed_effector_types: [none]
+      requires_follow_with_mit: true
 
 # --- OmniHand active (controllable) joints -----------------------------------
 # Per model: ordered active-joint suffixes (side-prefixed at use, e.g.

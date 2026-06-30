@@ -6,6 +6,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
 from _multi_arm_runtime import (
+    MOTION_PROFILES,
     controller_joint_names,
     controller_path,
     omnihand_controller_joint_names,
@@ -31,31 +32,16 @@ TRAC_IK_KINEMATICS = {
     "kinematics_solver_attempts": 5,
     "solve_type": "Distance",
 }
+# Per-profile group + prefix + base/tip frames come from the registry motion
+# profiles (duo_motion_registry.yaml) — no second hand-maintained copy here.
 MOVEIT_PROFILE_DEFAULTS = {
-    "nero_arm": {
-        "planning_group_name": "nero_arm",
-        "input_joint_prefix": "",
-        "arm_base_frame": "base_link",
-        "arm_tip_frame": "tcp_link",
-    },
-    "right_arm": {
-        "planning_group_name": "right_arm",
-        "input_joint_prefix": "right_arm_",
-        "arm_base_frame": "right_arm_base_link",
-        "arm_tip_frame": "right_arm_nero_tool0",
-    },
-    "left_arm": {
-        "planning_group_name": "left_arm",
-        "input_joint_prefix": "left_arm_",
-        "arm_base_frame": "left_arm_base_link",
-        "arm_tip_frame": "left_arm_nero_tool0",
-    },
-    "both_arms": {
-        "planning_group_name": "both_arms",
-        "input_joint_prefix": "",
-        "arm_base_frame": "",
-        "arm_tip_frame": "",
-    },
+    name: {
+        "planning_group_name": str(profile.get("moveit_group", name)),
+        "input_joint_prefix": str(profile.get("input_joint_prefix", "")),
+        "arm_base_frame": str(profile.get("base_frame", "")),
+        "arm_tip_frame": str(profile.get("tip_frame", "")),
+    }
+    for name, profile in MOTION_PROFILES.items()
 }
 
 

@@ -43,11 +43,19 @@ CANONICAL_ARM_JOINTS = list(_MOTION_REGISTRY["arm"]["canonical_joints"])
 OMNIHAND_O12_ACTIVE_JOINT_SUFFIXES = [
     str(joint["suffix"]) for joint in _MOTION_REGISTRY["omnihand"]["o12_pro"]["active_joints"]
 ]
+# Profile geometry + arm side conventions are registry-derived (no second copy).
+# MOTION_PROFILES is public so _moveit_config_builder builds its profile defaults
+# (group/prefix/base/tip frames) from the same registry entries.
+_MOTION_PROFILES = _MOTION_REGISTRY.get("motion_profiles", {})
+MOTION_PROFILES = _MOTION_PROFILES
+_ARM = _MOTION_REGISTRY.get("arm", {})
+ARM_SIDES = _ARM.get("sides", {})
+ARM_CONTROLLER_NAME = str(_ARM.get("controller_name", "arm_controller"))
+
+# profile -> input joint prefix (was a hardcoded dict; now from the registry).
 PROFILE_PREFIX_DEFAULTS = {
-    DEFAULT_MOVEIT_GROUP: "",
-    "right_arm": "right_arm_",
-    "left_arm": "left_arm_",
-    DUAL_ARM_MOVEIT_GROUP: "",
+    name: str(profile.get("input_joint_prefix", ""))
+    for name, profile in _MOTION_PROFILES.items()
 }
 
 
@@ -121,42 +129,35 @@ def parse_arm_instances(raw_value: object) -> list[Mapping[str, object]]:
     return parsed
 
 
+def _planning_instance_for_side(side: str) -> dict[str, str]:
+    """Planning-only arm instance for a registry side (no driver/CAN bring-up)."""
+    side_cfg = ARM_SIDES.get(side, {})
+    prefix = str(side_cfg.get("prefix", f"{side}_arm_"))
+    namespace = str(side_cfg.get("namespace", side))
+    return {
+        "name": namespace,
+        "namespace": namespace,
+        "joint_prefix": prefix,
+        "feedback_joint_prefix": prefix,
+        "controller_name": ARM_CONTROLLER_NAME,
+        "can_port": "",
+        "arm_type": "",
+        "effector_type": "",
+        "omnihand_type": "",
+        "revo2_type": "",
+        "tcp_offset": "",
+        "launch_driver": "",
+    }
+
+
 def _default_arm_instances(
     moveit_profile: str,
     explicit_joint_prefix: str = "",
     explicit_feedback_joint_prefix: str = "",
 ) -> list[dict[str, str]]:
     if moveit_profile == DUAL_ARM_MOVEIT_GROUP:
-        return [
-            {
-                "name": "left_arm",
-                "namespace": "left_arm",
-                "joint_prefix": "left_arm_",
-                "feedback_joint_prefix": "left_arm_",
-                "controller_name": "arm_controller",
-                "can_port": "",
-                "arm_type": "",
-                "effector_type": "",
-                "omnihand_type": "",
-                "revo2_type": "",
-                "tcp_offset": "",
-                "launch_driver": "",
-            },
-            {
-                "name": "right_arm",
-                "namespace": "right_arm",
-                "joint_prefix": "right_arm_",
-                "feedback_joint_prefix": "right_arm_",
-                "controller_name": "arm_controller",
-                "can_port": "",
-                "arm_type": "",
-                "effector_type": "",
-                "omnihand_type": "",
-                "revo2_type": "",
-                "tcp_offset": "",
-                "launch_driver": "",
-            },
-        ]
+        sides = _MOTION_PROFILES.get(DUAL_ARM_MOVEIT_GROUP, {}).get("sides", ["left", "right"])
+        return [_planning_instance_for_side(side) for side in sides]
 
     default_prefix = explicit_joint_prefix or PROFILE_PREFIX_DEFAULTS.get(moveit_profile, "")
     default_feedback_prefix = explicit_feedback_joint_prefix or default_prefix
@@ -167,7 +168,7 @@ def _default_arm_instances(
             "namespace": "",
             "joint_prefix": default_prefix,
             "feedback_joint_prefix": default_feedback_prefix,
-            "controller_name": "arm_controller",
+            "controller_name": ARM_CONTROLLER_NAME,
             "can_port": "",
             "arm_type": "",
             "effector_type": "",
