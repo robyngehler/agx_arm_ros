@@ -6,6 +6,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
 from _multi_arm_runtime import (
+    ARM_SIDES,
     MOTION_PROFILES,
     controller_joint_names,
     controller_path,
@@ -149,6 +150,11 @@ def _build_mit_trajectory_execution(arm_instances: list[dict[str, str]]) -> dict
     }
 
 
+def _side_frame(side: str, key: str) -> str:
+    """Per-side arm frame/prefix from the registry (arm.sides.<side>.<key>)."""
+    return str(ARM_SIDES.get(side, {}).get(key, ""))
+
+
 def _resolve_profile_settings(
     moveit_profile: str,
     custom_model: str,
@@ -181,14 +187,15 @@ def _resolve_profile_settings(
         "arm_base_frame": explicit_arm_base_frame or defaults["arm_base_frame"],
         "arm_tip_frame": explicit_arm_tip_frame or defaults["arm_tip_frame"],
         "include_dual_arm_groups": "true" if moveit_profile == DUAL_ARM_MOVEIT_GROUP else "false",
-        "left_arm_base_frame": "left_arm_base_link",
-        "left_arm_tip_frame": "left_arm_nero_tool0",
-        "left_arm_joint_prefix": "left_arm_",
-        "left_arm_link_prefix": "left_arm_",
-        "right_arm_base_frame": "right_arm_base_link",
-        "right_arm_tip_frame": "right_arm_nero_tool0",
-        "right_arm_joint_prefix": "right_arm_",
-        "right_arm_link_prefix": "right_arm_",
+        # Per-side frames/prefixes come from the registry (arm.sides), not hardcoded.
+        "left_arm_base_frame": _side_frame("left", "base_frame"),
+        "left_arm_tip_frame": _side_frame("left", "tip_frame"),
+        "left_arm_joint_prefix": _side_frame("left", "prefix"),
+        "left_arm_link_prefix": _side_frame("left", "prefix"),
+        "right_arm_base_frame": _side_frame("right", "base_frame"),
+        "right_arm_tip_frame": _side_frame("right", "tip_frame"),
+        "right_arm_joint_prefix": _side_frame("right", "prefix"),
+        "right_arm_link_prefix": _side_frame("right", "prefix"),
     }
 
 

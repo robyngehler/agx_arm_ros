@@ -28,34 +28,33 @@ from _moveit_config_builder import (
     ALL_REVO2_TYPES,
     build_moveit_config,
 )
-from _multi_arm_runtime import omnihand_controller_joint_names
+from _multi_arm_runtime import (
+    ARM_SIDES,
+    CANONICAL_ARM_JOINTS,
+    MOTION_PROFILES,
+    omnihand_controller_joint_names,
+)
 
 
 def _build_ros2_controllers_file(
     arm_type, effector_type, revo2_type, omnihand_type, namespace, moveit_profile, input_joint_prefix
 ):
-    if moveit_profile == "both_arms":
-        joint_prefixes = ["left_arm_", "right_arm_"]
+    # Joint prefixes per side and the canonical joint set come from the registry
+    # (motion_profiles.<profile>.sides + arm.sides.<side>.prefix + arm.canonical_joints),
+    # not a second hardcoded copy. An explicit single-arm input_joint_prefix still overrides.
+    profile_sides = MOTION_PROFILES.get(moveit_profile, {}).get("sides", [])
+    if len(profile_sides) > 1:
+        joint_prefixes = [str(ARM_SIDES.get(side, {}).get("prefix", f"{side}_arm_")) for side in profile_sides]
+    elif input_joint_prefix:
+        joint_prefixes = [input_joint_prefix]
+    elif profile_sides:
+        joint_prefixes = [str(ARM_SIDES.get(profile_sides[0], {}).get("prefix", ""))]
     else:
-        resolved_input_joint_prefix = input_joint_prefix
-        if not resolved_input_joint_prefix and moveit_profile == "right_arm":
-            resolved_input_joint_prefix = "right_arm_"
-        if not resolved_input_joint_prefix and moveit_profile == "left_arm":
-            resolved_input_joint_prefix = "left_arm_"
-        joint_prefixes = [resolved_input_joint_prefix]
+        joint_prefixes = [input_joint_prefix]
 
     arm_joints = []
     for joint_prefix in joint_prefixes:
-        arm_joints.extend([
-            f"{joint_prefix}joint1",
-            f"{joint_prefix}joint2",
-            f"{joint_prefix}joint3",
-            f"{joint_prefix}joint4",
-            f"{joint_prefix}joint5",
-            f"{joint_prefix}joint6",
-        ])
-        if arm_type == "nero":
-            arm_joints.append(f"{joint_prefix}joint7")
+        arm_joints.extend(f"{joint_prefix}{joint}" for joint in CANONICAL_ARM_JOINTS)
 
     cm_controllers = {
         "arm_controller": {
