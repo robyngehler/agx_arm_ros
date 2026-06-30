@@ -28,6 +28,8 @@ setup(
             "agx_arm_record_leader_trajectory = agx_arm_mit_demos.leader_trajectory_recorder:main",
             "agx_arm_execute_saved_trajectory = agx_arm_mit_demos.execute_saved_trajectory:main",
             "agx_arm_capture_anchor_pose = agx_arm_mit_demos.capture_anchor_pose:main",
+            "agx_arm_recorded_to_catalogue = agx_arm_mit_demos.recorded_to_catalogue:main",
+            "agx_arm_teach_manager = agx_arm_mit_demos.teach_manager:main",
             "agx_arm_wakeword_motion_manager = agx_arm_mit_demos.wakeword_motion_manager:main",
         ],
     },
