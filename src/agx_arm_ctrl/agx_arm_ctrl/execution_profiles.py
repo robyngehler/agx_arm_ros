@@ -6,6 +6,8 @@ from typing import Any
 import yaml
 from ament_index_python.packages import get_package_share_directory
 
+from agx_arm_ctrl.motion_registry import motion_profile
+
 
 PROFILE_CONFIG_RELATIVE_PATH = Path("config") / "execution_profiles.yaml"
 DUO_MODEL_RELATIVE_PATH = Path("urdf") / "duo_system.urdf.xacro"
@@ -130,6 +132,26 @@ def resolve_execution_profile(
 
     if raw_profile.get("use_duo_model"):
         resolved["custom_model"] = str(Path(duo_model_path) if duo_model_path is not None else default_duo_model_path())
+        # Duo profiles take their arm prefix + base/tip/tcp frames from the motion
+        # registry (motion_profiles.<moveit_profile>) instead of re-declaring them in
+        # execution_profiles.yaml. A preset may still override any of these keys.
+        registry_profile = {}
+        try:
+            registry_profile = motion_profile(resolved.get("moveit_profile", ""))
+        except KeyError:
+            registry_profile = {}
+        prefix = str(registry_profile.get("input_joint_prefix", "")).strip()
+        tip_frame = str(registry_profile.get("tip_frame", "")).strip()
+        registry_fill = {
+            "input_joint_prefix": prefix,
+            "feedback_joint_prefix": prefix,
+            "arm_base_frame": str(registry_profile.get("base_frame", "")).strip(),
+            "arm_tip_frame": tip_frame,
+            "tcp_parent_frame": tip_frame,
+        }
+        for key, value in registry_fill.items():
+            if value and key not in resolved:
+                resolved[key] = value
 
     xacro_args = raw_profile.get("custom_model_xacro_args")
     if isinstance(xacro_args, dict) and xacro_args:

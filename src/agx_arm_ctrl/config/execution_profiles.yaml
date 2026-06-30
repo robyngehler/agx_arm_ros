@@ -11,11 +11,6 @@ profiles:
     use_duo_model: true
     moveit_profile: left_arm
     effector_type: none
-    input_joint_prefix: left_arm_
-    feedback_joint_prefix: left_arm_
-    arm_base_frame: left_arm_base_link
-    arm_tip_frame: left_arm_nero_tool0
-    tcp_parent_frame: left_arm_nero_tool0
     custom_model_xacro_args:
       use_left_arm: true
       use_left_hand: false
@@ -29,11 +24,6 @@ profiles:
     effector_type: omnihand
     omnihand_type: left
     launch_omnihand_bridge: true
-    input_joint_prefix: left_arm_
-    feedback_joint_prefix: left_arm_
-    arm_base_frame: left_arm_base_link
-    arm_tip_frame: left_arm_nero_tool0
-    tcp_parent_frame: left_arm_nero_tool0
     custom_model_xacro_args:
       use_left_arm: true
       use_left_hand: true
@@ -45,11 +35,6 @@ profiles:
     use_duo_model: true
     moveit_profile: right_arm
     effector_type: none
-    input_joint_prefix: right_arm_
-    feedback_joint_prefix: right_arm_
-    arm_base_frame: right_arm_base_link
-    arm_tip_frame: right_arm_nero_tool0
-    tcp_parent_frame: right_arm_nero_tool0
     custom_model_xacro_args:
       use_left_arm: false
       use_left_hand: false
@@ -63,11 +48,6 @@ profiles:
     effector_type: omnihand
     omnihand_type: right
     launch_omnihand_bridge: true
-    input_joint_prefix: right_arm_
-    feedback_joint_prefix: right_arm_
-    arm_base_frame: right_arm_base_link
-    arm_tip_frame: right_arm_nero_tool0
-    tcp_parent_frame: right_arm_nero_tool0
     custom_model_xacro_args:
       use_left_arm: false
       use_left_hand: false
