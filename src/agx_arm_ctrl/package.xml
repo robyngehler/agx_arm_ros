@@ -15,6 +15,7 @@
   <depend>std_srvs</depend>
   <depend>builtin_interfaces</depend>
   <depend>agx_arm_msgs</depend>
+  <exec_depend>agx_arm_description</exec_depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
   <depend>ament_index_python</depend>

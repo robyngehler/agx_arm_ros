@@ -20,6 +20,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from pathlib import Path
+
+from ament_index_python.packages import get_package_share_directory
+import yaml
 
 
 def _rad(degrees: float) -> float:
@@ -86,105 +90,63 @@ class HandModel:
         return list(self.active_joint_min_right), list(self.active_joint_max_right)
 
 
-# --- OmniHand 2025 (O10) -----------------------------------------------------
-# Mirrors the original constants in omnihand_bridge_node.py.
-O10 = HandModel(
-    name="o10",
-    gesture_config_file="omnihand_gestures.yaml",
-    joint_suffixes=(
-        "thumb_roll_joint",
-        "thumb_abad_joint",
-        "thumb_mcp_joint",
-        "index_abad_joint",
-        "index_pip_joint",
-        "middle_pip_joint",
-        "ring_abad_joint",
-        "ring_pip_joint",
-        "pinky_abad_joint",
-        "pinky_pip_joint",
-    ),
-    active_joint_min_right=(-0.03, -1.64, 0.0, -0.16, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-    active_joint_max_right=(1.12, 0.05, 0.8416, 0.0, 1.48, 1.48, 0.17, 1.48, 0.19, 1.48),
-    left_pos_direction=(-1, -1, -1, -1, 1, 1, -1, 1, -1, 1),
-    tactile_fingers=(
-        ("thumb_tip", "THUMB"),
-        ("index_tip", "INDEX"),
-        ("middle_tip", "MIDDLE"),
-        ("ring_tip", "RING"),
-        ("little_tip", "LITTLE"),
-    ),
-)
+# --- Registry-driven model construction --------------------------------------
+# The active-joint sets, limits, mirror directions, and tactile maps come from the
+# single source of truth, agx_arm_description/config/duo_motion_registry.yaml, so
+# this file no longer hand-maintains lists that must match the MoveIt SRDF /
+# controllers / _multi_arm_runtime. Only the gesture-preset file (a control-layer
+# concern) stays here. O12 limits are stored in the registry as degrees and the
+# vendor URDF (o12_hand_description) ranges; O10 as native radians.
+_GESTURE_CONFIG_FILE: dict[str, str] = {
+    "o10": "omnihand_gestures.yaml",
+    "o12_pro": "omnihand_pro_gestures.yaml",
+}
+
+_REGISTRY_RELATIVE_PATH = Path("config") / "duo_motion_registry.yaml"
 
 
-# --- OmniHand Pro 2025 (O12) -------------------------------------------------
-# Joint order and limits from the OmniHand Pro 2025 manual (§2.4) and the
-# AgibotHandO12 Python API. Limits are the RIGHT-hand ranges in radians; only
-# thumb_roll and thumb_abad differ between left/right (sign flip), everything
-# else is symmetric.
-#
-# thumb_roll / thumb_abad SIGN FIX (2026-06-29): the original provisional values
-# were sign-flipped (thumb_roll [-42,0], thumb_abad [0,+54]). The bridge clamps
-# SDK targets to these limits, so positive thumb_roll commands clamped to 0 and the
-# thumb never rolled toward the palm (observed on hardware). The official vendor
-# URDF (o12_hand_description) and the vendor demo fist preset both use thumb_roll
-# [0,+42] and thumb_abad [-54,0]; aligned here so command clamps match the hand.
-# The remaining ranges are PROVISIONAL — verify on hardware.
-O12_PRO = HandModel(
-    name="o12_pro",
-    gesture_config_file="omnihand_pro_gestures.yaml",
-    joint_suffixes=(
-        "thumb_roll_joint",
-        "thumb_abad_joint",
-        "thumb_mcp_joint",
-        "thumb_pip_joint",
-        "index_abad_joint",
-        "index_mcp_joint",
-        "index_pip_joint",
-        "middle_abad_joint",
-        "middle_mcp_joint",
-        "middle_pip_joint",
-        "ring_mcp_joint",
-        "pinky_mcp_joint",
-    ),
-    active_joint_min_right=(
-        _rad(0.0),    # thumb_roll  (vendor URDF: [0, +42]); see note below
-        _rad(-54.0),  # thumb_abad  (vendor URDF: [-54, 0]); see note below
-        _rad(-49.0),  # thumb_mcp
-        _rad(-74.0),  # thumb_pip
-        _rad(-15.0),  # index_abad
-        _rad(0.0),    # index_mcp
-        _rad(0.0),    # index_pip
-        _rad(-15.0),  # middle_abad
-        _rad(0.0),    # middle_mcp
-        _rad(0.0),    # middle_pip
-        _rad(0.0),    # ring_mcp
-        _rad(0.0),    # pinky_mcp
-    ),
-    active_joint_max_right=(
-        _rad(42.0),   # thumb_roll  (vendor URDF: [0, +42]); see note below
-        _rad(0.0),    # thumb_abad  (vendor URDF: [-54, 0]); see note below
-        _rad(0.0),    # thumb_mcp
-        _rad(0.0),    # thumb_pip
-        _rad(15.0),   # index_abad
-        _rad(76.0),   # index_mcp
-        _rad(85.0),   # index_pip
-        _rad(15.0),   # middle_abad
-        _rad(76.0),   # middle_mcp
-        _rad(98.0),   # middle_pip
-        _rad(79.0),   # ring_mcp
-        _rad(79.0),   # pinky_mcp
-    ),
-    # Only thumb_roll and thumb_abad flip sign between left and right.
-    left_pos_direction=(-1, -1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
-    tactile_fingers=(
-        ("thumb_tip", "THUMB"),
-        ("index_tip", "INDEX"),
-        ("middle_tip", "MIDDLE"),
-        ("ring_tip", "RING"),
-        ("little_tip", "LITTLE"),
-    ),
-)
+def _find_motion_registry() -> Path:
+    """Locate duo_motion_registry.yaml in agx_arm_description (share, then source)."""
+    try:
+        share_dir = Path(get_package_share_directory("agx_arm_description"))
+        candidate = share_dir / _REGISTRY_RELATIVE_PATH
+        if candidate.is_file():
+            return candidate
+    except Exception:
+        pass
+    source_rel = Path("src") / "agx_arm_sim" / "agx_arm_description" / _REGISTRY_RELATIVE_PATH
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / source_rel
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "duo_motion_registry.yaml not found in agx_arm_description (share or source tree)"
+    )
 
+
+def _load_motion_registry() -> dict:
+    return yaml.safe_load(_find_motion_registry().read_text(encoding="utf-8")) or {}
+
+
+def _hand_model_from_registry(name: str, entry: dict) -> HandModel:
+    joints = entry.get("active_joints", [])
+    unit = str(entry.get("limit_unit", "rad"))
+    convert = _rad if unit == "deg" else (lambda value: float(value))
+    return HandModel(
+        name=name,
+        gesture_config_file=_GESTURE_CONFIG_FILE.get(name, ""),
+        joint_suffixes=tuple(str(joint["suffix"]) for joint in joints),
+        active_joint_min_right=tuple(convert(joint["min"]) for joint in joints),
+        active_joint_max_right=tuple(convert(joint["max"]) for joint in joints),
+        left_pos_direction=tuple(int(joint["left_dir"]) for joint in joints),
+        tactile_fingers=tuple((str(a), str(b)) for a, b in entry.get("tactile_fingers", [])),
+    )
+
+
+_OMNIHAND_REGISTRY = _load_motion_registry().get("omnihand", {})
+
+O10 = _hand_model_from_registry("o10", _OMNIHAND_REGISTRY["o10"])
+O12_PRO = _hand_model_from_registry("o12_pro", _OMNIHAND_REGISTRY["o12_pro"])
 
 HAND_MODELS: dict[str, HandModel] = {O10.name: O10, O12_PRO.name: O12_PRO}
 # o12_pro is the live default: it is the hardware we own, and the O10 SDK vendor

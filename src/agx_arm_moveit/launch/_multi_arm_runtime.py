@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
+from ament_index_python.packages import get_package_share_directory
 import yaml
 from launch.substitutions import LaunchConfiguration
 
@@ -9,30 +11,37 @@ from launch.substitutions import LaunchConfiguration
 DEFAULT_MOVEIT_GROUP = "nero_arm"
 DUAL_ARM_MOVEIT_GROUP = "both_arms"
 DEFAULT_PREFIXED_FEEDBACK_TOPIC = "feedback/prefixed_joint_states"
-CANONICAL_ARM_JOINTS = [
-    "joint1",
-    "joint2",
-    "joint3",
-    "joint4",
-    "joint5",
-    "joint6",
-    "joint7",
-]
-# OmniHand Pro O12 active (controllable) joints, side-prefixed at use. Must match
-# agx_arm_ctrl/omnihand/models.py O12_PRO and the MoveIt SRDF omnihand_group.
+
+# Arm + OmniHand joint sets come from the single source of truth,
+# agx_arm_description/config/duo_motion_registry.yaml — no second hand-synced copy
+# here (this module previously duplicated them with a "must match" comment).
+_REGISTRY_RELATIVE_PATH = Path("config") / "duo_motion_registry.yaml"
+
+
+def _find_motion_registry() -> Path:
+    try:
+        share_dir = Path(get_package_share_directory("agx_arm_description"))
+        candidate = share_dir / _REGISTRY_RELATIVE_PATH
+        if candidate.is_file():
+            return candidate
+    except Exception:
+        pass
+    source_rel = Path("src") / "agx_arm_sim" / "agx_arm_description" / _REGISTRY_RELATIVE_PATH
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / source_rel
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(
+        "duo_motion_registry.yaml not found in agx_arm_description (share or source tree)"
+    )
+
+
+_MOTION_REGISTRY = yaml.safe_load(_find_motion_registry().read_text(encoding="utf-8")) or {}
+
+CANONICAL_ARM_JOINTS = list(_MOTION_REGISTRY["arm"]["canonical_joints"])
+# OmniHand Pro O12 active (controllable) joints, side-prefixed at use.
 OMNIHAND_O12_ACTIVE_JOINT_SUFFIXES = [
-    "thumb_roll_joint",
-    "thumb_abad_joint",
-    "thumb_mcp_joint",
-    "thumb_pip_joint",
-    "index_abad_joint",
-    "index_mcp_joint",
-    "index_pip_joint",
-    "middle_abad_joint",
-    "middle_mcp_joint",
-    "middle_pip_joint",
-    "ring_mcp_joint",
-    "pinky_mcp_joint",
+    str(joint["suffix"]) for joint in _MOTION_REGISTRY["omnihand"]["o12_pro"]["active_joints"]
 ]
 PROFILE_PREFIX_DEFAULTS = {
     DEFAULT_MOVEIT_GROUP: "",
