@@ -54,12 +54,11 @@ profiles:
       use_right_arm: true
       use_right_hand: true
 
-  # Planning / description surface for the Duo. MoveIt brings up `both_arms` as a
-  # planning-only profile, so this profile carries planning-only arm instances
-  # (no driver / CAN bring-up). Execution drivers, per-arm controllers, and the
-  # both_arms fan-out bridge are owned by
-  # `agx_arm_mit_controller/launch/start_both_arms_execution.launch.py`, which keeps
-  # planning and execution as separate surfaces.
+  # Duo MoveIt slice. `mode:=moveit_mit` brings up one per-arm MIT controller per
+  # side (namespaced /<side>_arm/arm_controller) plus move_group; MoveIt owns the
+  # both_arms execution (it fans a both_arms plan out to the per-arm controllers
+  # natively). The coordinator dispatches arm motions through MoveGroup /
+  # ExecuteTrajectory on this same slice — there is no separate both_arms controller.
   duo_arm:
     robot_name: duo_nero_system
     use_duo_model: true
