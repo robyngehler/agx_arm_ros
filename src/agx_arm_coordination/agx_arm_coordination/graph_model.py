@@ -172,7 +172,7 @@ def validate_activity(graph: ActivityGraph, catalogue: dict[str, Action]) -> lis
     for flag in flags:
         members = graph.sync_group(flag)
         for i, a_no in enumerate(members):
-            for b_no in members[i + 1 :]:
+            for b_no in members[i + 1:]:
                 a, b = graph.nodes[a_no], graph.nodes[b_no]
                 act_a = catalogue.get(a.action_id)
                 act_b = catalogue.get(b.action_id)

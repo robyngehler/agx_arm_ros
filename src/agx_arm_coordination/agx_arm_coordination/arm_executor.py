@@ -184,7 +184,12 @@ class ArmTrajectoryPlanner:
                 f"{len(positions)} joints, group '{action.robot_id}' has "
                 f"{len(joint_names)}"
             )
-        return (TrajectoryPoint(positions=positions, time_from_start_sec=self._move_time(action.metadata)),)
+        return (
+            TrajectoryPoint(
+                positions=positions,
+                time_from_start_sec=self._move_time(action.metadata),
+            ),
+        )
 
     def _plan_recorded(
         self, action: Action, joint_names: tuple[str, ...]
