@@ -1,0 +1,107 @@
+# Duo motion registry — the single source of truth for the Duo motion stack.
+#
+# This file consolidates the arm + OmniHand joint sets, side conventions, motion
+# profiles, and the OmniHand active-joint limits/mirror that were previously
+# duplicated across packages (agx_arm_ctrl/omnihand/models.py,
+# agx_arm_moveit/launch/_multi_arm_runtime.py + _moveit_config_builder.py, the
+# MoveIt SRDF/controllers/initial_positions, and agx_arm_coordination/arm_config.yaml).
+#
+# Ownership: lives in agx_arm_description (the lowest description/side package) and
+# is read from its share/ by every consumer via
+#   get_package_share_directory("agx_arm_description")/config/duo_motion_registry.yaml
+# so no package re-declares these sets. The physical joint topology (link frames,
+# mimic ratios, meshes) remains in the URDF/xacro; this registry is the active /
+# controllable surface derived from it.
+#
+# schema_version bumps when the structure changes; consumers should tolerate
+# additive fields.
+schema_version: 1
+
+# --- Arm (Nero, 7-DoF) -------------------------------------------------------
+arm:
+  # Canonical (unprefixed) joint order for one Nero arm.
+  canonical_joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+  sides:
+    left:
+      prefix: left_arm_
+      namespace: left_arm
+      can_port: can_nero_left
+    right:
+      prefix: right_arm_
+      namespace: right_arm
+      can_port: can_nero_right
+  # Per-arm runtime controller (namespaced at use: /<namespace>/<controller_name>).
+  controller_name: arm_controller
+
+# --- Motion profiles (MoveIt planning groups) --------------------------------
+# group -> the MoveIt planning group and which arm sides it spans. Single-arm
+# profiles carry one side; both_arms spans left then right (joint concatenation
+# order for combined trajectories).
+motion_profiles:
+  nero_arm:
+    moveit_group: nero_arm
+    sides: []          # unprefixed single arm (standalone Nero)
+  left_arm:
+    moveit_group: left_arm
+    sides: [left]
+  right_arm:
+    moveit_group: right_arm
+    sides: [right]
+  both_arms:
+    moveit_group: both_arms
+    sides: [left, right]
+
+# --- OmniHand active (controllable) joints -----------------------------------
+# Per model: ordered active-joint suffixes (side-prefixed at use, e.g.
+# right_thumb_roll_joint), command limits for the RIGHT hand, the left-hand sign
+# mirror, and the tip-to-tip tactile finger map (ROS layout name, vendor EFinger).
+# limit_unit selects how min/max are interpreted (deg are converted to rad on load).
+omnihand:
+  o12_pro:
+    sdk_active_joint_count: 12
+    limit_unit: deg
+    # min/max are RIGHT-hand command limits; left_dir mirrors the joint for the
+    # left hand (-1 flips sign, +1 keeps). Values match models.py O12_PRO (vendor
+    # URDF o12_hand_description + AgibotHandO12); PROVISIONAL — verify on hardware.
+    active_joints:
+      - { suffix: thumb_roll_joint,  min: 0,   max: 42, left_dir: -1 }
+      - { suffix: thumb_abad_joint,  min: -54, max: 0,  left_dir: -1 }
+      - { suffix: thumb_mcp_joint,   min: -49, max: 0,  left_dir: 1 }
+      - { suffix: thumb_pip_joint,   min: -74, max: 0,  left_dir: 1 }
+      - { suffix: index_abad_joint,  min: -15, max: 15, left_dir: 1 }
+      - { suffix: index_mcp_joint,   min: 0,   max: 76, left_dir: 1 }
+      - { suffix: index_pip_joint,   min: 0,   max: 85, left_dir: 1 }
+      - { suffix: middle_abad_joint, min: -15, max: 15, left_dir: 1 }
+      - { suffix: middle_mcp_joint,  min: 0,   max: 76, left_dir: 1 }
+      - { suffix: middle_pip_joint,  min: 0,   max: 98, left_dir: 1 }
+      - { suffix: ring_mcp_joint,    min: 0,   max: 79, left_dir: 1 }
+      - { suffix: pinky_mcp_joint,   min: 0,   max: 79, left_dir: 1 }
+    tactile_fingers:
+      - [thumb_tip, THUMB]
+      - [index_tip, INDEX]
+      - [middle_tip, MIDDLE]
+      - [ring_tip, RING]
+      - [little_tip, LITTLE]
+
+  # Legacy OmniHand 2025 (10 active joints). Mock-only fallback; SDK submodule
+  # swapped out. Limits are native radians.
+  o10:
+    sdk_active_joint_count: 10
+    limit_unit: rad
+    active_joints:
+      - { suffix: thumb_roll_joint,  min: -0.03, max: 1.12,   left_dir: -1 }
+      - { suffix: thumb_abad_joint,  min: -1.64, max: 0.05,   left_dir: -1 }
+      - { suffix: thumb_mcp_joint,   min: 0.0,   max: 0.8416, left_dir: -1 }
+      - { suffix: index_abad_joint,  min: -0.16, max: 0.0,    left_dir: -1 }
+      - { suffix: index_pip_joint,   min: 0.0,   max: 1.48,   left_dir: 1 }
+      - { suffix: middle_pip_joint,  min: 0.0,   max: 1.48,   left_dir: 1 }
+      - { suffix: ring_abad_joint,   min: 0.0,   max: 0.17,   left_dir: -1 }
+      - { suffix: ring_pip_joint,    min: 0.0,   max: 1.48,   left_dir: 1 }
+      - { suffix: pinky_abad_joint,  min: 0.0,   max: 0.19,   left_dir: -1 }
+      - { suffix: pinky_pip_joint,   min: 0.0,   max: 1.48,   left_dir: 1 }
+    tactile_fingers:
+      - [thumb_tip, THUMB]
+      - [index_tip, INDEX]
+      - [middle_tip, MIDDLE]
+      - [ring_tip, RING]
+      - [little_tip, LITTLE]
