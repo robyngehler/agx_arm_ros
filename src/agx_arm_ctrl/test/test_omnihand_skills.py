@@ -18,14 +18,51 @@ from agx_arm_ctrl.omnihand.skills import (
 
 # --- skill catalogue ---------------------------------------------------------
 
-def test_fallback_catalogue_has_mvp_skills():
+def test_empty_data_yields_empty_catalogue():
+    # No hardcoded fallback: the skill mapping has a single source of truth
+    # (config/omnihand_skills.yaml), so empty data gives an empty catalogue.
     cat = parse_skill_catalogue(None)
+    assert cat.skills == {}
+
+
+def test_installed_skill_yaml_has_mvp_skills():
+    # The single source of truth (config/omnihand_skills.yaml) carries the MVP skills.
+    from pathlib import Path
+
+    from ament_index_python.packages import get_package_share_directory
+
+    from agx_arm_ctrl.omnihand.skills import load_skill_catalogue
+
+    path = Path(get_package_share_directory("agx_arm_ctrl")) / "config" / "omnihand_skills.yaml"
+    cat = load_skill_catalogue(str(path))
     assert cat.resolve("open_hand").motion == MOTION_OPEN
     assert cat.resolve("open_hand").target_preset == "zero"
     grasp = cat.resolve("grasp_glass_until_contact")
     assert grasp.motion == MOTION_CLOSE_UNTIL_CONTACT
     assert grasp.target_preset == "fist_vendor_demo"
     assert cat.resolve("stop_hand").target_preset is None
+
+
+def test_gesture_yaml_joint_order_matches_registry():
+    # The gesture presets are ordered by joint; that order must equal the registry
+    # active-joint set (the single source of truth), or preset vectors would be
+    # silently mis-mapped onto the wrong joints.
+    from pathlib import Path
+
+    from ament_index_python.packages import get_package_share_directory
+    import yaml
+
+    from agx_arm_ctrl.motion_registry import omnihand_model
+
+    config_dir = Path(get_package_share_directory("agx_arm_ctrl")) / "config"
+    for yaml_name, model_key in (
+        ("omnihand_pro_gestures.yaml", "o12_pro"),
+        ("omnihand_gestures.yaml", "o10"),
+    ):
+        data = yaml.safe_load((config_dir / yaml_name).read_text(encoding="utf-8")) or {}
+        order = [str(name) for name in data.get("omnihand_active_joint_order", [])]
+        expected = [str(j["suffix"]) for j in omnihand_model(model_key)["active_joints"]]
+        assert order == expected, (yaml_name, order, expected)
 
 
 def test_catalogue_parses_yaml_dict_and_defaults():

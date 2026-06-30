@@ -130,29 +130,16 @@ class SkillCatalogue:
             ) from None
 
 
-FALLBACK_SKILLS: dict[str, dict[str, Any]] = {
-    "open_hand": {"motion": MOTION_OPEN, "target_preset": "zero"},
-    "release_glass": {"motion": MOTION_OPEN, "target_preset": "zero"},
-    "release_bottle": {"motion": MOTION_OPEN, "target_preset": "zero"},
-    "grasp_glass_until_contact": {
-        "motion": MOTION_CLOSE_UNTIL_CONTACT,
-        "target_preset": "fist_vendor_demo",
-    },
-    "grasp_bottle_until_contact": {
-        "motion": MOTION_CLOSE_UNTIL_CONTACT,
-        "target_preset": "fist_vendor_demo",
-    },
-    "stop_hand": {"motion": MOTION_FREEZE, "target_preset": None},
-}
-
-
 def parse_skill_catalogue(data: dict[str, Any] | None) -> SkillCatalogue:
-    """Build a SkillCatalogue from already-parsed YAML (or the built-in fallback).
+    """Build a SkillCatalogue from already-parsed YAML.
 
-    Kept separate from file IO so it can be unit-tested with plain dicts.
+    Kept separate from file IO so it can be unit-tested with plain dicts. The
+    skill_name -> motion/preset mapping has a single source of truth, the
+    installed config/omnihand_skills.yaml (resolved by load_skill_catalogue);
+    there is no hardcoded duplicate here. Empty data yields an empty catalogue.
     """
     data = data or {}
-    raw_skills = data.get("omnihand_skills") or FALLBACK_SKILLS
+    raw_skills = data.get("omnihand_skills") or {}
     skills: dict[str, SkillDefinition] = {}
     for name, spec in raw_skills.items():
         spec = spec or {}
@@ -174,11 +161,13 @@ def parse_skill_catalogue(data: dict[str, Any] | None) -> SkillCatalogue:
 
 
 def load_skill_catalogue(config_path: str | Path | None) -> SkillCatalogue:
-    """Load the skill catalogue from a YAML file, falling back to built-ins.
+    """Load the skill catalogue from a YAML file.
 
-    The config file is the single source of truth for the skill_name -> backend
-    motion/preset mapping. An unreadable file is non-fatal: the built-in MVP
-    catalogue (open->zero, grasp->fist_vendor_demo) keeps the controller usable.
+    config/omnihand_skills.yaml is the single source of truth for the
+    skill_name -> backend motion/preset mapping (resolved to the package share by
+    the skill controller). A missing/unreadable file yields an empty catalogue, so
+    a broken install fails loudly on the first skill rather than silently using a
+    hardcoded duplicate mapping.
     """
     if config_path is None:
         return parse_skill_catalogue(None)
