@@ -8,6 +8,8 @@
   <license>Apache-2.0</license>
 
   <depend>agx_arm_mit_controller</depend>
+  <exec_depend>agx_arm_description</exec_depend>
+  <depend>ament_index_python</depend>
   <depend>control_msgs</depend>
   <depend>rcl_interfaces</depend>
   <depend>rclpy</depend>

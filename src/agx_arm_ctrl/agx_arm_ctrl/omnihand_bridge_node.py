@@ -20,62 +20,46 @@ import yaml
 
 from agx_arm_msgs.msg import OmniHandStatus, OmniHandTactileRaw
 
+from agx_arm_ctrl.motion_registry import arm_sides
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HandModel, get_hand_model
 
 
-# Side -> native SocketCAN interface. The authoritative mapping lives in
-# config/omnihand_can_interfaces.yaml (installed to the package share); this dict
-# is only a last-resort fallback if that file cannot be read. Keep both in sync.
-CAN_INTERFACE_CONFIG = "omnihand_can_interfaces.yaml"
-FALLBACK_CAN_INTERFACES = {"right": "can_nero_right", "left": "can_nero_left"}
+# Side -> native SocketCAN interface. The authoritative mapping is the motion
+# registry (duo_motion_registry.yaml arm.sides.<side>.can_port); a tiny built-in
+# fallback only covers the registry being unreadable. The can_interface launch
+# parameter still overrides this per run.
+_FALLBACK_CAN_INTERFACES = {"right": "can_nero_right", "left": "can_nero_left"}
 
 
 def resolve_can_interface(hand_side: str) -> tuple[str, str]:
-    """Return (interface_name, source) for the side, preferring the config file."""
+    """Return (interface_name, source) for the side from the motion registry."""
     try:
-        config_path = (
-            Path(get_package_share_directory("agx_arm_ctrl"))
-            / "config"
-            / CAN_INTERFACE_CONFIG
-        )
-        data = yaml.safe_load(config_path.read_text()) or {}
-        mapping = data.get("omnihand_can_interfaces", {})
-        interface = str(mapping.get(hand_side, "")).strip()
+        side_cfg = arm_sides().get(hand_side, {})
+        interface = str(side_cfg.get("can_port", "")).strip()
         if interface:
-            return interface, str(config_path)
+            return interface, "duo_motion_registry.yaml"
     except Exception:
         pass
-    return FALLBACK_CAN_INTERFACES.get(hand_side, ""), "built-in fallback"
+    return _FALLBACK_CAN_INTERFACES.get(hand_side, ""), "built-in fallback"
 
 
-JOINT_SUFFIXES = [
-    "thumb_roll_joint",
-    "thumb_abad_joint",
-    "thumb_mcp_joint",
-    "index_abad_joint",
-    "index_pip_joint",
-    "middle_pip_joint",
-    "ring_abad_joint",
-    "ring_pip_joint",
-    "pinky_abad_joint",
-    "pinky_pip_joint",
-]
+# The legacy O10 joint set / limits / mirror / tactile map come from the O10 hand
+# model, which is itself registry-driven (duo_motion_registry.yaml omnihand.o10) —
+# so this module no longer keeps a second hardcoded O10 list. These constants are
+# the model=None fallback used by build_joint_names/load_gesture_presets; the O10
+# SDK-internal motor/actuator calibration below stays here (not a description asset).
+_O10_MODEL = get_hand_model("o10")
+JOINT_SUFFIXES = list(_O10_MODEL.joint_suffixes)
 
-TACTILE_FINGERS = [
-    ("thumb_tip", "THUMB"),
-    ("index_tip", "INDEX"),
-    ("middle_tip", "MIDDLE"),
-    ("ring_tip", "RING"),
-    ("little_tip", "LITTLE"),
-]
+TACTILE_FINGERS = [tuple(finger) for finger in _O10_MODEL.tactile_fingers]
 
 SDK_TACTILE_LAYOUT_NAME = ",".join(name for name, _ in TACTILE_FINGERS)
 
 SDK_ACTIVE_JOINT_COUNT = len(JOINT_SUFFIXES)
 SDK_PADDED_VECTOR_COUNT = SDK_ACTIVE_JOINT_COUNT + 2
-SDK_LEFT_POS_DIRECTION = [-1, -1, -1, -1, 1, 1, -1, 1, -1, 1]
-SDK_ACTIVE_JOINT_MAX_RIGHT = [1.12, 0.05, 0.8416, 0.0, 1.48, 1.48, 0.17, 1.48, 0.19, 1.48]
-SDK_ACTIVE_JOINT_MIN_RIGHT = [-0.03, -1.64, 0.0, -0.16, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+SDK_LEFT_POS_DIRECTION = list(_O10_MODEL.left_pos_direction)
+SDK_ACTIVE_JOINT_MAX_RIGHT = list(_O10_MODEL.active_joint_max_right)
+SDK_ACTIVE_JOINT_MIN_RIGHT = list(_O10_MODEL.active_joint_min_right)
 SDK_MOTOR_MAX_RIGHT = [1.12, 0.05, 1.33, 0.0, 1.43, 1.43, 0.17, 1.43, 0.19, 1.43]
 SDK_MOTOR_MIN_RIGHT = [-0.03, -1.64, 0.0, -0.16, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 SDK_ACTUATOR_MAX_RIGHT = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4096.0, 0.0, 0.0, 0.0]
@@ -833,7 +817,7 @@ class OmniHandBridgeNode(Node):
             raise ValueError("omnihand_type must be 'left' or 'right'")
 
         # Resolve the native SocketCAN interface: explicit param wins, else the
-        # side -> interface mapping from config/omnihand_can_interfaces.yaml.
+        # side -> interface mapping from the motion registry (arm.sides.*.can_port).
         self.can_interface = str(self.get_parameter("can_interface").value).strip()
         interface_source = "can_interface parameter"
         if not self.can_interface:

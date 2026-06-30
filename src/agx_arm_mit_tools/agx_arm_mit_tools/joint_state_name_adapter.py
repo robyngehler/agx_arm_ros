@@ -6,16 +6,12 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
+from agx_arm_mit_tools.motion_registry import canonical_arm_joints
 
-CANONICAL_ARM_JOINTS = {
-	"joint1",
-	"joint2",
-	"joint3",
-	"joint4",
-	"joint5",
-	"joint6",
-	"joint7",
-}
+
+# Canonical (unprefixed) arm joints from the single source of truth
+# (agx_arm_description duo_motion_registry.yaml), not a local copy.
+CANONICAL_ARM_JOINTS = set(canonical_arm_joints())
 
 
 def adapt_joint_name(name: str, joint_prefix: str, mode: str) -> str:

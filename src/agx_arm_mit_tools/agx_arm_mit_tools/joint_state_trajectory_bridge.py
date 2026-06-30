@@ -9,16 +9,12 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from agx_arm_mit_tools.motion_registry import canonical_arm_joints
 
-DEFAULT_JOINT_NAMES = [
-	"joint1",
-	"joint2",
-	"joint3",
-	"joint4",
-	"joint5",
-	"joint6",
-	"joint7",
-]
+
+# Canonical (unprefixed) arm joints from the single source of truth
+# (agx_arm_description duo_motion_registry.yaml), not a local copy.
+DEFAULT_JOINT_NAMES = canonical_arm_joints()
 
 
 def select_target_positions(

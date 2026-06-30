@@ -47,8 +47,8 @@ def generate_launch_description():
         default_value="",
         description=(
             "Native SocketCAN interface for the hand (e.g. can_nero_right). Leave "
-            "empty to resolve it from omnihand_type via "
-            "config/omnihand_can_interfaces.yaml."
+            "empty to resolve it from omnihand_type via the motion registry "
+            "(duo_motion_registry.yaml arm.sides.<side>.can_port)."
         ),
     )
     sdk_cfg_path_arg = DeclareLaunchArgument(
