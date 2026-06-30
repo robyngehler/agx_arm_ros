@@ -85,9 +85,16 @@ class ArmConfig:
         groups: dict[str, ArmGroup] = {}
         for name, spec in (data.get("groups") or {}).items():
             spec = spec or {}
+            joint_names = tuple(str(j) for j in spec.get("joint_names", []))
+            if not joint_names:
+                # Single source of truth: derive the group's joint names from the
+                # motion registry (canonical Nero joints side-prefixed per profile)
+                # instead of re-listing them in arm_config.yaml.
+                from agx_arm_coordination.motion_registry import group_joint_names
+                joint_names = group_joint_names(str(name))
             groups[str(name)] = ArmGroup(
                 action_server=str(spec.get("action_server", "")),
-                joint_names=tuple(str(j) for j in spec.get("joint_names", [])),
+                joint_names=joint_names,
             )
         poses = {
             str(name): tuple(float(v) for v in vec)

@@ -21,44 +21,17 @@
 #     exercise scheduling/routing without moving the arms.
 
 arm_executor:
+  # joint_names are NOT listed here: the arm executor derives them from the motion
+  # registry (duo_motion_registry.yaml: canonical Nero joints side-prefixed per
+  # motion profile) so the Duo joint sets have one source of truth. both_arms is
+  # left joints then right joints; the to_pose [..._L, ..._R] order matches that.
   groups:
     both_arms:
       action_server: both_arms_controller/follow_joint_trajectory
-      joint_names:
-        - left_arm_joint1
-        - left_arm_joint2
-        - left_arm_joint3
-        - left_arm_joint4
-        - left_arm_joint5
-        - left_arm_joint6
-        - left_arm_joint7
-        - right_arm_joint1
-        - right_arm_joint2
-        - right_arm_joint3
-        - right_arm_joint4
-        - right_arm_joint5
-        - right_arm_joint6
-        - right_arm_joint7
     left_arm:
       action_server: /left_arm/arm_controller/follow_joint_trajectory
-      joint_names:
-        - left_arm_joint1
-        - left_arm_joint2
-        - left_arm_joint3
-        - left_arm_joint4
-        - left_arm_joint5
-        - left_arm_joint6
-        - left_arm_joint7
     right_arm:
       action_server: /right_arm/arm_controller/follow_joint_trajectory
-      joint_names:
-        - right_arm_joint1
-        - right_arm_joint2
-        - right_arm_joint3
-        - right_arm_joint4
-        - right_arm_joint5
-        - right_arm_joint6
-        - right_arm_joint7
 
   defaults:
     base_move_time_sec: 4.0    # nominal move duration at velocity_scaling 1.0
