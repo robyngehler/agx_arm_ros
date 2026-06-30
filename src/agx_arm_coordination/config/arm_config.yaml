@@ -2,8 +2,15 @@
 # anchor poses, and timing defaults. Used by ArmTrajectoryPlanner to turn a
 # Trajectory catalogue action into a FollowJointTrajectory goal.
 #
-# PLACEHOLDERS to confirm on the Duo runtime (proposal §9 Step 3):
-#   - action_server names must match the duo both_arms / per-arm controllers.
+# Execution providers (brought up by
+# `agx_arm_mit_controller/launch/start_both_arms_execution.launch.py`):
+#   - both_arms -> the fan-out FJT bridge (agx_arm_mit_tools
+#     `agx_arm_both_arms_trajectory_bridge`), which owns
+#     `both_arms_controller/follow_joint_trajectory` and splits the 14-joint goal
+#     by prefix to the two namespaced per-arm controllers.
+#   - left_arm / right_arm -> the per-side MIT controllers, namespaced
+#     `/<side>_arm/arm_controller/follow_joint_trajectory`.
+# STILL placeholders to confirm/teach on hardware (proposal §9 Step 3):
 #   - joint_names must match those controllers' joint order (Nero arm = 7 DoF,
 #     prefixed left_arm_/right_arm_ per the SRDF both_arms group). both_arms is
 #     left joints then right joints, and the to_pose list order [..._L, ..._R]
@@ -33,7 +40,7 @@ arm_executor:
         - right_arm_joint6
         - right_arm_joint7
     left_arm:
-      action_server: left_arm_controller/follow_joint_trajectory
+      action_server: /left_arm/arm_controller/follow_joint_trajectory
       joint_names:
         - left_arm_joint1
         - left_arm_joint2
@@ -43,7 +50,7 @@ arm_executor:
         - left_arm_joint6
         - left_arm_joint7
     right_arm:
-      action_server: right_arm_controller/follow_joint_trajectory
+      action_server: /right_arm/arm_controller/follow_joint_trajectory
       joint_names:
         - right_arm_joint1
         - right_arm_joint2

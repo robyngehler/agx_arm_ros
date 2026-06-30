@@ -74,6 +74,12 @@ profiles:
       use_right_arm: true
       use_right_hand: true
 
+  # Planning / description surface for the Duo. MoveIt brings up `both_arms` as a
+  # planning-only profile, so this profile carries planning-only arm instances
+  # (no driver / CAN bring-up). Execution drivers, per-arm controllers, and the
+  # both_arms fan-out bridge are owned by
+  # `agx_arm_mit_controller/launch/start_both_arms_execution.launch.py`, which keeps
+  # planning and execution as separate surfaces.
   duo_arm:
     robot_name: duo_nero_system
     use_duo_model: true
@@ -89,11 +95,9 @@ profiles:
         namespace: left_arm
         joint_prefix: left_arm_
         feedback_joint_prefix: left_arm_
-        can_port: can_nero_left
-        launch_driver: true
+        launch_driver: false
       - name: right_arm
         namespace: right_arm
         joint_prefix: right_arm_
         feedback_joint_prefix: right_arm_
-        can_port: can_nero_right
-        launch_driver: true
+        launch_driver: false

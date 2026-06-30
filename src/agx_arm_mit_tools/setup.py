@@ -26,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "agx_arm_mit_joint_state_bridge = agx_arm_mit_tools.joint_state_trajectory_bridge:main",
+            "agx_arm_both_arms_trajectory_bridge = agx_arm_mit_tools.both_arms_trajectory_bridge:main",
             "agx_arm_joint_state_name_adapter = agx_arm_mit_tools.joint_state_name_adapter:main",
             "agx_arm_joint_state_merger = agx_arm_mit_tools.joint_state_merger:main",
             "agx_arm_duo_soft_estop = agx_arm_mit_tools.duo_soft_estop:main",
