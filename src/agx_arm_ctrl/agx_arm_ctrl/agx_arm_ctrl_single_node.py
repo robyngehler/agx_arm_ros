@@ -142,6 +142,10 @@ class AgxArmRosNode(Node):
         self.is_nero = "nero" in self.arm_type
         self.is_switch_seamlessly = True
         self.is_mit_mode = False
+        # Leader (zero-force drag) mode silences the normal joint-state push on
+        # the firmware, so the bus-recovery watchdog must fall back to the
+        # leader-angle stream instead of mistaking that silence for a stall.
+        self._leader_mode_active = False
         self._current_motion_mode = None  # tracks last mode ctrl sent to hardware
         self.enable_flag = False
         self.control_ready = False
@@ -340,6 +344,18 @@ class AgxArmRosNode(Node):
             return False
         return True
 
+    def _leader_feedback_fresh(self) -> bool:
+        """True when the leader-angle stream is actively reporting.
+
+        In leader/drag mode this stream — not ``get_joint_angles()`` — is the
+        live feedback the firmware pushes, so the bus-recovery watchdog uses it
+        as the health signal while normal joint push is silenced.
+        """
+        if not self.is_nero:
+            return False
+        leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+        return leader_joint_angles is not None and leader_joint_angles.hz > 0
+
     def _check_arm_connected(self) -> bool:
         return self.agx_arm is not None and self.agx_arm.is_ok()
 
@@ -444,6 +460,12 @@ class AgxArmRosNode(Node):
                         if not self._control_ready_logged:
                             self.get_logger().info("Agx_arm feedback is ready, control is now enabled")
                             self._control_ready_logged = True
+                elif self._leader_mode_active and self._leader_feedback_fresh():
+                    # In leader/drag mode the firmware disables the normal
+                    # joint-state push (enable_can_push=DISABLE); the live signal
+                    # is the leader-angle stream. Treat it as a healthy bus so the
+                    # recovery watchdog does not false-trigger on that silence.
+                    self._last_good_feedback_monotonic = time.monotonic()
                 self._publish_joint_states()
                 self._publish_pose()
                 self._publish_arm_status()
@@ -561,6 +583,9 @@ class AgxArmRosNode(Node):
                 # Force a fresh motion-mode handshake on the next command.
                 self._current_motion_mode = None
                 self.is_mit_mode = False
+                # A reconnect returns the firmware to normal push; drop any stale
+                # leader-mode assumption so the watchdog uses normal feedback.
+                self._leader_mode_active = False
 
                 if self._wait_for_feedback(self.enable_timeout):
                     self.get_logger().info(
@@ -1189,7 +1214,11 @@ class AgxArmRosNode(Node):
 
             self.agx_arm.set_normal_mode()
             self.is_mit_mode = False
+            self._leader_mode_active = False
             self._current_motion_mode = None
+            # Normal joint push resumes now; give it a fresh watchdog window so
+            # the transition itself is never read as a stall.
+            self._last_good_feedback_monotonic = time.monotonic()
             response.success = True
             response.message = "Switched to normal mode"
             self.get_logger().info(response.message)
@@ -1217,7 +1246,11 @@ class AgxArmRosNode(Node):
 
             self.agx_arm.set_leader_mode()
             self.is_mit_mode = False
+            self._leader_mode_active = True
             self._current_motion_mode = None
+            # Normal joint push is now silenced; reset the watchdog window so the
+            # gap until the first leader-angle sample is not read as a stall.
+            self._last_good_feedback_monotonic = time.monotonic()
             response.success = True
             response.message = "Switched to leader mode"
             self.get_logger().info(response.message)
