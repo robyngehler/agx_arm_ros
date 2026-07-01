@@ -205,18 +205,26 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   planning_pipelines:=ompl
 ```
 
-The `duo_arm` profile is the simplest starting point for both-arms planning. By default it keeps `arm_instances` in planning-only mode with `launch_driver: false`.
+The `duo_arm` profile is the simplest starting point for both-arms planning. The `moveit_mit`
+slice owns the per-arm driver bring-up: `arm_instances` carry `launch_driver: true` and
+`can_port` (`can_nero_left` / `can_nero_right`) so each `agx_arm_ctrl` driver reads its CAN bus
+and publishes `/<side>_arm/feedback/joint_states`. The `joint_state_merger` prefixes those into
+`/feedback/prefixed_joint_states`, which `move_group` follows — that is what makes the live arms
+appear in RViz. (Before this was wired, the drivers lived in a separate
+`start_both_arms_execution.launch.py`; that launch was retired and the driver bring-up moved back
+onto this slice.)
 
-For staged live dual-arm runtime, promote the same launch to managed drivers by overriding `arm_instances`:
+For visualization/planning only (no hardware, no drivers), override `arm_instances` to drop the
+drivers:
 
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
   execution_profile:=duo_arm \
-  follow:=true \
+  follow:=false \
   use_rviz:=true \
   planning_pipelines:=ompl \
-  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_nero_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: true}, {name: right_arm, namespace: right_arm, can_port: can_nero_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: true}]'
+  arm_instances:='[{name: left_arm, namespace: left_arm, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: false}, {name: right_arm, namespace: right_arm, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: false}]'
 ```
 
 ## 6. When you need explicit overrides instead of profiles

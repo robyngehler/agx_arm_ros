@@ -25,7 +25,10 @@ def test_resolve_right_hand_profile_sets_duo_model_and_omnihand():
     )
 
 
-def test_resolve_duo_arm_profile_provides_planning_only_instances():
+def test_resolve_duo_arm_profile_brings_up_per_arm_drivers():
+    # The moveit_mit duo_arm slice owns the per-arm agx_arm_ctrl driver bring-up
+    # (launch_driver:true + can_port); without it nothing publishes
+    # /<side>_arm/feedback/joint_states and move_group never sees the arms.
     resolved = resolve_execution_profile(
         "duo_arm",
         duo_model_path="/tmp/duo_system.urdf.xacro",
@@ -42,14 +45,16 @@ def test_resolve_duo_arm_profile_provides_planning_only_instances():
             "namespace": "left_arm",
             "joint_prefix": "left_arm_",
             "feedback_joint_prefix": "left_arm_",
-            "launch_driver": False,
+            "can_port": "can_nero_left",
+            "launch_driver": True,
         },
         {
             "name": "right_arm",
             "namespace": "right_arm",
             "joint_prefix": "right_arm_",
             "feedback_joint_prefix": "right_arm_",
-            "launch_driver": False,
+            "can_port": "can_nero_right",
+            "launch_driver": True,
         },
     ]
 
