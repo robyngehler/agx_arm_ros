@@ -36,39 +36,28 @@ catalogue `waypoints` · `[`/`]` select recording · `s`/`h`/`q`. The individual
 work for scripted/one-shot use; the manager just wires them together with the MIT/leader mode
 switching.
 
-## The execution seam (config → real providers)
+## The execution seam (coordinator → MoveIt slice)
 
-- The MIT controller node exposes a `control_msgs/FollowJointTrajectory` action server named by
-  the `action_name` parameter (default `arm_controller/follow_joint_trajectory`). For the Duo, each
-  per-arm MIT controller runs under its own `namespace` (`left_arm` / `right_arm`), so the servers
-  are `/<side>_arm/arm_controller/follow_joint_trajectory`. The combined
-  `both_arms_controller/follow_joint_trajectory` is provided by the fan-out bridge (see the
-  execution-seam note below); `start_both_arms_execution.launch.py` brings up both per-arm
-  controllers and the bridge together.
-- The coordinator's `arm_executor` reads `agx_arm_coordination/config/arm_config.yaml`:
-  groups → `action_server` + `joint_names`, and named `poses`. It is already structured
-  dual-arm (`both_arms`, `right_arm`, `left_arm`). **No arm_executor code change is needed** —
-  right-side bring-up is a launch/config + teach exercise.
+The coordinator does **not** own an arm-execution path: it dispatches arm motion through the
+**MoveIt multi-arm slice**, and MoveIt fans a `both_arms` plan out to the per-arm controllers
+natively (its `MoveItSimpleControllerManager` splits by joint membership).
+
+- **Bring-up = one slice:** `start_agx_arm_components.launch.py execution_profile:=duo_arm
+  mode:=moveit_mit` brings up **both per-arm MIT controllers** (namespaced
+  `/<side>_arm/arm_controller/follow_joint_trajectory`) **and `move_group`** together (see
+  `start_agx_arm_moveit`, `use_mit_controller:=true`). There is no separate both_arms controller.
+- **Coordinator dispatch:** `arm_executor` builds a `MoveGroupPlan` (anchor `to_pose`) or a
+  `RecordedTrajectoryPlan` (recorded `waypoints`); the coordinator sends `moveit_msgs/MoveGroup`
+  (collision-aware plan + execute, `/move_action`) or `moveit_msgs/ExecuteTrajectory`
+  (`/execute_trajectory`). The planning group + joint names come from the motion registry;
+  `arm_config.yaml` only carries the group list, the two MoveIt action names, poses, and defaults.
 - The hand is driven by `omnihand_skill_controller` (semantic skill → vendor preset → SDK),
   **not** by MoveIt. MoveIt only models the arm; the O12 hand description was migrated so the
   model is clean, but the demo does not MoveIt-plan the fingers.
 
-> **Execution seam (wired).** Planning and execution are separate surfaces. MoveIt's `both_arms`
-> profile stays *planning-only* (`start_moveit` skips fake ros2_control; the `duo_arm` execution
-> profile carries planning-only, driver-off arm instances). Execution is owned by
-> `agx_arm_mit_controller/launch/start_both_arms_execution.launch.py`, which brings up one per-arm
-> MIT controller per side (namespaced `/<side>_arm/arm_controller/follow_joint_trajectory`) plus the
-> `both_arms` fan-out FJT bridge (`agx_arm_mit_tools`) that owns
-> `both_arms_controller/follow_joint_trajectory` and splits the 14-joint goal by prefix to the two
-> per-arm servers. `arm_config.yaml` already points the three groups at those real providers:
->
-> ```bash
-> ros2 launch agx_arm_mit_controller start_both_arms_execution.launch.py \
->   left_effector_type:=omnihand right_effector_type:=omnihand omnihand_backend_type:=sdk
-> ```
->
 > Use `arm_dry_run:=true` on the coordinator until anchor poses + recorded waypoints are taught;
-> the joint vectors below are still placeholders.
+> the joint vectors below are still placeholders. If `move_group` runs under a namespace, override
+> `move_group_action` / `execute_trajectory_action` in `arm_config.yaml`.
 
 ## Step A — bring up the right side
 
@@ -139,8 +128,10 @@ in place (flow-style metadata + comments would be clobbered); paste the block un
 # scheduling/routing only, no arm motion (hand open/release still safe to exercise)
 ros2 launch agx_arm_coordination start_hefeweizen_demo.launch.py arm_dry_run:=true
 
-# live once anchors/waypoints are taught: bring up the arm execution seam, then drop arm_dry_run
-#   ros2 launch agx_arm_mit_controller start_both_arms_execution.launch.py omnihand_backend_type:=sdk
+# live once anchors/waypoints are taught: bring up the MoveIt slice (per-arm controllers +
+# move_group), then run the coordinator without arm_dry_run
+#   ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+#     execution_profile:=duo_arm mode:=moveit_mit omnihand_backend_type:=sdk
 #   ros2 launch agx_arm_coordination start_hefeweizen_demo.launch.py   # arm_dry_run defaults false
 ```
 

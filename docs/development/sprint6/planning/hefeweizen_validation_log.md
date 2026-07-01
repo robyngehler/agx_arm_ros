@@ -126,6 +126,27 @@ to a clean `components.launch`. See `session_handoff_2026-06-29.md`.
 - **Could NOT run here:** the live both_arms split against two real per-arm controllers, multi-cycle
   execution, and cancel/abort propagation on hardware — Duo-host bring-up steps.
 
+## 2026-07-01 — coordinator converged onto the MoveIt slice (development host)
+
+- **Single arm-execution slice.** The coordinator no longer owns a parallel both_arms controller.
+  `arm_executor.plan()` now returns a `MoveGroupPlan` (anchor `to_pose`) or `RecordedTrajectoryPlan`
+  (recorded `waypoints`); the coordinator dispatches `moveit_msgs/MoveGroup` (collision-aware plan +
+  execute) or `moveit_msgs/ExecuteTrajectory`. MoveIt's `MoveItSimpleControllerManager` fans a
+  both_arms plan out to the per-arm `/<side>_arm/arm_controller` servers natively — the fan-out was
+  duplicated by the retired bridge. **Retired** (supersedes the 2026-06-30 entry):
+  `both_arms_trajectory_bridge.py` + its test + entry point, and `start_both_arms_execution.launch.py`.
+- **Config.** `arm_config.yaml` shrank to the group list + `move_group_action` /
+  `execute_trajectory_action` + poses + defaults; planning group + joint names come from the registry.
+  `agx_arm_coordination` package.xml: `control_msgs` → `moveit_msgs`.
+- **Bring-up** is the one MoveIt slice: `start_agx_arm_components.launch.py
+  execution_profile:=duo_arm mode:=moveit_mit` (per-arm MIT controllers + move_group together).
+- **Validated here (no ROS/hardware):** coordination builds; 32 unit tests pass (`test_arm_executor`
+  rewritten for the new plan types); the real `arm_config` yields a both_arms `MoveGroupPlan` with 14
+  registry-derived joints; `coordinator_node` imports resolve (`moveit_msgs`). `test_pep257` stays
+  red on the pre-existing package-wide D213 docstring style.
+- **Could NOT run here:** live MoveGroup planning/execution against move_group + the per-arm
+  controllers on the Duo; recorded `ExecuteTrajectory` replay (waypoints still placeholders).
+
 ## Hardware bring-up checklist (to fill on the Jetson/Duo)
 
 ### Step 1 — skill controller standalone (proposal §9 Step 1)

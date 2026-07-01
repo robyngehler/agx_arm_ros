@@ -44,13 +44,14 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
 - [x] OmniHand MoveIt description migrated O10 → **O12 Pro** (vendor URDF) so `components.launch`
       no longer errors on missing `*_mcp_joint`; SRDF/controllers/initial_positions/ros2_control
       all on the 12 active joints (offline SRDF-vs-URDF cross-check clean).
-- [x] `both_arms` execution seam wired: fan-out FJT bridge `agx_arm_both_arms_trajectory_bridge`
-      (`agx_arm_mit_tools`) owns `both_arms_controller/follow_joint_trajectory` and splits to the two
-      namespaced per-arm controllers; bring-up via `start_both_arms_execution.launch.py`. Trajectory
-      split unit-tested; `arm_config.yaml` groups point at the real providers.
+- [x] `both_arms` execution converged onto the MoveIt slice: the coordinator dispatches anchor moves
+      via `moveit_msgs/MoveGroup` (collision-aware) and recorded replay via `ExecuteTrajectory`;
+      MoveIt fans a both_arms plan out to the per-arm controllers natively. The earlier parallel
+      fan-out bridge + `start_both_arms_execution.launch.py` were retired. Bring-up = components
+      `execution_profile:=duo_arm mode:=moveit_mit` (per-arm controllers + move_group together).
 - [ ] each executes independently; correct joint ordering; multiple cycles without launch restart;
       slow scaling respected; safe cancel/stop. *(hardware-pending — anchor poses + recorded
-      waypoints are placeholders; confirm the live split against two per-arm controllers on the Duo.)*
+      waypoints are placeholders; confirm live MoveGroup planning + the native fan-out on the Duo.)*
 
 ## Step 4 — Coordinator + mini graphs
 

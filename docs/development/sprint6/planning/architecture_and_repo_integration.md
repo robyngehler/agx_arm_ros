@@ -20,10 +20,10 @@ implementation. Companion to `hefeweizen_pour_proposal.md`.
                  └───────┬───────────────────────┬───────────┘
                          │                       │
         ┌────────────────▼─────────┐   ┌─────────▼─────────────────────┐
-        │ both_arms trajectory     │   │ OmniHand skill controller     │
-        │ (existing MoveIt FJT /   │   │ (agx_arm_ctrl)                │
-        │  per-arm MIT split)      │   │  skill_name → vendor gesture, │
-        │                          │   │  tactile-confirmed, hold/​fault│
+        │ MoveIt multi-arm slice   │   │ OmniHand skill controller     │
+        │ (MoveGroup plan+execute /│   │ (agx_arm_ctrl)                │
+        │  ExecuteTrajectory; MoveIt│  │  skill_name → vendor gesture, │
+        │  fans out to per-arm ctrl)│  │  tactile-confirmed, hold/​fault│
         └──────────────────────────┘   └──────────┬────────────────────┘
                                                   │ vendor SDK (below ROS)
                                                   ▼  OmniHand on native CAN FD side bus
@@ -58,7 +58,10 @@ keeps the demo graph hardware-agnostic.
 - **Messages/actions → `src/agx_arm_msgs`.** `PerformActivity.action`, `PerformAction.action`,
   `RobotEvent.msg`. Hand skills ride on `PerformAction` (metadata) for the MVP — no separate
   `HandSkill.action` yet (decision §8).
-- **Arm trajectory execution → existing `both_arms` FJT / per-arm MIT path** (no new package).
+- **Arm trajectory execution → the MoveIt multi-arm slice** (no new package): the coordinator sends
+  `moveit_msgs/MoveGroup` (anchor→anchor, collision-aware) / `ExecuteTrajectory` (recorded); MoveIt
+  fans a both_arms plan out to the per-arm controllers natively (updated 2026-07-01, supersedes the
+  earlier "existing both_arms FJT / per-arm MIT split" phrasing and the retired fan-out bridge).
 - **Graph/catalogue/resources data → `config/` (YAML)** for the MVP (see §6).
 
 ## 4. ROS contracts (agx_arm-centric)

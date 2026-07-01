@@ -26,13 +26,18 @@
   (`mean | max | min`), set via `defaults.contact_aggregation` in `config/omnihand_skills.yaml` or
   per-action `metadata.contact_aggregation`. `min` ("all sensors must touch") is available for a
   stricter grasp once calibrated.
-- `both_arms` executor → **reuses the existing FollowJointTrajectory path via a thin adapter**
-  (`arm_executor.ArmTrajectoryPlanner`): catalogue metadata (anchor `to_pose` or recorded
-  `waypoints`, `velocity_scaling`) is turned into the FJT goal; no second arm execution path.
+- `both_arms` executor → **dispatches through the MoveIt multi-arm slice** (updated 2026-07-01,
+  supersedes the earlier "thin FJT adapter" decision): `arm_executor.ArmTrajectoryPlanner` builds a
+  `MoveGroupPlan` (anchor `to_pose`) or `RecordedTrajectoryPlan` (recorded `waypoints`); the
+  coordinator sends `moveit_msgs/MoveGroup` (collision-aware plan + execute) or
+  `moveit_msgs/ExecuteTrajectory`. MoveIt fans a both_arms plan out to the per-arm controllers
+  natively, so there is no second arm-execution path (the fan-out bridge was retired).
 - Event schema → **one shared `RobotEvent`** for the coordinator and every executor (skill
   controller, arm path), streamed on each node's `~/events`.
 
 ### Still open / deferred
 
-- MoveIt collision-aware planning between anchor poses (the MVP commands the endpoint joint vector
-  and lets the controller interpolate; collision-aware anchor-to-anchor planning is a later slice).
+- **Resolved (2026-07-01):** collision-aware anchor-to-anchor planning now happens via MoveGroup.
+- Recorded replay uses `ExecuteTrajectory` (executes the taught trajectory as-is through MoveIt's
+  controller manager; the path itself is not re-collision-checked). Full MoveIt Cartesian/retime of
+  recorded joint trajectories is a later refinement — not exercisable until waypoints are taught.
