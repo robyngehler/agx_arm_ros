@@ -30,24 +30,60 @@ playback it enables MIT and captures the current pose so the arm never snaps to 
 ### 1. Bring up the arm (dependency — must run first)
 
 The teach manager is a wrapper; it does **not** start the arm. Bring up the right arm's MIT
-controller + driver first (it provides `set_leader_mode` / normal mode, `enable_agx_arm`,
-`mit_controller/enable` + `hold_current`, and the `feedback/*` topics). Un-namespaced, so the
+controller + driver first (it provides normal mode, `enable_agx_arm`, `mit_controller/enable` +
+`mit_controller/freedrive` + `hold_current`, and the `feedback/*` topics). Un-namespaced, so the
 manager's default service/topic names match:
 
 ```bash
 bash ./scripts/activate_native_can.sh        # can_nero_right up (see Step A for the hand)
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-  can_port:=can_nero_right input_joint_prefix:=right_arm_
+  can_port:=can_nero_right \
+  gravity_arm_side:=right          # bakes the real body mount into the gravity URDF
 ```
+
+> **`gravity_arm_side:=right|left` is required for a body-mounted arm.** The arm base is tilted on the
+> torso (`body_to_right_arm_mount` in `duo_body.xacro` is a 90° pitch), so a gravity model built from the
+> standalone *upright* Nero URDF puts gravity on the wrong axis — it commands ~0 on joint1/joint3 while
+> those actually carry the load, and the arm drifts sideways. `gravity_arm_side` derives the gravity URDF
+> from `duo_system.urdf.xacro` for that side, so the world→base mount is **baked in** (ground truth from
+> the description) and pinocchio computes gravity correctly — no hand-typed angle. Leave it empty only for
+> a standalone arm physically mounted upright. (`gravity_mounting_rpy` remains as a manual override for a
+> one-off rig; keep it `[0,0,0]` when `gravity_arm_side` is set, or the mount is applied twice.)
 
 If the services are not up yet, the manager waits and prints exactly this command (it never
 free-runs without the arm).
 
+> **Do not set `input_joint_prefix` for the standalone teach loop.** The driver publishes
+> `feedback/joint_states` with the raw nero joint names `joint1..joint7` (unprefixed), and MIT
+> playback replays the *recorded* joint names straight back to the controller. If `input_joint_prefix`
+> is `right_arm_`, the controller rejects any trajectory whose names do not start with `right_arm_`, so
+> there is no single `--source-joints` value that makes both recording (needs `joint1..7` to match the
+> feedback) **and** playback (would need `right_arm_joint1..7`) work. Keep the whole teach loop
+> unprefixed: launch **without** `input_joint_prefix` and pass `--source-joints joint1,…,joint7`. The
+> `input_joint_prefix:=right_arm_` argument belongs to the dual-arm **MoveIt** slice, where MoveIt/the
+> coordinator send `right_arm_`-prefixed goals — not to this bring-up.
+
+> **Freedrive = software leader mode (mounting-pose aware).** The teach manager no longer uses the
+> firmware drag mode (`set_leader_mode`): that mode compensates gravity in firmware with **no** hook
+> for the mounting pose or end-effector, so it feels wrong on a tilted body mount. Instead `idle`/
+> `record` call `mit_controller/freedrive`, which drives a zero-force MIT command (kp=0, `freedrive_kd`
+> damping, gravity feedforward) using the pinocchio gravity model. Set `gravity_mounting_rpy` to the
+> arm base orientation in world `[roll, pitch, yaw]` (XYZ extrinsic, rad) so compensation is correct;
+> `[0,0,0]` is an upright table mount. Because the arm stays in **normal** mode, `feedback/joint_states`
+> stays live — recordings are sourced from `--source-joints` on that topic (same order as anchor
+> capture), not from `feedback/leader_joint_angles`. Tune `freedrive_kd` on hardware: raise if the arm
+> drifts/oscillates, lower if it feels sticky.
+
 ### 2. Run the teach manager
 
 ```bash
-ros2 run agx_arm_mit_demos agx_arm_teach_manager --arm-config src/agx_arm_coordination/config/arm_config.yaml --source-joints right_arm_joint1,right_arm_joint2,right_arm_joint3,right_arm_joint4,right_arm_joint5,right_arm_joint6,right_arm_joint7
+ros2 run agx_arm_mit_demos agx_arm_teach_manager --arm-config src/agx_arm_coordination/config/arm_config.yaml --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 ```
+
+> `--source-joints` are the joint names **as they appear on `feedback/joint_states`** — on this
+> un-namespaced, unprefixed bring-up that is `joint1..joint7` (the tool prints the names it sees if one
+> is missing). Recordings and anchor captures are stored in this order; align the captured vector with
+> the group's `joint_names` when you convert to catalogue waypoints for the dual-arm slice.
 
 Keys: `i` idle/freedrive · `r` record (`n` to record) · `p` playback (`f` to play, `c` cancel) ·
 `a` capture current pose → named anchor in `arm_config.yaml` · `w` convert the selected recording →
@@ -79,6 +115,75 @@ natively (its `MoveItSimpleControllerManager` splits by joint membership).
 > Use `arm_dry_run:=true` on the coordinator until anchor poses + recorded waypoints are taught;
 > the joint vectors below are still placeholders. If `move_group` runs under a namespace, override
 > `move_group_action` / `execute_trajectory_action` in `arm_config.yaml`.
+
+## Dual-arm teach + duo-vs-parallel routing
+
+Both arms can be taught **simultaneously** to capture time-dependent, synchronized trajectories.
+The teach manager is arm-count-aware: pass one namespace per arm. Each arm is its own namespaced MIT
+stack that internally uses the **unprefixed** joints `joint1..7` — the namespace, not a joint prefix,
+separates the arms (never bring two arms up un-namespaced: both would publish `joint1..7` on the same
+`feedback/joint_states` and collide).
+
+```bash
+# one MIT bring-up per arm, each namespaced (own CAN bus, own gravity mounting pose)
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
+  namespace:=left_arm  can_port:=can_nero_left  gravity_mounting_rpy:="[...]"
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
+  namespace:=right_arm can_port:=can_nero_right gravity_mounting_rpy:="[...]"
+
+# one teach manager driving both; record captures both arms on ONE clock
+ros2 run agx_arm_mit_demos agx_arm_teach_manager \
+  --arm-config src/agx_arm_coordination/config/arm_config.yaml \
+  --arms left_arm right_arm \
+  --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
+```
+
+**Resource choice at save time (not a hardcoded rule).** With two arms, `record` (`n`) and anchor
+(`a`) ask which resource to store the result as: `both_arms` (merged **14-dim**, left then right),
+or a single side (**7-dim**). If you pick `both_arms` while one arm stood still, that arm is stored
+as a constant hold — which is a valid "hold while the other works" duo action.
+
+**Storage stays arm-agnostic; the coordinator decides how to run it.** Two representations are both
+legal (no `PerformAction.action` change — `both_arms` is already a first-class `robot_id`/resource and
+pose dimension is generic):
+- **Duo action** (`robot_id: both_arms`, 14-dim): one MoveIt `both_arms` goal. `MoveItSimpleControllerManager`
+  splits by joint membership to each side's `FollowJointTrajectory`; the `joint_state_merger` re-prefixes
+  each side's feedback onto `feedback/prefixed_joint_states`. **One trajectory, one time
+  parameterization = genuine sync.**
+- **Two per-arm actions** (`left_arm` + `right_arm`) with the same `sync_flag`: the scheduler releases
+  them as a barrier group (start together).
+
+Convert a taught duo motion to catalogue waypoints by merging the two per-arm recordings:
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_recorded_to_catalogue LEFT.json \
+  --merge-with RIGHT.json --action-id both_arms_pour_profile_v1
+# emits 14-dim waypoints in registry order (left_arm_* then right_arm_*); the block echoes the
+# joint order — cross-check it against group_joint_names('both_arms') before pasting.
+```
+
+### The parallelism constraint (important)
+
+Two separate `ExecuteTrajectory` goals to the **same** `move_group` **serialize** — MoveIt executes one
+at a time. So "two parallel actions" over MoveIt is *not* actually simultaneous. Genuine simultaneous
+dual-arm motion needs one of:
+1. **A merged `both_arms` trajectory** (one goal) — the sync path. The coordinator does this
+   **automatically**: when two per-arm Trajectory actions (`left_arm` + `right_arm`) share a
+   `sync_flag`, it merges their plans into one `both_arms` goal at dispatch (`merge_arm_plans` in
+   `arm_executor`) — recorded pairs onto a shared timeline via `ExecuteTrajectory`, anchor pairs into
+   one collision-aware `MoveGroup` goal. Not-taught / mixed / non-arm groups fall back to independent
+   dispatch unchanged.
+2. **Direct per-arm `FollowJointTrajectory`** (bypassing move_group) — two different controllers run
+   concurrently, replay-only (no live planning). This is what the teach manager's own `f` playback does
+   (it needs `enable_debug_joint_trajectory_topic:=true` on the MIT bring-up).
+
+### Single-arm action while the other arm is present
+
+Route a 7-dim action to its **own** group (`left_arm`/`right_arm`), not `both_arms`: MoveIt plans only
+that side; the other arm gets no trajectory and its MIT controller **holds** its pose. Because the
+merged feedback carries both arms, the moving arm's plan is collision-aware against the static one.
+Making the idle arm actively **make space / dodge** is a planning-time decision (a `both_arms` goal
+that constrains only the working arm and leaves the other free) — coordinator policy, not a replay.
 
 ## Step A — bring up the right side
 
@@ -124,11 +229,7 @@ ros2 run agx_arm_mit_demos agx_arm_capture_anchor_pose \
 
 ## Step C — teach the functional trajectories (cap opener, pour)
 
-> **Recommended: use the teach manager** — `r` (record mode) then `n` records a motion; `p` then
-> `f` plays it back to check; `w` converts the selected recording into catalogue `waypoints`. The
-> raw CLI below is the scripted alternative.
-
-Use the leader recorder for the multi-waypoint motions (scripted alternative):
+Use the leader recorder for the multi-waypoint motions:
 
 ```bash
 ros2 run agx_arm_mit_demos agx_arm_record_leader_trajectory --name pour_profile_right
@@ -163,6 +264,34 @@ ros2 launch agx_arm_coordination start_hefeweizen_demo.launch.py arm_dry_run:=tr
 #     execution_profile:=duo_arm mode:=moveit_mit omnihand_backend_type:=sdk
 #   ros2 launch agx_arm_coordination start_hefeweizen_demo.launch.py   # arm_dry_run defaults false
 ```
+
+## Gravity-compensation tuning on hardware (freedrive is the clean test)
+
+Freedrive runs at `kp=0`, so the gravity feedforward is the **only** thing holding the arm — it
+exposes any sign/scale error that the position gain masks in the trajectory path. The controller
+publishes the commanded gravity torque so you can compare it against the measured motor effort at the
+same pose, and the gravity/gain knobs are **live-tunable** (no relaunch):
+
+```bash
+# in freedrive (teach manager 'i'), move the arm so joint2/joint4 are horizontal (max load) and watch:
+ros2 topic echo /mit_controller/gravity_feedforward   # commanded gravity torque (effort[])
+ros2 topic echo /feedback/joint_states                # effort[] = measured motor torque
+```
+
+- **Opposite signs** (commanded vs measured) → flip the sign:
+  `ros2 param set /mit_controller gravity_feedforward_sign 1.0`
+- **Same sign, too small** (arm still sags) → raise the scale:
+  `ros2 param set /mit_controller gravity_scale 1.3` (step up until it floats).
+- **Commanded ≈ measured but arm still won't hold** → gravity is right; the issue is damping/stiffness,
+  tune `freedrive_kd` (lower = easier to move) or the hold `kp`/`kd`.
+- **Vibration in normal hold** is usually a wrong-signed or mis-scaled gravity feedforward fighting
+  `kp`; fix gravity first (above), then retune `kp`/`kd`.
+- **Sideways drift / arm won't hold laterally = wrong gravity axis, not scale/sign.** A body-mounted arm
+  is tilted, so launch with `gravity_arm_side:=right|left` (bakes the mount into the gravity URDF). Symptom
+  of a missing/incorrect mount: `gravity_feedforward` shows ~0 on joint1/joint3 while the arm clearly needs
+  torque there. This needs a relaunch (URDF is built at start-up).
+
+Persist the values that work into `nero_mit_controller_defaults.yaml`.
 
 ## Calibration still owed on hardware (see hefeweizen_validation_log.md)
 
