@@ -35,6 +35,42 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 
+def average_joint_positions(node, latest_getter, want, settle_sec, timeout_sec) -> dict[str, float]:
+    """Average each requested joint over a short settle window once data arrives.
+
+    Spins ``node``; ``latest_getter()`` returns the most recent ``JointState`` (or
+    ``None``). This is the single implementation shared by ``capture_anchor_pose``
+    and the teach manager, so anchor-pose capture behaves identically in both.
+    """
+    deadline = time.monotonic() + timeout_sec
+    sums: dict[str, float] = {name: 0.0 for name in want}
+    counts: dict[str, int] = {name: 0 for name in want}
+    seen_names: set[str] = set()
+    settle_end: Optional[float] = None
+    while rclpy.ok() and time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+        msg = latest_getter()
+        if msg is None:
+            continue
+        seen_names.update(msg.name)
+        if settle_end is None:
+            settle_end = time.monotonic() + settle_sec
+        pos = {n: float(p) for n, p in zip(msg.name, msg.position)}
+        for name in want:
+            if name in pos:
+                sums[name] += pos[name]
+                counts[name] += 1
+        if settle_end is not None and time.monotonic() >= settle_end:
+            break
+    missing = [n for n in want if counts[n] == 0]
+    if missing:
+        raise RuntimeError(
+            f"joints not found on the source topic: {missing}\n"
+            f"joint names seen on the topic: {sorted(seen_names) or '(none received)'}"
+        )
+    return {name: sums[name] / counts[name] for name in want}
+
+
 class _JointStateCapture(Node):
     def __init__(self, topic: str) -> None:
         super().__init__("capture_anchor_pose")
@@ -46,33 +82,7 @@ class _JointStateCapture(Node):
 
     def collect(self, want: list[str], settle_sec: float, timeout_sec: float) -> dict[str, float]:
         """Average each requested joint over a short settle window."""
-        deadline = time.monotonic() + timeout_sec
-        sums: dict[str, float] = {name: 0.0 for name in want}
-        counts: dict[str, int] = {name: 0 for name in want}
-        seen_names: set[str] = set()
-        settle_end: Optional[float] = None
-        while rclpy.ok() and time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=0.1)
-            msg = self.latest
-            if msg is None:
-                continue
-            seen_names.update(msg.name)
-            if settle_end is None:
-                settle_end = time.monotonic() + settle_sec
-            pos = {n: float(p) for n, p in zip(msg.name, msg.position)}
-            for name in want:
-                if name in pos:
-                    sums[name] += pos[name]
-                    counts[name] += 1
-            if settle_end is not None and time.monotonic() >= settle_end:
-                break
-        missing = [n for n in want if counts[n] == 0]
-        if missing:
-            raise RuntimeError(
-                f"joints not found on the source topic: {missing}\n"
-                f"joint names seen on the topic: {sorted(seen_names) or '(none received)'}"
-            )
-        return {name: sums[name] / counts[name] for name in want}
+        return average_joint_positions(self, lambda: self.latest, want, settle_sec, timeout_sec)
 
 
 def _format_vector(values: list[float], precision: int) -> str:
@@ -169,4 +179,4 @@ def main() -> None:
     print("rebuild agx_arm_coordination (or symlink-install) for a launched coordinator to use it")
 
 
-__all__ = ["main", "update_pose_in_config"]
+__all__ = ["main", "update_pose_in_config", "average_joint_positions"]

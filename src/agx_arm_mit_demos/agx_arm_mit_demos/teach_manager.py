@@ -43,7 +43,7 @@ from agx_arm_mit_controller.trajectory_io import (
     save_recorded_trajectory,
 )
 
-from .capture_anchor_pose import update_pose_in_config
+from .capture_anchor_pose import average_joint_positions, update_pose_in_config
 from .execute_saved_trajectory import SavedTrajectoryExecutorNode, execute_recorded_trajectory
 from .leader_trajectory_recorder import build_recorded_trajectory, record_trajectory
 from .recorded_to_catalogue import format_waypoints_block, recorded_to_waypoints
@@ -138,11 +138,31 @@ class TeachManagerNode(SavedTrajectoryExecutorNode):
 
     # --- mode transitions ----------------------------------------------------
 
+    def disable_mit(self) -> None:
+        """Turn the MIT controller off (best-effort) before a back-drivable mode.
+
+        Safety: MIT must never stay enabled during freedrive. If it did, it would
+        keep holding a target while the arm is hand-moved, and — because the arm
+        firmware, not MIT, holds the pose in teaching mode — the next playback enable
+        could act on a stale reference and snap the arm. Disabling here makes the
+        "MIT off during freedrive" invariant real.
+        """
+        if not self.enable_client.wait_for_service(timeout_sec=0.0):
+            return  # controller not up yet; nothing to disable
+        ok, message = self.call_enable_mit(False, self.args.service_timeout)
+        if not ok:
+            self.get_logger().warn(f"could not disable MIT before freedrive: {message}")
+
     def _enter_leader(self, label: str) -> None:
         self.ensure_arm_enabled()
+        # 1) MIT off first, so it never fights leader mode or keeps a stale target.
+        self.disable_mit()
+        # 2) normal mode, then leader/teaching (back-drivable), then confirm feedback.
         if not self.call_set_normal_mode(self.args.service_timeout):
             raise RuntimeError("failed to switch to normal mode")
-        ok, msg = self.call_trigger(self.set_leader_mode_client, "set_leader_mode", self.args.service_timeout)
+        ok, msg = self.call_trigger(
+            self.set_leader_mode_client, "set_leader_mode", self.args.service_timeout
+        )
         if not ok:
             raise RuntimeError(f"failed to switch to leader mode for {label}: {msg}")
         if not self.wait_for_leader_feedback(self.args.feedback_timeout):
@@ -245,41 +265,16 @@ class TeachManagerNode(SavedTrajectoryExecutorNode):
         if not pose_name:
             self.get_logger().warn("no pose name given; capture aborted")
             return
-        averaged = self._collect_source_positions()
+        # Reuse capture_anchor_pose's averaging (single implementation, no duplicate).
+        averaged = average_joint_positions(
+            self, lambda: self.source_joint_state, self.source_joints,
+            self.args.settle_sec, self.args.feedback_timeout,
+        )
         vector = [averaged[name] for name in self.source_joints]
         note = update_pose_in_config(self.arm_config_path, pose_name, vector, self.args.precision)
         formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
         self.get_logger().info(f"{note}: {pose_name} = {formatted}")
         self.get_logger().info("rebuild agx_arm_coordination (or symlink-install) for a launched coordinator")
-
-    def _collect_source_positions(self) -> dict[str, float]:
-        want = self.source_joints
-        sums = {n: 0.0 for n in want}
-        counts = {n: 0 for n in want}
-        seen: set[str] = set()
-        deadline = time.monotonic() + self.args.feedback_timeout
-        settle_end: Optional[float] = None
-        while rclpy.ok() and time.monotonic() < deadline:
-            rclpy.spin_once(self, timeout_sec=0.1)
-            msg = self.source_joint_state
-            if msg is None:
-                continue
-            seen.update(msg.name)
-            if settle_end is None:
-                settle_end = time.monotonic() + self.args.settle_sec
-            pos = {n: float(p) for n, p in zip(msg.name, msg.position)}
-            for name in want:
-                if name in pos:
-                    sums[name] += pos[name]
-                    counts[name] += 1
-            if settle_end is not None and time.monotonic() >= settle_end:
-                break
-        missing = [n for n in want if counts[n] == 0]
-        if missing:
-            raise RuntimeError(
-                f"joints not on {self.args.source_topic}: {missing}; saw {sorted(seen) or '(none)'}"
-            )
-        return {n: sums[n] / counts[n] for n in want}
 
     def convert_to_waypoints(self, key_reader: TerminalKeyReader) -> None:
         path = self.selected_trajectory_path()
@@ -410,7 +405,42 @@ class TeachManagerNode(SavedTrajectoryExecutorNode):
             f"library={self.library_dir}"
         )
 
+    def wait_for_required_services(self, timeout_s: float) -> None:
+        """Block until the arm + MIT services exist, pointing at the bring-up launch.
+
+        The teach manager is a wrapper — it does not start the arm driver / MIT
+        controller. Those must already run (they provide set_leader_mode / normal
+        mode, enable, hold_current, and the feedback topics).
+        """
+        clients = [
+            ("set_normal_mode", self.set_normal_mode_client),
+            ("set_leader_mode", self.set_leader_mode_client),
+            ("mit_controller/enable", self.enable_client),
+            ("mit_controller/hold_current", self.hold_current_client),
+        ]
+        if self.args.auto_enable_arm:
+            clients.append(("enable_agx_arm", self.enable_arm_client))
+        deadline = None if timeout_s <= 0.0 else time.monotonic() + timeout_s
+        warned = False
+        while rclpy.ok():
+            missing = [label for label, client in clients
+                       if not client.wait_for_service(timeout_sec=0.2)]
+            if not missing:
+                return
+            if not warned:
+                self.get_logger().warn(
+                    "Waiting for the arm's MIT controller services: " + ", ".join(missing)
+                    + ".\nThe teach manager does not start the arm — bring it up first, e.g.:\n"
+                    "  ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py "
+                    "can_port:=can_nero_right input_joint_prefix:=right_arm_"
+                )
+                warned = True
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError("Timed out waiting for arm services: " + ", ".join(missing))
+            rclpy.spin_once(self, timeout_sec=0.2)
+
     def run(self) -> None:
+        self.wait_for_required_services(self.args.startup_timeout)
         start_state = ManagerState(self.args.start_mode)
         if start_state == ManagerState.IDLE:
             self.enter_idle_mode()
@@ -448,6 +478,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--movement-threshold", type=float, default=0.01)
     parser.add_argument("--service-timeout", type=float, default=5.0)
     parser.add_argument("--feedback-timeout", type=float, default=3.0)
+    parser.add_argument("--startup-timeout", type=float, default=0.0,
+                        help="Seconds to wait for the arm/MIT services at startup; 0 waits forever")
     parser.add_argument("--settle-sec", type=float, default=0.5, help="Averaging window for anchor capture")
     parser.add_argument("--precision", type=int, default=5)
     parser.add_argument("--max-waypoints", type=int, default=8, help="Downsample target for waypoint conversion")

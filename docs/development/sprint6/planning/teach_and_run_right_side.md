@@ -18,23 +18,44 @@ dual-arm; the left side mirrors this once it is connected.
 | recorded JSON → catalogue `waypoints` | `agx_arm_recorded_to_catalogue` *(new)* | `agx_arm_mit_demos` |
 | **all of the above from one keyboard UI** | `agx_arm_teach_manager` *(new)* | `agx_arm_mit_demos` |
 
-## Central teach tool (one process for the whole loop)
+## Primary path: the teach manager
 
-Instead of juggling the separate CLIs, `agx_arm_teach_manager` runs the full teach loop —
-freedrive, record, capture anchor pose, playback, and waypoint conversion — from one keyboard UI
-(modelled on the wakeword motion manager):
+`agx_arm_teach_manager` is **the** entry point for teaching — freedrive, trajectory recording,
+anchor-pose capture, playback, and waypoint conversion — from one keyboard UI (modelled on the
+wakeword motion manager). Use it instead of the raw CLIs: on its own, `agx_arm_record_leader_trajectory`
+/ `agx_arm_capture_anchor_pose` require you to already have freedrive enabled and the mode switching
+right; the manager does that for you and switches modes **safely** (MIT off during freedrive; on
+playback it enables MIT and captures the current pose so the arm never snaps to a stale target).
+
+### 1. Bring up the arm (dependency — must run first)
+
+The teach manager is a wrapper; it does **not** start the arm. Bring up the right arm's MIT
+controller + driver first (it provides `set_leader_mode` / normal mode, `enable_agx_arm`,
+`mit_controller/enable` + `hold_current`, and the `feedback/*` topics). Un-namespaced, so the
+manager's default service/topic names match:
 
 ```bash
-ros2 run agx_arm_mit_demos agx_arm_teach_manager \
-  --source-joints right_arm_joint1,right_arm_joint2,right_arm_joint3,right_arm_joint4,right_arm_joint5,right_arm_joint6,right_arm_joint7 \
-  --arm-config src/agx_arm_coordination/config/arm_config.yaml
+bash ./scripts/activate_native_can.sh        # can_nero_right up (see Step A for the hand)
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
+  can_port:=can_nero_right input_joint_prefix:=right_arm_
+```
+
+If the services are not up yet, the manager waits and prints exactly this command (it never
+free-runs without the arm).
+
+### 2. Run the teach manager
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_teach_manager --arm-config src/agx_arm_coordination/config/arm_config.yaml --source-joints right_arm_joint1,right_arm_joint2,right_arm_joint3,right_arm_joint4,right_arm_joint5,right_arm_joint6,right_arm_joint7
 ```
 
 Keys: `i` idle/freedrive · `r` record (`n` to record) · `p` playback (`f` to play, `c` cancel) ·
 `a` capture current pose → named anchor in `arm_config.yaml` · `w` convert the selected recording →
-catalogue `waypoints` · `[`/`]` select recording · `s`/`h`/`q`. The individual CLIs below still
-work for scripted/one-shot use; the manager just wires them together with the MIT/leader mode
-switching.
+catalogue `waypoints` · `[`/`]` select recording · `s`/`h`/`q`.
+
+Internally the manager **reuses** the same building blocks as the CLIs below (the leader recorder,
+saved-trajectory executor, `capture_anchor_pose`'s averaging, and `recorded_to_catalogue`) — no
+duplicated motion code. The individual CLIs remain for scripted/one-shot use.
 
 ## The execution seam (coordinator → MoveIt slice)
 
@@ -78,8 +99,12 @@ ros2 launch agx_arm_ctrl start_omnihand_bridge.launch.py \
 
 ## Step B — teach the anchor poses (freedrive + capture)
 
+> **Recommended: use the teach manager** (§Primary path) — press `i` for freedrive, hand-move the
+> arm, press `a` and name the pose. The manager handles freedrive + the safe mode switch for you.
+> The raw CLI below is the scripted/one-shot alternative and needs freedrive already active.
+
 The `arm_config.yaml` anchor poses (`Idle_R`, `Pre_Grip_R`, `grasp_R`, …) ship as all-zero
-placeholders. Capture the real right-arm vectors:
+placeholders. Capture the real right-arm vectors (scripted alternative):
 
 ```bash
 # put the right arm in leader/freedrive (the recorder enters leader mode; or use the
@@ -99,7 +124,11 @@ ros2 run agx_arm_mit_demos agx_arm_capture_anchor_pose \
 
 ## Step C — teach the functional trajectories (cap opener, pour)
 
-Use the leader recorder for the multi-waypoint motions:
+> **Recommended: use the teach manager** — `r` (record mode) then `n` records a motion; `p` then
+> `f` plays it back to check; `w` converts the selected recording into catalogue `waypoints`. The
+> raw CLI below is the scripted alternative.
+
+Use the leader recorder for the multi-waypoint motions (scripted alternative):
 
 ```bash
 ros2 run agx_arm_mit_demos agx_arm_record_leader_trajectory --name pour_profile_right
