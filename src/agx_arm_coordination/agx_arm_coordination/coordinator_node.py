@@ -52,10 +52,12 @@ from agx_arm_coordination.arm_executor import (
     ArmTrajectoryPlanner,
     MoveGroupPlan,
     NotTaughtError,
+    PlanMergeError,
     RecordedTrajectoryPlan,
+    merge_arm_plans,
 )
 from agx_arm_coordination.graph_loader import ActivityCatalogue
-from agx_arm_coordination.graph_model import Scheduler
+from agx_arm_coordination.graph_model import ACTIONTYPE_TRAJECTORY, Scheduler
 from agx_arm_coordination.performer import KIND_ARM, KIND_HAND, RoutingError, route
 
 
@@ -69,6 +71,10 @@ class _Child:
     def __init__(self, action_no: int, action_id: str) -> None:
         self.action_no = action_no
         self.action_id = action_id
+        # Action numbers this child completes. Usually just its own, but a merged
+        # duo dispatch (two synced per-arm actions -> one both_arms goal) covers
+        # both, so both are marked done/complete together.
+        self.action_nos = [action_no]
         self.done = False
         self.success = False
         self.message = ""
@@ -329,6 +335,87 @@ class CoordinatorNode(Node):
         child.attach_goal_future(exec_client.send_goal_async(goal))
         return child
 
+    # --- sync-group merge (Case 4) -------------------------------------------
+
+    def _dispatch_units(self, batch, activity_id) -> list[_Child]:
+        """Turn a scheduler batch into children, merging synced per-arm pairs.
+
+        Two separate goals to move_group serialize, so per-arm Trajectory actions
+        that share a ``sync_flag`` are merged into one ``both_arms`` goal here (a
+        single MoveIt trajectory = genuine time-sync). Anything not mergeable
+        (mixed kinds, a hand in the group, uneven coverage, not taught) falls back
+        to independent dispatch — identical to the previous behaviour.
+        """
+        by_flag: dict[int, list] = {}
+        singles: list = []
+        for item in batch:
+            if item.sync_flag:
+                by_flag.setdefault(item.sync_flag, []).append(item)
+            else:
+                singles.append(item)
+
+        children: list[_Child] = []
+        for members in by_flag.values():
+            merged = None
+            if len(members) >= 2:
+                merged = self._try_merge_sync_group(members, activity_id)
+            if merged is not None:
+                children.append(merged)
+            else:
+                children.extend(
+                    self._dispatch(m.action_no, m.action_id, activity_id) for m in members
+                )
+        children.extend(
+            self._dispatch(m.action_no, m.action_id, activity_id) for m in singles
+        )
+        return children
+
+    def _try_merge_sync_group(self, members, activity_id) -> _Child | None:
+        """Merge a synced left_arm+right_arm Trajectory pair into one both_arms goal.
+
+        Returns None (caller falls back to per-action dispatch) whenever the group
+        is not exactly the two arm sides, is not all Trajectory, has no both_arms
+        group configured, is not yet taught, or the plans cannot be merged.
+        """
+        if len(members) != 2:
+            return None
+        actions = [self.catalogue.get_action_detail(m.action_id) for m in members]
+        if not all(a.actiontype_id == ACTIONTYPE_TRAJECTORY for a in actions):
+            return None
+        if {a.robot_id for a in actions} != {"left_arm", "right_arm"}:
+            return None
+        group = self.arm_planner.config.groups.get("both_arms")
+        if group is None:
+            return None
+        try:
+            plans = [self.arm_planner.plan(a) for a in actions]
+        except (NotTaughtError, ArmConfigError):
+            return None
+        merged_id = "+".join(a.action_id for a in actions)
+        try:
+            merged_plan = merge_arm_plans(plans, group, merged_id)
+        except PlanMergeError as exc:
+            self.get_logger().warn(f"sync-merge fallback for {merged_id}: {exc}")
+            return None
+
+        rep_no = members[0].action_no
+        if isinstance(merged_plan, MoveGroupPlan):
+            child = self._dispatch_move_group(rep_no, merged_plan)
+        else:
+            child = self._dispatch_execute_trajectory(rep_no, merged_plan)
+        child.action_id = merged_id
+        child.action_nos = [m.action_no for m in members]
+        self.get_logger().info(
+            f"-> merged synced {merged_id} into one both_arms goal (genuine dual-arm sync)"
+        )
+        return child
+
+    def _child_robot_id(self, child: _Child) -> str:
+        if len(child.action_nos) > 1:
+            return "both_arms"
+        action = self.catalogue.actions.get(child.action_id)
+        return action.robot_id if action else ""
+
     # --- main execution ------------------------------------------------------
 
     def _execute(self, goal_handle) -> PerformActivity.Result:
@@ -364,36 +451,44 @@ class CoordinatorNode(Node):
                 goal_handle.canceled()
                 return result
 
-            # dispatch any newly ready batch
-            for item in scheduler.next_batch(completed, set(running)):
-                try:
-                    child = self._dispatch(item.action_no, item.action_id, activity_id)
-                except (DispatchError, KeyError) as exc:
-                    return self._abort(
-                        goal_handle, result, running, activity_id,
-                        item.action_id, len(completed), str(exc),
-                    )
-                running[item.action_no] = child
-                self.get_logger().info(f"-> dispatch {item.action_id} (#{item.action_no})")
-                self._event("info", activity_id=activity_id, action_id=item.action_id,
-                            robot_id=self.catalogue.actions[item.action_id].robot_id,
+            # dispatch any newly ready batch (synced per-arm pairs merged to one goal)
+            try:
+                units = self._dispatch_units(
+                    scheduler.next_batch(completed, set(running)), activity_id
+                )
+            except (DispatchError, KeyError) as exc:
+                return self._abort(
+                    goal_handle, result, running, activity_id, "", len(completed), str(exc),
+                )
+            for child in units:
+                for covered_no in child.action_nos:
+                    running[covered_no] = child
+                self.get_logger().info(f"-> dispatch {child.action_id} ({child.action_nos})")
+                self._event("info", activity_id=activity_id, action_id=child.action_id,
+                            robot_id=self._child_robot_id(child),
                             state="running", message="dispatched")
-                self._publish_feedback(goal_handle, item.action_no, item.action_id,
+                self._publish_feedback(goal_handle, child.action_no, child.action_id,
                                        "running", len(completed), total)
 
-            # poll running children
+            # poll running children (a merged child appears under both action_nos)
+            polled: set[int] = set()
             for action_no in list(running):
-                child = running[action_no]
+                child = running.get(action_no)
+                if child is None or id(child) in polled:
+                    continue
+                polled.add(id(child))
                 child.poll()
                 if not child.done:
                     continue
-                del running[action_no]
+                for covered_no in child.action_nos:
+                    running.pop(covered_no, None)
                 if child.success:
-                    completed.add(action_no)
+                    for covered_no in child.action_nos:
+                        completed.add(covered_no)
                     self._event("completed", activity_id=activity_id,
                                 action_id=child.action_id, state="completed",
                                 message=child.message)
-                    self._publish_feedback(goal_handle, action_no, child.action_id,
+                    self._publish_feedback(goal_handle, child.action_no, child.action_id,
                                            "completed", len(completed), total)
                 else:
                     return self._abort(

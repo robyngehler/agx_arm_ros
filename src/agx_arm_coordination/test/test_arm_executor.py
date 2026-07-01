@@ -5,10 +5,14 @@ import pytest
 from agx_arm_coordination.arm_executor import (
     ArmConfig,
     ArmConfigError,
+    ArmGroup,
     ArmTrajectoryPlanner,
     MoveGroupPlan,
     NotTaughtError,
+    PlanMergeError,
     RecordedTrajectoryPlan,
+    TrajectoryPoint,
+    merge_arm_plans,
 )
 from agx_arm_coordination.graph_model import Action
 
@@ -83,3 +87,61 @@ def test_unknown_group_raises():
 def test_neither_to_pose_nor_waypoints_raises():
     with pytest.raises(ArmConfigError):
         PLANNER.plan(_traj("both_arms", {"velocity_scaling": 0.1}))
+
+
+# --- dispatch merge (Case 4): two synced per-arm plans -> one both_arms plan ---
+
+_BOTH = ArmGroup(planning_group="both_arms", joint_names=("l1", "l2", "r1", "r2"))
+
+
+def _mg(robot_id, joints, positions):
+    return MoveGroupPlan(
+        action_id=robot_id, robot_id=robot_id, planning_group=robot_id,
+        joint_names=joints, target_positions=positions,
+        velocity_scaling=1.0, acceleration_scaling=1.0,
+    )
+
+
+def _rec(robot_id, joints, frames):
+    return RecordedTrajectoryPlan(
+        action_id=robot_id, robot_id=robot_id, planning_group=robot_id, joint_names=joints,
+        points=tuple(TrajectoryPoint(positions=p, time_from_start_sec=t) for t, p in frames),
+    )
+
+
+def test_merge_move_group_orders_by_group_regardless_of_input_order():
+    left = _mg("left_arm", ("l1", "l2"), (0.1, 0.2))
+    right = _mg("right_arm", ("r1", "r2"), (0.3, 0.4))
+    merged = merge_arm_plans([right, left], _BOTH, "sync")  # right first on purpose
+    assert isinstance(merged, MoveGroupPlan)
+    assert merged.robot_id == "both_arms"
+    assert merged.joint_names == ("l1", "l2", "r1", "r2")
+    assert merged.target_positions == (0.1, 0.2, 0.3, 0.4)
+
+
+def test_merge_recorded_uses_union_timeline_and_holds_short_arm():
+    left = _rec("left_arm", ("l1", "l2"), [(0.0, (0.0, 0.0)), (1.0, (1.0, 1.0))])
+    right = _rec("right_arm", ("r1", "r2"), [(0.0, (0.0, 0.0)), (2.0, (2.0, 2.0))])
+    merged = merge_arm_plans([left, right], _BOTH, "sync")
+    assert isinstance(merged, RecordedTrajectoryPlan)
+    assert merged.joint_names == ("l1", "l2", "r1", "r2")
+    times = [p.time_from_start_sec for p in merged.points]
+    assert times == [0.0, 1.0, 2.0]  # union of both arms' waypoint times
+    # at t=2 the left arm holds its final (1,1); right reached (2,2)
+    assert merged.points[-1].positions == pytest.approx((1.0, 1.0, 2.0, 2.0))
+    # at t=1 right is halfway (1,1)
+    assert merged.points[1].positions == pytest.approx((1.0, 1.0, 1.0, 1.0))
+
+
+def test_merge_rejects_mixed_plan_types():
+    left = _mg("left_arm", ("l1", "l2"), (0.1, 0.2))
+    right = _rec("right_arm", ("r1", "r2"), [(0.0, (0.0, 0.0))])
+    with pytest.raises(PlanMergeError):
+        merge_arm_plans([left, right], _BOTH, "sync")
+
+
+def test_merge_rejects_coverage_mismatch():
+    left = _mg("left_arm", ("l1", "l2"), (0.1, 0.2))
+    dup = _mg("left_arm", ("l1", "l2"), (0.3, 0.4))
+    with pytest.raises(PlanMergeError):
+        merge_arm_plans([left, dup], _BOTH, "sync")

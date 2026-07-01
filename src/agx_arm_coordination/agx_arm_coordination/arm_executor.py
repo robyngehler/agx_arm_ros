@@ -1,7 +1,6 @@
 """Arm trajectory planning for the coordinator's performer.
 
-``Trajectory`` actions are dispatched through the **MoveIt multi-arm slice** — the
-coordinator does not own a second arm-execution path. The ROS-free
+``Trajectory`` actions are dispatched through the **MoveIt multi-arm slice**. The ROS-free
 :class:`ArmTrajectoryPlanner` turns a catalogue action + an :class:`ArmConfig`
 into a plan object that the coordinator node sends to MoveIt:
 
@@ -36,6 +35,10 @@ class ArmConfigError(ValueError):
 
 class NotTaughtError(RuntimeError):
     """Raised when a recorded trajectory has no taught waypoints yet."""
+
+
+class PlanMergeError(ValueError):
+    """Raised when per-arm plans cannot be merged into one duo plan."""
 
 
 @dataclass(frozen=True)
@@ -243,3 +246,122 @@ class ArmTrajectoryPlanner:
             joint_names=group.joint_names,
             points=tuple(points),
         )
+
+
+# --- duo dispatch merge --
+#
+# Two separate goals to the same move_group serialize, so two parallel-branch
+# per-arm actions that must run *synchronized* are merged here into ONE duo plan
+# for the both_arms group. The duo group's joint order (registry) drives the
+# concatenation, so the merged vector always matches what MoveIt splits back to
+# the per-arm controllers.
+
+
+def _interp_columns(
+    times: list[float], positions: list[tuple[float, ...]], grid: list[float]
+) -> list[list[float]]:
+    """Linear per-joint interpolation onto ``grid`` (clamp/hold outside the ends)."""
+    if not times:
+        raise PlanMergeError("cannot merge a plan with no points")
+    width = len(positions[0])
+    last = len(times) - 1
+    out: list[list[float]] = []
+    cursor = 0
+    for query in grid:
+        if query <= times[0]:
+            out.append([float(v) for v in positions[0]])
+            continue
+        if query >= times[last]:
+            out.append([float(v) for v in positions[last]])
+            continue
+        while cursor < last and times[cursor + 1] < query:
+            cursor += 1
+        t0, t1 = times[cursor], times[cursor + 1]
+        span = t1 - t0
+        alpha = 0.0 if span <= 0.0 else (query - t0) / span
+        p0, p1 = positions[cursor], positions[cursor + 1]
+        out.append([float(p0[j]) + alpha * (float(p1[j]) - float(p0[j])) for j in range(width)])
+    return out
+
+
+def _order_by_group(plans: list, group: ArmGroup):
+    """Order per-arm plans so their concatenated joint_names == the duo group's."""
+    order = list(group.joint_names)
+
+    def first_index(plan) -> int:
+        head = plan.joint_names[0] if plan.joint_names else None
+        return order.index(head) if head in order else len(order) + 1
+
+    ordered = sorted(plans, key=first_index)
+    concat = tuple(joint for plan in ordered for joint in plan.joint_names)
+    if concat != tuple(group.joint_names):
+        raise PlanMergeError(
+            f"cannot merge: per-arm joints {concat} do not concatenate to duo group "
+            f"{tuple(group.joint_names)} (order/coverage mismatch)"
+        )
+    return ordered
+
+
+def merge_move_group_plans(plans: list, group: ArmGroup, action_id: str) -> MoveGroupPlan:
+    """Merge per-arm anchor goals into one collision-aware both_arms MoveGroup goal."""
+    ordered = _order_by_group(plans, group)
+    positions = tuple(value for plan in ordered for value in plan.target_positions)
+    return MoveGroupPlan(
+        action_id=action_id,
+        robot_id="both_arms",
+        planning_group=group.planning_group,
+        joint_names=tuple(group.joint_names),
+        target_positions=positions,
+        velocity_scaling=min(plan.velocity_scaling for plan in ordered),
+        acceleration_scaling=min(plan.acceleration_scaling for plan in ordered),
+    )
+
+
+def merge_recorded_plans(plans: list, group: ArmGroup, action_id: str) -> RecordedTrajectoryPlan:
+    """Merge per-arm recorded plans onto one shared timeline (both_arms group).
+
+    Uses the union of both plans' waypoint times as the grid so the taught
+    waypoints are preserved; each arm is linearly interpolated onto that grid and
+    an arm that ends earlier holds its final pose while the other keeps moving.
+    """
+    ordered = _order_by_group(plans, group)
+    for plan in ordered:
+        if not plan.points:
+            raise PlanMergeError(f"plan '{plan.action_id}' has no points")
+    grid = sorted({point.time_from_start_sec for plan in ordered for point in plan.points})
+    columns_per_plan = [
+        _interp_columns(
+            [point.time_from_start_sec for point in plan.points],
+            [point.positions for point in plan.points],
+            grid,
+        )
+        for plan in ordered
+    ]
+    points: list[TrajectoryPoint] = []
+    for frame_index, time_from_start in enumerate(grid):
+        merged: list[float] = []
+        for columns in columns_per_plan:
+            merged.extend(columns[frame_index])
+        points.append(
+            TrajectoryPoint(positions=tuple(merged), time_from_start_sec=time_from_start)
+        )
+    return RecordedTrajectoryPlan(
+        action_id=action_id,
+        robot_id="both_arms",
+        planning_group=group.planning_group,
+        joint_names=tuple(group.joint_names),
+        points=tuple(points),
+    )
+
+
+def merge_arm_plans(plans: list, group: ArmGroup, action_id: str):
+    """Merge same-type per-arm plans into one duo plan; raise on a mixed/odd set."""
+    if len(plans) < 2:
+        raise PlanMergeError("need at least two plans to merge")
+    if all(isinstance(plan, MoveGroupPlan) for plan in plans):
+        return merge_move_group_plans(plans, group, action_id)
+    if all(isinstance(plan, RecordedTrajectoryPlan) for plan in plans):
+        return merge_recorded_plans(plans, group, action_id)
+    raise PlanMergeError(
+        "cannot merge a mix of anchor (MoveGroup) and recorded (ExecuteTrajectory) plans"
+    )
