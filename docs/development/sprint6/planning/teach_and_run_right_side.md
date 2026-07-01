@@ -12,7 +12,7 @@ dual-arm; the left side mirrors this once it is connected.
 | freedrive / leader mode + record a motion | `agx_arm_record_leader_trajectory` | `agx_arm_mit_demos` |
 | play a recorded motion | `agx_arm_execute_saved_trajectory` | `agx_arm_mit_demos` |
 | **save a single joint config as a named anchor pose** | `agx_arm_capture_anchor_pose` *(new, this sprint)* | `agx_arm_mit_demos` |
-| arm execution via FollowJointTrajectory | MIT controller's built-in FJT action (`action_name` param) | `agx_arm_mit_controller` |
+| arm execution (plan + execute) | MoveIt `move_group` (per-arm MIT controllers via `moveit_mit`) | `agx_arm_moveit` |
 | hand grasp/open/release as a skill | `omnihand_skill_controller` | `agx_arm_ctrl` |
 | order arm + hand actions (DAG) | coordinator | `agx_arm_coordination` |
 | recorded JSON → catalogue `waypoints` | `agx_arm_recorded_to_catalogue` *(new)* | `agx_arm_mit_demos` |
@@ -108,7 +108,7 @@ ros2 run agx_arm_mit_demos agx_arm_record_leader_trajectory --name pour_profile_
 
 Then turn its sampled points into the matching catalogue action's `waypoints:`
 (`positions` + `time_from_start_sec`) in `agx_arm_coordination/config/catalogue.yaml`. The
-`arm_executor` replays `waypoints` as a FollowJointTrajectory goal. Use the converter (or the
+`arm_executor` replays `waypoints` through MoveIt's `ExecuteTrajectory`. Use the converter (or the
 teach manager's `w` key) instead of transcribing by hand:
 
 ```bash

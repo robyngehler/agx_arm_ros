@@ -18,12 +18,9 @@ It reuses the proven building blocks rather than re-implementing motion code:
 MIT/leader service plumbing via :class:`SavedTrajectoryExecutorNode`),
 ``capture_anchor_pose`` (anchor write), and ``recorded_to_catalogue`` (waypoints).
 
-Right-side bring-up example (7-DoF right arm, real hand bus already up)::
+Right-side bring-up example (7-DoF right arm, real hand bus already up).
 
-    ros2 run agx_arm_mit_demos agx_arm_teach_manager \\
-        --source-joints right_arm_joint1,right_arm_joint2,right_arm_joint3,\\
-right_arm_joint4,right_arm_joint5,right_arm_joint6,right_arm_joint7 \\
-        --arm-config src/agx_arm_coordination/config/arm_config.yaml
+    ros2 run agx_arm_mit_demos agx_arm_teach_manager --arm-config src/agx_arm_coordination/config/arm_config.yaml --source-joints right_arm_joint1,right_arm_joint2,right_arm_joint3,right_arm_joint4,right_arm_joint5,right_arm_joint6,right_arm_joint7
 
 See ``docs/development/sprint6/planning/teach_and_run_right_side.md``.
 """
