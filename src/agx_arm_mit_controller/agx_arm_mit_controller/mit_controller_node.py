@@ -49,6 +49,7 @@ class ExecutionState(str, Enum):
     CANCELING_TO_HOLD = "CANCELING_TO_HOLD"
     HOLDING_FINAL_POINT = "HOLDING_FINAL_POINT"
     LEADER_MODE = "LEADER_MODE"
+    FREEDRIVE = "FREEDRIVE"
     STALE_FEEDBACK = "STALE_FEEDBACK"
     FAULTED = "FAULTED"
 
@@ -74,11 +75,18 @@ class NeroMitControllerNode(Node):
         self.declare_parameter("torque_limit", [8.0] * 7)
         self.declare_parameter("kp", [2.0, 3.0, 2.0, 3.0, 2.0, 2.0, 2.0])
         self.declare_parameter("kd", [0.1, 0.1, 0.1, 0.1, 0.12, 0.12, 0.08])
+        # Freedrive (zero-force drag) damping: kp is forced to 0 so gravity
+        # feedforward makes the arm back-drivable; kd only damps the motion.
+        self.declare_parameter("freedrive_kd", [0.1, 0.1, 0.1, 0.1, 0.12, 0.12, 0.08])
         self.declare_parameter("gravity_compensation_enabled", False)
         self.declare_parameter("gravity_backend", "pinocchio")
         self.declare_parameter("gravity_urdf_path", "")
         self.declare_parameter("gravity_scale", 1.0)
         self.declare_parameter("gravity_feedforward_sign", -1.0)
+        # Arm base orientation in world (XYZ extrinsic rpy). Rotates the gravity
+        # model so compensation is correct for a tilted body mount; [0,0,0] keeps
+        # the upright table-mount default.
+        self.declare_parameter("gravity_mounting_rpy", [0.0, 0.0, 0.0])
         self.declare_parameter("calibration_file", "")
         self.declare_parameter("action_name", "arm_controller/follow_joint_trajectory")
         self.declare_parameter("action_feedback_rate_hz", 20.0)
@@ -102,11 +110,13 @@ class NeroMitControllerNode(Node):
         self.torque_limit = self._load_float_array("torque_limit")
         self.kp = self._load_float_array("kp")
         self.kd = self._load_float_array("kd")
+        self.freedrive_kd = self._load_float_array("freedrive_kd")
         self.gravity_compensation_enabled = bool(self.get_parameter("gravity_compensation_enabled").value)
         self.gravity_backend = str(self.get_parameter("gravity_backend").value)
         self.gravity_urdf_path = str(self.get_parameter("gravity_urdf_path").value)
         self.gravity_scale = float(self.get_parameter("gravity_scale").value)
         self.gravity_feedforward_sign = float(self.get_parameter("gravity_feedforward_sign").value)
+        self.gravity_mounting_rpy = [float(v) for v in self.get_parameter("gravity_mounting_rpy").value]
         self.calibration_file = str(self.get_parameter("calibration_file").value)
         self.action_name = str(self.get_parameter("action_name").value)
         self.action_feedback_rate_hz = float(self.get_parameter("action_feedback_rate_hz").value)
@@ -142,6 +152,7 @@ class NeroMitControllerNode(Node):
         self.gravity_model: Optional[GravityModel] = None
         self.calibration_model: Optional[CalibrationModel] = None
         self.leader_mode_active = False
+        self.freedrive_active = False
         self.arm_fault_active = False
         self.arm_fault_message = ""
         self.execution_state = ExecutionState.DISABLED
@@ -155,6 +166,11 @@ class NeroMitControllerNode(Node):
         self.move_mit_pub = self.create_publisher(MoveMITMsg, "control/move_mit", 10)
         self.reference_pub = self.create_publisher(JointState, "~/reference_joint_states", 10)
         self.execution_state_pub = self.create_publisher(String, "~/execution_state", 10)
+        # Diagnostic: the gravity feedforward torque actually commanded (post
+        # scale/sign/calibration, clamped). Compare it live against the measured
+        # motor effort on feedback/joint_states at the same pose to tune sign/scale
+        # — in freedrive (kp=0) this torque is the *only* thing holding the arm.
+        self.gravity_ff_pub = self.create_publisher(JointState, "~/gravity_feedforward", 10)
         self.create_subscription(
             JointState,
             "feedback/joint_states",
@@ -185,6 +201,7 @@ class NeroMitControllerNode(Node):
                 callback_group=self.callback_group,
             )
         self.create_service(SetBool, "~/enable", self._enable_callback, callback_group=self.callback_group)
+        self.create_service(SetBool, "~/freedrive", self._freedrive_callback, callback_group=self.callback_group)
         self.create_service(Empty, "~/hold_current", self._hold_current_callback, callback_group=self.callback_group)
         self.create_service(
             Empty,
@@ -207,11 +224,38 @@ class NeroMitControllerNode(Node):
             self._control_loop,
             callback_group=self.callback_group,
         )
+        # Live tuning of the gain/gravity knobs so freedrive sign/scale can be
+        # dialled in on hardware without relaunching (e.g. ros2 param set
+        # /mit_controller gravity_feedforward_sign 1.0). The control loop reads
+        # these attributes every tick.
+        self.add_on_set_parameters_callback(self._on_set_parameters)
+
         self._publish_execution_state(force=True)
         self.get_logger().info(
             f"MIT controller ready for joints {self.joint_names} at {self.control_rate_hz:.1f} Hz"
         )
         self.get_logger().info(f"MIT gains loaded: kp={self.kp}, kd={self.kd}")
+
+    def _on_set_parameters(self, params) -> "SetParametersResult":
+        from rcl_interfaces.msg import SetParametersResult
+
+        live_vectors = {"freedrive_kd", "kp", "kd"}
+        live_scalars = {"gravity_scale", "gravity_feedforward_sign"}
+        for param in params:
+            try:
+                if param.name in live_vectors:
+                    values = [float(v) for v in param.value]
+                    if len(values) != len(self.joint_names):
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f"{param.name} needs {len(self.joint_names)} values",
+                        )
+                    setattr(self, param.name, values)
+                elif param.name in live_scalars:
+                    setattr(self, param.name, float(param.value))
+            except (TypeError, ValueError) as exc:
+                return SetParametersResult(successful=False, reason=f"{param.name}: {exc}")
+        return SetParametersResult(successful=True)
         self.get_logger().info(
             f"FollowJointTrajectory action available on '{self.action_name}'"
         )
@@ -235,9 +279,12 @@ class NeroMitControllerNode(Node):
         if self.gravity_compensation_enabled:
             try:
                 gravity_urdf_path = self.gravity_urdf_path or None
-                self.gravity_model = create_gravity_model(self.gravity_backend, gravity_urdf_path)
+                self.gravity_model = create_gravity_model(
+                    self.gravity_backend, gravity_urdf_path, self.gravity_mounting_rpy
+                )
                 self.get_logger().info(
-                    f"Gravity compensation enabled via {self.gravity_backend} using {self.gravity_model.urdf_path}"
+                    f"Gravity compensation enabled via {self.gravity_backend} using {self.gravity_model.urdf_path} "
+                    f"(mounting_rpy={self.gravity_mounting_rpy})"
                 )
             except GravityModelError as exc:
                 self.get_logger().error(str(exc))
@@ -401,12 +448,44 @@ class NeroMitControllerNode(Node):
             response.message = "enabled" if request.data else "disabled"
             return response
 
+    def _freedrive_callback(self, request: SetBool.Request, response: SetBool.Response) -> SetBool.Response:
+        with self.state_lock:
+            if request.data:
+                if not self.gravity_compensation_enabled or self.gravity_model is None:
+                    response.success = False
+                    response.message = "freedrive requires gravity compensation (no gravity model loaded)"
+                    return response
+                if not self._has_fresh_feedback():
+                    response.success = False
+                    response.message = "Cannot enter freedrive without fresh feedback/joint_states"
+                    return response
+                if not self.enabled:
+                    self._set_enabled(True)
+                self.active_trajectory = None
+                self.holding_final_point = False
+                self.freedrive_active = True
+                self._set_execution_state(ExecutionState.FREEDRIVE)
+                self.get_logger().info("Freedrive on (zero-force, gravity-compensated)")
+                response.success = True
+                response.message = "freedrive on"
+            else:
+                self.freedrive_active = False
+                if self._has_fresh_feedback():
+                    self.hold_reference = self._capture_current_reference()
+                self.holding_final_point = False
+                self._set_execution_state(ExecutionState.IDLE_HOLD)
+                self.get_logger().info("Freedrive off (holding current pose)")
+                response.success = True
+                response.message = "freedrive off"
+            return response
+
     def _hold_current_callback(self, request: Empty.Request, response: Empty.Response) -> Empty.Response:
         del request
         with self.state_lock:
             if not self._has_fresh_feedback():
                 self.get_logger().warn("Ignoring hold_current request without fresh feedback")
                 return response
+            self.freedrive_active = False
             self.active_trajectory = None
             self.hold_reference = self._capture_current_reference()
             self.holding_final_point = False
@@ -446,6 +525,7 @@ class NeroMitControllerNode(Node):
             self.active_trajectory = None
             self.hold_reference = None
             self.holding_final_point = False
+            self.freedrive_active = False
             self.external_cancel_requested = True
             self._set_execution_state(ExecutionState.DISABLED)
             self.get_logger().info("MIT controller disabled")
@@ -465,6 +545,7 @@ class NeroMitControllerNode(Node):
     def _activate_trajectory(self, buffer: JointTrajectoryBuffer) -> None:
         if self.auto_enable_on_trajectory and not self.enabled:
             self._set_enabled(True)
+        self.freedrive_active = False
         self.active_trajectory = buffer
         self.trajectory_start_monotonic = time.monotonic()
         self.hold_reference = None
@@ -866,6 +947,11 @@ class NeroMitControllerNode(Node):
                 self._set_execution_state(ExecutionState.STALE_FEEDBACK)
                 return
 
+            if self.freedrive_active:
+                self._publish_freedrive_command()
+                self._set_execution_state(ExecutionState.FREEDRIVE)
+                return
+
             # get reference hold or trajectory pose
             reference = self._reference_from_state()
             if reference is None:
@@ -891,7 +977,7 @@ class NeroMitControllerNode(Node):
                 desired_torque = clamp(float(feedforward[index]), self.torque_limit[index])
                 position_error = desired_position - current_position
 
-                """
+                # (un)comment the following block to switch a joint to (not) hold if it exceeds the position error limit
                 if math.fabs(position_error) > self.position_error_limit[index]:
                     self.get_logger().warn(
                         f"Joint {joint_name} exceeded position error limit; switching that joint to hold"
@@ -899,7 +985,7 @@ class NeroMitControllerNode(Node):
                     desired_position = current_position
                     desired_velocity = 0.0
                     desired_torque = 0.0
-                """
+                
                 cmd.p_des.append(desired_position)
                 cmd.v_des.append(desired_velocity)
                 cmd.kp.append(self.kp[index] * gain_scale)
@@ -917,6 +1003,39 @@ class NeroMitControllerNode(Node):
 
             self.move_mit_pub.publish(cmd)
             self._publish_reference(reference)
+            self._publish_gravity_feedforward(cmd.torque)
+
+    def _publish_freedrive_command(self) -> None:
+        """Zero-force, gravity-compensated command so the arm is back-drivable.
+
+        kp is forced to 0 (no position hold) and only the gravity feedforward
+        torque plus kd damping is applied, so the operator can hand-move the arm
+        while the model carries its own weight. This is our software leader mode:
+        unlike the firmware drag mode it honours the mounting pose baked into the
+        gravity model. p_des tracks the live position so a later kp>0 hand-off
+        never snaps to a stale target.
+        """
+        positions = [self.feedback_positions[joint_name] for joint_name in self.joint_names]
+        reference = SampledTrajectoryPoint(
+            positions=tuple(positions),
+            velocities=(0.0,) * len(self.joint_names),
+            efforts=(0.0,) * len(self.joint_names),
+        )
+        feedforward = self._compute_feedforward(reference)
+
+        cmd = MoveMITMsg()
+        cmd.joint_index = list(range(1, len(self.joint_names) + 1))
+        cmd.p_des = [float(value) for value in positions]
+        cmd.v_des = [0.0] * len(self.joint_names)
+        cmd.kp = [0.0] * len(self.joint_names)
+        cmd.kd = [float(value) for value in self.freedrive_kd]
+        cmd.torque = [
+            clamp(float(feedforward[index]), self.torque_limit[index])
+            for index in range(len(self.joint_names))
+        ]
+        self.move_mit_pub.publish(cmd)
+        self._publish_reference(reference)
+        self._publish_gravity_feedforward(cmd.torque)
 
     def _publish_reference(self, reference: SampledTrajectoryPoint) -> None:
         msg = JointState()
@@ -926,6 +1045,13 @@ class NeroMitControllerNode(Node):
         msg.velocity = [float(value) for value in reference.velocities]
         msg.effort = [float(value) for value in reference.efforts]
         self.reference_pub.publish(msg)
+
+    def _publish_gravity_feedforward(self, torque: list[float]) -> None:
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.name = list(self.joint_names)
+        msg.effort = [float(value) for value in torque]
+        self.gravity_ff_pub.publish(msg)
 
 
 def main(args: Optional[list[str]] = None) -> None:

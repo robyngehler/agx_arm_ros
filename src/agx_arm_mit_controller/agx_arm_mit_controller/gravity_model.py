@@ -11,6 +11,15 @@ class GravityModelError(RuntimeError):
     pass
 
 
+def _resolve_mounting_rpy(mounting_rpy: "list[float] | tuple[float, float, float] | None") -> tuple[float, float, float]:
+    if mounting_rpy is None:
+        return (0.0, 0.0, 0.0)
+    values = list(mounting_rpy)
+    if len(values) != 3:
+        raise GravityModelError(f"mounting_rpy must have 3 elements, got {len(values)}")
+    return (float(values[0]), float(values[1]), float(values[2]))
+
+
 class GravityModel(Protocol):
     joint_names: list[str]
     urdf_path: str
@@ -30,9 +39,14 @@ class PinocchioGravityModel:
     _pin: object
     _model: object
     _data: object
+    mounting_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     @classmethod
-    def from_urdf(cls, urdf_path: str | Path) -> "PinocchioGravityModel":
+    def from_urdf(
+        cls,
+        urdf_path: str | Path,
+        mounting_rpy: "list[float] | tuple[float, float, float] | None" = None,
+    ) -> "PinocchioGravityModel":
         try:
             import pinocchio as pin
         except Exception as exc:
@@ -42,9 +56,24 @@ class PinocchioGravityModel:
 
         path = str(Path(urdf_path).expanduser().resolve())
         model = pin.buildModelFromUrdf(path)
+
+        rpy = _resolve_mounting_rpy(mounting_rpy)
+        if any(abs(angle) > 1e-9 for angle in rpy):
+            # The URDF is authored with an upright base, so pinocchio's default
+            # gravity ([0, 0, -g] in the base frame) only holds for a table
+            # mount. On the Duo body the arm base is tilted, so express world
+            # gravity in the (rotated) base frame: g_base = R_base_in_world^T @ g.
+            # rpy is the base-frame orientation in world (XYZ extrinsic), matching
+            # the convention used elsewhere in this stack.
+            import numpy as np
+
+            r_base_in_world = pin.rpy.rpyToMatrix(rpy[0], rpy[1], rpy[2])
+            g_world = np.array(model.gravity.linear, dtype=float)
+            model.gravity.linear = r_base_in_world.T @ g_world
+
         data = model.createData()
         joint_names = [name for name in model.names if name not in ("universe",)]
-        return cls(path, joint_names, pin, model, data)
+        return cls(path, joint_names, pin, model, data, rpy)
 
     def compute_gravity(self, joint_positions: list[float]) -> list[float]:
         if len(joint_positions) != self.model_dofs:
@@ -108,8 +137,9 @@ class PinocchioGravityModel:
 def create_gravity_model(
     backend: str = "pinocchio",
     urdf_path: str | Path | None = None,
+    mounting_rpy: "list[float] | tuple[float, float, float] | None" = None,
 ) -> GravityModel:
     resolved_path = default_nero_urdf_path() if urdf_path is None else Path(urdf_path)
     if backend == "pinocchio":
-        return PinocchioGravityModel.from_urdf(resolved_path)
+        return PinocchioGravityModel.from_urdf(resolved_path, mounting_rpy)
     raise GravityModelError(f"Unsupported gravity backend: {backend}")

@@ -35,14 +35,13 @@ def _duo_side_for_prefix(input_joint_prefix: str) -> str:
 def _apply_duo_slice_mappings(
     model_path: Path,
     mappings: dict[str, str],
-    input_joint_prefix: str,
+    side: str,
     effector_type: str,
 ) -> dict[str, str]:
     if model_path.name != "duo_system.urdf.xacro":
         return mappings
 
-    side = _duo_side_for_prefix(input_joint_prefix)
-    if not side:
+    if side not in ("left", "right"):
         return mappings
 
     # Keep only the active arm slice. When the runtime profile uses OmniHand,
@@ -113,13 +112,12 @@ def _freeze_subtree_joints(urdf_text: str, root_link: str) -> str:
 def _apply_static_omnihand_payload(
     model_path: Path,
     urdf_text: str,
-    input_joint_prefix: str,
+    side: str,
     effector_type: str,
 ) -> str:
     if model_path.name != "duo_system.urdf.xacro" or effector_type != "omnihand":
         return urdf_text
 
-    side = _duo_side_for_prefix(input_joint_prefix)
     if side not in ("left", "right"):
         return urdf_text
     return _freeze_subtree_joints(urdf_text, f"{side}_base_link")
@@ -132,6 +130,7 @@ def resolve_gravity_urdf_path(
     input_joint_prefix: str = "",
     effector_type: str = "none",
     explicit_gravity_urdf_path: str = "",
+    duo_side: str = "",
 ) -> str:
     if explicit_gravity_urdf_path.strip():
         return str(Path(explicit_gravity_urdf_path).expanduser().resolve())
@@ -143,11 +142,16 @@ def resolve_gravity_urdf_path(
     if model_path.suffix != ".xacro":
         return str(model_path)
 
+    # An explicit duo_side wins over deriving the side from the joint prefix, so
+    # the (prefix-free) teach loop can still bake the body mount into the gravity
+    # URDF by naming the arm side directly.
+    side = duo_side.strip() or _duo_side_for_prefix(input_joint_prefix)
+
     mappings = parse_xacro_mappings(custom_model_xacro_args)
     mappings = _apply_duo_slice_mappings(
         model_path,
         mappings,
-        input_joint_prefix,
+        side,
         effector_type,
     )
     temp_urdf = tempfile.NamedTemporaryFile(
@@ -188,7 +192,7 @@ def resolve_gravity_urdf_path(
     generated_urdf_text = _apply_static_omnihand_payload(
         model_path,
         generated_urdf_text,
-        input_joint_prefix,
+        side,
         effector_type,
     )
     temp_urdf.write(generated_urdf_text)

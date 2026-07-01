@@ -1,3 +1,4 @@
+import ast
 import os
 from pathlib import Path
 
@@ -31,14 +32,47 @@ def _default_params_file() -> str:
     return str(installed_params_file)
 
 
+def _duo_system_xacro_path() -> str:
+    """Locate duo_system.urdf.xacro (share dir first, source tree fallback)."""
+    try:
+        share = Path(get_package_share_directory("duo_body_description"))
+        candidate = share / "urdf" / "duo_system.urdf.xacro"
+        if candidate.is_file():
+            return str(candidate)
+    except Exception:
+        pass
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "src" / "duo_body_description" / "urdf" / "duo_system.urdf.xacro"
+        if candidate.is_file():
+            return str(candidate)
+    return ""
+
+
 def _build_controller_node(context):
+    # gravity_arm_side bakes the arm's real body mount into the gravity URDF
+    # (ground truth from the description), so gravity compensation is correct for
+    # the tilted body-mounted arm without a hand-typed gravity_mounting_rpy.
+    gravity_arm_side = LaunchConfiguration("gravity_arm_side").perform(context).strip()
+    custom_model = LaunchConfiguration("custom_model").perform(context).strip()
+    if gravity_arm_side in ("left", "right") and not custom_model:
+        custom_model = _duo_system_xacro_path()
+
     resolved_gravity_urdf_path = resolve_gravity_urdf_path(
-        custom_model=LaunchConfiguration("custom_model").perform(context),
+        custom_model=custom_model,
         custom_model_xacro_args=LaunchConfiguration("custom_model_xacro_args").perform(context),
         input_joint_prefix=LaunchConfiguration("input_joint_prefix").perform(context),
         effector_type=LaunchConfiguration("effector_type").perform(context),
         explicit_gravity_urdf_path=LaunchConfiguration("gravity_urdf_path").perform(context),
+        duo_side=gravity_arm_side,
     )
+
+    mounting_rpy_str = LaunchConfiguration("gravity_mounting_rpy").perform(context)
+    try:
+        gravity_mounting_rpy = [float(value) for value in ast.literal_eval(mounting_rpy_str)]
+        if len(gravity_mounting_rpy) != 3:
+            raise ValueError
+    except Exception:
+        gravity_mounting_rpy = [0.0, 0.0, 0.0]
 
     return [
         LogInfo(msg=["MIT controller params_file: ", LaunchConfiguration("params_file")]),
@@ -62,6 +96,7 @@ def _build_controller_node(context):
                     "control_rate_hz": LaunchConfiguration("control_rate_hz"),
                     "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
                     "gravity_urdf_path": resolved_gravity_urdf_path,
+                    "gravity_mounting_rpy": gravity_mounting_rpy,
                     "enable_debug_joint_trajectory_topic": LaunchConfiguration(
                         "enable_debug_joint_trajectory_topic"
                     ),
@@ -199,6 +234,16 @@ def generate_launch_description():
         default_value="",
         description="Optional explicit gravity URDF path override. Empty auto-resolves from custom_model or the canonical Nero URDF.",
     )
+    gravity_mounting_rpy_arg = DeclareLaunchArgument(
+        "gravity_mounting_rpy",
+        default_value="[0.0, 0.0, 0.0]",
+        description="Manual arm base orientation in world [roll, pitch, yaw] (XYZ extrinsic, rad) for gravity/freedrive. [0,0,0] = upright. Prefer gravity_arm_side (URDF-derived); use this only as an override, and keep it [0,0,0] when gravity_arm_side is set.",
+    )
+    gravity_arm_side_arg = DeclareLaunchArgument(
+        "gravity_arm_side",
+        default_value="",
+        description="left|right to bake that arm's real body mount into the gravity URDF (ground truth from duo_system.urdf.xacro), so gravity compensation is correct for the tilted body-mounted arm. Empty = standalone upright arm.",
+    )
     params_file_arg = DeclareLaunchArgument(
         "params_file",
         default_value=default_params_file,
@@ -275,6 +320,8 @@ def generate_launch_description():
             custom_model_xacro_args_arg,
             input_joint_prefix_arg,
             gravity_urdf_path_arg,
+            gravity_mounting_rpy_arg,
+            gravity_arm_side_arg,
             params_file_arg,
             launch_driver_arg,
             enable_debug_joint_trajectory_topic_arg,

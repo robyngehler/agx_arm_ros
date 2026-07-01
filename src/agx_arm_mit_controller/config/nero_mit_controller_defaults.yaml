@@ -11,12 +11,22 @@
     torque_limit: [8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0]
     kp: [2.0, 3.0, 2.0, 3.0, 2.0, 2.0, 2.0]
     kd: [0.1, 0.1, 0.1, 0.1, 0.12, 0.12, 0.08]
+    # Software freedrive (teach idle/record): kp is forced to 0 so gravity
+    # feedforward makes the arm back-drivable; freedrive_kd only damps motion.
+    # Deliberately started high (~5x the hold kd) so the first hardware runs are
+    # stable/viscous rather than lively. Tune down once it proves stable: lower
+    # if it feels sticky, raise if the arm drifts/oscillates.
+    freedrive_kd: [0.5, 0.5, 0.5, 0.5, 0.6, 0.6, 0.4]
     gravity_compensation_enabled: true
     gravity_backend: pinocchio
     # Leave empty to auto-discover the canonical Nero URDF.
     gravity_urdf_path: ""
     gravity_scale: 1.0
     gravity_feedforward_sign: -1.0
+    # Arm base orientation in world as [roll, pitch, yaw] (XYZ extrinsic, rad).
+    # [0,0,0] = upright table mount. Set to the body mounting pose so freedrive
+    # gravity compensation is correct for a tilted arm.
+    gravity_mounting_rpy: [0.0, 0.0, 0.0]
     # Leave empty to auto-discover config/nero_gravity_calibration.json.
     calibration_file: ""
     action_name: arm_controller/follow_joint_trajectory
