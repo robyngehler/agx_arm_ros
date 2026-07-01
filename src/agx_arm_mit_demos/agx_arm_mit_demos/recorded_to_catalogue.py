@@ -28,10 +28,34 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from agx_arm_mit_controller.duo_trajectory import ArmSegment, merge_arm_recordings
 from agx_arm_mit_controller.trajectory_io import (
     RecordedTrajectory,
     load_recorded_trajectory,
 )
+
+
+def build_duo_trajectory(
+    left: RecordedTrajectory,
+    right: RecordedTrajectory,
+    *,
+    name: str,
+    left_prefix: str = "left_arm_",
+    right_prefix: str = "right_arm_",
+    rate_hz: float | None = None,
+) -> RecordedTrajectory:
+    """Merge a left + right recording into one ``both_arms`` (14-dim) trajectory.
+
+    Output joint order is ``left_prefix``-joints then ``right_prefix``-joints,
+    matching the motion registry's ``both_arms`` side order (``[left, right]``).
+    The emitted waypoint block echoes this order so it can be cross-checked
+    against the catalogue group's ``joint_names`` before pasting.
+    """
+    segments = [
+        ArmSegment(left, tuple(f"{left_prefix}{joint}" for joint in left.joint_names)),
+        ArmSegment(right, tuple(f"{right_prefix}{joint}" for joint in right.joint_names)),
+    ]
+    return merge_arm_recordings(segments, name=name, rate_hz=rate_hz, robot="duo")
 
 
 def downsample_indices(count: int, max_points: int) -> list[int]:
@@ -93,9 +117,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Convert a recorded leader trajectory into catalogue waypoints"
     )
-    parser.add_argument("trajectory_path", help="Path to a RecordedTrajectory JSON file")
+    parser.add_argument("trajectory_path", help="Path to a RecordedTrajectory JSON file (the left arm when merging)")
     parser.add_argument(
         "--action-id", required=True, help="Catalogue action_id the waypoints belong to"
+    )
+    parser.add_argument(
+        "--merge-with",
+        default="",
+        help="Second RecordedTrajectory (the right arm) to merge into one both_arms (14-dim) action",
+    )
+    parser.add_argument(
+        "--left-prefix", default="left_arm_", help="Joint prefix for the first recording in the duo merge"
+    )
+    parser.add_argument(
+        "--right-prefix", default="right_arm_", help="Joint prefix for the --merge-with recording in the duo merge"
+    )
+    parser.add_argument(
+        "--merge-rate-hz",
+        type=float,
+        default=0.0,
+        help="Common resample rate for the duo merge (0 = max of the two recordings' rates)",
     )
     parser.add_argument(
         "--max-points", type=int, default=8, help="Downsample to at most this many waypoints"
@@ -119,6 +160,27 @@ def main() -> None:
     if not trajectory.points:
         raise SystemExit(f"recording '{trajectory.name}' has no points")
 
+    if args.merge_with:
+        right_path = Path(args.merge_with).expanduser().resolve()
+        if not right_path.is_file():
+            raise SystemExit(f"--merge-with recording not found: {right_path}")
+        right = load_recorded_trajectory(right_path)
+        if not right.points:
+            raise SystemExit(f"recording '{right.name}' has no points")
+        trajectory = build_duo_trajectory(
+            trajectory,
+            right,
+            name=args.action_id,
+            left_prefix=args.left_prefix,
+            right_prefix=args.right_prefix,
+            rate_hz=args.merge_rate_hz or None,
+        )
+        print(
+            f"merged '{Path(args.trajectory_path).name}' + '{right_path.name}' -> "
+            f"{len(trajectory.joint_names)}-dim both_arms trajectory "
+            f"({trajectory.duration:.2f}s @ {trajectory.sample_rate_hz:.0f} Hz)"
+        )
+
     waypoints = recorded_to_waypoints(trajectory, args.max_points, args.decimals)
     block = format_waypoints_block(args.action_id, trajectory, waypoints)
 
@@ -141,5 +203,6 @@ __all__ = [
     "downsample_indices",
     "recorded_to_waypoints",
     "format_waypoints_block",
+    "build_duo_trajectory",
     "main",
 ]

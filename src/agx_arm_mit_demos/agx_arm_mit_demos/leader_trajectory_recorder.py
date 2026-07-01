@@ -137,10 +137,14 @@ def record_trajectory(
 	hold_timeout: float,
 	movement_threshold: float,
 	wait_for_enter: bool = True,
+	joint_names: Optional[list[str]] = None,
 ) -> tuple[list[RecorderSnapshot], int]:
-	joint_names = list(node.leader_joint_state.name) if node.leader_joint_state is not None else []
+	# Default to the native leader stream's joint order; callers driving a
+	# software freedrive (no leader stream) pass their own joint_names instead.
+	if joint_names is None:
+		joint_names = list(node.leader_joint_state.name) if node.leader_joint_state is not None else []
 	if not joint_names:
-		raise RuntimeError("leader_joint_angles does not contain joint names")
+		raise RuntimeError("no joint names available for recording")
 
 	if wait_for_enter:
 		print("Press Enter to start recording once the arm is in leader mode.")
