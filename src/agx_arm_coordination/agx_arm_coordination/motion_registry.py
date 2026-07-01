@@ -43,6 +43,12 @@ def load_motion_registry() -> dict:
     return yaml.safe_load(_find_motion_registry().read_text(encoding="utf-8")) or {}
 
 
+def moveit_group(group_name: str) -> str:
+    """Return the MoveIt planning-group name for an arm group (registry moveit_group)."""
+    profile = load_motion_registry().get("motion_profiles", {}).get(group_name, {})
+    return str(profile.get("moveit_group", group_name))
+
+
 def group_joint_names(group_name: str) -> tuple[str, ...]:
     """Joint names for an arm group, side-prefixed per its motion profile.
 
@@ -65,4 +71,4 @@ def group_joint_names(group_name: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-__all__ = ["load_motion_registry", "group_joint_names"]
+__all__ = ["load_motion_registry", "moveit_group", "group_joint_names"]

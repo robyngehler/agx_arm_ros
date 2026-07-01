@@ -1,23 +1,22 @@
 """Arm trajectory planning for the coordinator's performer.
 
-``Trajectory`` actions are dispatched to the existing ``both_arms`` / per-arm
-FollowJointTrajectory path (no new arm control package — graph doc §3). The
-ROS-free :class:`ArmTrajectoryPlanner` turns a catalogue action + an
-:class:`ArmConfig` into a concrete goal (action server + joint names + timed
-waypoints); the coordinator node sends it as a ``control_msgs/FollowJointTrajectory``.
+``Trajectory`` actions are dispatched through the **MoveIt multi-arm slice** — the
+coordinator does not own a second arm-execution path. The ROS-free
+:class:`ArmTrajectoryPlanner` turns a catalogue action + an :class:`ArmConfig`
+into a plan object that the coordinator node sends to MoveIt:
 
-Two trajectory sources (graph doc §"Task Composition Design"):
+- **anchor-pose endpoints** (``to_pose``) -> :class:`MoveGroupPlan`: a joint-space
+  goal for the group's MoveIt planning group. The coordinator sends it as a
+  ``moveit_msgs/action/MoveGroup`` goal (plan + execute), so the move is
+  collision-aware and MoveIt fans it out natively to the per-arm controllers.
+- **recorded waypoints** (``waypoints``) -> :class:`RecordedTrajectoryPlan`: a
+  taught joint trajectory the coordinator replays through
+  ``moveit_msgs/action/ExecuteTrajectory`` (same controller-manager fan-out). A
+  recorded action with no taught ``waypoints`` yet raises :class:`NotTaughtError`.
 
-- **anchor-pose endpoints** (``to_pose``): MoveIt-planned transitions between
-  named anchor poses. The MVP commands the endpoint joint vector directly and
-  lets the controller interpolate from the current pose; collision-aware MoveIt
-  planning between anchors is wired in a later slice (documented limitation).
-- **recorded waypoints** (``waypoints``): taught Cartesian motions (cap opener,
-  pour profile). Replayed as-is. A recorded action with no taught ``waypoints``
-  yet raises :class:`NotTaughtError` so the coordinator reports it cleanly.
-
-Pose/waypoint values are placeholders until measured/taught on hardware
-(proposal §9 Step 3, hefeweizen_validation_log.md).
+The planning group and the group's joint names come from the motion registry
+(single source of truth) — this module never re-declares them. Pose / waypoint
+values are placeholders until measured/taught on hardware.
 """
 
 from __future__ import annotations
@@ -41,8 +40,8 @@ class NotTaughtError(RuntimeError):
 
 @dataclass(frozen=True)
 class ArmGroup:
-    action_server: str
-    joint_names: tuple[str, ...]
+    planning_group: str               # MoveIt planning group (registry moveit_group)
+    joint_names: tuple[str, ...]      # registry-derived, side-prefixed
 
 
 @dataclass(frozen=True)
@@ -52,50 +51,81 @@ class TrajectoryPoint:
 
 
 @dataclass(frozen=True)
-class ArmGoal:
+class MoveGroupPlan:
+    """A collision-aware joint-space goal for one MoveIt planning group."""
+
     action_id: str
     robot_id: str
-    action_server: str
+    planning_group: str
+    joint_names: tuple[str, ...]
+    target_positions: tuple[float, ...]
+    velocity_scaling: float
+    acceleration_scaling: float
+
+
+@dataclass(frozen=True)
+class RecordedTrajectoryPlan:
+    """A taught joint trajectory replayed through MoveIt's ExecuteTrajectory."""
+
+    action_id: str
+    robot_id: str
+    planning_group: str
     joint_names: tuple[str, ...]
     points: tuple[TrajectoryPoint, ...]
 
 
 @dataclass(frozen=True)
 class ArmDefaults:
+    # Legacy timing knobs (kept for config compatibility); MoveIt times anchor
+    # moves itself, so these no longer drive the anchor path.
     base_move_time_sec: float = 4.0
     min_move_time_sec: float = 1.0
 
 
+_DEFAULT_MOVE_GROUP_ACTION = "/move_action"
+_DEFAULT_EXECUTE_TRAJECTORY_ACTION = "/execute_trajectory"
+
+
 class ArmConfig:
-    """Group joint sets / action servers, named anchor poses, and defaults."""
+    """Arm groups (registry-derived), named anchor poses, MoveIt action names."""
 
     def __init__(
         self,
         groups: dict[str, ArmGroup],
         poses: dict[str, tuple[float, ...]],
         defaults: ArmDefaults,
+        move_group_action: str = _DEFAULT_MOVE_GROUP_ACTION,
+        execute_trajectory_action: str = _DEFAULT_EXECUTE_TRAJECTORY_ACTION,
     ) -> None:
         self.groups = groups
         self.poses = poses
         self.defaults = defaults
+        self.move_group_action = move_group_action
+        self.execute_trajectory_action = execute_trajectory_action
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ArmConfig":
         data = (data or {}).get("arm_executor", data) or {}
+
+        raw_groups = data.get("groups") or []
+        # groups may be a list of names or a mapping keyed by name. The planning
+        # group + joint names come from the registry (single source of truth);
+        # an explicit per-group planning_group / joint_names override is honoured
+        # (used by unit tests so they need no installed registry).
+        if isinstance(raw_groups, dict):
+            items = [(str(name), spec or {}) for name, spec in raw_groups.items()]
+        else:
+            items = [(str(name), {}) for name in raw_groups]
         groups: dict[str, ArmGroup] = {}
-        for name, spec in (data.get("groups") or {}).items():
-            spec = spec or {}
+        for name, spec in items:
             joint_names = tuple(str(j) for j in spec.get("joint_names", []))
-            if not joint_names:
-                # Single source of truth: derive the group's joint names from the
-                # motion registry (canonical Nero joints side-prefixed per profile)
-                # instead of re-listing them in arm_config.yaml.
-                from agx_arm_coordination.motion_registry import group_joint_names
-                joint_names = group_joint_names(str(name))
-            groups[str(name)] = ArmGroup(
-                action_server=str(spec.get("action_server", "")),
-                joint_names=joint_names,
-            )
+            planning_group = str(spec.get("planning_group", ""))
+            if not joint_names or not planning_group:
+                from agx_arm_coordination.motion_registry import group_joint_names, moveit_group
+                joint_names = joint_names or group_joint_names(name)
+                planning_group = planning_group or moveit_group(name)
+            groups[name] = ArmGroup(planning_group=planning_group, joint_names=joint_names)
+
         poses = {
             str(name): tuple(float(v) for v in vec)
             for name, vec in (data.get("poses") or {}).items()
@@ -105,12 +135,25 @@ class ArmConfig:
             base_move_time_sec=float(raw_def.get("base_move_time_sec", 4.0)),
             min_move_time_sec=float(raw_def.get("min_move_time_sec", 1.0)),
         )
-        return cls(groups=groups, poses=poses, defaults=defaults)
+        return cls(
+            groups=groups,
+            poses=poses,
+            defaults=defaults,
+            move_group_action=str(data.get("move_group_action", _DEFAULT_MOVE_GROUP_ACTION)),
+            execute_trajectory_action=str(
+                data.get("execute_trajectory_action", _DEFAULT_EXECUTE_TRAJECTORY_ACTION)
+            ),
+        )
 
     @classmethod
     def from_file(cls, path: str | Path) -> "ArmConfig":
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         return cls.from_dict(data)
+
+
+def _scaling(metadata: dict[str, Any], key: str) -> float:
+    value = float(metadata.get(key, 1.0) or 1.0)
+    return min(max(value, 1e-3), 1.0)
 
 
 class ArmTrajectoryPlanner:
@@ -137,70 +180,51 @@ class ArmTrajectoryPlanner:
             out.extend(self.config.poses[name])
         return tuple(out)
 
-    def _move_time(self, metadata: dict[str, Any]) -> float:
-        scaling = float(metadata.get("velocity_scaling", 1.0) or 1.0)
-        scaling = max(scaling, 1e-3)
-        return max(
-            self.config.defaults.base_move_time_sec / scaling,
-            self.config.defaults.min_move_time_sec,
-        )
-
-    def plan(self, action: Action) -> ArmGoal:
+    def plan(self, action: Action) -> MoveGroupPlan | RecordedTrajectoryPlan:
         group = self._group(action.robot_id)
         metadata = action.metadata
-        joint_names = group.joint_names
 
         if "waypoints" in metadata and metadata.get("waypoints"):
-            points = self._plan_recorded(action, joint_names)
-        elif metadata.get("source") == "recorded":
+            return self._plan_recorded(action, group)
+        if metadata.get("source") == "recorded":
             raise NotTaughtError(
                 f"recorded trajectory '{action.action_id}' has no taught waypoints yet "
                 "(teach on hardware, then add 'waypoints' to its metadata)"
             )
-        elif "to_pose" in metadata:
-            points = self._plan_anchor_endpoint(action, joint_names)
-        else:
-            raise ArmConfigError(
-                f"action '{action.action_id}' has neither 'to_pose' nor 'waypoints'"
-            )
-
-        return ArmGoal(
-            action_id=action.action_id,
-            robot_id=action.robot_id,
-            action_server=group.action_server,
-            joint_names=joint_names,
-            points=points,
+        if "to_pose" in metadata:
+            return self._plan_anchor_endpoint(action, group)
+        raise ArmConfigError(
+            f"action '{action.action_id}' has neither 'to_pose' nor 'waypoints'"
         )
 
-    def _plan_anchor_endpoint(
-        self, action: Action, joint_names: tuple[str, ...]
-    ) -> tuple[TrajectoryPoint, ...]:
+    def _plan_anchor_endpoint(self, action: Action, group: ArmGroup) -> MoveGroupPlan:
         to_pose = action.metadata["to_pose"]
         pose_names = [to_pose] if isinstance(to_pose, str) else list(to_pose)
         positions = self._pose_vector(pose_names)
-        if len(positions) != len(joint_names):
+        if len(positions) != len(group.joint_names):
             raise ArmConfigError(
                 f"action '{action.action_id}': to_pose {pose_names} expands to "
                 f"{len(positions)} joints, group '{action.robot_id}' has "
-                f"{len(joint_names)}"
+                f"{len(group.joint_names)}"
             )
-        return (
-            TrajectoryPoint(
-                positions=positions,
-                time_from_start_sec=self._move_time(action.metadata),
-            ),
+        return MoveGroupPlan(
+            action_id=action.action_id,
+            robot_id=action.robot_id,
+            planning_group=group.planning_group,
+            joint_names=group.joint_names,
+            target_positions=positions,
+            velocity_scaling=_scaling(action.metadata, "velocity_scaling"),
+            acceleration_scaling=_scaling(action.metadata, "acceleration_scaling"),
         )
 
-    def _plan_recorded(
-        self, action: Action, joint_names: tuple[str, ...]
-    ) -> tuple[TrajectoryPoint, ...]:
+    def _plan_recorded(self, action: Action, group: ArmGroup) -> RecordedTrajectoryPlan:
         points: list[TrajectoryPoint] = []
         for index, wp in enumerate(action.metadata["waypoints"]):
             positions = tuple(float(v) for v in wp.get("positions", []))
-            if len(positions) != len(joint_names):
+            if len(positions) != len(group.joint_names):
                 raise ArmConfigError(
                     f"action '{action.action_id}' waypoint {index} has "
-                    f"{len(positions)} positions, expected {len(joint_names)}"
+                    f"{len(positions)} positions, expected {len(group.joint_names)}"
                 )
             points.append(
                 TrajectoryPoint(
@@ -212,4 +236,10 @@ class ArmTrajectoryPlanner:
             raise NotTaughtError(
                 f"recorded trajectory '{action.action_id}' has an empty waypoint list"
             )
-        return tuple(points)
+        return RecordedTrajectoryPlan(
+            action_id=action.action_id,
+            robot_id=action.robot_id,
+            planning_group=group.planning_group,
+            joint_names=group.joint_names,
+            points=tuple(points),
+        )

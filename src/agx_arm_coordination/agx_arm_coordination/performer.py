@@ -3,9 +3,9 @@
 Coordinator-internal for the MVP (architecture decision §8): the coordinator
 calls :func:`route` to decide whether an action is a hand skill (dispatched as a
 ``PerformAction`` goal to the matching ``omnihand_skill_controller``) or an arm
-trajectory (dispatched to the existing ``both_arms`` / per-arm FollowJointTrajectory
-path). The routing decision itself is ROS-free so it can be unit-tested; the
-coordinator node turns the decision into the actual ROS goal.
+trajectory (dispatched to the MoveIt multi-arm slice via MoveGroup /
+ExecuteTrajectory). The routing decision itself is ROS-free so it can be
+unit-tested; the coordinator node turns the decision into the actual ROS goal.
 """
 
 from __future__ import annotations

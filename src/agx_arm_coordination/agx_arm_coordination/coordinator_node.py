@@ -8,8 +8,10 @@ performer:
 
 - ``Gripper`` + ``{left,right}_hand`` -> ``PerformAction`` to the side's
   ``omnihand_skill_controller``.
-- ``Trajectory`` + ``{both_arms,left_arm,right_arm}`` -> ``FollowJointTrajectory``
-  on the existing arm control path.
+- ``Trajectory`` + ``{both_arms,left_arm,right_arm}`` -> the MoveIt multi-arm slice:
+  anchor->anchor via ``MoveGroup`` (collision-aware plan + execute), recorded replay
+  via ``ExecuteTrajectory``. MoveIt fans a both_arms plan out to the per-arm
+  controllers natively, so the coordinator owns no second arm-execution path.
 
 The coordinator never touches a vendor SDK or the hardware directly; it only
 dispatches catalogue-backed actions. Child failure (or cancellation) aborts the
@@ -26,7 +28,14 @@ import time
 
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Duration
-from control_msgs.action import FollowJointTrajectory
+from moveit_msgs.action import ExecuteTrajectory, MoveGroup
+from moveit_msgs.msg import (
+    Constraints,
+    JointConstraint,
+    MoveItErrorCodes,
+    MotionPlanRequest,
+    RobotTrajectory,
+)
 import rclpy
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -41,7 +50,9 @@ from agx_arm_coordination.arm_executor import (
     ArmConfig,
     ArmConfigError,
     ArmTrajectoryPlanner,
+    MoveGroupPlan,
     NotTaughtError,
+    RecordedTrajectoryPlan,
 )
 from agx_arm_coordination.graph_loader import ActivityCatalogue
 from agx_arm_coordination.graph_model import Scheduler
@@ -104,10 +115,17 @@ class _HandChild(_Child):
 
 
 class _ArmChild(_Child):
+    """Arm child over a MoveGroup or ExecuteTrajectory goal (both moveit_msgs).
+
+    Both result types carry a ``moveit_msgs/MoveItErrorCodes`` ``error_code`` whose
+    ``val`` is ``SUCCESS`` (1) on success.
+    """
+
     def _interpret_result(self, wrapper) -> None:
         result = wrapper.result
-        ok = result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
-        self.mark(ok, result.error_string or f"error_code={result.error_code}")
+        code = result.error_code.val
+        ok = code == MoveItErrorCodes.SUCCESS
+        self.mark(ok, "" if ok else f"MoveIt error_code={code}")
 
 
 class CoordinatorNode(Node):
@@ -120,6 +138,10 @@ class CoordinatorNode(Node):
         self.declare_parameter("arm_dry_run", False)
         self.declare_parameter("poll_period_sec", 0.05)
         self.declare_parameter("goal_accept_timeout_sec", 5.0)
+        # MoveGroup planning knobs for anchor->anchor moves.
+        self.declare_parameter("joint_goal_tolerance_rad", 0.01)
+        self.declare_parameter("num_planning_attempts", 10)
+        self.declare_parameter("allowed_planning_time_sec", 5.0)
 
         config_dir_param = str(self.get_parameter("config_dir").value).strip()
         if not config_dir_param:
@@ -131,6 +153,9 @@ class CoordinatorNode(Node):
         self.arm_dry_run = bool(self.get_parameter("arm_dry_run").value)
         self.poll_period = float(self.get_parameter("poll_period_sec").value)
         self.goal_accept_timeout = float(self.get_parameter("goal_accept_timeout_sec").value)
+        self.joint_goal_tolerance = float(self.get_parameter("joint_goal_tolerance_rad").value)
+        self.num_planning_attempts = int(self.get_parameter("num_planning_attempts").value)
+        self.allowed_planning_time = float(self.get_parameter("allowed_planning_time_sec").value)
 
         self.catalogue = ActivityCatalogue.from_config_dir(config_dir)
         arm_config_path = config_dir / "arm_config.yaml"
@@ -146,11 +171,18 @@ class CoordinatorNode(Node):
             self._hand_clients[side] = ActionClient(
                 self, PerformAction, name, callback_group=self._cb_group
             )
-        self._arm_clients: dict[str, ActionClient] = {}
-        for robot_id, group in self.arm_planner.config.groups.items():
-            self._arm_clients[robot_id] = ActionClient(
-                self, FollowJointTrajectory, group.action_server, callback_group=self._cb_group
-            )
+        # Arm motion goes through the MoveIt multi-arm slice: anchor->anchor via
+        # MoveGroup (collision-aware plan + execute), recorded replay via
+        # ExecuteTrajectory. MoveIt fans a both_arms plan out to the per-arm
+        # controllers natively, so there is no per-group action client here.
+        arm_cfg = self.arm_planner.config
+        self._move_group_client = ActionClient(
+            self, MoveGroup, arm_cfg.move_group_action, callback_group=self._cb_group
+        )
+        self._execute_trajectory_client = ActionClient(
+            self, ExecuteTrajectory, arm_cfg.execute_trajectory_action,
+            callback_group=self._cb_group,
+        )
 
         self.action_server = ActionServer(
             self,
@@ -217,7 +249,7 @@ class CoordinatorNode(Node):
 
     def _dispatch_arm(self, action_no, action, activity_id) -> _Child:
         try:
-            arm_goal = self.arm_planner.plan(action)
+            plan = self.arm_planner.plan(action)
         except NotTaughtError as exc:
             if self.arm_dry_run:
                 child = _ArmChild(action_no, action.action_id)
@@ -227,30 +259,74 @@ class CoordinatorNode(Node):
         except ArmConfigError as exc:
             raise DispatchError(str(exc)) from exc
 
-        if self.arm_dry_run:
-            child = _ArmChild(action_no, action.action_id)
-            child.mark(True, f"dry_run: would send {len(arm_goal.points)} point(s) to "
-                             f"{arm_goal.action_server}")
-            return child
+        if isinstance(plan, MoveGroupPlan):
+            return self._dispatch_move_group(action_no, plan)
+        if isinstance(plan, RecordedTrajectoryPlan):
+            return self._dispatch_execute_trajectory(action_no, plan)
+        raise DispatchError(f"unhandled arm plan type {type(plan).__name__}")
 
-        client = self._arm_clients.get(action.robot_id)
-        if client is None or not client.wait_for_server(timeout_sec=self.goal_accept_timeout):
+    def _dispatch_move_group(self, action_no, plan: MoveGroupPlan) -> _Child:
+        """Anchor->anchor as a collision-aware MoveGroup plan+execute goal."""
+        if self.arm_dry_run:
+            child = _ArmChild(action_no, plan.action_id)
+            child.mark(True, f"dry_run: would plan+execute group '{plan.planning_group}' to a "
+                             f"{len(plan.joint_names)}-joint anchor via MoveGroup")
+            return child
+        if not self._move_group_client.wait_for_server(timeout_sec=self.goal_accept_timeout):
             raise DispatchError(
-                f"arm controller '{arm_goal.action_server}' for {action.robot_id} not available"
+                f"move_group action '{self.arm_planner.config.move_group_action}' not available"
             )
-        goal = FollowJointTrajectory.Goal()
+        constraints = Constraints()
+        for joint_name, position in zip(plan.joint_names, plan.target_positions):
+            jc = JointConstraint()
+            jc.joint_name = joint_name
+            jc.position = float(position)
+            jc.tolerance_above = self.joint_goal_tolerance
+            jc.tolerance_below = self.joint_goal_tolerance
+            jc.weight = 1.0
+            constraints.joint_constraints.append(jc)
+        request = MotionPlanRequest()
+        request.group_name = plan.planning_group
+        request.goal_constraints.append(constraints)
+        request.max_velocity_scaling_factor = plan.velocity_scaling
+        request.max_acceleration_scaling_factor = plan.acceleration_scaling
+        request.num_planning_attempts = self.num_planning_attempts
+        request.allowed_planning_time = self.allowed_planning_time
+        goal = MoveGroup.Goal()
+        goal.request = request
+        goal.planning_options.plan_only = False  # plan AND execute
+        child = _ArmChild(action_no, plan.action_id)
+        child.attach_goal_future(self._move_group_client.send_goal_async(goal))
+        return child
+
+    def _dispatch_execute_trajectory(self, action_no, plan: RecordedTrajectoryPlan) -> _Child:
+        """Replay a recorded trajectory through MoveIt's ExecuteTrajectory."""
+        if self.arm_dry_run:
+            child = _ArmChild(action_no, plan.action_id)
+            child.mark(True, f"dry_run: would replay {len(plan.points)} waypoint(s) on group "
+                             f"'{plan.planning_group}' via ExecuteTrajectory")
+            return child
+        exec_client = self._execute_trajectory_client
+        if not exec_client.wait_for_server(timeout_sec=self.goal_accept_timeout):
+            raise DispatchError(
+                "execute_trajectory action "
+                f"'{self.arm_planner.config.execute_trajectory_action}' not available"
+            )
         traj = JointTrajectory()
-        traj.joint_names = list(arm_goal.joint_names)
-        for point in arm_goal.points:
+        traj.joint_names = list(plan.joint_names)
+        for point in plan.points:
             jp = JointTrajectoryPoint()
             jp.positions = list(point.positions)
             sec = int(point.time_from_start_sec)
             nsec = int((point.time_from_start_sec - sec) * 1e9)
             jp.time_from_start = Duration(sec=sec, nanosec=nsec)
             traj.points.append(jp)
-        goal.trajectory = traj
-        child = _ArmChild(action_no, action.action_id)
-        child.attach_goal_future(client.send_goal_async(goal))
+        robot_traj = RobotTrajectory()
+        robot_traj.joint_trajectory = traj
+        goal = ExecuteTrajectory.Goal()
+        goal.trajectory = robot_traj
+        child = _ArmChild(action_no, plan.action_id)
+        child.attach_goal_future(exec_client.send_goal_async(goal))
         return child
 
     # --- main execution ------------------------------------------------------
