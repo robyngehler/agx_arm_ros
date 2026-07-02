@@ -9,7 +9,7 @@ paths:
 # Local Agent Workflow
 
 *Use when planning and sequencing work in agx_arm_ros. Covers the preferred change order, docs promotion
-flow, and validation expectations for the current Sprint 2 through Sprint 4 baseline.*
+flow, and validation expectations for the current Duo baseline.*
 
 Use a small, reproducible change order and promote stable answers into the top-level docs tree.
 
@@ -37,7 +37,7 @@ Read these first when changing package boundaries or OmniHand integration surfac
 ## Working Rules
 
 - start from the owning package instead of creating a parallel surface
-- use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface for Duo body system bringup; keep long-term canonical description ownership in `src/agx_arm_sim/agx_arm_description`
+- use `src/duo_body_description` only as the documented Duo staging surface for Duo body system bringup; keep long-term canonical description ownership in `src/agx_arm_sim/agx_arm_description`
 - keep the OmniHand bridge in `agx_arm_ctrl` in the current baseline
 - keep the public ROS contract agx_arm-centric
 - make description and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable Duo target

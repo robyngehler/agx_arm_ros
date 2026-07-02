@@ -14,8 +14,8 @@ This repository is organized so Claude Code loads only the guidance needed for t
 2. `AGENTS.md` is imported by `CLAUDE.md` and carries the durable engineering contract.
 3. Read one file from `.claude/rules/` that matches the task. Path-scoped rules also auto-load when you
    touch matching files.
-4. Read the matching canonical docs under `docs/project/` or `docs/assets/` when a public contract or
-   workflow decision is involved.
+4. Read the matching canonical docs under `docs/control/` (how to run it), `docs/project/`, or
+   `docs/assets/` when a bringup, public contract, or workflow decision is involved.
 5. Use a skill from `.claude/skills/` only when the task needs a repeatable workflow.
 6. Delegate to a subagent in `.claude/agents/` when a narrower persona helps.
 
@@ -44,6 +44,7 @@ This repository is organized so Claude Code loads only the guidance needed for t
 - generated-versus-source decisions: `.claude/rules/generated-vs-source-assets.md`
 - local change order and promotion workflow: `.claude/rules/local-agent-workflow.md`
 - OmniHand runtime contract and bridge surface: `.claude/rules/omnihand-bridge.md`
+- how to run the system (bringup launch/arguments, teach loop): `docs/control/bringup.md`, `docs/control/teach_and_run.md`
 
 ## Context Minimization Rules
 

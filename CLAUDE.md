@@ -25,6 +25,7 @@ the task.
 
 - repository overview: `README.md`, `README_EN.md`
 - durable engineering contract: `AGENTS.md`
+- how to run the system (bringup launch/arguments, teach loop): `docs/control/`
 - human repository structure and architecture: `docs/project/`
 - component, runtime, and OmniHand docs: `docs/assets/`
 - Claude Code operating model: this file (`CLAUDE.md`)
@@ -37,13 +38,14 @@ Do not load every rule by default. Match context to the task.
 ## What Lives Where
 
 - routing and context minimization: `.claude/rules/context-routing.md`
-- Sprint 2 package boundaries: `.claude/rules/repository-structure.md`
+- package boundaries and current roles: `.claude/rules/repository-structure.md`
 - naming and package-split policy: `.claude/rules/package-naming.md`
 - ROS2-native development and value capture: `.claude/rules/ros2-development.md`
 - source versus generated asset rules: `.claude/rules/generated-vs-source-assets.md`
 - local workflow and promotion order: `.claude/rules/local-agent-workflow.md`
 - OmniHand bridge contract and runtime surface: `.claude/rules/omnihand-bridge.md`
-- current working notes: `docs/development/sprint5/` (CAN transport & control-layer); Duo body baseline in `docs/development/sprint4/`
+- how to run the system (bringup + teach): `docs/control/bringup.md`, `docs/control/teach_and_run.md`
+- current working notes: `docs/development/sprint6/` (coordinator, dual-arm teach, duo trajectory sync)
 
 The files under `.claude/rules/` are the canonical agent-facing rule layer (workflow, naming,
 package-split, ROS2 practice). The human docs under `docs/project/` and `docs/assets/` describe repo
@@ -65,10 +67,9 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 ## Default Expectations
 
 - keep the public ROS surface agx_arm-centric
-- treat `src/duo_body_description` as the current Sprint 3 and Sprint 4 staging package for Duo body
-  system assembly while keeping `src/agx_arm_sim/agx_arm_description` and `src/agx_arm_moveit` as the
-  long-term canonical surfaces
-- keep the OmniHand bridge in `agx_arm_ctrl` during Sprint 2
+- treat `src/duo_body_description` as the Duo body staging package for system assembly while keeping
+  `src/agx_arm_sim/agx_arm_description` and `src/agx_arm_moveit` as the long-term canonical surfaces
+- keep the OmniHand bridge in `agx_arm_ctrl`
 - prefer shared `control/joint_states` and combined `feedback/joint_states` for coordinated
   arm-plus-hand flows
 - use repo-owned `agx_arm_msgs` messages for OmniHand-specific diagnostics and tactile payloads

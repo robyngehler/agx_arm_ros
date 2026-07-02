@@ -13,7 +13,7 @@ paths:
 *Use when naming new packages, messages, launch arguments, or deciding whether OmniHand should split out
 of agx_arm_ctrl in the current baseline.*
 
-Avoid rename churn while the current Sprint 2 through Sprint 4 transition is still stabilizing the shared
+Avoid rename churn while the current Duo transition is still stabilizing the shared
 environment and OmniHand bridge.
 
 ## Current Canonical Names
@@ -23,7 +23,7 @@ environment and OmniHand bridge.
 
 ## Duo System Naming Rules
 
-- keep `duo_body_description` as the documented Sprint 3 and Sprint 4 staging package while the body-mounted multi-arm system is still being validated
+- keep `duo_body_description` as the documented Duo staging package while the body-mounted multi-arm system is still being validated
 - keep canonical shared Nero and OmniHand assets in `agx_arm_description`
 - use distinct arm prefixes such as `left_arm_` and `right_arm_` when composing the Duo system so the arm chain does not collide with OmniHand `left_base_link` and `right_base_link`
 

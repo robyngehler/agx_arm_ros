@@ -1,11 +1,11 @@
 # Repo Interaction Diagrams
 
-status: ACTIVE_SPRINT3_4_DUO_SYSTEM_STAGING
-last_updated: 2026-05-28
+status: ACTIVE_DUO_BASELINE
+last_updated: 2026-07-02
 
 ## Purpose
 
-This document provides the stable visual reference for how the current repo behaves during the current Sprint 2 through Sprint 4 transition.
+This document provides the stable visual reference for how the current repo behaves in the Duo baseline.
 
 It focuses on the currently active ROS2 runtime and launch surfaces:
 

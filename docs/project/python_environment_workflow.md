@@ -1,7 +1,7 @@
 # Python Environment Workflow
 
-status: ACTIVE_SPRINT4
-last_updated: 2026-06-03
+status: ACTIVE_DUO_BASELINE
+last_updated: 2026-07-02
 
 ## Purpose
 

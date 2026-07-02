@@ -1,17 +1,16 @@
 # Repository Structure
 
-status: ACTIVE_SPRINT3_4_DUO_SYSTEM_STAGING
-last_updated: 2026-06-29
+status: ACTIVE_DUO_BASELINE
+last_updated: 2026-07-02
 
 ## Purpose
 
-This document defines the current workspace structure that Sprint 2 through Sprint 4 treat as canonical.
-
-It is intentionally based on the repo as it exists today, not on a future rename pass.
+This document defines the current canonical workspace structure of the Duo baseline (through the
+coordination/teach/duo work). It is based on the repo as it exists today, not on a future rename pass.
 
 ## Current Workspace Roles
 
-| Surface | Current Path | Role | Sprint 2 Rule |
+| Surface | Current Path | Role | Rule |
 | --- | --- | --- | --- |
 | Canonical robot description | `src/agx_arm_sim/agx_arm_description` | Source of truth for Nero, Revo2, and repo-owned OmniHand description assets | Reuse directly for canonical shared assets; do not create another long-term description source of truth. |
 | Duo system staging description | `src/duo_body_description` | Temporary staging package for Duo body plus configurable right/left arm-hand system assembly and description-only bringup | Use for Sprint 3 and Sprint 4 body-mounted system bringup; do not copy full Nero or OmniHand asset trees into it unnecessarily. |
@@ -29,6 +28,7 @@ It is intentionally based on the repo as it exists today, not on a future rename
 
 | Surface | Current Path | Role |
 | --- | --- | --- |
+| Operational bringup + teach SoT | `docs/control` | How to run the system: `bringup.md` (launch/argument matrix) and `teach_and_run.md` |
 | Component, runtime, and integration docs | `docs/assets` | Asset/repo inventories plus OmniHand, MIT, and control component docs |
 | Development coordination and working notes | `docs/development` | Roadmap, progress, component routing, plus per-sprint logs and working sets |
 | Human repository structure | `docs/project` | Workspace structure and architecture (agent workflow/naming rules live in `.claude/rules` and `.github/instructions`) |

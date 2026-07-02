@@ -20,10 +20,11 @@ A stable, reproducible Duo runtime moving toward coordinated dual-arm (and dual-
 - `component_implementation_map.md` — component → owning package → docs routing.
 - `sprintN/` — each sprint: `README.md` (target), `checklist.md`, `errors_and_fixes.md`,
   `open_questions.md`, and `planning/` for the valuable insight docs.
-- **Current sprint:** `sprint5/` (CAN transport & control-layer pinning).
+- **Current sprint:** `sprint6/` (Activity-DAG coordinator, dual-arm teach, duo trajectory sync).
 
 ## Where durable docs live (not here)
 
+- How to run the system (launch + arguments, teach loop) → `../control/`
 - Component / runtime / OmniHand / control architecture → `../assets/`
 - Human repository structure & architecture → `../project/`
 - Agent workflow, naming, and ROS2-practice rules → `.claude/rules/` and `.github/instructions/`

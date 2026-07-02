@@ -4,7 +4,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 ## Scope
 
-- Preserve the current stable package boundaries; during Sprint 3 and Sprint 4, allow `src/duo_body_description` as a temporary staging surface for Duo body system assembly while the long-term canonical description and planning ownership remains under the existing `agx_arm_*` packages.
+- Preserve the current stable package boundaries; `src/duo_body_description` is a staging surface for Duo body system assembly while long-term canonical description and planning ownership stays under the existing `agx_arm_*` packages.
 - Keep implementation changes small, package-scoped, and validated.
 - Keep documentation aligned with any public contract or workflow change.
 
@@ -12,25 +12,27 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 1. `README.md` and `README_EN.md` for repository overview.
 2. This file for durable engineering constraints.
-3. `docs/assets/` for component architecture, validation, and OmniHand/runtime integration docs.
-4. `docs/project/` for human-facing repository structure and architecture.
-5. `.github/instructions/` and `.claude/rules/` for agent workflow, naming, and ROS2-practice rules (these do not live in `docs/`).
-6. `.github/copilot-instructions.md` for the Copilot operating model.
-7. `.github/skills/` for reusable workflows.
+3. `docs/control/` for how to run the system (bringup launch/argument matrix, teach loop).
+4. `docs/assets/` for component architecture, validation, and OmniHand/runtime integration docs.
+5. `docs/project/` for human-facing repository structure and architecture.
+6. `.github/instructions/` and `.claude/rules/` for agent workflow, naming, and ROS2-practice rules (these do not live in `docs/`).
+7. `.github/copilot-instructions.md` for the Copilot operating model.
+8. `.github/skills/` for reusable workflows.
 
 ## Workspace Rules
 
 - Keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and source of shared Nero and OmniHand assets.
-- Allow `src/duo_body_description` as the current Sprint 3 and Sprint 4 staging package for Duo body plus configurable arm-hand system assembly; do not duplicate full Nero or OmniHand asset trees there.
-- Keep `src/agx_arm_moveit` as the current MoveIt baseline and generalize it in place rather than forking a second MoveIt package for the Duo system.
-- Keep runtime arm and hand integration in `src/agx_arm_ctrl` during Sprint 2.
+- Keep `src/duo_body_description` as the Duo body staging package for the configurable arm-hand system assembly; do not duplicate full Nero or OmniHand asset trees there.
+- Keep `src/agx_arm_moveit` as the MoveIt baseline and generalize it in place rather than forking a second MoveIt package for the Duo system.
+- Keep runtime arm and hand integration in `src/agx_arm_ctrl`.
 - Keep production MIT control ownership in `src/agx_arm_mit_controller`.
 - Keep MIT demo and workflow apps in `src/agx_arm_mit_demos` instead of the controller runtime package.
 - Keep MIT debug bridges, hold checks, and calibration helpers in `src/agx_arm_mit_tools`.
-- Keep the OmniHand bridge in `src/agx_arm_ctrl` for now; only revisit a package split after a non-mock backend proves a separate boundary is useful.
+- Keep dual-arm/dual-hand task orchestration (Activity-DAG coordinator, performer routing, catalogue) in `src/agx_arm_coordination`; reuse the existing `both_arms`/per-arm FollowJointTrajectory path for arm execution.
+- Keep the OmniHand bridge in `src/agx_arm_ctrl`; only revisit a package split after a non-mock backend proves a separate boundary is useful.
 - Extend `src/agx_arm_msgs` for repo-owned OmniHand messages instead of creating a second message package.
 - Treat `vendor/OmniHand-Pro-2025` as upstream input, not as the public ROS contract.
-- Generalize description and launch surfaces to be arm-count-aware from the start; the first executable Duo target is `body + right arm + right OmniHand`, then mirror to the left side.
+- Keep description and launch surfaces arm-count-aware (single arm, either side, both arms).
 
 ## ROS Contract Rules
 

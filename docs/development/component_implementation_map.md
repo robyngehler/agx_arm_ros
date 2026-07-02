@@ -1,7 +1,7 @@
 # Component And Implementation Map
 
-status: ACTIVE_SPRINT5_CAN_TRANSPORT
-last_updated: 2026-06-15
+status: ACTIVE_DUO_BASELINE
+last_updated: 2026-07-02
 
 ## Purpose
 
@@ -18,6 +18,9 @@ Use these three top-level development docs for cross-sprint coordination:
 - `docs/development/nero_physical_ai_roadmap.md`
 - `docs/development/nero_physical_ai_progress.md`
 - `docs/development/component_implementation_map.md`
+
+For **how to run** any of the components below (launch + arguments), see the operational SoT
+`docs/control/bringup.md` and `docs/control/teach_and_run.md`.
 
 ## Component Map
 

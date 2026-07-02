@@ -8,29 +8,29 @@ paths:
 
 # Repository Structure
 
-*Use when creating, moving, or extending package surfaces in agx_arm_ros. Covers the current Sprint 2
-through Sprint 4 package boundaries and where new work belongs.*
+*Use when creating, moving, or extending package surfaces in agx_arm_ros. Covers the current Duo
+package boundaries and where new work belongs.*
 
-Use the current workspace layout as the implementation truth during the active Sprint 2 through Sprint 4 baseline.
+Use the current workspace layout as the implementation truth during the active Duo baseline.
 
 ## Canonical Package Roles
 
 - `src/agx_arm_sim/agx_arm_description`: canonical long-term description package for Nero, Revo2, and repo-owned OmniHand assets
-- `src/duo_body_description`: current Sprint 3 and Sprint 4 staging package for Duo body plus configurable arm-hand system assembly
+- `src/duo_body_description`: current Duo staging package for Duo body plus configurable arm-hand system assembly
 - `src/agx_arm_moveit`: current MoveIt baseline and simulation path
 - `src/agx_arm_ctrl`: runtime arm bridge, launch surfaces, and current end-effector integration point
 - `src/agx_arm_mit_controller`: runtime MIT controller node, shared trajectory/gravity libraries, and curated controller configs
 - `src/agx_arm_mit_demos`: interactive recorder, playback, and wakeword demo workflows around the MIT stack
 - `src/agx_arm_mit_tools`: debug bridges, hold validation, and calibration helpers around the MIT stack
 - `src/agx_arm_msgs`: repo-owned ROS messages
-- `src/agx_arm_coordination`: Sprint 6 Activity-DAG coordinator, coordinator-internal performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks
+- `src/agx_arm_coordination`: Activity-DAG coordinator, performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks
 - `vendor/OmniHand-Pro-2025`: upstream SDK input, not the public repo contract
 
 ## Current Placement Rules
 
 - keep the OmniHand bridge and the OmniHand skill controller in `src/agx_arm_ctrl` for now
 - keep Sprint 6 task orchestration (coordinator, performer routing, YAML graph/catalogue loader) in `src/agx_arm_coordination`; route `Trajectory+both_arms` through the existing FollowJointTrajectory path rather than forking arm execution
-- keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface
+- keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and use `src/duo_body_description` only as the documented Duo staging surface
 - do not fork a second MoveIt package for the same Nero or Duo baseline
 - keep production MIT execution ownership in `src/agx_arm_mit_controller`
 - place app-layer demos under `src/agx_arm_mit_demos` instead of the controller runtime package
@@ -41,8 +41,8 @@ Use the current workspace layout as the implementation truth during the active S
 
 ## Documentation Split
 
-- `docs/assets/`: stable factual inventories and validation state
-- `docs/assets/`: stable OmniHand and runtime integration decisions
+- `docs/control/`: how to run the system — bringup launch/argument matrix and the teach loop
+- `docs/assets/`: stable factual inventories, validation state, and OmniHand/runtime integration decisions
 - `docs/development/`: fixed roadmap, progress, and component-routing docs plus sprint working folders
 - `docs/project/`: stable package, naming, and workflow policy
 - `.claude/`: concise Claude-Code-native rule, skill, and agent layer

@@ -29,12 +29,11 @@ Load this rule for ROS2-native questions and decisions.
 
 ## Value Capture
 
+- `docs/control/` for how to run the system (bringup launch/arguments, teach loop)
 - `docs/project/` for stable structure, naming, workflow, and ROS2 practice decisions
-- `docs/assets/` for stable runtime and bridge contracts
-- `docs/assets/` for stable factual inventories and validation state
+- `docs/assets/` for stable runtime and bridge contracts, factual inventories, and validation state
 - top-level `docs/development/` docs only for roadmap, progress, and component routing
 - `docs/development/sprintN/` for discovery, checklist, error/fix, and blocker tracking
-- use `docs/development/sprint4/` for the current Duo body system implementation record
 - keep `.claude/` guidance synchronized with the stable docs it mirrors
 
 ## Validation
