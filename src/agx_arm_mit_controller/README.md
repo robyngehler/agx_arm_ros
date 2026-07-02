@@ -62,7 +62,8 @@ Standalone controller bringup:
 
 ```bash
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
+  gravity_arm_side:=right \
   arm_type:=nero \
   effector_type:=agx_gripper \
   tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
@@ -79,7 +80,8 @@ Recommended common bringup from `agx_arm_ctrl`:
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
-  can_port:=can_nero \
+  execution_profile:=right_arm \
+  can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=agx_gripper
 ```
@@ -89,9 +91,12 @@ Debug soft-target mode:
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=debug_soft_target \
-  can_port:=can_nero \
+  execution_profile:=right_arm \
+  can_port:=can_nero_right \
   arm_type:=nero
 ```
+
+For the current bringup matrix and the teach workflow, prefer `docs/control/bringup.md` and `docs/control/teach_and_run.md` over duplicating launch combinations in package-local notes.
 
 ## Demo Package
 
@@ -99,6 +104,7 @@ Use `agx_arm_mit_demos` for the app-layer workflows:
 
 - `agx_arm_record_leader_trajectory`
 - `agx_arm_execute_saved_trajectory`
+- `agx_arm_teach_manager`
 - `agx_arm_wakeword_motion_manager`
 
 Examples:
@@ -106,10 +112,11 @@ Examples:
 ```bash
 ros2 run agx_arm_mit_demos agx_arm_record_leader_trajectory -- --output-dir ~/agx_arm_trajectories
 ros2 run agx_arm_mit_demos agx_arm_execute_saved_trajectory -- ~/agx_arm_trajectories/demo.json
+ros2 run agx_arm_mit_demos agx_arm_teach_manager --arm-config src/agx_arm_coordination/config/arm_config.yaml --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 ros2 run agx_arm_mit_demos agx_arm_wakeword_motion_manager -- --auto-enable-arm --start-mode idle
 ```
 
-For the full record/replay/wakeword walkthrough, see `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`.
+For the current record, replay, anchor-capture, and teach-manager walkthrough, see `docs/control/teach_and_run.md`. Keep `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md` only as the historical Sprint 2 workflow note.
 
 ## Tools Package
 
@@ -125,7 +132,7 @@ Examples:
 
 ```bash
 ros2 run agx_arm_mit_tools agx_arm_test_position_hold -- --duration 8.0
-ros2 run agx_arm_mit_tools agx_arm_compare_gravity -- --can-port can_nero --duration 2.0 --rate 2.0 --csv-path logs/nero_gravity_dataset.csv
+ros2 run agx_arm_mit_tools agx_arm_compare_gravity -- --can-port can_nero_right --duration 2.0 --rate 2.0 --csv-path logs/nero_gravity_dataset.csv
 ros2 run agx_arm_mit_tools agx_arm_fit_gravity_calibration -- logs/nero_gravity_dataset.csv --output config/nero_gravity_calibration.json
 ```
 

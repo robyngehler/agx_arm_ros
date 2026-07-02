@@ -103,7 +103,7 @@ The first diagram answers which launch files and nodes are started.
 
 ```mermaid
 flowchart TD
-    START["ros2 launch agx_arm_ctrl<br/>start_single_agx_arm_moveit.launch.py"] --> ARGS["resolve launch arguments"]
+    START["ros2 launch agx_arm_ctrl<br/>start_agx_arm_components.launch.py<br/>mode:=moveit_mit execution_profile:=right_arm"] --> ARGS["resolve launch arguments"]
     ARGS --> CTRL["include start_single_agx_arm.launch.py<br/>or start_nero_mit_controller.launch.py"]
     ARGS --> DEMO["include agx_arm_moveit/demo.launch.py"]
 
@@ -169,7 +169,7 @@ flowchart TD
     ARGS["arm_type, effector_type,<br/>revo2_type, omnihand_type,<br/>tcp_offset"]
 
     subgraph MoveItPath["MoveIt launch path"]
-        M0["start_single_agx_arm_moveit.launch.py"]
+        M0["start_agx_arm_components.launch.py\nmode:=moveit_mit execution_profile:=right_arm"]
         M1["agx_arm_moveit/demo.launch.py"]
         M2["_moveit_config_builder.py"]
         M3["config/agx_arm.urdf.xacro"]

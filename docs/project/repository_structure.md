@@ -28,6 +28,7 @@ coordination/teach/duo work). It is based on the repo as it exists today, not on
 
 | Surface | Current Path | Role |
 | --- | --- | --- |
+| Global docs hub and cross-cutting status | `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md` | Global navigation plus repo-wide checklist, fixes, and open questions without duplicating sprint-local notes |
 | Operational bringup + teach SoT | `docs/control` | How to run the system: `bringup.md` (launch/argument matrix) and `teach_and_run.md` |
 | Component, runtime, and integration docs | `docs/assets` | Asset/repo inventories plus OmniHand, MIT, and control component docs |
 | Development coordination and working notes | `docs/development` | Roadmap, progress, component routing, plus per-sprint logs and working sets |
@@ -67,6 +68,7 @@ Treat these directories as generated or runtime-managed:
 7. Generalize description and launch surfaces to be arm-count-aware from the start; the first executable Duo target is `body + right arm + right OmniHand`, then mirror to the left side.
 8. Keep Sprint 6 task orchestration in `src/agx_arm_coordination` (coordinator + performer routing + YAML graph/catalogue loader); do not move the OmniHand skill controller out of `src/agx_arm_ctrl` or fork a second arm execution path for it.
 9. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
+10. Keep repo-wide checklist, error-and-fix, and open-question summaries in top-level `docs/*.md`; do not duplicate those same summaries again under top-level `docs/development/`.
 
 ## Current Deliverables Anchored To This Structure
 

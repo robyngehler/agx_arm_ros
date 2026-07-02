@@ -34,6 +34,7 @@ Use the current workspace layout as the implementation truth during the active S
 
 ## Documentation Split
 
+- top-level `docs/*.md`: global docs hub and repo-wide checklist, fixes, and open questions
 - `docs/assets/`: stable factual inventories and validation state
 - `docs/assets/`: stable OmniHand and runtime integration decisions
 - `docs/development/`: fixed roadmap, progress, and component-routing docs plus sprint working folders

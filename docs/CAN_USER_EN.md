@@ -12,16 +12,33 @@ sudo apt update && sudo apt install can-utils ethtool
 
 These two tools are used to configure the CAN module.
 
-## 0 Recommended workflow: `prepare_can_interfaces.py`
+## 0 Current native workflow: `activate_native_can.sh`
 
-Prefer the repo-owned role-based preparation script: `scripts/prepare_can_interfaces.py`.
+The current Duo hardware-first baseline uses `scripts/activate_native_can.sh` on the Jetson native `mttcan` side buses. This is the path used by `docs/control/bringup.md` and the current arm-plus-hand runtime.
+
+```bash
+cd ~/agx_arm_ws/src/agx_arm_ros
+sudo bash scripts/activate_native_can.sh
+ip -details link show can_nero_right
+```
+
+It applies the validated side-bus mapping:
+
+- `can0 -> can_nero_right`
+- `can1 -> can_nero_left`
+
+Use `scripts/prepare_can_interfaces.py` only for USB CAN or CAN FD adapters, fallback bringup, or bench setups. Deprecated public runtime names such as `can0` and `can_nero` should not be used as `can_port` values.
+
+## 1 USB role-based workflow: `prepare_can_interfaces.py`
+
+Prefer the repo-owned role-based preparation script when you are on the USB-adapter path: `scripts/prepare_can_interfaces.py`.
 
 It reads `config/can_interface_roles.json` and automatically handles:
 
 - discovery of Linux CAN interfaces and USB `bus-info`
 - role resolution for the current repo roles (`nero`, `effector`, `omnihand`)
 - classic CAN or CAN FD bitrate configuration
-- interface renaming such as `can_nero`, `can_effector`, and `can_omnihand`
+- interface renaming such as `can_nero_right`, `can_effector`, and `can_omnihand`
 - `restart-ms` and `txqueuelen` setup
 
 Run it from the repository root:
@@ -49,9 +66,9 @@ If you see `ip: command not found` when executing the script, install the `ip` c
 
 `sudo apt-get install iproute2`
 
-The legacy `can_activate.sh` procedure remains below for compatibility with older manual USB workflows. For the native arms and OmniHand use `scripts/activate_native_can.sh`.
+The legacy `can_activate.sh` procedure remains below for compatibility with older manual USB workflows.
 
-## 1 Find CAN Modules
+## 2 Find CAN Modules
 
 Run:
 
@@ -93,7 +110,7 @@ If no CAN module is detected, only the following will be printed:
 Both ethtool and can-utils are installed.
 ```
 
-## 2  Activate a Single CAN Module (using `can_activate.sh`)
+## 3  Activate a Single CAN Module (using `can_activate.sh`)
 
 ### (1) Find the USB port hardware address of the CAN module
 

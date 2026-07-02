@@ -20,6 +20,7 @@ prefix — the driver publishes unprefixed `joint1..7` within its namespace.
 
 ```bash
 sudo bash scripts/activate_native_can.sh          # both sides (or: ... right | left)
+# For a shared arm+hand bus (first tests): TX_QUEUE_LEN=1000 sudo bash scripts/activate_native_can.sh right
 ip -details link show can_nero_right              # expect: mtu 72, fd, one-shot, bitrate 1M, dbitrate 5M
 ```
 
@@ -30,7 +31,14 @@ Rationale + alternatives (USB adapters): [omnihand_canfd_setup.md](../assets/omn
 
 Brings up the arm driver + MIT controller (freedrive, `hold_current`, FollowJointTrajectory). Body-mounted
 arms are tilted, so pass `gravity_arm_side` — it bakes the real mount into the gravity model (see
-[teach_and_run.md](teach_and_run.md) for why). Do **not** pass `input_joint_prefix` for the teach loop.
+[teach_and_run.md](teach_and_run.md) for why). With the OmniHand mounted, also pass `effector_type:=omnihand`
+so the ~1 kg hand is folded into the gravity model (mount tilt alone is not enough). Do **not** pass
+`input_joint_prefix` for the teach loop.
+
+> **Shared arm+hand bus:** the `right arm + OmniHand` row puts the arm and the hand on one bus
+> (`can_nero_right`). For first tests, keep `one-shot on` and just deepen the TX ring (`TX_QUEUE_LEN=1000`)
+> and keep `control_rate_hz` at 100; only fall back to `ONE_SHOT=off` if the hand still starves when the MIT
+> controller runs — see [teach_and_run.md](teach_and_run.md) (bus load).
 
 | Goal | Command |
 |---|---|
@@ -70,7 +78,9 @@ and (for `duo_arm`) per-side driver bring-up from the registry.
 | both arms, MoveIt+MIT (live) | `... mode:=moveit_mit execution_profile:=duo_arm follow:=true use_rviz:=true planning_pipelines:=ompl` |
 | both arms, planning only (no hw) | `... mode:=moveit_mit execution_profile:=duo_arm follow:=false use_rviz:=true planning_pipelines:=ompl` |
 
-The `right_hand`/`left_hand` SDK paths need the vendor lib on the env; see
+The `right_hand`/`left_hand` SDK paths use the repo's normal OmniHand auto-discovery path and do not need
+manual `PYTHONPATH` or `LD_LIBRARY_PATH` exports during ROS launch. Use `sdk_python_dir` or
+`AGX_ARM_OMNIHAND_SDK_DIR` only when the built vendor package lives outside the repo checkout; see
 [omnihand_solo_bringup_and_load_test.md](../assets/omnihand/omnihand_solo_bringup_and_load_test.md). The
 `duo_arm` slice launches each side's driver itself (per-side `can_port` from the registry) and merges
 per-arm feedback into `/feedback/prefixed_joint_states` for `move_group`.

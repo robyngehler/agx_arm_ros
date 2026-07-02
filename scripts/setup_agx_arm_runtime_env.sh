@@ -19,12 +19,24 @@ fi
 echo "[1/2] Updating conda environment '${env_name}' from ${env_file}"
 conda env update --name "${env_name}" --file "${env_file}" --prune
 
-pyagxarm_repo="$(cd "${repo_root}/.." && pwd)/pyAgxArm"
-if [[ -f "${pyagxarm_repo}/pyproject.toml" ]]; then
-    echo "[2/2] Installing sibling pyAgxArm into '${env_name}'"
+vendored_pyagxarm_repo="${repo_root}/vendor/pyAgxArm"
+sibling_pyagxarm_repo="$(cd "${repo_root}/.." && pwd)/pyAgxArm"
+pyagxarm_repo=""
+pyagxarm_label=""
+
+if [[ -f "${vendored_pyagxarm_repo}/pyproject.toml" ]]; then
+    pyagxarm_repo="${vendored_pyagxarm_repo}"
+    pyagxarm_label="vendored pyAgxArm (${vendored_pyagxarm_repo})"
+elif [[ -f "${sibling_pyagxarm_repo}/pyproject.toml" ]]; then
+    pyagxarm_repo="${sibling_pyagxarm_repo}"
+    pyagxarm_label="sibling pyAgxArm (${sibling_pyagxarm_repo})"
+fi
+
+if [[ -n "${pyagxarm_repo}" ]]; then
+    echo "[2/2] Installing ${pyagxarm_label} into '${env_name}'"
     conda run --no-capture-output --name "${env_name}" python -m pip install -e "${pyagxarm_repo}"
 else
-    echo "[2/2] Skipping pyAgxArm editable install; sibling repo not found at ${pyagxarm_repo}"
+    echo "[2/2] Skipping pyAgxArm editable install; neither vendor/pyAgxArm nor ../pyAgxArm was found"
 fi
 
 echo ""

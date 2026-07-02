@@ -13,17 +13,19 @@ the task.
 ## Operating Model
 
 1. Read `README.md` or `README_EN.md` for repository orientation.
-2. `AGENTS.md` is imported above and carries the durable rules.
-3. Read the single most relevant file from `.claude/rules/` for the task. Path-scoped rules also
+2. Read `docs/README.md` and the matching top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, or `docs/open_questions.md` when the task is cross-cutting or documentation-heavy.
+3. `AGENTS.md` is imported above and carries the durable rules.
+4. Read the single most relevant file from `.claude/rules/` for the task. Path-scoped rules also
    auto-load when you touch matching files.
-4. Consult the matching human doc under `docs/project/` (repo structure) or `docs/assets/` (component
+5. Consult the matching human doc under `docs/project/` (repo structure) or `docs/assets/` (component
    and runtime contracts) when the task changes package boundaries, public runtime contracts, or
    component architecture. Naming and ROS2-practice rules live in `.claude/rules/`.
-5. Use a skill from `.claude/skills/` only when the task needs a reusable workflow.
+6. Use a skill from `.claude/skills/` only when the task needs a reusable workflow.
 
 ## Source Of Truth Order
 
 - repository overview: `README.md`, `README_EN.md`
+- global docs hub and repo-wide status: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 - durable engineering contract: `AGENTS.md`
 - how to run the system (bringup launch/arguments, teach loop): `docs/control/`
 - human repository structure and architecture: `docs/project/`
@@ -45,6 +47,7 @@ Do not load every rule by default. Match context to the task.
 - local workflow and promotion order: `.claude/rules/local-agent-workflow.md`
 - OmniHand bridge contract and runtime surface: `.claude/rules/omnihand-bridge.md`
 - how to run the system (bringup + teach): `docs/control/bringup.md`, `docs/control/teach_and_run.md`
+- global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 - current working notes: `docs/development/sprint6/` (coordinator, dual-arm teach, duo trajectory sync)
 
 The files under `.claude/rules/` are the canonical agent-facing rule layer (workflow, naming,

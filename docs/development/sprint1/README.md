@@ -15,8 +15,8 @@ Promoted stable Sprint 1 outputs:
 - `docs/assets/omnihand_asset_validation.md`
 - `docs/assets/agv_cad_inventory.md`
 - `docs/assets/mit_controller/mit_controller_model_inventory.md`
-- `docs/assets/omnihand/omnihand_phase1_joint_map.md`
-- `docs/assets/omnihand/omnihand_phase1_run_log.md`
+- `docs/assets/omnihand/omnihand_active_joint_map.md`
+- `docs/assets/omnihand/omnihand_vendor_sdk_aarch64.md`
 - `docs/assets/omnihand/omnihand_wrapper_integration_plan.md`
 
 Current working location during implementation:

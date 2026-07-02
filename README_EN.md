@@ -16,7 +16,7 @@ This workspace is currently focused on the Nero stack and provides the matching 
 | SDK | [pyAgxArm](https://github.com/agilexrobotics/pyAgxArm) |
 | CAN module usage | [can_user](./docs/CAN_USER_EN.md) |
 | TCP Offset Configuration | [tcp_offset](./docs/assets/tcp_offset/TCP_OFFSET_EN.md) |
-| URDF | [agx_arm_description](./src/agx_arm_sim/agx_arm_description/README.md) |
+| URDF | [agx_arm_description](./src/agx_arm_sim/agx_arm_description/README_EN.md) |
 | Moveit| [Moveit](./src/agx_arm_moveit/README_EN.md) |
 | Nero MIT soft control | [agx_arm_mit_controller](./src/agx_arm_mit_controller/README.md) |
 
@@ -24,7 +24,9 @@ This workspace is currently focused on the Nero stack and provides the matching 
 
 ## Quick Start
 
-### 1. Install Python SDK
+### 1. Optional standalone Python SDK checkout
+
+The ROS runtime in this repo is pinned to `vendor/pyAgxArm`. Clone the sibling SDK repo only when you want to work on `pyAgxArm` directly outside this workspace.
 
 ```bash
 git clone https://github.com/agilexrobotics/pyAgxArm.git
@@ -65,7 +67,7 @@ pip3 install .
     git submodule update --remote --recursive
     ```
 
-    > The only remaining submodule is `vendor/OmniHand-Pro-2025`; Nero/Revo2 description assets are committed directly in this repository.
+    > The tracked vendor inputs are `vendor/pyAgxArm` and `vendor/OmniHand-Pro-2025`; Nero/Revo2 description assets are committed directly in this repository.
 
 ### 3. Install Dependencies
 
@@ -84,7 +86,7 @@ cd ~/agx_arm_ws/src/agx_arm_ros/
 bash ./scripts/setup_agx_arm_runtime_env.sh
 ```
 
-For more detail, see [Python environment workflow](./docs/project/python_environment_workflow.md).
+The runtime environment script installs `vendor/pyAgxArm` first and falls back to `../pyAgxArm` only when the vendored copy is unavailable. For more detail, see [Python environment workflow](./docs/project/python_environment_workflow.md).
 
 ### 4. Build and Source Workspace
 
@@ -113,7 +115,15 @@ If you need a separate TRAC-IK overlay, export `AGX_ARM_TRAC_IK_OVERLAY=/path/to
 
 CAN module must be activated before use. For details, see: [CAN Configuration Guide](./docs/CAN_USER_EN.md)
 
-The recommended path is the repo-owned role-based preparation script. It reads [config/can_interface_roles.json](./config/can_interface_roles.json) and keeps the SocketCAN naming, bitrate, and CAN FD settings aligned for the Nero arm, effectors, and OmniHand:
+The current Duo hardware-first path is `scripts/activate_native_can.sh`. It configures the validated Jetson side buses `can0 -> can_nero_right` and `can1 -> can_nero_left` for the arm-plus-hand runtime used by [docs/control/bringup.md](./docs/control/bringup.md):
+
+```bash
+cd ~/agx_arm_ws/src/agx_arm_ros
+sudo bash scripts/activate_native_can.sh
+ip -details link show can_nero_right
+```
+
+Use the repo-owned role-based preparation script only for USB CAN or CAN FD adapters, fallback bringup, or bench setups. It reads [config/can_interface_roles.json](./config/can_interface_roles.json) and keeps the USB-role SocketCAN naming, bitrate, and CAN FD settings aligned for the Nero arm, effectors, and OmniHand:
 
 ```bash
 cd ~/agx_arm_ws/src/agx_arm_ros
@@ -122,7 +132,7 @@ python3 scripts/prepare_can_interfaces.py --roles nero --dry-run
 python3 scripts/prepare_can_interfaces.py --roles nero
 ```
 
-If you need to pin a specific USB port or Linux interface, add `--nero-can-interface 1-4.2:1.0` or `--nero-can-interface can0`. To prepare both the arm and OmniHand together, use `--roles nero,omnihand`. The native arms and OmniHand use `scripts/activate_native_can.sh` (see docs/control/bringup.md). The legacy USB `can_activate.sh` flow remains in the CAN guide.
+If you need to pin a specific USB port or Linux interface, add `--nero-can-interface 1-4.2:1.0` or `--nero-can-interface can0`. To prepare both the arm and OmniHand together, use `--roles nero,omnihand`. The deprecated public names `can0` and `can_nero` should not be used as runtime `can_port` values. The legacy USB `can_activate.sh` flow remains in the CAN guide.
 
 
 ### Launch Driver
@@ -131,7 +141,7 @@ You can start the driver using a launch file or by running the node directly.
 
 > **Important: Read before launching**
 > The parameters in the following launch commands **must** be replaced according to your actual hardware configuration:
-> - **`can_port`**: The CAN port connected to the arm, e.g. `can0`; if you follow the recommended `prepare_can_interfaces.py` flow, the default Nero role name is `can_nero`.
+> - **`can_port`**: For the current native Duo bringup, use `can_nero_right` or `can_nero_left`. Older public names such as `can0` and `can_nero` are deprecated.
 > - **`arm_type`**: The arm model. In this workspace the active example is `nero`.
 > - **`effector_type`**: The end-effector type, e.g. `none` or `agx_gripper`.
 > - **`tcp_offset`**: Tool Center Point (TCP) offset relative to the flange center, e.g. [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] 
@@ -143,19 +153,19 @@ You can start the driver using a launch file or by running the node directly.
 **Using launch file:**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can_nero_right arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **Running node directly:**
 
 ```bash
-ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_type:=nero -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can_nero_right -p arm_type:=nero -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **Visualization Debug Launch:**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 > **Note:**
@@ -165,17 +175,19 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 > - `follow:=true` keeps the display synchronized with real feedback. If you only want state-follow visualization, keep `control:=false`.
 > - The MIT debug topic is enabled only while `control:=true`, and the slider bridge no longer auto-enables MIT. Enable `mit_controller` explicitly before driving sliders.
 
-**MoveIt One-Click Launch (Arm Control + MoveIt + RViz):**
+**MoveIt One-Click Launch (current canonical entrypoint, arm control + MoveIt + RViz):**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-    can_port:=can_nero \
-    arm_type:=nero \
-    effector_type:=agx_gripper \
-    load_simple_obstacles:=true
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+    execution_profile:=right_arm \
+    can_port:=can_nero_right \
+    follow:=true \
+    use_rviz:=true \
+    planning_pipelines:=ompl
 ```
 
-> This launch file now defaults to `use_mit_controller:=true`: it starts `start_nero_mit_controller.launch.py` and routes MoveIt execution through `arm_controller/follow_joint_trajectory` into the integrated MIT action server on `mit_controller`. `load_simple_obstacles:=true` seeds the planning scene from [simple_obstacles.json](./src/agx_arm_moveit/config/simple_obstacles.json) via `src/agx_arm_moveit/scripts/apply_simple_obstacles.py`; use `simple_obstacles_config:=/abs/path/to/file.json` to replace that baseline. Set `use_mit_controller:=false` only if you explicitly want the legacy direct execution path.
+This path uses the current component multiplexer through `mode:=moveit_mit`: the selected `execution_profile` resolves the model slice, prefixes, and control chain, and the runtime defaults to the MIT execution path. If you need the lower-level combined MoveIt wrapper, `start_agx_arm_moveit.launch.py` still exists; `start_single_agx_arm_moveit.launch.py` remains a compatibility alias only. Prefer [docs/control/bringup.md](./docs/control/bringup.md) for the current launch matrix.
 
 Tune the MIT side with `mit_control_rate_hz` and `mit_params_file` as needed.
 
@@ -183,7 +195,7 @@ Tune the MIT side with `mit_control_rate_hz` and `mit_params_file` as needed.
 
 ```bash
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-    can_port:=can_nero \
+  can_port:=can_nero_right \
     arm_type:=nero \
     effector_type:=agx_gripper \
     tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
@@ -191,13 +203,13 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
 
 This launch reuses `agx_arm_ctrl` as the hardware adapter and starts the MIT application node on top. In addition to `can_port`, it now forwards the main `agx_arm_ctrl` runtime parameters directly: `arm_type`, `effector_type`, `omnihand_type`, `launch_omnihand_bridge`, `omnihand_backend_type`, `auto_enable`, `fast_mode`, `speed_percent`, `pub_rate`, `enable_timeout`, `tcp_offset`, `gripper_default_effort`, and `publish_gripper_joint`. It also exposes MIT-specific `control_rate_hz`, `params_file`, `log_level`, and the opt-in `enable_debug_joint_trajectory_topic` guard for RViz soft-target debugging.
 
-The MIT node subscribes to `feedback/joint_states`, serves `arm_controller/follow_joint_trajectory` for MoveIt, publishes `control/move_mit` continuously, and only accepts the debug `~/joint_trajectory` topic when that input is explicitly enabled.
+The MIT node subscribes to `feedback/joint_states`, serves `arm_controller/follow_joint_trajectory` for MoveIt, publishes `control/move_mit` continuously, and only accepts the debug `~/joint_trajectory` topic when that input is explicitly enabled. For the full current launch matrix, prefer [docs/control/bringup.md](./docs/control/bringup.md).
 
 ### Launch Parameters
 
 | Parameter | Default | Description | Options |
 |-----------|---------|-------------|---------|
-| `can_port` | `can0` | CAN port | - |
+| `can_port` | `can_nero_right` | CAN port | `can_nero_right`, `can_nero_left` |
 | `arm_type` | `nero` | Arm model | `nero` |
 | `effector_type` | `none` | End-effector type | `none`, `agx_gripper`, `revo2` |
 | `namespace` | empty string | Arm instance namespace | Any valid ROS namespace |
@@ -274,7 +286,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
   - Recommended configuration: `follow:=false, control:=true`  
   - Example:  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=false control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero follow:=false control:=true
     ```
 
 - **Scenario 3: Real arm + follow only, no control** (common: monitor state only, avoid RViz interfering with control)  
@@ -282,7 +294,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
   - Recommended configuration: `follow:=true, control:=false`  
   - Example:  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=false
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero follow:=true control:=false
     ```
 
 - **Scenario 4: Real arm + control + follow** (use RViz to send control and follow real feedback)  
@@ -290,7 +302,7 @@ Below are **common usage scenarios** with recommended `follow` and `control` com
   - Recommended configuration: `follow:=true, control:=true`
   - Example:  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero follow:=true control:=true
     ```
 
 > **Tip:** In general, it is recommended to keep the **control channel unique**, i.e. only one component should be responsible for publishing `/control/*` topics (choose one among the `agx_arm_ctrl` node, MoveIt, or RViz `joint_state_publisher`) to avoid conflicts from multiple control sources.

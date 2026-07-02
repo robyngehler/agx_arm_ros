@@ -1,5 +1,8 @@
 # Proposal: Stage 2 Integrated MIT `FollowJointTrajectory` Controller for Nero
 
+> Historical proposal: the integrated MIT action-server path is now part of the current runtime.
+> Use `docs/control/bringup.md` and `docs/control/teach_and_run.md` for the active workflow instead of this design note.
+
 ## 1. Purpose
 
 This proposal defines the next clean integration step between MoveIt 2 / RViz and the custom MIT controller for the AgileX Nero arm.

@@ -1,4 +1,4 @@
-# OmniHand Phase 1 Joint Map
+# OmniHand Active Joint Map
 
 status: VENDOR_DECLARED_BASELINE
 runtime_verification: PENDING
@@ -9,9 +9,9 @@ source_documents:
 
 ## Purpose
 
-This document records the vendor-declared active-joint order used by the isolated Phase 1 smoke test.
+This document records the vendor-declared active-joint order and limits that the repo uses as its baseline mapping reference.
 
-It is a baseline for scripting and later wrapper work, not a claim that runtime validation has already succeeded.
+It is a mapping baseline for scripting, bridge work, and later runtime validation. It is not a claim that every value below has already been verified on live hardware.
 
 ## Finger Grouping
 

@@ -116,8 +116,8 @@ def generate_launch_description():
     )
     can_port_arg = DeclareLaunchArgument(
         "can_port",
-        default_value="can_nero",
-        description="CAN interface used by the underlying agx_arm_ctrl driver.",
+        default_value="can_nero_right",
+        description="CAN interface used by the underlying agx_arm_ctrl driver. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.",
     )
     arm_type_arg = DeclareLaunchArgument(
         "arm_type",

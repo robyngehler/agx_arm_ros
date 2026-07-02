@@ -23,7 +23,7 @@ def wait_until(condition_fn, timeout_s: float, sleep_s: float = 0.1, description
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Compare measured motor torques against URDF gravity torques")
 	parser.add_argument("--interface", default="socketcan")
-	parser.add_argument("--can-port", default="can0")
+	parser.add_argument("--can-port", default="can_nero_right")
 	parser.add_argument("--duration", type=float, default=10.0)
 	parser.add_argument("--rate", type=float, default=10.0)
 	parser.add_argument("--backend", default="pinocchio")

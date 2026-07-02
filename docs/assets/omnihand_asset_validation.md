@@ -21,7 +21,7 @@ found_artifacts:
 - repo-owned OmniHand bridge node and launch surface under `src/agx_arm_ctrl`
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `agx_arm_msgs/OmniHandTactileRaw`
 - validated mock-hardware launch path through `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
-- validated Jetson `aarch64` hardware-info probe through the socket-backed vendor SDK using `OMNIHAND_SOCKETCAN_IFACE=can0`
+- validated Jetson `aarch64` hardware-info probe through the socket-backed vendor SDK using `OMNIHAND_SOCKETCAN_IFACE=can_nero_right`
 missing_artifacts:
 - non-mock backend support behind the repo-owned OmniHand bridge
 - validated safe active-joint command and readback loop on the current live device path
@@ -38,7 +38,7 @@ interface_notes:
 - the vendor ROS2 API doc exposes left/right topic families under `/agihand/omnihand/{left,right}/...`
 - current local hand messages are Revo2-specific and should not be reused as the OmniHand long-term interface
 - a local vendor patch now allows a socket-backed Python build/import path on `aarch64` for isolated testing, and the unpacked Python package can be refreshed without local wheel tooling
-- the current host now also validates live OmniHand hardware-info retrieval over SocketCAN on `can0`, including model, serial, firmware, supply voltage, and `1 Mbps / 5 Mbps` CAN FD timing
+- the current host now also validates live OmniHand hardware-info retrieval over SocketCAN on `can_nero_right`, including model, serial, firmware, supply voltage, and `1 Mbps / 5 Mbps` CAN FD timing
 risks:
 - the vendor README documents Ubuntu 22.04 `x86_64`, while this workspace host is `aarch64`
 - the vendored `thirdParty/` tree only ships the `usbcanfd_libusb_x64` userspace bundle locally, so the stock vendor ZLG path remains x64-only even though the repo now has a socket-backed workaround for build/import
@@ -54,7 +54,7 @@ recommended_next_action:
 - use standard `sensor_msgs/JointState` plus `trajectory_msgs/JointTrajectory` and controller conventions for kinematics and motion, with new repo-owned messages only for OmniHand-specific diagnostics and tactile data
 - keep `.gitmodules` pointed at the workspace fork and keep the upstream Agibot repository available as the sync and review source
 open_questions:
-- What is the first safe joint-space command/readback probe that should be captured as the Phase 1 motion baseline on the now-working `can0` path?
+- What is the first safe joint-space command/readback probe that should be captured as the Phase 1 motion baseline on the now-working `can_nero_right` path?
 - Should the repo keep an optional vendor-ROS backend adapter as a fallback behind the repo-owned bridge, or target direct SDK access only for the first hardware backend?
 - Should `vendor/OmniHand-Pro-2025` permanently keep the workspace fork as the default submodule URL while maintaining `AgibotTech/OmniHand-Pro-2025` as an explicit `upstream` remote?
 related_sprint: 1

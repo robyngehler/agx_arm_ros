@@ -1,7 +1,7 @@
 # Nero Physical AI Progress Monitor
 
-status: SPRINT5_ACTIVE_CAN_TRANSPORT_AND_ARM_PLUS_HAND
-last_updated: 2026-06-15
+status: SPRINT6_ACTIVE_COORDINATED_TASKS
+last_updated: 2026-07-02
 
 ## Purpose
 
@@ -32,18 +32,19 @@ runtime/CAN-transport stabilization iteration** that sits ahead of the roadmap's
 | 2 | Common environment and OmniHand bridge | COMPLETE | Shared ROS2 semantics, package boundaries, and the repo-owned OmniHand bridge with the **vendor SDK backend** (active 10-joint command, status, tactile) are in place. |
 | 3 | Nero planning and control hardening | COMPLETE | TRAC-IK + OMPL planning validated; `/compute_ik`, MoveIt profiles, and the MIT control path are working. |
 | 4 | Duo body + OmniHand system baseline | COMPLETE | Shared macro/xacro-driven URDF, dynamic SRDF, and arm-count-aware MoveIt (`right_arm`/`left_arm`/`both_arms`) are landed. **OMPL + TRAC-IK planning succeeds for the Duo groups**, and a **joint arm + OmniHand bringup with small live movements** ran via `start_agx_arm_components.launch.py`. |
-| 5 | CAN transport + arm-plus-hand | ACTIVE | Arms (and the OmniHand) moved to native `mttcan` CAN FD side buses with `one-shot on`, removing the ENOBUFS stalls; `pyAgxArm` pinned as a submodule. Current work: validate arm + hand sharing one side bus, and prepare the first demo task. |
+| 5 | CAN transport + arm-plus-hand | COMPLETE | Native `mttcan` CAN FD side buses and the pinned `pyAgxArm` runtime are now the repo baseline. Shared arm+hand bus behavior remains documented as a carried operational caveat, not the owning sprint target. |
+| 6 | Coordinated tasks + skill layer | ACTIVE | Coordinator, dual-arm teach flow, and OmniHand skill abstractions are the current focus. Shared bus validation remains a dependency where the live workflow still couples arm and hand on one side bus. |
 
-## Active Sprint Focus (execution sprint 5)
+## Active Sprint Focus (execution sprint 6)
 
-- validate **arm + its OmniHand on the same native side bus** (`can_nero_right` / `can_nero_left`,
-  CAN FD): bus-load budget (arm ~30 % @1 Mbit + hand), latency, and whether `one-shot` is right for
-  the hand (single-attempt frames) — see `sprint5/planning/can_transport_decision.md`
-- run **multiple consecutive plan&execute cycles on native CAN** without a launch restart, then tag
-  `pyAgxArm` `hw-validated-<date>` and bump the submodule pin
 - prepare the **first demo task: coordinated Hefeweizen pouring** — decompose into per-arm recorded
   or planned trajectories above per-arm MIT execution, using the existing `both_arms` planning plus
   the OmniHand grasp; this is the roadmap's pouring reference task (Section 5, Sprint 4 output)
+- keep the shared-bus runtime caveat explicit: shared arm+hand bringup may still need a workflow-
+  specific native CAN profile (`ONE_SHOT=off`, lower MIT control rate) even though the arm-only
+  native CAN baseline is stable — see `docs/control/teach_and_run.md`
+- keep validating coordinator dispatch, dual-arm teach capture, and the semantic hand-skill layer on
+  top of the current MoveIt + MIT + OmniHand bridge baseline
 - keep the public ROS2 surface agx_arm-centric; keep `both_arms` execution per-arm at the MIT action
   boundary until a coordinated fault/safety model is documented
 - keep the OmniHand bridge in `agx_arm_ctrl`; keep `src/duo_body_description` as the staging package

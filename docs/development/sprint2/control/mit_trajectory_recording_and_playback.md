@@ -2,6 +2,8 @@
 
 Status: targeted Sprint 2 workflow note for the current Nero MIT controller path and the adjacent wakeword demo tooling.
 
+Historical note: the current operational source of truth moved to `docs/control/bringup.md` and `docs/control/teach_and_run.md`. Keep this file for Sprint 2 rationale, wakeword demo history, and controller-tuning context.
+
 This note documents an adjacent workflow that is not a direct Physical AI roadmap gate by itself, but it is a useful integration slice for later TTS-driven and interaction-driven demos.
 
 Use `docs/development/nero_physical_ai_roadmap.md` and `docs/development/nero_physical_ai_progress.md` for cross-sprint coordination.
@@ -58,10 +60,10 @@ source install/setup.bash
 
 ## Launch
 
-The default launch path already uses the packaged controller YAML:
+The current native launch path already uses the packaged controller YAML:
 
 ```bash
-ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py can_port:=can_nero
+ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py can_port:=can_nero_right gravity_arm_side:=right
 ```
 
 The default profile is `src/agx_arm_mit_controller/config/nero_mit_controller_defaults.yaml` and now enables gravity compensation by default.
@@ -231,7 +233,8 @@ Example:
 
 ```bash
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
+  gravity_arm_side:=right \
   params_file:=$PWD/src/agx_arm_mit_controller/config/mit_playback_soft.yaml
 ```
 

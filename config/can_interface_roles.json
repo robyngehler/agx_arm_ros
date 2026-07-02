@@ -1,9 +1,9 @@
 {
-  "_note": "Roles for the USB-adapter path via scripts/prepare_can_interfaces.py. The Duo arms and OmniHand run on the Jetson NATIVE mttcan side buses via scripts/activate_native_can.sh; use these roles only for USB CAN/CAN-FD adapters.",
+  "_note": "Roles for the USB-adapter path via scripts/prepare_can_interfaces.py. The Duo arms and OmniHand run on the Jetson NATIVE mttcan side buses via scripts/activate_native_can.sh; use these roles only for USB CAN/CAN-FD adapters. Legacy target names such as can_nero are deprecated.",
   "roles": {
     "nero": {
-      "description": "Nero arm classic CAN USB adapter (legacy/fallback)",
-      "target_name": "can_nero",
+      "description": "Nero arm classic CAN USB adapter for the current single-arm or right-side baseline (legacy name can_nero is deprecated)",
+      "target_name": "can_nero_right",
       "mode": "can",
       "bitrate": 1000000,
       "restart_ms": 100,

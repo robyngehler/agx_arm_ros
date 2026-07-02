@@ -11,13 +11,14 @@ This repository is organized so Claude Code loads only the guidance needed for t
 ## Loading Order
 
 1. Read `README.md` or `README_EN.md` for repository orientation.
-2. `AGENTS.md` is imported by `CLAUDE.md` and carries the durable engineering contract.
-3. Read one file from `.claude/rules/` that matches the task. Path-scoped rules also auto-load when you
+2. Read `docs/README.md` and the matching top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, or `docs/open_questions.md` when the task is cross-cutting or documentation-heavy.
+3. `AGENTS.md` is imported by `CLAUDE.md` and carries the durable engineering contract.
+4. Read one file from `.claude/rules/` that matches the task. Path-scoped rules also auto-load when you
    touch matching files.
-4. Read the matching canonical docs under `docs/control/` (how to run it), `docs/project/`, or
+5. Read the matching canonical docs under `docs/control/` (how to run it), `docs/project/`, or
    `docs/assets/` when a bringup, public contract, or workflow decision is involved.
-5. Use a skill from `.claude/skills/` only when the task needs a repeatable workflow.
-6. Delegate to a subagent in `.claude/agents/` when a narrower persona helps.
+6. Use a skill from `.claude/skills/` only when the task needs a repeatable workflow.
+7. Delegate to a subagent in `.claude/agents/` when a narrower persona helps.
 
 ## Read A Rule When
 
@@ -45,6 +46,7 @@ This repository is organized so Claude Code loads only the guidance needed for t
 - local change order and promotion workflow: `.claude/rules/local-agent-workflow.md`
 - OmniHand runtime contract and bridge surface: `.claude/rules/omnihand-bridge.md`
 - how to run the system (bringup launch/arguments, teach loop): `docs/control/bringup.md`, `docs/control/teach_and_run.md`
+- global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 
 ## Context Minimization Rules
 

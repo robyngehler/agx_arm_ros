@@ -5,7 +5,7 @@
 # whose presets live in omnihand_pro_gestures.yaml (12 joints). This file is only
 # loaded for hand_model=o10, i.e. load_gesture_presets(get_hand_model("o10")) or
 # the legacy default load_gesture_presets() with no model. See
-# docs/assets/omnihand/proposal_omnihand_pro_migration.md.
+# docs/development/sprint6/planning/omnihand_gesture_mapping.md for the O10-vs-O12 note.
 #
 # Loaded by agx_arm_ctrl.omnihand_bridge_node.load_gesture_presets(model); the
 # exerciser node and any future skill controller read from here instead of

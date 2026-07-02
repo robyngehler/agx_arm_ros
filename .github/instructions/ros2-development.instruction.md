@@ -19,6 +19,7 @@ Load this instruction for ROS2-native questions and decisions.
 
 ## Value Capture
 
+- top-level `docs/*.md` for global navigation and repo-wide checklist, fixes, and open questions
 - `docs/project/` for stable structure, naming, workflow, and ROS2 practice decisions
 - `docs/assets/` for stable runtime and bridge contracts
 - `docs/assets/` for stable factual inventories and validation state

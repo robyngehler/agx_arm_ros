@@ -41,7 +41,7 @@ cd ~/agx_arm_ws/src/agx_arm_ros
 bash ./scripts/setup_agx_arm_runtime_env.sh
 ```
 
-By default this creates or updates `agx-arm-runtime`. The script also installs the sibling `pyAgxArm` repo in editable mode when it is found at `../pyAgxArm`.
+By default this creates or updates `agx-arm-runtime`. The script installs the vendored `vendor/pyAgxArm` checkout first and only falls back to a sibling `../pyAgxArm` checkout when the vendored copy is unavailable.
 
 Run ROS commands inside that environment with the repo wrapper instead of activating Conda manually:
 

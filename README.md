@@ -24,7 +24,9 @@
 
 ## 快速开始
 
-### 1. 安装 Python SDK
+### 1. 可选：单独检出 Python SDK
+
+当前仓库内的 ROS 运行时默认固定到 `vendor/pyAgxArm`。只有在你需要脱离本工作区直接开发 `pyAgxArm` 时，才需要额外克隆旁路 SDK 仓库。
 
 ```bash
 git clone https://github.com/agilexrobotics/pyAgxArm.git
@@ -65,7 +67,7 @@ pip3 install .
     git submodule update --remote --recursive
     ```
 
-    > 当前仓库仅保留 `vendor/OmniHand-Pro-2025` 作为子模块；Nero/Revo2 描述资产已经直接提交在仓库内。
+    > 当前仓库跟踪的 vendor 输入包括 `vendor/pyAgxArm` 与 `vendor/OmniHand-Pro-2025`；Nero/Revo2 描述资产已经直接提交在仓库内。
 
 ### 3. 安装依赖
 
@@ -84,7 +86,7 @@ cd ~/agx_arm_ws/src/agx_arm_ros/
 bash ./scripts/setup_agx_arm_runtime_env.sh
 ```
 
-更多说明请参考：[Python 环境工作流](./docs/project/python_environment_workflow.md)。
+运行环境脚本会优先安装 `vendor/pyAgxArm`，只有 vendored 副本缺失时才回退到 `../pyAgxArm`。更多说明请参考：[Python 环境工作流](./docs/project/python_environment_workflow.md)。
 
 ### 4. 编译并 Source 工作空间
 
@@ -113,7 +115,15 @@ bash ./scripts/run_in_ros_conda.sh -- ros2 launch agx_arm_ctrl start_agx_arm_com
 
 使用前需先激活 CAN 模块，详见：[CAN 配置指南](./docs/CAN_USER.md)
 
-推荐优先使用仓库内的角色化准备脚本。该脚本会读取 [config/can_interface_roles.json](./config/can_interface_roles.json) 中的角色定义，并统一处理 Nero、末端执行器与 OmniHand 的 SocketCAN 命名、波特率和 CAN FD 参数：
+当前 Duo 真机基线路径优先使用 `scripts/activate_native_can.sh`。它会按 [docs/control/bringup.md](./docs/control/bringup.md) 中的当前约定，把 Jetson 原生 side bus 配置为 `can0 -> can_nero_right`、`can1 -> can_nero_left`：
+
+```bash
+cd ~/agx_arm_ws/src/agx_arm_ros
+sudo bash scripts/activate_native_can.sh
+ip -details link show can_nero_right
+```
+
+仓库内的角色化准备脚本保留用于 USB CAN 或 CAN FD 适配器、fallback bringup 和 bench 场景。该脚本会读取 [config/can_interface_roles.json](./config/can_interface_roles.json) 中的角色定义，并统一处理 USB 角色路径下的 SocketCAN 命名、波特率和 CAN FD 参数：
 
 ```bash
 cd ~/agx_arm_ws/src/agx_arm_ros
@@ -122,7 +132,7 @@ python3 scripts/prepare_can_interfaces.py --roles nero --dry-run
 python3 scripts/prepare_can_interfaces.py --roles nero
 ```
 
-若需要显式绑定某个 USB 口或 Linux 接口，可额外传入 `--nero-can-interface 3-1.4:1.0` 或 `--nero-can-interface can0`。当同时准备机械臂和 OmniHand 时，可使用 `--roles nero,omnihand`。原生机械臂与 OmniHand 使用 `scripts/activate_native_can.sh`（见 docs/control/bringup.md）；兼容旧流程的 USB `can_activate.sh` 仍保留在 [CAN 配置指南](./docs/CAN_USER.md) 中。
+若需要显式绑定某个 USB 口或 Linux 接口，可额外传入 `--nero-can-interface 3-1.4:1.0` 或 `--nero-can-interface can0`。当同时准备机械臂和 OmniHand 时，可使用 `--roles nero,omnihand`。`can0` 与 `can_nero` 这类旧的公开运行时名称已弃用，不应再作为 `can_port` 使用。兼容旧流程的 USB `can_activate.sh` 仍保留在 [CAN 配置指南](./docs/CAN_USER.md) 中。
 
 ### 启动驱动
 
@@ -130,7 +140,7 @@ python3 scripts/prepare_can_interfaces.py --roles nero
 
 > **重要提示：启动前必读**
 > 以下启动命令中的参数**必须**根据您的实际硬件配置进行替换：
-> - **`can_port`**：机械臂连接的 CAN 端口，示例值 `can0`；若按本文推荐流程使用 `prepare_can_interfaces.py`，Nero 默认角色名为 `can_nero`。
+> - **`can_port`**：当前原生 Duo bringup 推荐使用 `can_nero_right` 或 `can_nero_left`。旧的公开名称如 `can0`、`can_nero` 已弃用。
 > - **`arm_type`**：机械臂的型号，当前工作区示例值 `nero`。
 > - **`effector_type`**：末端执行器类型，示例值 `none` 或 `agx_gripper`。
 > - **`tcp_offset`**：工具中心（TCP）相对法兰盘中心的偏移量，示例值：[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
@@ -142,19 +152,19 @@ python3 scripts/prepare_can_interfaces.py --roles nero
 **使用 launch 文件启动：**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm.launch.py can_port:=can_nero_right arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **直接运行节点启动:**
 
 ```bash
-ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can0 -p arm_type:=nero -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 run agx_arm_ctrl agx_arm_ctrl_single --ros-args -p can_port:=can_nero_right -p arm_type:=nero -p effector_type:=none -p tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 **可视化调试启动:**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
+ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero effector_type:=none tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
 ```
 
 > **注意：**
@@ -164,17 +174,19 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_
 > - `follow:=true` 时，模型会订阅真实反馈并驱动显示；若只做状态跟随展示，推荐保持 `control:=false`。
 > - MIT 调试 topic 仅在 `control:=true` 时开启，且滑条桥接节点不再自动使能 MIT；在拖动滑条前请先显式使能 `mit_controller`。
 
-**MoveIt 一键启动（臂控 + MoveIt + RViz）：**
+**MoveIt 一键启动（当前规范入口，臂控 + MoveIt + RViz）：**
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-    can_port:=can_nero \
-    arm_type:=nero \
-    effector_type:=agx_gripper \
-    load_simple_obstacles:=true
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+    execution_profile:=right_arm \
+    can_port:=can_nero_right \
+    follow:=true \
+    use_rviz:=true \
+    planning_pipelines:=ompl
 ```
 
-该启动方式默认 `use_mit_controller:=true`：会先启动 `start_nero_mit_controller.launch.py`，再让 MoveIt 通过 `arm_controller/follow_joint_trajectory` 直接调用 `mit_controller` 上的集成 MIT action server。`load_simple_obstacles:=true` 会通过 `src/agx_arm_moveit/scripts/apply_simple_obstacles.py` 将 [simple_obstacles.json](./src/agx_arm_moveit/config/simple_obstacles.json) 中的基础障碍物注入规划场景；如需替换障碍物集合，可传入 `simple_obstacles_config:=/abs/path/to/file.json`。若要退回旧的直接执行路径，可显式设置 `use_mit_controller:=false`。
+该启动方式会通过 `mode:=moveit_mit` 走当前规范的组件多路复用入口：按 `execution_profile` 解析模型切片、前缀与控制链，并默认复用 MIT 软轨迹执行路径。若需要更底层的一键 MoveIt 包装，`start_agx_arm_moveit.launch.py` 仍可使用；`start_single_agx_arm_moveit.launch.py` 仅保留为兼容别名。完整当前矩阵以 [docs/control/bringup.md](./docs/control/bringup.md) 为准。
 
 MIT 侧控制频率与参数文件可继续通过 `mit_control_rate_hz` 和 `mit_params_file` 调整。
 
@@ -182,7 +194,7 @@ MIT 侧控制频率与参数文件可继续通过 `mit_control_rate_hz` 和 `mit
 
 ```bash
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-    can_port:=can_nero \
+  can_port:=can_nero_right \
     arm_type:=nero \
     effector_type:=agx_gripper \
     tcp_offset:='[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]'
@@ -190,15 +202,15 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
 
 该启动方式会复用 `agx_arm_ctrl` 作为硬件适配层，并额外启动一个面向应用的 MIT 控制节点。它现在除了 `can_port` 外，也直接暴露 `arm_type`、`effector_type`、`omnihand_type`、`launch_omnihand_bridge`、`omnihand_backend_type`、`auto_enable`、`fast_mode`、`speed_percent`、`pub_rate`、`enable_timeout`、`tcp_offset`、`gripper_default_effort`、`publish_gripper_joint` 等底层运行参数，同时额外提供 `control_rate_hz`、`params_file`、`log_level`，以及用于 RViz 软目标调试的显式 `enable_debug_joint_trajectory_topic` 开关。
 
-该节点订阅 `feedback/joint_states`，对外提供 `arm_controller/follow_joint_trajectory` 给 MoveIt 使用，并持续发布 `control/move_mit`。仅当显式开启调试输入时，它才接收调试用的 `~/joint_trajectory` topic，便于后续扩展软轨迹回放、重力补偿和碰撞监测。
+该节点订阅 `feedback/joint_states`，对外提供 `arm_controller/follow_joint_trajectory` 给 MoveIt 使用，并持续发布 `control/move_mit`。仅当显式开启调试输入时，它才接收调试用的 `~/joint_trajectory` topic，便于后续扩展软轨迹回放、重力补偿和碰撞监测。完整的当前启动矩阵以 [docs/control/bringup.md](./docs/control/bringup.md) 为准。
 
-> 若需要同时启动机械臂控制节点、MoveIt2 和 RViz，请使用上面的 `start_single_agx_arm_moveit.launch.py`；它会自动接入关节反馈，并默认复用 MIT 软轨迹执行路径。详见 [Moveit](./src/agx_arm_moveit/README.md)。
+> 若需要同时启动机械臂控制节点、MoveIt2 和 RViz，请优先使用上面的 `start_agx_arm_components.launch.py mode:=moveit_mit`；若只想调用较低层包装，可使用 `start_agx_arm_moveit.launch.py`。详见 [docs/control/bringup.md](./docs/control/bringup.md) 与 [Moveit](./src/agx_arm_moveit/README.md)。
 
 ### 启动参数
 
 | 参数 | 默认值 | 说明 | 可选值 |
 |------|--------|------|--------|
-| `can_port` | `can0` | CAN 端口 | - |
+| `can_port` | `can_nero_right` | CAN 端口 | `can_nero_right`, `can_nero_left` |
 | `arm_type` | `nero` | 机械臂型号 | `nero` |
 | `effector_type` | `none` | 末端执行器类型 | `none`, `agx_gripper`, `revo2` |
 | `namespace` | 空字符串 | 机械臂实例命名空间 | 任意合法 ROS 命名空间 |
@@ -275,7 +287,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=nero
   - 推荐配置：`follow:=false, control:=true`  
   - 示例：  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=false control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero follow:=false control:=true
     ```
 
 - **场景 3：真机 + 仅跟随不控制**（常见：只看状态，不希望 RViz 干扰控制）  
@@ -283,7 +295,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=nero
   - 推荐配置：`follow:=true, control:=false`  
   - 示例：  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=false
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero follow:=true control:=false
     ```
 
 - **场景 4：真机 + 控制 + 跟随**（从 RViz 发控制，并在 RViz 跟随真实反馈）  
@@ -291,7 +303,7 @@ ros2 launch agx_arm_description display.launch.py arm_type:=nero
   - 推荐配置：`follow:=true, control:=true`
   - 示例：  
     ```bash
-    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can0 arm_type:=nero follow:=true control:=true
+    ros2 launch agx_arm_ctrl start_single_agx_arm_rviz.launch.py can_port:=can_nero_right arm_type:=nero follow:=true control:=true
     ```
 
 > **提示：** 一般情况下，建议**控制通道保持唯一**，即只保留一个组件负责发布 `/control/*` 话题（如 `agx_arm_ctrl` 节点、MoveIt、或 RViz 中的 joint_state_publisher 三者选其一），以避免多源控制导致冲突。

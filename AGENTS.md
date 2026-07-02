@@ -11,13 +11,14 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 ## Source Of Truth Order
 
 1. `README.md` and `README_EN.md` for repository overview.
-2. This file for durable engineering constraints.
-3. `docs/control/` for how to run the system (bringup launch/argument matrix, teach loop).
-4. `docs/assets/` for component architecture, validation, and OmniHand/runtime integration docs.
-5. `docs/project/` for human-facing repository structure and architecture.
-6. `.github/instructions/` and `.claude/rules/` for agent workflow, naming, and ROS2-practice rules (these do not live in `docs/`).
-7. `.github/copilot-instructions.md` for the Copilot operating model.
-8. `.github/skills/` for reusable workflows.
+2. `docs/README.md` plus top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, and `docs/open_questions.md` for global docs routing and cross-cutting status.
+3. This file for durable engineering constraints.
+4. `docs/control/` for how to run the system (bringup launch/argument matrix, teach loop).
+5. `docs/assets/` for component architecture, validation, and OmniHand/runtime integration docs.
+6. `docs/project/` for human-facing repository structure and architecture.
+7. `.github/instructions/` and `.claude/rules/` for agent workflow, naming, and ROS2-practice rules (these do not live in `docs/`).
+8. `.github/copilot-instructions.md` for the Copilot operating model.
+9. `.github/skills/` for reusable workflows.
 
 ## Workspace Rules
 
@@ -45,6 +46,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 ## Documentation And Source Rules
 
 - Treat `.github/instructions/` and `.claude/rules/` as the agent-facing rule layer (workflow, naming, package, ROS2 practice); keep them consistent with the human docs under `docs/project/` and `docs/assets/`.
+- Keep `docs/README.md` and the top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, and `docs/open_questions.md` aligned with any cross-cutting documentation restructuring.
 - Update `docs/assets/` when an OmniHand or runtime component contract (command, feedback, launch, package) changes.
 - Update `docs/project/` when repository structure or architecture changes; update `.github/instructions/` and `.claude/rules/` when workflow, naming, or package-split rules change.
 - Treat `.github/`, `docs/`, `src/`, `scripts/`, `config/`, and `vendor/` as source-managed.

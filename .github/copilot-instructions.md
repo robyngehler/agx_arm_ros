@@ -5,14 +5,16 @@ This repository uses `AGENTS.md` as the durable engineering contract and `.githu
 ## Operating Model
 
 1. Read `README.md` or `README_EN.md` for repository orientation.
-2. Read `AGENTS.md` for the durable rules.
-3. Load the single most relevant file from `.github/instructions/`.
-4. Consult the matching canonical doc under `docs/project/` or `docs/assets/` when the task changes package boundaries, naming, public runtime contracts, or ROS2-native development decisions.
-5. Load a skill from `.github/skills/` only when the task needs a reusable workflow.
+2. Read `docs/README.md` and the matching top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, or `docs/open_questions.md` when the task is cross-cutting or documentation-heavy.
+3. Read `AGENTS.md` for the durable rules.
+4. Load the single most relevant file from `.github/instructions/`.
+5. Consult the matching canonical doc under `docs/project/` or `docs/assets/` when the task changes package boundaries, naming, public runtime contracts, or ROS2-native development decisions.
+6. Load a skill from `.github/skills/` only when the task needs a reusable workflow.
 
 ## Source Of Truth Order
 
 - repository overview: `README.md`, `README_EN.md`
+- global docs hub and repo-wide status: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 - durable engineering contract: `AGENTS.md`
 - stable package and workflow policy: `docs/project/`
 - stable runtime and OmniHand decisions: `docs/assets/`
@@ -33,6 +35,7 @@ Do not load every instruction by default. Match context to the task.
 - local workflow and promotion order: `.github/instructions/local-agent-workflow.instruction.md`
 - OmniHand bridge contract and runtime surface: `.github/instructions/omnihand-bridge.instruction.md`
 - current Duo body system working notes: `docs/development/sprint4/`
+- global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 
 These instructions are concise Copilot-native mirrors of the current stable docs under `docs/project/` and `docs/assets/`.
 

@@ -269,7 +269,7 @@ def _load_sdk_symbols(sdk_python_dir: str = "") -> tuple[type[Any], Any, Any]:
         module = import_module("agibot_hand")
     except ImportError as exc:
         raise RuntimeError(
-            "backend_type=sdk requires agibot_hand on PYTHONPATH and the vendor library path to be set"
+            "backend_type=sdk could not import agibot_hand even after the repo auto-discovery path ran; set the bridge 'sdk_python_dir' parameter or AGX_ARM_OMNIHAND_SDK_DIR only if the built vendor package lives outside the repo checkout"
         ) from exc
 
     missing = [
@@ -509,9 +509,10 @@ class SdkOmniHandBackend:
         self.cfg_path = cfg_path
         self.sdk_python_dir = sdk_python_dir
         self.can_interface = can_interface
-        # The vendor SocketCAN backend reads the interface ONLY from this env var
-        # (default "can0"). Export it before the constructor so the hand opens on the
-        # native side bus (e.g. can_nero_right) instead of can0.
+        # The vendor SocketCAN backend reads the interface ONLY from this env var.
+        # Export the repo-owned side-bus name explicitly so the hand opens on the
+        # public runtime interface (for example can_nero_right) instead of a legacy
+        # kernel-facing alias such as can0.
         if can_interface:
             os.environ["OMNIHAND_SOCKETCAN_IFACE"] = can_interface
         self.backend_name = "vendor_sdk"
@@ -553,7 +554,7 @@ class SdkOmniHandBackend:
         self.connected = True
         self.initialized = True
         self.status_text = (
-            f"sdk backend ready (active joint control, can_interface={can_interface or 'can0(default)'}, "
+            f"sdk backend ready (active joint control, can_interface={can_interface or 'can_nero_right(default)'}, "
             f"device_id={device_id})"
         )
         try:

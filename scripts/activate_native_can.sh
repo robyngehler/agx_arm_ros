@@ -29,12 +29,28 @@
 #                 the arm ENOBUFS stalls). Note: it also makes hand frames
 #                 single-attempt — drop ONE_SHOT below if the hand needs retries.
 #   restart-ms  : auto-recover from bus-off.
+#   txqueuelen  : socket TX ring depth. The mttcan/kernel default (10) is tiny,
+#                 so an arm command burst (7 MIT frames per control cycle) can
+#                 overrun it and surface as ENOBUFS ("no buffer space [105]")
+#                 before one-shot even helps. A deeper queue absorbs the burst.
+#
+# Shared arm+hand bus (right side = right arm + right OmniHand on can_nero_right):
+#   the arm firmware push (autonomous) + MIT command TX contends with the hand's
+#   CANFD request/response. Because the OmniHand CANFD IDs are high (low
+#   arbitration priority), with ONE_SHOT=on the hand LOSES arbitration to the arm
+#   and its single-attempt frames are dropped -> "请求超时" / the bridge goes silent
+#   the moment the MIT controller starts (idle-hold sends little, so the hand is
+#   fine there). To keep the hand alive on a shared bus, prefer ONE_SHOT=off with
+#   a deeper TX_QUEUE_LEN so hand frames get retried and arm bursts still fit; also
+#   lower the arm MIT command rate (control_rate_hz) to cut arm TX. See
+#   docs/control/teach_and_run.md (bus load) and the sprint6 debug recordings.
 #
 # Usage:
 #   sudo bash activate_native_can.sh                 # both side buses (defaults)
 #   sudo bash activate_native_can.sh right           # right side only
 #   sudo bash activate_native_can.sh left            # left side only
 #   FD=0 sudo bash activate_native_can.sh            # classic-only (arm, no hand)
+#   ONE_SHOT=off TX_QUEUE_LEN=1000 sudo bash activate_native_can.sh  # shared arm+hand bus
 #   TDCR_VALUE=0x900 sudo bash activate_native_can.sh  # override TDCR for a different transceiver
 #
 # Idempotent: an interface already renamed to its target is reconfigured in place.
@@ -46,7 +62,8 @@ SAMPLE_POINT="${SAMPLE_POINT:-0.8}"
 DBITRATE="${DBITRATE:-5000000}"
 DSAMPLE_POINT="${DSAMPLE_POINT:-0.8}"
 RESTART_MS="${RESTART_MS:-100}"
-ONE_SHOT="${ONE_SHOT:-on}"      # set to "off" to allow retransmission
+ONE_SHOT="${ONE_SHOT:-on}"      # "off" allows retransmission (prefer off on a shared arm+hand bus)
+TX_QUEUE_LEN="${TX_QUEUE_LEN:-1000}"  # socket TX ring depth; kernel default (10) is too small for arm command bursts
 FD="${FD:-1}"                   # 1 = CAN FD (arm+hand), 0 = classic only (arm)
 TDCR_VALUE="${TDCR_VALUE:-0x800}" # TJA1051T/3 (Adafruit CAN Pal) validated value
 SIDE="${1:-both}"
@@ -120,8 +137,14 @@ activate_one() {
         ip link set "$work" name "$target" || return 1
     fi
 
+    # Deepen the TX ring before bringing the link up so an arm command burst does
+    # not immediately surface as ENOBUFS on a shared arm+hand bus.
+    ip link set "$target" txqueuelen "$TX_QUEUE_LEN" \
+        && echo "  txqueuelen: $target = $TX_QUEUE_LEN" \
+        || echo "  warning: could not set txqueuelen on '$target'." >&2
+
     ip link set "$target" up || return 1
-    echo "  OK: $target is up."
+    echo "  OK: $target is up (one-shot=$ONE_SHOT, txqueuelen=$TX_QUEUE_LEN)."
     if [ "$FD" = "1" ]; then
         ip -details link show "$target" | grep -q 'mtu 72' \
             || echo "  warning: '$target' did not report CAN FD MTU 72 — verify the transceiver supports FD/BRS."

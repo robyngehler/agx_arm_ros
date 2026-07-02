@@ -8,17 +8,17 @@ simulation_track_status: SHARED_COMMAND_SURFACE_LANDED
 
 ## Current Execution Status
 
-- Repo-side Phase 1 artifacts are now in place:
+- Repo-side isolated bring-up artifacts are now in place:
 	- `scripts/omnihand/phase1_smoke_test.py`
-	- `docs/assets/omnihand/omnihand_phase1_run_log.md`
-	- `docs/assets/omnihand/omnihand_phase1_joint_map.md`
+	- `docs/assets/omnihand/omnihand_vendor_sdk_aarch64.md`
+	- `docs/assets/omnihand/omnihand_active_joint_map.md`
 - The current workspace host is no longer blocked at build/import time for isolated testing:
 	- a local socket-backed vendor build now succeeds on `aarch64`
 	- the unpacked Python package refresh now succeeds even when `python -m build` is unavailable locally
 	- the built Python package imports successfully on this host
 	- the repo smoke test can probe that built package directly
 	- the repo-local SDK baseline is now fixed to a SocketCAN build on `aarch64`, with ZLG userspace treated as opt-in only when a native `aarch64` SDK exists
-	- the current host can now retrieve live OmniHand hardware information through `OMNIHAND_SOCKETCAN_IFACE=can0`
+	- the current host can now retrieve live OmniHand hardware information through `OMNIHAND_SOCKETCAN_IFACE=can_nero_right`
 - The remaining Phase 1 blocker is now narrower:
 	- device enumeration is no longer blocked on the current host
 	- no safe command-response loop has been validated yet
@@ -122,7 +122,7 @@ Tasks:
 - read hardware information and firmware info
 - command one safe active joint and read back joint state
 - verify fault handling and clean shutdown behavior
-- capture the final tested transport setup, host architecture, and adapter details in a run log
+- capture the final tested transport setup, host architecture, and adapter details in stable validation notes
 
 Recommended artifact output:
 
@@ -141,7 +141,7 @@ Current state:
 - the smoke-test entrypoint exists
 - the vendor-declared 10-joint naming map is recorded in the repo
 - a socket-backed local build/import path now works on `aarch64`
-- the current host can now retrieve live hardware information from the hand through `OMNIHAND_SOCKETCAN_IFACE=can0`
+- the current host can now retrieve live hardware information from the hand through `OMNIHAND_SOCKETCAN_IFACE=can_nero_right`
 - the earlier incomplete probe remains useful as error-handling evidence, but it no longer represents the best-known bring-up state on this host
 
 ## Phase 2: Repo-Owned Adapter Layer

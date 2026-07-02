@@ -1,14 +1,15 @@
 # Development — Target & Index
 
 This tree tracks the active development of the Duo Nero system. It holds the program-level
-roadmap/progress plus one folder per sprint.
+roadmap/progress, cross-sprint follow-up docs, plus one folder per sprint.
 
 ## Current target
 
 A stable, reproducible Duo runtime moving toward coordinated dual-arm (and dual-hand) tasks:
 
-- **Transport stable** — arms on native `mttcan` (`can0`/`can1`) with `one-shot on`; one bus per
-  arm; arm+hand-per-bus under evaluation. See `sprint5/`.
+- **Transport baseline established** — the active path is native `mttcan` on the Jetson side buses;
+  `one-shot on` remains the arm-stable default, while shared arm+hand operation still carries
+  workflow-specific caveats captured in `../control/teach_and_run.md` and `sprint5/`.
 - **Control layer pinned** — `pyAgxArm` vendored as the `vendor/pyAgxArm` submodule; runtime no
   longer drifts. See `../project/control_layer_and_dependencies.md`.
 - **Duo body baseline** — prefixed MoveIt + per-arm MIT wrappers, hand-aware config profiles.
@@ -18,6 +19,8 @@ A stable, reproducible Duo runtime moving toward coordinated dual-arm (and dual-
 
 - `nero_physical_ai_roadmap.md`, `nero_physical_ai_progress.md` — program roadmap and status.
 - `component_implementation_map.md` — component → owning package → docs routing.
+- `checklist.md`, `errors_and_fixes.md`, `open_questions.md` — cross-sprint development follow-ups
+  that do not belong to a single sprint folder.
 - `sprintN/` — each sprint: `README.md` (target), `checklist.md`, `errors_and_fixes.md`,
   `open_questions.md`, and `planning/` for the valuable insight docs.
 - **Current sprint:** `sprint6/` (Activity-DAG coordinator, dual-arm teach, duo trajectory sync).
@@ -27,4 +30,5 @@ A stable, reproducible Duo runtime moving toward coordinated dual-arm (and dual-
 - How to run the system (launch + arguments, teach loop) → `../control/`
 - Component / runtime / OmniHand / control architecture → `../assets/`
 - Human repository structure & architecture → `../project/`
+- Cross-repo checklist / fixes / open questions → `../checklist.md`, `../errors_and_fixes.md`, `../open_questions.md`
 - Agent workflow, naming, and ROS2-practice rules → `.claude/rules/` and `.github/instructions/`

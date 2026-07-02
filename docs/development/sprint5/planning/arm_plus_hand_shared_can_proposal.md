@@ -1,5 +1,8 @@
 # Proposal: Dual-CAN Bring-up for AgileX Nero Arm and AgiBot OmniHand Pro
 
+> Historical proposal: kept for Sprint 5 design context and transport investigation history.
+> Current operational bringup lives in `docs/control/bringup.md` and `docs/assets/omnihand/omnihand_canfd_setup.md`.
+
 ## Context
 
 The current host is a Jetson/Ubuntu 22.04 system running an NVIDIA Tegra kernel. The AgileX Nero arm now works over SocketCAN after enabling the missing `gs_usb` kernel driver for the supplied USB-CAN adapter. The AgiBot OmniHand Pro is not yet usable through the same path because the current adapter/driver binding exposes only a classic CAN interface, while the OmniHand SDK path requires CAN FD frames.

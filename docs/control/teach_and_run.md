@@ -38,8 +38,20 @@ manager's default service/topic names match:
 bash ./scripts/activate_native_can.sh        # can_nero_right up (see Step A for the hand)
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
   can_port:=can_nero_right \
-  gravity_arm_side:=right          # bakes the real body mount into the gravity URDF
+  gravity_arm_side:=right \
+  effector_type:=omnihand
+# gravity_arm_side:=right bakes the real body mount (tilt) into the gravity URDF;
+# effector_type:=omnihand folds the ~1 kg OmniHand in as a rigid payload at the flange.
 ```
+
+> **`effector_type:=omnihand` is required when the OmniHand is mounted.** `gravity_arm_side` bakes the
+> body mount (tilt) into the gravity URDF, but the end-effector load is only folded in when
+> `effector_type:=omnihand` — that flag makes the gravity slice keep the hand (`use_right_hand:=true`)
+> and freezes its finger joints so the ~1 kg hand rides along as a rigid payload at the flange (verified:
+> the gravity URDF grows from 4.58 kg to 5.64 kg, +1.04 kg of hand). Without it, `gravity_arm_side` alone
+> builds a hand-less model and the arm sags/drifts under the real hand. It is otherwise harmless on this
+> bring-up: on the driver it only merges `feedback/omnihand/joint_states` into the combined
+> `feedback/joint_states` (no extra CAN traffic), and the teach loop reads `joint1..7` by name regardless.
 
 > **`gravity_arm_side:=right|left` is required for a body-mounted arm.** The arm base is tilted on the
 > torso (`body_to_right_arm_mount` in `duo_body.xacro` is a 90° pitch), so a gravity model built from the
@@ -73,6 +85,23 @@ free-runs without the arm).
 > stays live — recordings are sourced from `--source-joints` on that topic (same order as anchor
 > capture), not from `feedback/leader_joint_angles`. Tune `freedrive_kd` on hardware: raise if the arm
 > drifts/oscillates, lower if it feels sticky.
+
+> **Shared arm+hand CAN bus — keep the hand alive.** On the right side the arm and the OmniHand share one
+> physical bus (`can_nero_right`; there are only two mttcan channels, one per arm). The arm firmware pushes
+> feedback autonomously and the MIT controller adds 7 command frames per control cycle; the OmniHand's CANFD
+> IDs are high (low arbitration priority), so under arm load with `one-shot on` the hand loses arbitration,
+> its frames are dropped, and the bridge goes silent (`请求超时`) the moment the MIT controller starts — while
+> idle-hold is fine. To keep the hand alive on the shared bus:
+> - **first tests: keep `one-shot on` (the validated arm ENOBUFS mitigation) and just deepen the TX ring** —
+>   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
+>   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.
+> - keep `control_rate_hz` at its 100 Hz default (do **not** drop it — a lower rate risks hold instability);
+>   handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`) instead.
+> - only if the hand still starves under arm load, fall back to `ONE_SHOT=off` (lets hand frames retry) — but
+>   then watch the arm for ENOBUFS, since retransmission buildup returns.
+> - **`pub_rate` is not the bus lever:** it only sets the ROS republish rate of already-cached feedback (the
+>   arm firmware push rate is fixed), so lowering it does not reduce CAN traffic — it only makes teach
+>   recording sample staler feedback. Leave it at its default.
 
 ### 2. Run the teach manager
 

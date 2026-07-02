@@ -144,9 +144,10 @@ class O12ProSdkBackend:
         self._last_tactile_read_s = 0.0
         self._extra_fault_text = ""
 
-        # The vendor SocketCAN backend reads the interface ONLY from this env var
-        # (default "can0"). Export it before constructing the hand so it opens on
-        # the native side bus (e.g. can_nero_right) instead of can0.
+        # The vendor SocketCAN backend reads the interface ONLY from this env var.
+        # Export the repo-owned side-bus name explicitly so the hand opens on the
+        # public runtime interface (for example can_nero_right) instead of a legacy
+        # kernel-facing alias such as can0.
         if can_interface:
             os.environ["OMNIHAND_SOCKETCAN_IFACE"] = can_interface
 
@@ -167,7 +168,7 @@ class O12ProSdkBackend:
         self.connected = True
         self.initialized = True
         self.status_text = (
-            f"o12 pro sdk backend ready (can_interface={can_interface or 'can0(default)'}, "
+            f"o12 pro sdk backend ready (can_interface={can_interface or 'can_nero_right(default)'}, "
             f"device_id={device_id})"
         )
         try:

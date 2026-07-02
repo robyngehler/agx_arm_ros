@@ -58,7 +58,7 @@ Key point: the 200 Hz publish thread is **RX/CPU work, not CAN TX**. `get_*` ret
 ## 3. Single-arm chain (e.g. `standalone` profile)
 
 Processes: 1× `move_group` · 1× `mit_controller` · 1× `agx_arm_ctrl_single_node` (one CAN
-channel, e.g. `can_nero`).
+channel, e.g. `can_nero_right`).
 
 ```
 RViz/MoveIt plan

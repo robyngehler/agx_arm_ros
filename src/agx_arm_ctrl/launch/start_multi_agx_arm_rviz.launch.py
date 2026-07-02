@@ -273,7 +273,11 @@ def generate_launch_description():
                 choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
                 description="Repo-owned execution preset for shared Duo RViz debug.",
             ),
-            DeclareLaunchArgument("can_port", default_value="can0"),
+            DeclareLaunchArgument(
+                "can_port",
+                default_value="can_nero_right",
+                description="Fallback single-port argument for shared RViz debug. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.",
+            ),
             DeclareLaunchArgument("arm_type", default_value="nero", choices=["nero"]),
             DeclareLaunchArgument(
                 "moveit_profile",

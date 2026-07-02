@@ -241,7 +241,7 @@ Example active-joint set for the left hand:
 - `left_pinky_abad_joint`
 - `left_pinky_pip_joint`
 
-The backend maps those local names to the vendor-declared active-joint order already recorded in `docs/assets/omnihand/omnihand_phase1_joint_map.md`.
+The backend maps those local names to the vendor-declared active-joint order recorded in `docs/assets/omnihand/omnihand_active_joint_map.md`.
 
 ### Topics, Actions, And Services
 

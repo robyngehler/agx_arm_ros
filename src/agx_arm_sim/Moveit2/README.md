@@ -20,10 +20,12 @@ ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-   can_port:=can0 \
+   can_port:=can_nero_right \
    arm_type:=nero \
    effector_type:=agx_gripper
 ```
+
+旧的公开运行时名称如 `can0`、`can_nero` 仅可视为历史痕迹；当前对外运行时接口请统一使用 `can_nero_right` 或 `can_nero_left`。
 
 ## 为什么保留本目录
 

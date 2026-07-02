@@ -12,16 +12,33 @@ sudo apt update && sudo apt install can-utils ethtool
 
 这两个工具用于配置 CAN 模块
 
-## 0 推荐工作流：`prepare_can_interfaces.py`
+## 0 当前原生工作流：`activate_native_can.sh`
 
-推荐优先使用仓库内的角色化准备脚本：`scripts/prepare_can_interfaces.py`。
+当前 Duo 真机基线路径优先使用 Jetson 原生 `mttcan` side bus 上的 `scripts/activate_native_can.sh`。这也是 `docs/control/bringup.md` 和当前 arm-plus-hand 运行时采用的路径。
+
+```bash
+cd ~/agx_arm_ws/src/agx_arm_ros
+sudo bash scripts/activate_native_can.sh
+ip -details link show can_nero_right
+```
+
+它会应用当前已验证的 side-bus 映射：
+
+- `can0 -> can_nero_right`
+- `can1 -> can_nero_left`
+
+`scripts/prepare_can_interfaces.py` 保留用于 USB CAN 或 CAN FD 适配器、fallback bringup 和 bench 场景。像 `can0`、`can_nero` 这样的旧公开运行时名称不应再作为 `can_port` 使用。
+
+## 1 USB 角色化工作流：`prepare_can_interfaces.py`
+
+当你走 USB 适配器路径时，推荐使用仓库内的角色化准备脚本：`scripts/prepare_can_interfaces.py`。
 
 该脚本会读取 `config/can_interface_roles.json` 中的角色配置，并自动完成以下操作：
 
 - 枚举当前 Linux CAN 接口和 USB `bus-info`
 - 按角色解析目标接口（当前默认角色包含 `nero`、`effector`、`omnihand`）
 - 配置 classic CAN / CAN FD 波特率
-- 按配置重命名接口，例如 `can_nero`、`can_effector`、`can_omnihand`
+- 按配置重命名接口，例如 `can_nero_right`、`can_effector`、`can_omnihand`
 - 设置 `restart-ms` 与 `txqueuelen`
 
 建议在仓库根目录执行：
@@ -47,9 +64,9 @@ python3 scripts/prepare_can_interfaces.py --roles nero
 
 如果执行脚本时出现 `ip: command not found`，请安装 `ip` 指令，一般是 `sudo apt-get install iproute2`。
 
-以下章节保留旧的 USB `can_activate.sh` 手工流程以兼容既有方式；原生机械臂与 OmniHand 请使用 `scripts/activate_native_can.sh`。
+以下章节保留旧的 USB `can_activate.sh` 手工流程以兼容既有方式。
 
-## 1 寻找can模块
+## 2 寻找can模块
 
 执行
 
@@ -90,7 +107,7 @@ Interface can0 is connected to USB port 3-1.1:1.0
 Both ethtool and can-utils are installed.
 ```
 
-## 2 激活单个can模块, **此处使用`can_activate.sh`脚本**
+## 3 激活单个can模块, **此处使用`can_activate.sh`脚本**
 
 (1) 查看can模块插在usb端口的硬件地址。拔掉所有can模块，只将连接到机械臂的can模块插入PC，执行
 

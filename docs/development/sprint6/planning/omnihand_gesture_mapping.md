@@ -9,9 +9,9 @@
 > joints)**, not the O10 10-joint hand this inventory was written for. The 18
 > vendor gestures and 10-element vectors below are **O10-only** and must not be
 > reused for the Pro as-is — the Pro adds real `thumb_pip` and `*_mcp` curl joints
-> and drops `ring_abad`/`pinky_abad`. See
-> [proposal_omnihand_pro_migration.md](../../../assets/omnihand/proposal_omnihand_pro_migration.md)
-> §5.4 (joint order) and §9 (skill-layer migration).
+> and drops `ring_abad`/`pinky_abad`. Keep the live skill layer anchored in the
+> repo-owned O12 preset files and current bridge/runtime validation docs, not in
+> the older O10 migration notes.
 >
 > Source of truth for live presets:
 > - `o12_pro`: `src/agx_arm_ctrl/config/omnihand_pro_gestures.yaml` (12 joints;
@@ -21,7 +21,7 @@
 >
 > Load them model-aware: `resolve_gesture_presets(side, get_hand_model("o12_pro"))`.
 > A calibrated O12 grasp/skill table still needs to be produced on the Pro
-> hardware (proposal §9.2) before the skill controller can use named grasp poses.
+> hardware before the skill controller can use named grasp poses.
 
 ---
 

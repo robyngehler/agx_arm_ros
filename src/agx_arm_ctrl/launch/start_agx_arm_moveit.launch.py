@@ -277,7 +277,11 @@ def generate_launch_description():
                 choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
                 description="Repo-owned execution preset that resolves mounted Duo model, prefixes, and supported hand wiring from one choice.",
             ),
-            DeclareLaunchArgument("can_port", default_value="can0"),
+            DeclareLaunchArgument(
+                "can_port",
+                default_value="can_nero_right",
+                description="CAN port used by the wrapped AGX Arm node. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.",
+            ),
             DeclareLaunchArgument("arm_type", default_value="nero", choices=["nero"]),
             DeclareLaunchArgument(
                 "moveit_profile",

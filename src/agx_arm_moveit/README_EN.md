@@ -103,12 +103,15 @@ This calls `scripts/apply_simple_obstacles.py` and seeds the planning scene from
 
 ### 2.2 Control the real arm
 
+For the current operational launch matrix, CAN naming, and teach-vs-MoveIt split, use `../../docs/control/bringup.md` as the source of truth. The examples below mirror the current right-side native path.
+
 Recommended common bringup for native MIT execution:
 
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit \
-  can_port:=can_nero \
+  execution_profile:=right_arm \
+  can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=agx_gripper \
   load_simple_obstacles:=true
@@ -118,7 +121,8 @@ Canonical combined MoveIt wrapper:
 
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
-  can_port:=can_nero \
+  execution_profile:=right_arm \
+  can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=agx_gripper \
   load_simple_obstacles:=true
@@ -128,7 +132,7 @@ Compatibility wrapper with the older combined launch name:
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=agx_gripper \
   load_simple_obstacles:=true
@@ -140,7 +144,7 @@ Revo2 example:
 
 ```bash
 ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=revo2 \
   revo2_type:=left
@@ -151,7 +155,7 @@ The shared config-based wrappers now resolve the first per-arm OmniHand bringup 
 ```bash
 ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
   execution_profile:=right_hand \
-  can_port:=can_right \
+  can_port:=can_nero_right \
   follow:=true \
   use_rviz:=false
 ```
@@ -163,7 +167,7 @@ Recommended split-launch flow if you want to keep the MIT soft-trajectory path w
 ```bash
 # Terminal 1
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-  can_port:=can_nero \
+  can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=agx_gripper \
   publish_gripper_joint:=false
@@ -204,7 +208,7 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   moveit_profile:=both_arms \
   custom_model:=/home/user/workspace/agx_arm_ros/src/duo_body_description/urdf/duo_system.urdf.xacro \
   custom_model_xacro_args:='use_left_arm:=true use_left_hand:=false use_right_arm:=true use_right_hand:=false' \
-  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: false}, {name: right_arm, namespace: right_arm, can_port: can_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: false}]' \
+  arm_instances:='[{name: left_arm, namespace: left_arm, can_port: can_nero_left, joint_prefix: left_arm_, feedback_joint_prefix: left_arm_, launch_driver: false}, {name: right_arm, namespace: right_arm, can_port: can_nero_right, joint_prefix: right_arm_, feedback_joint_prefix: right_arm_, launch_driver: false}]' \
   planning_pipelines:=ompl
 ```
 
