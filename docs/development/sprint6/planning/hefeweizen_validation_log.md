@@ -74,9 +74,9 @@ to a clean `components.launch`. See `session_handoff_2026-06-29.md`.
 - **Pose-capture tool added** (`agx_arm_capture_anchor_pose`, `agx_arm_mit_demos`):
   snapshots the live arm joint vector into a named `arm_config.yaml` anchor pose,
   comment-preserving. Offline-tested (update + insert). Completes the teach loop with
-  the existing leader recorder + performer. See `teach_and_run_right_side.md`.
+  the existing leader recorder + performer. See `../../../control/teach_and_run.md`.
 - Still NOT run on hardware here: live arm motion, the skill controller against the
-  Pro hand, RViz. Those are the right-side bring-up steps in `teach_and_run_right_side.md`.
+  Pro hand, RViz. Those are the right-side bring-up steps in `../../../control/teach_and_run.md`.
 
 ## 2026-06-30 — central teach tool + cleanup (development host)
 
@@ -94,7 +94,7 @@ to a clean `components.launch`. See `session_handoff_2026-06-29.md`.
 - **Stable-doc drift reconciled:** `omnihand_asset_validation.md` and `basic_control_scripts.md` no
   longer say "mock-only" / "10 active joints" (the `backend_type:=sdk` O12 path is validated on the
   Jetson); vendor repo-rename note (`agillink_omnihand_sdk`) added to `omnihand_vendor_sdk_aarch64.md`;
-  `teach_and_run_right_side.md` now states the arm-execution seam honestly (per-arm via `action_name`
+  `../../../control/teach_and_run.md` now states the arm-execution seam honestly (per-arm via `action_name`
   override; `both_arms` is planning-only with no execution controller yet).
 - **Validated here (no ROS/hardware):** `py_compile` clean on the new modules + `models.py`; the
   converter downsampling exercised directly (endpoints preserved, monotone, ≤ max_points).

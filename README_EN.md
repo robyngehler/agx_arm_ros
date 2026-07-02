@@ -122,7 +122,7 @@ python3 scripts/prepare_can_interfaces.py --roles nero --dry-run
 python3 scripts/prepare_can_interfaces.py --roles nero
 ```
 
-If you need to pin a specific USB port or Linux interface, add `--nero-can-interface 1-4.2:1.0` or `--nero-can-interface can0`. To prepare both the arm and OmniHand together, use `--roles nero,omnihand`. The native arms and OmniHand use `scripts/activate_native_can.sh` (see docs/assets/control/basic_control_scripts.md). The legacy USB `can_activate.sh` flow remains in the CAN guide.
+If you need to pin a specific USB port or Linux interface, add `--nero-can-interface 1-4.2:1.0` or `--nero-can-interface can0`. To prepare both the arm and OmniHand together, use `--roles nero,omnihand`. The native arms and OmniHand use `scripts/activate_native_can.sh` (see docs/control/bringup.md). The legacy USB `can_activate.sh` flow remains in the CAN guide.
 
 
 ### Launch Driver

@@ -122,7 +122,7 @@ python3 scripts/prepare_can_interfaces.py --roles nero --dry-run
 python3 scripts/prepare_can_interfaces.py --roles nero
 ```
 
-若需要显式绑定某个 USB 口或 Linux 接口，可额外传入 `--nero-can-interface 3-1.4:1.0` 或 `--nero-can-interface can0`。当同时准备机械臂和 OmniHand 时，可使用 `--roles nero,omnihand`。原生机械臂与 OmniHand 使用 `scripts/activate_native_can.sh`（见 docs/assets/control/basic_control_scripts.md）；兼容旧流程的 USB `can_activate.sh` 仍保留在 [CAN 配置指南](./docs/CAN_USER.md) 中。
+若需要显式绑定某个 USB 口或 Linux 接口，可额外传入 `--nero-can-interface 3-1.4:1.0` 或 `--nero-can-interface can0`。当同时准备机械臂和 OmniHand 时，可使用 `--roles nero,omnihand`。原生机械臂与 OmniHand 使用 `scripts/activate_native_can.sh`（见 docs/control/bringup.md）；兼容旧流程的 USB `can_activate.sh` 仍保留在 [CAN 配置指南](./docs/CAN_USER.md) 中。
 
 ### 启动驱动
 

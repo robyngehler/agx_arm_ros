@@ -1,22 +1,22 @@
-# Teach + Run — Right Side (Hefeweizen, hardware-first)
+# Teach + Run (hardware-first)
 
-How to make the Hefeweizen task executable on the **right side** (the side currently
-wired: `can_nero_right` up, hand + right arm via `nero_right_arm`) by **reusing** the
-existing MIT demo/tools instead of building new motion code. The architecture stays
-dual-arm; the left side mirrors this once it is connected.
+How to teach and run coordinated arm(+hand) motions — single arm, either side, or both arms
+simultaneously — by **reusing** the MIT demo/tools instead of building new motion code. Examples use
+the right side (`can_nero_right`); the left side and dual-arm mirror the same commands (see
+[bringup.md](bringup.md) for the argument matrix).
 
 ## Tool reuse map (no new motion stack)
 
-| Need | Reused tool | Package |
+| Need | Tool | Package |
 |---|---|---|
-| freedrive / leader mode + record a motion | `agx_arm_record_leader_trajectory` | `agx_arm_mit_demos` |
+| freedrive + record a motion | `agx_arm_record_leader_trajectory` | `agx_arm_mit_demos` |
 | play a recorded motion | `agx_arm_execute_saved_trajectory` | `agx_arm_mit_demos` |
-| **save a single joint config as a named anchor pose** | `agx_arm_capture_anchor_pose` *(new, this sprint)* | `agx_arm_mit_demos` |
+| save a joint config as a named anchor pose | `agx_arm_capture_anchor_pose` | `agx_arm_mit_demos` |
 | arm execution (plan + execute) | MoveIt `move_group` (per-arm MIT controllers via `moveit_mit`) | `agx_arm_moveit` |
 | hand grasp/open/release as a skill | `omnihand_skill_controller` | `agx_arm_ctrl` |
 | order arm + hand actions (DAG) | coordinator | `agx_arm_coordination` |
-| recorded JSON → catalogue `waypoints` | `agx_arm_recorded_to_catalogue` *(new)* | `agx_arm_mit_demos` |
-| **all of the above from one keyboard UI** | `agx_arm_teach_manager` *(new)* | `agx_arm_mit_demos` |
+| recorded JSON → catalogue `waypoints` | `agx_arm_recorded_to_catalogue` | `agx_arm_mit_demos` |
+| **all of the above from one keyboard UI** | `agx_arm_teach_manager` | `agx_arm_mit_demos` |
 
 ## Primary path: the teach manager
 
@@ -185,10 +185,10 @@ merged feedback carries both arms, the moving arm's plan is collision-aware agai
 Making the idle arm actively **make space / dodge** is a planning-time decision (a `both_arms` goal
 that constrains only the working arm and leaves the other free) — coordinator policy, not a replay.
 
-## Step A — bring up the right side
+## Step A — bring up the side (example: right)
 
 ```bash
-# clean system-python build (see python_environment_workflow.md); the ~/.local cmake shim
+# clean system-python build (see ../project/python_environment_workflow.md); the ~/.local cmake shim
 # must not shadow /usr/bin/cmake for ament_cmake packages.
 bash ./scripts/colcon_build_system_python.sh --packages-select \
   agx_arm_msgs agx_arm_ctrl agx_arm_coordination agx_arm_mit_controller agx_arm_mit_demos
@@ -225,7 +225,7 @@ ros2 run agx_arm_mit_demos agx_arm_capture_anchor_pose \
   with the group's `joint_names` (the `_R` half of `both_arms`).
 - Default source topic is `feedback/joint_states` (override with `--source-topic`).
 - Repeat for every `*_R` anchor. Rebuild `agx_arm_coordination` (or symlink-install) afterwards.
-- Record the measured vectors in `hefeweizen_validation_log.md`.
+- Record the measured vectors in `../development/sprint6/planning/hefeweizen_validation_log.md`.
 
 ## Step C — teach the functional trajectories (cap opener, pour)
 
@@ -293,7 +293,7 @@ ros2 topic echo /feedback/joint_states                # effort[] = measured moto
 
 Persist the values that work into `nero_mit_controller_defaults.yaml`.
 
-## Calibration still owed on hardware (see hefeweizen_validation_log.md)
+## Calibration still owed on hardware (see ../development/sprint6/planning/hefeweizen_validation_log.md)
 
 - replace the `zero` / `fist_vendor_demo` presets with measured O12 `open` / glass / bottle
   grasp poses; tactile `contact_threshold` / `stable_samples` per object (mock tactile is all

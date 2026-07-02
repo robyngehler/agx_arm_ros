@@ -33,7 +33,7 @@ can_port:=can_nero_right``)::
         --arms left_arm right_arm \\
         --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 
-See ``docs/development/sprint6/planning/teach_and_run_right_side.md``.
+See ``docs/control/teach_and_run.md``.
 """
 
 from __future__ import annotations

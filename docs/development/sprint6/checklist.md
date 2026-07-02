@@ -36,7 +36,7 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
       recorded waypoints teach-on-hardware via `arm_executor.py` + `config/arm_config.yaml`).
 - [x] teach tooling for anchor poses: `agx_arm_capture_anchor_pose` (`agx_arm_mit_demos`) snapshots
       the live joint vector into `arm_config.yaml`, reusing the leader recorder + performer.
-      Right-side runbook in `planning/teach_and_run_right_side.md`.
+      Right-side runbook in `../../control/teach_and_run.md`.
 - [x] central teach tool `agx_arm_teach_manager` (`agx_arm_mit_demos`): one keyboard UI for
       freedrive/record/playback + anchor capture (`a`) + recorded→catalogue waypoint conversion
       (`w`), modelled on the wakeword motion manager. Standalone converter:
