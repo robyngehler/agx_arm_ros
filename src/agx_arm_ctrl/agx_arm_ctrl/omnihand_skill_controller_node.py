@@ -4,7 +4,7 @@
 This node (one per side, launched as ``/left_hand/omnihand_skill_controller`` /
 ``/right_hand/...``) turns a *semantic* ``skill_name`` into a vendor-agnostic
 motion confirmed by tactile feedback, and holds/releases according to policy.
-It is sprint 6 "missing piece 1+2" and the bottom of the coordinator stack.
+It is the bottom of the coordinator stack.
 
 Contract (see docs/development/sprint6/planning/hand_skill_backend_mapping.md):
 
@@ -23,7 +23,7 @@ Contract (see docs/development/sprint6/planning/hand_skill_backend_mapping.md):
   action, so it never blocks arm+hand resources on the same side bus.
 
 Transport: hand skills ride on ``agx_arm_msgs/action/PerformAction`` (no
-dedicated HandSkill.action for the MVP). The goal's ``metadata_json`` carries
+dedicated HandSkill.action). The goal's ``metadata_json`` carries
 ``skill_name``, ``contact_sensors``, ``contact_threshold``, ``stable_samples``,
 ``timeout_sec``, ``completion_policy`` and ``fallback_policy``.
 """

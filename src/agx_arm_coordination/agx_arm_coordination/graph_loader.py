@@ -1,10 +1,9 @@
-"""YAML-backed activity/catalogue loader (the MVP database-bridge replacement).
+"""YAML-backed activity/catalogue loader (database-bridge replacement).
 
-Architecture decision §8: for the MVP the activity graph + catalogue live in
-version-controlled YAML, behind the SAME logical service contract the reference
-``db_bridge`` exposes — ``get_activity_plan`` / ``validate_activity`` /
-``get_action_detail``. A real database can replace this loader later without any
-coordinator change.
+The activity graph + catalogue live in version-controlled YAML, behind the same
+logical service contract a ``db_bridge`` exposes — ``get_activity_plan`` /
+``validate_activity`` / ``get_action_detail``. A real database can replace this
+loader later without any coordinator change.
 
 Layout (installed to the package share/config):
 

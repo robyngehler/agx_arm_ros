@@ -1,6 +1,6 @@
 """Performer routing — which executor runs a given catalogue action.
 
-Coordinator-internal for the MVP (architecture decision §8): the coordinator
+Coordinator-internal: the coordinator
 calls :func:`route` to decide whether an action is a hand skill (dispatched as a
 ``PerformAction`` goal to the matching ``omnihand_skill_controller``) or an arm
 trajectory (dispatched to the MoveIt multi-arm slice via MoveGroup /

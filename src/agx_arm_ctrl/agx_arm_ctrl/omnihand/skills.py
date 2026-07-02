@@ -6,7 +6,7 @@ can be unit-tested without a running ROS graph: the semantic skill catalogue
 (raw vendor tactile vector -> per-object ``contact_score``), and the small
 helpers the node's state machine leans on.
 
-Design contract (sprint 6, ``hand_skill_backend_mapping.md``):
+Design contract (``hand_skill_backend_mapping.md``):
 
 - the public layer only ever sees the semantic ``skill_name``; the
   ``skill_name -> {motion, target preset}`` mapping lives here / in

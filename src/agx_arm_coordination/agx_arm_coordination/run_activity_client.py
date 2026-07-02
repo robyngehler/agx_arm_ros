@@ -4,8 +4,8 @@
     ros2 run agx_arm_coordination run_activity --activity hands_open_close_release_v1
 
 Sends a PerformActivity goal to ``execute_activity``, streams feedback, and
-prints the structured result. Handy for sprint-6 Step 4/5 bring-up without
-writing a bespoke client each time.
+prints the structured result. Handy for coordinator bring-up without writing a
+bespoke client each time.
 """
 
 from __future__ import annotations

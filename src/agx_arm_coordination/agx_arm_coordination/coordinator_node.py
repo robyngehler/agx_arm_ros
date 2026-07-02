@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Activity-DAG coordinator for the Duo Nero system.
 
-Loads a named activity graph (YAML-backed, decision §8), validates it, then runs
+Loads a named activity graph (YAML-backed), validates it, then runs
 a frontier scheduler that serializes by resource token, releases ``sync_flag``
 barrier groups together, and dispatches each node through its coordinator-internal
 performer:

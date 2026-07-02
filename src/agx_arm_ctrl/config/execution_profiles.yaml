@@ -60,9 +60,8 @@ profiles:
   # natively). The coordinator dispatches arm motions through MoveGroup /
   # ExecuteTrajectory on this same slice — there is no separate both_arms controller.
   #
-  # launch_driver:true so this slice owns the per-arm agx_arm_ctrl driver bring-up
-  # (the deleted start_both_arms_execution.launch.py previously owned it). The driver
-  # is what reads CAN and publishes /<side>_arm/feedback/joint_states, which the
+  # launch_driver:true so this slice owns the per-arm agx_arm_ctrl driver bring-up:
+  # the driver reads CAN and publishes /<side>_arm/feedback/joint_states, which the
   # joint_state_merger prefixes into /feedback/prefixed_joint_states for move_group.
   # can_port must be set per side when launch_driver is true (validated in
   # start_agx_arm_moveit.launch.py); values mirror duo_motion_registry arm.sides.*.can_port.
