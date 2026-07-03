@@ -34,7 +34,7 @@ multi-arm path differ in interaction frequency, and why ENOBUFS shows up almost 
 | `[cache]` | reads driver state updated by the background RX thread (no CAN request) |
 
 Default rates (from `start_agx_arm_components.launch.py`):
-`pub_rate = 200` (agx_arm_ctrl feedback), `mit_control_rate_hz = 100` (MIT command stream).
+`pub_rate = 200` (agx_arm_ctrl feedback), `mit_control_rate_hz = 50` (MIT command stream).
 
 ---
 

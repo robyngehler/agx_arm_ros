@@ -75,7 +75,13 @@ def generate_launch_description():
         "execution_profile",
         default_value="manual",
         choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
-        description="Repo-owned execution preset for the wrapped debug and MoveIt launches.",
+        description=(
+            "Repo-owned execution preset for the wrapped debug and MoveIt launches. "
+            "This is the normal source of truth for Duo slice selection: the preset resolves the mounted "
+            "model, arm/hand composition, prefixes/frames, and the custom_model/custom_model_xacro_args "
+            "that the downstream MIT launch uses to derive the gravity URDF. Prefer updating the preset "
+            "configuration over reconstructing the same slice through ad hoc per-command overrides."
+        ),
     )
     arm_type_arg = DeclareLaunchArgument(
         "arm_type",

@@ -89,7 +89,10 @@ free-runs without the arm).
 > feedback) **and** playback (would need `right_arm_joint1..7`) work. Keep the whole teach loop
 > unprefixed: launch **without** `input_joint_prefix` and pass `--source-joints joint1,…,joint7`. The
 > `input_joint_prefix:=right_arm_` argument belongs to the dual-arm **MoveIt** slice, where MoveIt/the
-> coordinator send `right_arm_`-prefixed goals — not to this bring-up.
+> coordinator send `right_arm_`-prefixed goals — not to this bring-up. (The reverse direction works
+> since 2026-07-03: a **prefixed** MoveIt bring-up also accepts trajectories with the raw
+> `joint1..7` names, so teach-manager playback over the debug topic runs against the same
+> `moveit_mit` slice used for transitions — pass `enable_debug_joint_trajectory_topic:=true`.)
 
 > **Freedrive = software leader mode (mounting-pose aware).** The teach manager no longer uses the
 > firmware drag mode (`set_leader_mode`): that mode compensates gravity in firmware with **no** hook
@@ -136,18 +139,67 @@ free-runs without the arm).
 ros2 run agx_arm_mit_demos agx_arm_teach_manager --arm-config src/agx_arm_coordination/config/arm_config.yaml --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 ```
 
+For first hardware playback tests, add a slower speed scale and a lead-in from the current hold pose:
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_teach_manager \
+  --arm-config src/agx_arm_coordination/config/arm_config.yaml \
+  --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7 \
+  --playback-speed-scale 0.25 \
+  --playback-lead-in-sec 2.0 \
+  --publish-repetitions 1
+```
+
+- `--playback-speed-scale`: direct teach-manager replay speed; `0.25` = quarter-speed, `1.0` = recorded speed.
+- `--playback-lead-in-sec`: inserts a linear blend from the current hold pose to the first recorded waypoint, so the start is not limited to the raw recorded first sample.
+- `--publish-repetitions 1`: recommended for cautious first tests; repeated debug publishes restart the same debug trajectory.
+
 > `--source-joints` are the joint names **as they appear on `feedback/joint_states`** — on this
 > un-namespaced, unprefixed bring-up that is `joint1..joint7` (the tool prints the names it sees if one
 > is missing). Recordings and anchor captures are stored in this order; align the captured vector with
 > the group's `joint_names` when you convert to catalogue waypoints for the dual-arm slice.
 
 Keys: `i` idle/freedrive · `r` record (`n` to record) · `p` playback (`f` to play, `c` cancel) ·
-`a` capture current pose → named anchor in `arm_config.yaml` · `w` convert the selected recording →
-catalogue `waypoints` · `[`/`]` select recording · `s`/`h`/`q`.
+`t` transitions (`f` to plan selected anchor target, `f` again to execute the cached MoveIt plan, `c`
+to clear it) · `a` capture current pose → named anchor in `arm_config.yaml` · `w` convert the selected
+recording → catalogue `waypoints` · `[`/`]` select recording or anchor target · `s`/`h`/`q`.
 
 Internally the manager **reuses** the same building blocks as the CLIs below (the leader recorder,
 saved-trajectory executor, `capture_anchor_pose`'s averaging, and `recorded_to_catalogue`) — no
 duplicated motion code. The individual CLIs remain for scripted/one-shot use.
+
+### Current playback scaling behavior
+
+- Teach-manager `f` playback is **direct MIT replay**, not MoveIt: it republishes the recorded trajectory to the controller's debug `~/joint_trajectory` input.
+- Anchor-pose transitions are **not** played inside the teach manager. Those are tested through the MoveIt/coordinator path, where `velocity_scaling` and `acceleration_scaling` already slow the `MoveGroup` request.
+- Direct recorded playback now has two explicit runtime levers: `--playback-speed-scale` stretches all recorded timestamps, and `--playback-lead-in-sec` inserts a current-pose entry segment before the first recorded waypoint.
+- The controller still validates the start state. Without a lead-in, the first recorded pose must be within `start_state_tolerance` of the current pose or the replay is rejected.
+
+### MoveIt-backed anchor transition tests from the teach manager
+
+- Start the normal MoveIt+MIT slice first, for example `start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=right_arm` or `execution_profile:=duo_arm`.
+- Use the `execution_profile` as the mounted-slice ground truth. That preset resolves the Duo model,
+  arm/hand composition, prefixes/frames, and the downstream gravity slice. If a different mounted
+  assembly is needed, change `src/agx_arm_ctrl/config/execution_profiles.yaml` instead of rebuilding the
+  same selection through one-off top-level launch arguments.
+- Enter `t` transitions mode in the teach manager. The manager reads `arm_config.yaml`, derives the
+  matching anchor targets for the current session (`right_arm`, `left_arm`, and when available
+  `both_arms`), and keeps the arm controllers in MIT hold rather than freedrive.
+- Use `[` and `]` to select the target anchor pose.
+- First `f` sends a `MoveGroup` request with `plan_only=true` and caches the resulting trajectory.
+- Second `f` sends that cached `RobotTrajectory` through `ExecuteTrajectory`.
+
+Conservative defaults are exposed directly on the teach manager CLI:
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_teach_manager \
+  --arm-config src/agx_arm_coordination/config/arm_config.yaml \
+  --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7 \
+  --transition-velocity-scaling 0.10 \
+  --transition-acceleration-scaling 0.10
+```
+
+This is the clean path to test anchor-pose actions before building activities out of them.
 
 ## The execution seam (coordinator → MoveIt slice)
 
@@ -164,9 +216,17 @@ natively (its `MoveItSimpleControllerManager` splits by joint membership).
   (collision-aware plan + execute, `/move_action`) or `moveit_msgs/ExecuteTrajectory`
   (`/execute_trajectory`). The planning group + joint names come from the motion registry;
   `arm_config.yaml` only carries the group list, the two MoveIt action names, poses, and defaults.
+- For recorded `waypoints`, the coordinator now stretches `time_from_start_sec` by the more conservative
+  of `velocity_scaling` and `acceleration_scaling`. Example: `0.10` means roughly 10x slower timing than
+  the taught timestamps.
 - The hand is driven by `omnihand_skill_controller` (semantic skill → vendor preset → SDK),
   **not** by MoveIt. MoveIt only models the arm; the O12 hand description was migrated so the
   model is clean, but the demo does not MoveIt-plan the fingers.
+
+> `entry_pose` on recorded catalogue actions is currently descriptive routing metadata, not an enforced
+> runtime precondition by itself. The safe path is therefore: test the recorded motion directly in the
+> teach manager first, then run it in an activity only after the preceding anchor transition is taught and
+> validated.
 
 > Use `arm_dry_run:=true` on the coordinator until anchor poses + recorded waypoints are taught;
 > the joint vectors below are still placeholders. If `move_group` runs under a namespace, override

@@ -45,13 +45,21 @@ class JointTrajectoryBuffer:
     ) -> "JointTrajectoryBuffer":
         joint_names = tuple(getattr(msg, "joint_names", []))
         if input_joint_prefix:
+            # A prefixed bring-up (e.g. the MoveIt duo slice with
+            # input_joint_prefix=right_arm_) must also accept trajectories that
+            # already carry the raw controller joint names — teach-loop
+            # recordings are stored as joint1..7 and replayed over the debug
+            # topic against the same controller. Only names that are neither
+            # prefixed nor raw are rejected.
+            expected_set = set(expected_joint_names)
             unprefixed_joint_names = [
                 name for name in joint_names if not name.startswith(input_joint_prefix)
             ]
-            if unprefixed_joint_names:
+            if unprefixed_joint_names and not all(name in expected_set for name in joint_names):
                 raise ValueError(
                     f"joint_names mismatch, expected all names to start with "
-                    f"{input_joint_prefix!r}, got {list(joint_names)}"
+                    f"{input_joint_prefix!r} or match the raw controller joint names, "
+                    f"got {list(joint_names)}"
                 )
         normalized_joint_names = tuple(
             name[len(input_joint_prefix):]

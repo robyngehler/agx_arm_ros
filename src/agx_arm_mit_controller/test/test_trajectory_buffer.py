@@ -76,3 +76,36 @@ def test_joint_trajectory_buffer_rejects_mixed_prefixed_joint_names():
         assert "joint_names mismatch" in str(exc)
     else:
         raise AssertionError("Expected ValueError for mixed prefixed joint_names")
+
+
+def test_joint_trajectory_buffer_accepts_raw_names_on_prefixed_bringup():
+    # Teach-loop recordings carry the raw controller names (joint1..7) and are
+    # replayed over the debug topic against a MoveIt bring-up that runs with
+    # input_joint_prefix=right_arm_ — both spellings must be accepted.
+    msg = SimpleNamespace(
+        joint_names=["joint1", "joint2"],
+        points=[make_point(1, [1.0, 2.0])],
+    )
+
+    buffer = JointTrajectoryBuffer.from_ros_message(
+        ["joint1", "joint2"],
+        msg,
+        input_joint_prefix="right_arm_",
+    )
+
+    assert buffer.initial_point.positions == (1.0, 2.0)
+
+
+def test_joint_trajectory_buffer_still_accepts_prefixed_names():
+    msg = SimpleNamespace(
+        joint_names=["right_arm_joint1", "right_arm_joint2"],
+        points=[make_point(1, [1.0, 2.0])],
+    )
+
+    buffer = JointTrajectoryBuffer.from_ros_message(
+        ["joint1", "joint2"],
+        msg,
+        input_joint_prefix="right_arm_",
+    )
+
+    assert buffer.initial_point.positions == (1.0, 2.0)

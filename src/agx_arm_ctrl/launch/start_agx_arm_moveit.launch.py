@@ -275,7 +275,12 @@ def generate_launch_description():
                 "execution_profile",
                 default_value="manual",
                 choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
-                description="Repo-owned execution preset that resolves mounted Duo model, prefixes, and supported hand wiring from one choice.",
+                description=(
+                    "Repo-owned execution preset that resolves the mounted Duo model, arm/hand composition, "
+                    "prefix/frame defaults, and supported hand wiring from one choice. In the normal wrapper "
+                    "path this preset is also what determines the custom_model/custom_model_xacro_args passed "
+                    "down to each MIT instance, which in turn controls how the gravity URDF is derived."
+                ),
             ),
             DeclareLaunchArgument(
                 "can_port",
@@ -324,7 +329,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_mit_controller", default_value="true", choices=["true", "false"]),
             DeclareLaunchArgument("use_rviz", default_value="true", choices=["true", "false"]),
             DeclareLaunchArgument("db", default_value="false", choices=["true", "false"]),
-            DeclareLaunchArgument("mit_control_rate_hz", default_value="100.0"),
+            DeclareLaunchArgument("mit_control_rate_hz", default_value="50.0"),
             DeclareLaunchArgument("mit_params_file", default_value=default_mit_params_file),
             DeclareLaunchArgument(
                 "planning_pipelines",

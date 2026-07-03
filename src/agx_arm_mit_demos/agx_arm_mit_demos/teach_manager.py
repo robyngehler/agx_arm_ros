@@ -39,25 +39,31 @@ See ``docs/control/teach_and_run.md``.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 import time
 from typing import Optional
 
+from action_msgs.msg import GoalStatus
+from moveit_msgs.action import ExecuteTrajectory, MoveGroup
+from moveit_msgs.msg import Constraints, JointConstraint, MotionPlanRequest, MoveItErrorCodes, RobotTrajectory
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Empty, SetBool, Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from builtin_interfaces.msg import Duration
 
 from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
 from agx_arm_mit_controller.trajectory_io import (
     RecordedTrajectory,
     load_recorded_trajectory,
+    recorded_to_joint_trajectory,
     sanitize_trajectory_name,
     save_recorded_trajectory,
 )
+from agx_arm_coordination.arm_executor import ArmConfig
 
 from .capture_anchor_pose import average_joint_positions, update_pose_in_config
 from .leader_trajectory_recorder import RecorderSnapshot, build_recorded_trajectory
@@ -69,10 +75,88 @@ class ManagerState(str, Enum):
     IDLE = "idle"
     RECORD = "record"
     PLAYBACK = "playback"
+    TRANSITIONS = "transitions"
+
+
+@dataclass(frozen=True)
+class TransitionTarget:
+    label: str
+    robot_id: str
+    planning_group: str
+    joint_names: tuple[str, ...]
+    pose_names: tuple[str, ...]
+    target_positions: tuple[float, ...]
 
 
 # Registry side order for a both_arms concatenation (left then right).
 _SIDE_ORDER = {"left_arm": 0, "right_arm": 1}
+
+
+def _transition_robot_ids(namespaces: list[str]) -> tuple[str, ...]:
+    ids: list[str] = []
+    names = [ns for ns in namespaces if ns]
+    if not names:
+        return ("right_arm",)
+    if {"left_arm", "right_arm"}.issubset(set(names)):
+        ids.append("both_arms")
+    for name in names:
+        if name in {"left_arm", "right_arm"}:
+            ids.append(name)
+    if not ids:
+        return ("right_arm",)
+    return tuple(dict.fromkeys(ids))
+
+
+def _pose_vector(config: ArmConfig, pose_names: tuple[str, ...]) -> tuple[float, ...]:
+    values: list[float] = []
+    for pose_name in pose_names:
+        if pose_name not in config.poses:
+            raise ValueError(f"unknown anchor pose '{pose_name}'")
+        values.extend(config.poses[pose_name])
+    return tuple(values)
+
+
+def _build_transition_targets(config: ArmConfig, namespaces: list[str]) -> list[TransitionTarget]:
+    targets: list[TransitionTarget] = []
+    for robot_id in _transition_robot_ids(namespaces):
+        group = config.groups.get(robot_id)
+        if group is None:
+            continue
+        if robot_id == "both_arms":
+            left = {name[:-2]: name for name in config.poses if name.endswith("_L")}
+            right = {name[:-2]: name for name in config.poses if name.endswith("_R")}
+            for stem in sorted(set(left) & set(right)):
+                pose_names = (left[stem], right[stem])
+                positions = _pose_vector(config, pose_names)
+                if len(positions) != len(group.joint_names):
+                    continue
+                targets.append(
+                    TransitionTarget(
+                        label=f"both_arms:{stem}",
+                        robot_id=robot_id,
+                        planning_group=group.planning_group,
+                        joint_names=group.joint_names,
+                        pose_names=pose_names,
+                        target_positions=positions,
+                    )
+                )
+            continue
+
+        suffix = "_L" if robot_id == "left_arm" else "_R"
+        for pose_name, vector in sorted(config.poses.items()):
+            if not pose_name.endswith(suffix) or len(vector) != len(group.joint_names):
+                continue
+            targets.append(
+                TransitionTarget(
+                    label=pose_name,
+                    robot_id=robot_id,
+                    planning_group=group.planning_group,
+                    joint_names=group.joint_names,
+                    pose_names=(pose_name,),
+                    target_positions=tuple(float(value) for value in vector),
+                )
+            )
+    return targets
 
 
 def _resolve_config_path(raw: str) -> Path:
@@ -206,6 +290,7 @@ class TeachManagerNode(Node):
         self.args = args
         self.library_dir = Path(args.library_dir).expanduser().resolve()
         self.arm_config_path = _resolve_config_path(args.arm_config) if args.arm_config else None
+        self.arm_config: Optional[ArmConfig] = None
         if self.arm_config_path is not None and not self.arm_config_path.exists():
             self.get_logger().warn(
                 f"--arm-config resolved to {self.arm_config_path}, which does not exist; "
@@ -217,6 +302,10 @@ class TeachManagerNode(Node):
         self.runtime_active = False
         self.selected_index = 0
         self.trajectory_paths: list[Path] = []
+        self.transition_selected_index = 0
+        self.transition_targets: list[TransitionTarget] = []
+        self.pending_transition_plan: Optional[RobotTrajectory] = None
+        self.pending_transition_target_label: Optional[str] = None
 
         namespaces = args.arms if args.arms else [""]
         self.arms = [
@@ -225,11 +314,66 @@ class TeachManagerNode(Node):
         # Deterministic duo order: left before right (registry both_arms order).
         self.arms.sort(key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
 
+        if self.arm_config_path is not None and self.arm_config_path.exists():
+            self._reload_arm_config()
+
+        self._move_group_client = ActionClient(self, MoveGroup, self._move_group_action_name())
+        self._execute_trajectory_client = ActionClient(
+            self, ExecuteTrajectory, self._execute_trajectory_action_name()
+        )
+
         self.refresh_library()
 
     @property
     def is_dual(self) -> bool:
         return len(self.arms) > 1
+
+    def _move_group_action_name(self) -> str:
+        return self.arm_config.move_group_action if self.arm_config is not None else "/move_action"
+
+    def _execute_trajectory_action_name(self) -> str:
+        return (
+            self.arm_config.execute_trajectory_action
+            if self.arm_config is not None
+            else "/execute_trajectory"
+        )
+
+    def _reload_arm_config(self) -> None:
+        if self.arm_config_path is None or not self.arm_config_path.exists():
+            self.arm_config = None
+            self.transition_targets = []
+            self.transition_selected_index = 0
+            self._clear_transition_plan()
+            return
+        self.arm_config = ArmConfig.from_file(self.arm_config_path)
+        self.transition_targets = _build_transition_targets(
+            self.arm_config,
+            [arm.namespace for arm in self.arms],
+        )
+        if self.transition_targets:
+            self.transition_selected_index = min(
+                self.transition_selected_index,
+                len(self.transition_targets) - 1,
+            )
+        else:
+            self.transition_selected_index = 0
+        self._clear_transition_plan()
+
+    def _clear_transition_plan(self) -> None:
+        self.pending_transition_plan = None
+        self.pending_transition_target_label = None
+
+    def selected_transition_target(self) -> Optional[TransitionTarget]:
+        if not self.transition_targets:
+            return None
+        return self.transition_targets[self.transition_selected_index]
+
+    def select_next_transition(self, step: int) -> None:
+        if not self.transition_targets:
+            return
+        self.transition_selected_index = (self.transition_selected_index + step) % len(self.transition_targets)
+        self._clear_transition_plan()
+        self.print_status()
 
     # --- shared spin helper --------------------------------------------------
 
@@ -276,15 +420,16 @@ class TeachManagerNode(Node):
 
     def enter_record_mode(self) -> None:
         self._enter_freedrive("record")
+        self._clear_transition_plan()
         self.state = ManagerState.RECORD
         self.get_logger().info("State -> record (freedrive; press 'n' to record)")
         self.print_status()
 
-    def enter_playback_mode(self) -> None:
+    def _enter_hold_mode(self, state: ManagerState, label: str) -> None:
         for arm in self.arms:
             ok, msg = arm.call_set_normal_mode(self.args.service_timeout)
             if not ok:
-                raise RuntimeError(f"[{arm.label}] failed to switch to normal mode before playback: {msg}")
+                raise RuntimeError(f"[{arm.label}] failed to switch to normal mode before {label}: {msg}")
         if not self.wait_for_source_feedback(self.args.feedback_timeout):
             raise RuntimeError("did not receive fresh feedback from all arms")
         for arm in self.arms:
@@ -294,9 +439,24 @@ class TeachManagerNode(Node):
             ok, msg = arm.call_hold_current(self.args.service_timeout)
             if not ok:
                 raise RuntimeError(f"[{arm.label}] failed to hold current pose: {msg}")
-        self.state = ManagerState.PLAYBACK
-        self.get_logger().info("State -> playback (MIT on, holding current)")
+        self.state = state
+        self.get_logger().info(f"State -> {state.value} ({label})")
         self.print_status()
+
+    def enter_playback_mode(self) -> None:
+        self._clear_transition_plan()
+        self._enter_hold_mode(ManagerState.PLAYBACK, "playback; MIT on, holding current")
+
+    def enter_transition_mode(self) -> None:
+        self._reload_arm_config()
+        if self.arm_config is None:
+            raise RuntimeError("--arm-config not set or unreadable; cannot plan anchor transitions")
+        if not self.transition_targets:
+            raise RuntimeError(
+                "arm_config has no anchor targets matching this teach session; "
+                "check the active arm namespaces and taught pose dimensions"
+            )
+        self._enter_hold_mode(ManagerState.TRANSITIONS, "transitions; MIT on, holding current")
 
     # --- library -------------------------------------------------------------
 
@@ -476,6 +636,7 @@ class TeachManagerNode(Node):
         formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
         self.get_logger().info(f"{note}: {pose_name} ({resource}, {len(vector)}-dim) = {formatted}")
         self.get_logger().info("rebuild agx_arm_coordination (or symlink-install) for a launched coordinator")
+        self._reload_arm_config()
 
     def convert_to_waypoints(self, key_reader: TerminalKeyReader) -> None:
         path = self.selected_trajectory_path()
@@ -497,16 +658,15 @@ class TeachManagerNode(Node):
 
     # --- playback ------------------------------------------------------------
 
-    def _dispatch_to_arm(self, arm: _ArmEndpoint, trajectory: RecordedTrajectory, columns: list[int]) -> None:
+    def _dispatch_to_arm(self, arm: _ArmEndpoint, trajectory_msg: JointTrajectory, columns: list[int]) -> None:
         """Publish a per-arm slice to that arm's controller (joint1..7, unprefixed)."""
         msg = JointTrajectory()
         msg.joint_names = list(arm.source_joints)
-        for point in trajectory.points:
+        for point in trajectory_msg.points:
             ros_point = JointTrajectoryPoint()
             ros_point.positions = [float(point.positions[i]) for i in columns]
             ros_point.velocities = [float(point.velocities[i]) for i in columns] if point.velocities else []
-            seconds = float(point.time_from_start)
-            ros_point.time_from_start = Duration(sec=int(seconds), nanosec=int((seconds % 1.0) * 1e9))
+            ros_point.time_from_start = point.time_from_start
             msg.points.append(ros_point)
         for _ in range(max(1, self.args.publish_repetitions)):
             arm.trajectory_pub.publish(msg)
@@ -523,6 +683,26 @@ class TeachManagerNode(Node):
         if all(joint in index for joint in arm.source_joints):
             return [index[joint] for joint in arm.source_joints]
         return None
+
+    def _current_positions_for_trajectory(
+        self,
+        trajectory: RecordedTrajectory,
+        dispatched: list[tuple[_ArmEndpoint, list[int]]],
+    ) -> list[float]:
+        current_positions = [float(point) for point in trajectory.points[0].positions]
+        for arm, columns in dispatched:
+            msg = arm.latest
+            if msg is None:
+                raise RuntimeError(f"no fresh feedback for {arm.label} before playback")
+            position_map = {name: float(value) for name, value in zip(msg.name, msg.position)}
+            missing = [joint for joint in arm.source_joints if joint not in position_map]
+            if missing:
+                raise RuntimeError(
+                    f"[{arm.label}] feedback/joint_states is missing {missing}; cannot build playback lead-in"
+                )
+            for column, joint_name in zip(columns, arm.source_joints):
+                current_positions[column] = position_map[joint_name]
+        return current_positions
 
     def playback_selected(self) -> None:
         if self.state != ManagerState.PLAYBACK:
@@ -544,10 +724,22 @@ class TeachManagerNode(Node):
                 f"recording joints {list(trajectory.joint_names)} match none of the arms "
                 f"{[a.label for a in self.arms]}; record it with a matching resource"
             )
+        if not self.wait_for_source_feedback(self.args.feedback_timeout):
+            raise RuntimeError("did not receive fresh feedback from all arms before playback")
+
+        current_positions = None
+        if self.args.playback_lead_in_sec > 0.0:
+            current_positions = self._current_positions_for_trajectory(trajectory, dispatched)
+        full_msg = recorded_to_joint_trajectory(
+            trajectory,
+            time_scale=1.0 / self.args.playback_speed_scale,
+            current_positions=current_positions,
+            lead_in_sec=self.args.playback_lead_in_sec,
+        )
         # Publish each arm's slice back-to-back (per-arm controllers run concurrently);
         # for a duo recording this is the direct-controller sync path (bypasses MoveIt).
         for arm, columns in dispatched:
-            self._dispatch_to_arm(arm, trajectory, columns)
+            self._dispatch_to_arm(arm, full_msg, columns)
         self.get_logger().info(
             f"Played {path.name} on {[arm.label for arm, _ in dispatched]} "
             "(needs enable_debug_joint_trajectory_topic:=true on the MIT bring-up)"
@@ -560,6 +752,101 @@ class TeachManagerNode(Node):
             if not ok:
                 self.get_logger().warn(f"[{arm.label}] failed to cancel: {msg}")
         self.get_logger().info("cancelled active MIT trajectory on all arms")
+
+    # --- transitions ---------------------------------------------------------
+
+    def _wait_for_moveit_server(self, client: ActionClient, label: str) -> None:
+        if not client.wait_for_server(timeout_sec=self.args.moveit_timeout):
+            raise RuntimeError(
+                f"{label} action '{client._action_name}' not available; "
+                "bring up start_agx_arm_components.launch.py mode:=moveit_mit for the matching execution_profile"
+            )
+
+    def _send_goal_and_wait(self, client: ActionClient, goal, label: str):
+        self._wait_for_moveit_server(client, label)
+        goal_future = client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, goal_future, timeout_sec=self.args.moveit_timeout)
+        if not goal_future.done() or goal_future.result() is None:
+            raise RuntimeError(f"timed out sending {label} goal")
+        goal_handle = goal_future.result()
+        if not goal_handle.accepted:
+            raise RuntimeError(f"{label} goal was rejected")
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future, timeout_sec=self.args.moveit_timeout)
+        if not result_future.done() or result_future.result() is None:
+            raise RuntimeError(f"timed out waiting for {label} result")
+        return result_future.result()
+
+    def plan_selected_transition(self) -> None:
+        if self.state != ManagerState.TRANSITIONS:
+            raise RuntimeError("switch to transitions mode first")
+        target = self.selected_transition_target()
+        if target is None:
+            raise RuntimeError("no anchor transition target available")
+        constraints = Constraints()
+        for joint_name, position in zip(target.joint_names, target.target_positions):
+            jc = JointConstraint()
+            jc.joint_name = joint_name
+            jc.position = float(position)
+            jc.tolerance_above = self.args.transition_joint_tolerance
+            jc.tolerance_below = self.args.transition_joint_tolerance
+            jc.weight = 1.0
+            constraints.joint_constraints.append(jc)
+        request = MotionPlanRequest()
+        request.group_name = target.planning_group
+        # Plan from the monitored current state. Without is_diff the default
+        # start_state is an empty (non-diff) RobotState and move_group logs
+        # 'Found empty JointState message' on every plan before falling back.
+        request.start_state.is_diff = True
+        request.goal_constraints.append(constraints)
+        request.max_velocity_scaling_factor = self.args.transition_velocity_scaling
+        request.max_acceleration_scaling_factor = self.args.transition_acceleration_scaling
+        request.num_planning_attempts = self.args.transition_num_planning_attempts
+        request.allowed_planning_time = self.args.transition_allowed_planning_time
+        goal = MoveGroup.Goal()
+        goal.request = request
+        goal.planning_options.plan_only = True
+        wrapper = self._send_goal_and_wait(self._move_group_client, goal, "MoveGroup plan")
+        result = wrapper.result
+        if result.error_code.val != MoveItErrorCodes.SUCCESS:
+            self._clear_transition_plan()
+            raise RuntimeError(
+                f"planning transition to {target.label} failed with MoveIt error_code={result.error_code.val}"
+            )
+        if not result.planned_trajectory.joint_trajectory.points:
+            self._clear_transition_plan()
+            raise RuntimeError(f"planning transition to {target.label} returned an empty trajectory")
+        self.pending_transition_plan = result.planned_trajectory
+        self.pending_transition_target_label = target.label
+        self.get_logger().info(
+            f"Planned transition to {target.label} on '{target.planning_group}' "
+            f"({len(result.planned_trajectory.joint_trajectory.points)} point(s), planning_time={result.planning_time:.3f}s). "
+            "Press 'f' again to execute."
+        )
+        self.print_status()
+
+    def execute_planned_transition(self) -> None:
+        if self.state != ManagerState.TRANSITIONS:
+            raise RuntimeError("switch to transitions mode first")
+        target = self.selected_transition_target()
+        if target is None:
+            raise RuntimeError("no anchor transition target available")
+        if self.pending_transition_plan is None or self.pending_transition_target_label != target.label:
+            self.plan_selected_transition()
+            return
+        goal = ExecuteTrajectory.Goal()
+        goal.trajectory = self.pending_transition_plan
+        wrapper = self._send_goal_and_wait(self._execute_trajectory_client, goal, "ExecuteTrajectory")
+        result = wrapper.result
+        status = getattr(wrapper, "status", GoalStatus.STATUS_UNKNOWN)
+        if status != GoalStatus.STATUS_SUCCEEDED or result.error_code.val != MoveItErrorCodes.SUCCESS:
+            raise RuntimeError(
+                f"executing transition to {target.label} failed with status={status}, "
+                f"MoveIt error_code={result.error_code.val}"
+            )
+        self.get_logger().info(f"Executed transition to {target.label} via MoveIt")
+        self._clear_transition_plan()
+        self.print_status()
 
     # --- terminal ------------------------------------------------------------
 
@@ -599,11 +886,20 @@ class TeachManagerNode(Node):
         if key == "p":
             self.enter_playback_mode()
             return
+        if key == "t":
+            self.enter_transition_mode()
+            return
         if key == "[":
-            self.select_next(-1)
+            if self.state == ManagerState.TRANSITIONS:
+                self.select_next_transition(-1)
+            else:
+                self.select_next(-1)
             return
         if key == "]":
-            self.select_next(1)
+            if self.state == ManagerState.TRANSITIONS:
+                self.select_next_transition(1)
+            else:
+                self.select_next(1)
             return
         if key == "a":
             self.capture_anchor(key_reader)
@@ -620,19 +916,28 @@ class TeachManagerNode(Node):
         if self.state == ManagerState.PLAYBACK and key == "c":
             self.cancel_active()
             return
+        if self.state == ManagerState.TRANSITIONS and key == "f":
+            self.execute_planned_transition()
+            return
+        if self.state == ManagerState.TRANSITIONS and key == "c":
+            self._clear_transition_plan()
+            self.get_logger().info("cleared cached transition plan")
+            self.print_status()
+            return
         self.get_logger().warn(f"unhandled key '{key}' in state={self.state.value}; press 'h' for help")
 
     def print_help(self) -> None:
         print(
             "\nTeach manager keys:\n"
             "  i -> idle / freedrive (MIT zero-force, gravity-compensated)\n"
-            "  r -> record mode      p -> playback mode\n"
+            "  r -> record mode      p -> playback mode      t -> transitions mode\n"
             "  a -> capture current pose as a named anchor (-> arm_config.yaml)\n"
             "  w -> convert selected recording -> catalogue waypoints\n"
-            "  [ / ] -> select previous / next recording\n"
+            "  [ / ] -> select previous / next item (recording or anchor target)\n"
             "  s -> status   h -> help   q -> quit\n"
             "Record mode:   n -> record a new trajectory\n"
             "Playback mode: f -> play selected   c -> cancel active trajectory\n"
+            "Transitions:  f -> plan selected target, press f again -> execute cached plan, c -> clear cached plan\n"
             "With two arms, record/anchor ask which resource to save "
             "(both_arms -> merged 14-dim, or one side -> 7-dim).\n"
         )
@@ -640,6 +945,7 @@ class TeachManagerNode(Node):
     def print_status(self) -> None:
         self.refresh_library()
         selected = self.selected_trajectory_path()
+        transition = self.selected_transition_target()
         arms = ", ".join(arm.label for arm in self.arms)
         print(
             "Status: "
@@ -647,6 +953,8 @@ class TeachManagerNode(Node):
             f"arms=[{arms}], "
             f"recordings={len(self.trajectory_paths)}, "
             f"selected={selected.name if selected else '<none>'}, "
+            f"transition={transition.label if transition else '<none>'}, "
+            f"transition_plan={'cached' if self.pending_transition_plan is not None else '<none>'}, "
             f"arm_config={'set' if self.arm_config_path else '<none>'}, "
             f"library={self.library_dir}"
         )
@@ -733,6 +1041,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--feedback-timeout", type=float, default=3.0)
     parser.add_argument("--startup-timeout", type=float, default=0.0,
                         help="Seconds to wait for the arm/MIT services at startup; 0 waits forever")
+    parser.add_argument("--moveit-timeout", type=float, default=15.0,
+                        help="Timeout waiting for MoveIt plan/execute action responses")
+    parser.add_argument(
+        "--playback-speed-scale",
+        type=float,
+        default=1.0,
+        help="Playback speed scale (0.25 = quarter-speed, 1.0 = recorded speed)",
+    )
+    parser.add_argument(
+        "--playback-lead-in-sec",
+        type=float,
+        default=0.0,
+        help="Blend from the current hold pose to the first recorded waypoint over this many seconds",
+    )
+    parser.add_argument("--transition-velocity-scaling", type=float, default=0.10,
+                        help="MoveIt velocity scaling for anchor transitions (0,1]")
+    parser.add_argument("--transition-acceleration-scaling", type=float, default=0.10,
+                        help="MoveIt acceleration scaling for anchor transitions (0,1]")
+    parser.add_argument("--transition-joint-tolerance", type=float, default=0.01,
+                        help="Joint target tolerance used when planning anchor transitions")
+    parser.add_argument("--transition-num-planning-attempts", type=int, default=10,
+                        help="MoveIt planning attempts for anchor transitions")
+    parser.add_argument("--transition-allowed-planning-time", type=float, default=5.0,
+                        help="MoveIt allowed planning time for anchor transitions")
     parser.add_argument("--settle-sec", type=float, default=0.5, help="Averaging window for anchor capture")
     parser.add_argument("--precision", type=int, default=5)
     parser.add_argument("--max-waypoints", type=int, default=8, help="Downsample target for waypoint conversion")
@@ -748,6 +1080,22 @@ def main() -> None:
     args = parse_args()
     if args.sample_rate <= 0.0:
         raise ValueError("--sample-rate must be > 0")
+    if args.playback_speed_scale <= 0.0:
+        raise ValueError("--playback-speed-scale must be > 0")
+    if args.playback_lead_in_sec < 0.0:
+        raise ValueError("--playback-lead-in-sec must be >= 0")
+    if not 0.0 < args.transition_velocity_scaling <= 1.0:
+        raise ValueError("--transition-velocity-scaling must be in (0, 1]")
+    if not 0.0 < args.transition_acceleration_scaling <= 1.0:
+        raise ValueError("--transition-acceleration-scaling must be in (0, 1]")
+    if args.transition_joint_tolerance <= 0.0:
+        raise ValueError("--transition-joint-tolerance must be > 0")
+    if args.transition_num_planning_attempts <= 0:
+        raise ValueError("--transition-num-planning-attempts must be > 0")
+    if args.transition_allowed_planning_time <= 0.0:
+        raise ValueError("--transition-allowed-planning-time must be > 0")
+    if args.moveit_timeout <= 0.0:
+        raise ValueError("--moveit-timeout must be > 0")
 
     rclpy.init()
     node = TeachManagerNode(args)

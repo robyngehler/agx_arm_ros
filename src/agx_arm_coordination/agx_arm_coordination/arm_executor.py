@@ -159,6 +159,14 @@ def _scaling(metadata: dict[str, Any], key: str) -> float:
     return min(max(value, 1e-3), 1.0)
 
 
+def _recorded_time_scale(metadata: dict[str, Any]) -> float:
+    """Stretch recorded waypoint timing by the more conservative metadata scale."""
+    return 1.0 / min(
+        _scaling(metadata, "velocity_scaling"),
+        _scaling(metadata, "acceleration_scaling"),
+    )
+
+
 class ArmTrajectoryPlanner:
     def __init__(self, config: ArmConfig) -> None:
         self.config = config
@@ -221,6 +229,7 @@ class ArmTrajectoryPlanner:
         )
 
     def _plan_recorded(self, action: Action, group: ArmGroup) -> RecordedTrajectoryPlan:
+        time_scale = _recorded_time_scale(action.metadata)
         points: list[TrajectoryPoint] = []
         for index, wp in enumerate(action.metadata["waypoints"]):
             positions = tuple(float(v) for v in wp.get("positions", []))
@@ -232,7 +241,7 @@ class ArmTrajectoryPlanner:
             points.append(
                 TrajectoryPoint(
                     positions=positions,
-                    time_from_start_sec=float(wp.get("time_from_start_sec", index + 1)),
+                    time_from_start_sec=float(wp.get("time_from_start_sec", index + 1)) * time_scale,
                 )
             )
         if not points:

@@ -409,7 +409,7 @@ def generate_launch_description():
 
     mit_control_rate_arg = DeclareLaunchArgument(
         'mit_control_rate_hz',
-        default_value='100.0',
+        default_value='50.0',
         description='MIT controller update rate when use_mit_controller is true.',
     )
 

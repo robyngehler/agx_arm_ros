@@ -73,6 +73,20 @@ def test_recorded_with_waypoints_builds_execute_trajectory_plan():
     assert plan.points[1].positions == (0.5, 0.5)
 
 
+def test_recorded_waypoints_honor_scaling_metadata_by_stretching_time():
+    plan = PLANNER.plan(_traj("right_arm", {
+        "waypoints": [
+            {"positions": [0.0, 0.0], "time_from_start_sec": 1.0},
+            {"positions": [0.5, 0.5], "time_from_start_sec": 2.0},
+        ],
+        "velocity_scaling": 0.25,
+        "acceleration_scaling": 0.5,
+    }))
+
+    assert isinstance(plan, RecordedTrajectoryPlan)
+    assert [point.time_from_start_sec for point in plan.points] == pytest.approx([4.0, 8.0])
+
+
 def test_pose_length_mismatch_raises():
     with pytest.raises(ArmConfigError):
         # to_pose expands to 2 joints for a 4-joint group

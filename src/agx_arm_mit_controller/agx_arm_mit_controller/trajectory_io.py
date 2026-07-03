@@ -125,17 +125,48 @@ def load_recorded_trajectory(file_path: str | Path) -> RecordedTrajectory:
     )
 
 
-def recorded_to_joint_trajectory(trajectory: RecordedTrajectory):
+def recorded_to_joint_trajectory(
+    trajectory: RecordedTrajectory,
+    *,
+    time_scale: float = 1.0,
+    current_positions: Optional[list[float]] = None,
+    lead_in_sec: float = 0.0,
+):
     from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+
+    if time_scale <= 0.0:
+        raise ValueError("time_scale must be > 0")
+    if lead_in_sec < 0.0:
+        raise ValueError("lead_in_sec must be >= 0")
 
     msg = JointTrajectory()
     msg.joint_names = list(trajectory.joint_names)
+    if current_positions is not None and len(current_positions) != len(msg.joint_names):
+        raise ValueError(
+            f"current_positions length mismatch, expected {len(msg.joint_names)}, got {len(current_positions)}"
+        )
+
+    if not trajectory.points:
+        return msg
+
+    first_time = float(trajectory.points[0].time_from_start)
+    velocity_time_scale = 1.0 / time_scale
+
+    if current_positions is not None and lead_in_sec > 0.0:
+        lead_in_point = JointTrajectoryPoint()
+        lead_in_point.positions = [float(value) for value in current_positions]
+        lead_in_point.velocities = [0.0] * len(current_positions)
+        lead_in_point.effort = [0.0] * len(current_positions)
+        lead_in_point.time_from_start = _duration_from_seconds(0.0)
+        msg.points.append(lead_in_point)
+
     for point in trajectory.points:
         ros_point = JointTrajectoryPoint()
         ros_point.positions = list(point.positions)
-        ros_point.velocities = list(point.velocities)
+        ros_point.velocities = [float(value) * velocity_time_scale for value in point.velocities]
         ros_point.effort = [0.0] * len(point.positions)
-        ros_point.time_from_start = _duration_from_seconds(point.time_from_start)
+        shifted_time = max(0.0, float(point.time_from_start) - first_time)
+        ros_point.time_from_start = _duration_from_seconds((shifted_time * time_scale) + lead_in_sec)
         msg.points.append(ros_point)
     return msg
 

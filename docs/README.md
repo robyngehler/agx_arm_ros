@@ -5,7 +5,7 @@ This directory is the human-facing documentation hub for the current Duo baselin
 ## What lives where
 
 - `control/`: how to start and operate the current system
-  - `bringup.md`: launch and argument matrix
+  - `bringup.md`: baseline, tool, and demo bringup map
   - `teach_and_run.md`: teach, record, replay, and coordinator-facing motion flow
 - `project/`: stable repository structure, architecture, and environment workflows
 - `assets/`: stable component facts, validation state, and runtime integration notes
@@ -24,6 +24,8 @@ This directory is the human-facing documentation hub for the current Duo baselin
 - Current package and staging rules: `project/repository_structure.md`
 - Current Python build/runtime split: `project/python_environment_workflow.md`
 - Current sprint coordination overview: `development/README.md`
+
+For operational launches, prefer the top-level `control/bringup.md` taxonomy first: pick a baseline, then add the matching tool or demo on top. In the normal MoveIt/MIT wrapper path, `start_agx_arm_components.launch.py` should normally be selected through `execution_profile` presets rather than rebuilt from one-off launch argument combinations.
 
 ## Notes on authority
 

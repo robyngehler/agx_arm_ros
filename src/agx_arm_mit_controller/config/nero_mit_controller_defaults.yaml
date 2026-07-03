@@ -14,8 +14,8 @@
     # kill oscillation/overshoot) vs the original [2,3,2,3,2,2,2]/[0.1..0.08]. If a
     # joint buzzes/vibrates, lower its kd first (noise on velocity feedback); if it
     # is sluggish/soft, raise kp. Both are live-tunable via `ros2 param set`.
-    kp: [3.0, 4.0, 3.0, 4.0, 3.0, 2.5, 2.5]
-    kd: [0.25, 0.25, 0.25, 0.25, 0.3, 0.3, 0.2]
+    kp: [50.0, 20.0, 50.0, 20.0, 20.0, 10.0, 10.0]
+    kd: [1.5, 1.5, 2.0, 1.5, 1.5, 1.5, 1.5]
     # Software freedrive (teach idle/record): kp is forced to 0 so gravity
     # feedforward makes the arm back-drivable; freedrive_kd only damps motion.
     # Deliberately started high (~5x the hold kd) so the first hardware runs are

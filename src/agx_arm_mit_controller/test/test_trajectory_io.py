@@ -59,3 +59,34 @@ def test_recorded_to_joint_trajectory_zeroes_efforts_by_default():
     msg = recorded_to_joint_trajectory(trajectory)
 
     assert list(msg.points[0].effort) == [0.0, 0.0]
+
+
+def test_recorded_to_joint_trajectory_scales_time_and_prepends_lead_in():
+    trajectory = RecordedTrajectory(
+        name="demo",
+        robot="nero",
+        joint_names=["joint1", "joint2"],
+        sample_rate_hz=50.0,
+        recorded_at="2026-05-07T00:00:00+00:00",
+        points=[
+            RecordedTrajectoryPoint(0.2, [0.1, 0.2], [0.4, 0.6], [0.0, 0.0]),
+            RecordedTrajectoryPoint(0.4, [0.3, 0.5], [0.8, 1.2], [0.0, 0.0]),
+        ],
+        metadata={"kind": "test"},
+    )
+
+    msg = recorded_to_joint_trajectory(
+        trajectory,
+        time_scale=2.0,
+        current_positions=[-0.2, -0.1],
+        lead_in_sec=1.5,
+    )
+
+    assert len(msg.points) == 3
+    assert list(msg.points[0].positions) == [-0.2, -0.1]
+    assert msg.points[0].time_from_start.sec == 0
+    assert msg.points[1].time_from_start.sec == 1
+    assert msg.points[1].time_from_start.nanosec == 500_000_000
+    assert msg.points[2].time_from_start.sec == 1
+    assert msg.points[2].time_from_start.nanosec == 900_000_000
+    assert list(msg.points[2].velocities) == [0.4, 0.6]
