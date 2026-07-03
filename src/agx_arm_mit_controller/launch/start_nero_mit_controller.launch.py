@@ -33,7 +33,16 @@ def _default_params_file() -> str:
 
 
 def _duo_system_xacro_path() -> str:
-    """Locate duo_system.urdf.xacro (share dir first, source tree fallback)."""
+    """Locate duo_system.urdf.xacro (source tree first, share dir fallback).
+
+    Like the params file, prefer the source tree in a colcon workspace: a stale
+    installed copy silently builds the gravity model against outdated assets
+    (e.g. the legacy O10 hand instead of the O12 Pro — ~0.6 kg mass error).
+    """
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "src" / "duo_body_description" / "urdf" / "duo_system.urdf.xacro"
+        if candidate.is_file():
+            return str(candidate)
     try:
         share = Path(get_package_share_directory("duo_body_description"))
         candidate = share / "urdf" / "duo_system.urdf.xacro"
@@ -41,10 +50,6 @@ def _duo_system_xacro_path() -> str:
             return str(candidate)
     except Exception:
         pass
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "src" / "duo_body_description" / "urdf" / "duo_system.urdf.xacro"
-        if candidate.is_file():
-            return str(candidate)
     return ""
 
 
@@ -64,6 +69,7 @@ def _build_controller_node(context):
         effector_type=LaunchConfiguration("effector_type").perform(context),
         explicit_gravity_urdf_path=LaunchConfiguration("gravity_urdf_path").perform(context),
         duo_side=gravity_arm_side,
+        hand_payload_mode=LaunchConfiguration("gravity_hand_payload").perform(context).strip(),
     )
 
     mounting_rpy_str = LaunchConfiguration("gravity_mounting_rpy").perform(context)
@@ -239,6 +245,11 @@ def generate_launch_description():
         default_value="[0.0, 0.0, 0.0]",
         description="Manual arm base orientation in world [roll, pitch, yaw] (XYZ extrinsic, rad) for gravity/freedrive. [0,0,0] = upright. Prefer gravity_arm_side (URDF-derived); use this only as an override, and keep it [0,0,0] when gravity_arm_side is set.",
     )
+    gravity_hand_payload_arg = DeclareLaunchArgument(
+        "gravity_hand_payload",
+        default_value="articulated",
+        description="How the OmniHand rides in the gravity model when effector_type is omnihand: 'articulated' keeps the finger joints movable and tracks live hand joint states (better compensation while grasping), 'static' freezes them at zero (legacy rigid payload). Identical when the hand publishes no feedback.",
+    )
     gravity_arm_side_arg = DeclareLaunchArgument(
         "gravity_arm_side",
         default_value="",
@@ -321,6 +332,7 @@ def generate_launch_description():
             input_joint_prefix_arg,
             gravity_urdf_path_arg,
             gravity_mounting_rpy_arg,
+            gravity_hand_payload_arg,
             gravity_arm_side_arg,
             params_file_arg,
             launch_driver_arg,

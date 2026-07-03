@@ -250,3 +250,35 @@ def test_resolve_gravity_urdf_path_freezes_duo_omnihand_as_static_payload(tmp_pa
     assert 'joint name="right_arm_right_hand_base_joint" type="fixed"' in generated_urdf
     assert 'joint name="right_thumb_roll_joint" type="fixed"' in generated_urdf
     assert 'joint name="right_thumb_roll_joint" type="revolute"' not in generated_urdf
+
+
+def test_resolve_gravity_urdf_path_articulated_keeps_hand_joints_movable(tmp_path, monkeypatch):
+    _install_fake_xacro(monkeypatch)
+    custom_model = tmp_path / "duo_system.urdf.xacro"
+    custom_model.write_text("<robot/>", encoding="utf-8")
+
+    generated_urdf = Path(
+        resolve_gravity_urdf_path(
+            custom_model=str(custom_model),
+            custom_model_xacro_args="use_right_arm:=true use_right_hand:=true",
+            input_joint_prefix="right_arm_",
+            effector_type="omnihand",
+            hand_payload_mode="articulated",
+        )
+    ).read_text(encoding="utf-8")
+
+    assert 'joint name="right_thumb_roll_joint" type="revolute"' in generated_urdf
+
+
+def test_resolve_gravity_urdf_path_rejects_unknown_hand_payload_mode(tmp_path):
+    custom_model = tmp_path / "duo_system.urdf.xacro"
+    custom_model.write_text("<robot/>", encoding="utf-8")
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        resolve_gravity_urdf_path(
+            custom_model=str(custom_model),
+            effector_type="omnihand",
+            hand_payload_mode="floppy",
+        )

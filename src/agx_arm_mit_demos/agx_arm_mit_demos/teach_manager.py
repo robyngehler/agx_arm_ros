@@ -75,6 +75,27 @@ class ManagerState(str, Enum):
 _SIDE_ORDER = {"left_arm": 0, "right_arm": 1}
 
 
+def _resolve_config_path(raw: str) -> Path:
+    """Resolve a possibly-relative config path independent of the launch cwd.
+
+    The documented invocation passes ``src/agx_arm_coordination/config/...``,
+    which only resolves from the workspace root. A relative path is tried
+    against the cwd and each of its parents, then against the directories
+    above this (installed) file, so the teach manager also works when started
+    from the home directory or anywhere else inside the workspace.
+    """
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+
+    search_roots = [Path.cwd(), *Path.cwd().parents, *Path(__file__).resolve().parents]
+    for root in search_roots:
+        candidate = root / path
+        if candidate.exists():
+            return candidate.resolve()
+    return path.resolve()
+
+
 class _ArmEndpoint:
     """All per-arm ROS handles for one (optionally namespaced) MIT stack.
 
@@ -184,7 +205,12 @@ class TeachManagerNode(Node):
         super().__init__("agx_arm_teach_manager")
         self.args = args
         self.library_dir = Path(args.library_dir).expanduser().resolve()
-        self.arm_config_path = Path(args.arm_config).expanduser().resolve() if args.arm_config else None
+        self.arm_config_path = _resolve_config_path(args.arm_config) if args.arm_config else None
+        if self.arm_config_path is not None and not self.arm_config_path.exists():
+            self.get_logger().warn(
+                f"--arm-config resolved to {self.arm_config_path}, which does not exist; "
+                "anchor capture ('a') will fail until it does"
+            )
         self.source_joints = [j.strip() for j in args.source_joints.split(",") if j.strip()]
         self.state = ManagerState.IDLE
         self.shutdown_requested = False
@@ -438,7 +464,15 @@ class TeachManagerNode(Node):
             )
             vector.extend(averaged[name] for name in arm.source_joints)
 
-        note = update_pose_in_config(self.arm_config_path, pose_name, vector, self.args.precision)
+        try:
+            note = update_pose_in_config(self.arm_config_path, pose_name, vector, self.args.precision)
+        except OSError as exc:
+            # Do not tear down the whole teach session over a bad config path;
+            # the captured pose is printed so it can still be pasted manually.
+            formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
+            self.get_logger().error(f"could not write anchor pose to {self.arm_config_path}: {exc}")
+            self.get_logger().error(f"captured vector for '{pose_name}' ({resource}): {formatted}")
+            return
         formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
         self.get_logger().info(f"{note}: {pose_name} ({resource}, {len(vector)}-dim) = {formatted}")
         self.get_logger().info("rebuild agx_arm_coordination (or symlink-install) for a launched coordinator")

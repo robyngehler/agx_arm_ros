@@ -32,13 +32,18 @@ Rationale + alternatives (USB adapters): [omnihand_canfd_setup.md](../assets/omn
 Brings up the arm driver + MIT controller (freedrive, `hold_current`, FollowJointTrajectory). Body-mounted
 arms are tilted, so pass `gravity_arm_side` — it bakes the real mount into the gravity model (see
 [teach_and_run.md](teach_and_run.md) for why). With the OmniHand mounted, also pass `effector_type:=omnihand`
-so the ~1 kg hand is folded into the gravity model (mount tilt alone is not enough). Do **not** pass
-`input_joint_prefix` for the teach loop.
+so the ~1 kg hand is folded into the gravity model (mount tilt alone is not enough); by default the hand
+rides **articulated** (live finger pose from combined feedback, `gravity_hand_payload:=static` restores the
+frozen rigid payload). With a custom gravity URDF the stale hand-less
+`config/nero_gravity_calibration.json` is no longer auto-applied (pass `calibration_file` explicitly for a
+matching calibration). Do **not** pass `input_joint_prefix` for the teach loop.
 
 > **Shared arm+hand bus:** the `right arm + OmniHand` row puts the arm and the hand on one bus
 > (`can_nero_right`). For first tests, keep `one-shot on` and just deepen the TX ring (`TX_QUEUE_LEN=1000`)
-> and keep `control_rate_hz` at 100; only fall back to `ONE_SHOT=off` if the hand still starves when the MIT
-> controller runs — see [teach_and_run.md](teach_and_run.md) (bus load).
+> and keep `control_rate_hz` at 50; only fall back to `ONE_SHOT=off` if the hand still starves when the MIT
+> controller runs — see [teach_and_run.md](teach_and_run.md) (bus load). The bridge itself now verifies and
+> re-sends dropped hand commands (`command_retry_*`) and polls the hand readback at `joint_read_rate`
+> (20 Hz default) instead of per publish tick.
 
 | Goal | Command |
 |---|---|

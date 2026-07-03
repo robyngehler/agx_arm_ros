@@ -70,6 +70,42 @@ def generate_launch_description():
         default_value="50.0",
         description="Feedback publish rate in Hz.",
     )
+    joint_read_rate_arg = DeclareLaunchArgument(
+        "joint_read_rate",
+        default_value="20.0",
+        description=(
+            "SDK joint readback poll rate in Hz (each poll is a real CAN request "
+            "on the shared arm+hand bus). Decoupled from pub_rate, which "
+            "republishes the cached state. <= 0 polls on every publish tick."
+        ),
+    )
+    command_retry_enabled_arg = DeclareLaunchArgument(
+        "command_retry_enabled",
+        default_value="true",
+        description=(
+            "Re-send the latest hand target until the joint readback confirms it "
+            "(the congested shared CAN bus silently drops hand frames under arm "
+            "load in one-shot mode)."
+        ),
+    )
+    command_retry_max_attempts_arg = DeclareLaunchArgument(
+        "command_retry_max_attempts",
+        default_value="8",
+        description=(
+            "Maximum command send attempts before giving up (eventual delivery "
+            "matters more than latency on the congested shared bus)."
+        ),
+    )
+    command_retry_period_s_arg = DeclareLaunchArgument(
+        "command_retry_period_s",
+        default_value="0.3",
+        description="Seconds between verification checks / re-sends.",
+    )
+    command_verify_tolerance_rad_arg = DeclareLaunchArgument(
+        "command_verify_tolerance_rad",
+        default_value="0.10",
+        description="Per-joint tolerance for treating a command as delivered.",
+    )
     joint_states_command_topic_arg = DeclareLaunchArgument(
         "joint_states_command_topic",
         default_value="control/joint_states",
@@ -98,6 +134,19 @@ def generate_launch_description():
             "sdk_python_dir": LaunchConfiguration("sdk_python_dir"),
             "can_interface": LaunchConfiguration("can_interface"),
             "pub_rate": ParameterValue(LaunchConfiguration("pub_rate"), value_type=float),
+            "joint_read_rate": ParameterValue(LaunchConfiguration("joint_read_rate"), value_type=float),
+            "command_retry_enabled": ParameterValue(
+                LaunchConfiguration("command_retry_enabled"), value_type=bool
+            ),
+            "command_retry_max_attempts": ParameterValue(
+                LaunchConfiguration("command_retry_max_attempts"), value_type=int
+            ),
+            "command_retry_period_s": ParameterValue(
+                LaunchConfiguration("command_retry_period_s"), value_type=float
+            ),
+            "command_verify_tolerance_rad": ParameterValue(
+                LaunchConfiguration("command_verify_tolerance_rad"), value_type=float
+            ),
             "joint_states_command_topic": LaunchConfiguration("joint_states_command_topic"),
             "tactile_sample_count": ParameterValue(LaunchConfiguration("tactile_sample_count"), value_type=int),
         }],
@@ -115,6 +164,11 @@ def generate_launch_description():
         sdk_cfg_path_arg,
         sdk_python_dir_arg,
         pub_rate_arg,
+        joint_read_rate_arg,
+        command_retry_enabled_arg,
+        command_retry_max_attempts_arg,
+        command_retry_period_s_arg,
+        command_verify_tolerance_rad_arg,
         joint_states_command_topic_arg,
         tactile_sample_count_arg,
         omnihand_bridge,

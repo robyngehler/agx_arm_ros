@@ -41,17 +41,33 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
   gravity_arm_side:=right \
   effector_type:=omnihand
 # gravity_arm_side:=right bakes the real body mount (tilt) into the gravity URDF;
-# effector_type:=omnihand folds the ~1 kg OmniHand in as a rigid payload at the flange.
+# effector_type:=omnihand folds the ~1 kg OmniHand into the gravity model (articulated by default).
 ```
 
 > **`effector_type:=omnihand` is required when the OmniHand is mounted.** `gravity_arm_side` bakes the
 > body mount (tilt) into the gravity URDF, but the end-effector load is only folded in when
-> `effector_type:=omnihand` — that flag makes the gravity slice keep the hand (`use_right_hand:=true`)
-> and freezes its finger joints so the ~1 kg hand rides along as a rigid payload at the flange (verified:
-> the gravity URDF grows from 4.58 kg to 5.64 kg, +1.04 kg of hand). Without it, `gravity_arm_side` alone
-> builds a hand-less model and the arm sags/drifts under the real hand. It is otherwise harmless on this
-> bring-up: on the driver it only merges `feedback/omnihand/joint_states` into the combined
-> `feedback/joint_states` (no extra CAN traffic), and the teach loop reads `joint1..7` by name regardless.
+> `effector_type:=omnihand` — that flag makes the gravity slice keep the hand (`use_right_hand:=true`;
+> verified: the gravity URDF grows from 4.58 kg to 5.64 kg, +1.04 kg of hand). Without it,
+> `gravity_arm_side` alone builds a hand-less model and the arm sags/drifts under the real hand. It is
+> otherwise harmless on this bring-up: on the driver it only merges `feedback/omnihand/joint_states`
+> into the combined `feedback/joint_states` (no extra CAN traffic), and the teach loop reads
+> `joint1..7` by name regardless.
+
+> **`gravity_hand_payload:=articulated` (default) tracks the live finger pose.** The hand joints stay
+> movable in the gravity URDF and the MIT controller feeds the hand joint states from the combined
+> `feedback/joint_states` into pinocchio by name (URDF mimic couplings for the underactuated distal
+> joints are re-applied), so the payload COM follows fist/open instead of assuming the frozen zero
+> pose. With no hand feedback the result is identical to the legacy rigid payload;
+> `gravity_hand_payload:=static` restores the frozen behavior explicitly.
+
+> **A stale gravity calibration is no longer auto-applied on custom gravity URDFs.** The auto-discovered
+> `config/nero_gravity_calibration.json` was least-squares-fitted on an upright, hand-less log; its
+> per-joint scale (×1.21/×0.72/×0.78 on joints 2–4) and bias would distort the now-correct duo+hand
+> model by whole newton-meters — far more than the finger-pose effect. When a custom gravity URDF is in
+> play (any `gravity_arm_side`/`custom_model` bring-up) the MIT controller now skips the auto-load and
+> logs a warning; pass `calibration_file:=...` explicitly once a calibration recorded **with** the hand
+> and mount exists (record freedrive residuals via `compare_gravity --urdf-path <generated urdf>`,
+> then fit with `fit_gravity_calibration`).
 
 > **`gravity_arm_side:=right|left` is required for a body-mounted arm.** The arm base is tilted on the
 > torso (`body_to_right_arm_mount` in `duo_body.xacro` is a 90° pitch), so a gravity model built from the
@@ -95,13 +111,24 @@ free-runs without the arm).
 > - **first tests: keep `one-shot on` (the validated arm ENOBUFS mitigation) and just deepen the TX ring** —
 >   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
 >   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.
-> - keep `control_rate_hz` at its 100 Hz default (do **not** drop it — a lower rate risks hold instability);
+> - keep `control_rate_hz` at its 50 Hz default (do **not** drop it — a lower rate risks hold instability);
 >   handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`) instead.
 > - only if the hand still starves under arm load, fall back to `ONE_SHOT=off` (lets hand frames retry) — but
 >   then watch the arm for ENOBUFS, since retransmission buildup returns.
 > - **`pub_rate` is not the bus lever:** it only sets the ROS republish rate of already-cached feedback (the
 >   arm firmware push rate is fixed), so lowering it does not reduce CAN traffic — it only makes teach
 >   recording sample staler feedback. Leave it at its default.
+> - **the bridge's `joint_read_rate` IS a bus lever** (unlike the arm's `pub_rate`): every hand joint
+>   readback is a real CANFD request/response. It now defaults to 20 Hz, decoupled from the 50 Hz ROS
+>   republish of the cached state — 30 fewer request frames per second on the shared bus, still plenty
+>   for teach recordings and command verification.
+> - **hand commands are now verified and re-sent by the bridge** (`command_retry_*` parameters,
+>   default 8 attempts every 0.3 s, 0.10 rad tolerance — eventual delivery matters more than the
+>   ~2.4 s worst case): a dropped gesture command ("every 3rd
+>   `omnihand_exerciser` call gets through") is retried automatically until the joint readback confirms
+>   it; `feedback/omnihand/status.status_text` shows `command_retry i/n pending` while in flight, and a
+>   give-up (fingers in contact, or bus dead) is logged once. `control/omnihand/stop` clears any
+>   pending retry.
 
 ### 2. Run the teach manager
 

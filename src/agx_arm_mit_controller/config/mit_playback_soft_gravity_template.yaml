@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    control_rate_hz: 100.0
+    control_rate_hz: 50.0
     gain_ramp_time_s: 1.0
     torque_limit: [4.0, 4.0, 4.0, 4.0, 2.0, 2.0, 2.0]
     kp: [0.6, 0.8, 0.6, 0.8, 0.4, 0.4, 0.3]
@@ -11,5 +11,7 @@
     gravity_feedforward_sign: -1.0
     # Leave empty to auto-discover the canonical Nero URDF.
     gravity_urdf_path: ""
-    # Leave empty to auto-discover config/nero_gravity_calibration.json.
+    # Leave empty to auto-discover config/nero_gravity_calibration.json — but only
+    # when gravity_urdf_path is also empty: with a custom gravity URDF (body mount
+    # and/or hand) that hand-less calibration is skipped and must be set explicitly.
     calibration_file: ""

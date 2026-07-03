@@ -65,7 +65,7 @@ class NeroMitControllerNode(Node):
             "joint_names",
             ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         )
-        self.declare_parameter("control_rate_hz", 100.0)
+        self.declare_parameter("control_rate_hz", 50.0)
         self.declare_parameter("feedback_timeout_s", 0.25)
         self.declare_parameter("auto_enable_on_trajectory", True)
         self.declare_parameter("hold_final_point", True)
@@ -145,6 +145,12 @@ class NeroMitControllerNode(Node):
         self.last_leader_feedback_monotonic = 0.0
         self.feedback_positions: dict[str, float] = {}
         self.feedback_velocities: dict[str, float] = {}
+        # Live positions of gravity-payload joints (e.g. OmniHand fingers) that
+        # ride behind the arm in an articulated gravity URDF. Filled from the
+        # combined feedback/joint_states; joints never seen stay at zero, which
+        # equals the frozen static-payload behavior.
+        self.payload_feedback_positions: dict[str, float] = {}
+        self.gravity_payload_joint_names: frozenset[str] = frozenset()
         self.active_trajectory: Optional[JointTrajectoryBuffer] = None
         self.trajectory_start_monotonic = 0.0
         self.hold_reference: Optional[SampledTrajectoryPoint] = None
@@ -268,6 +274,18 @@ class NeroMitControllerNode(Node):
         calibration_path: Path | None = None
         if self.calibration_file:
             calibration_path = Path(self.calibration_file).expanduser().resolve()
+        elif self.gravity_urdf_path:
+            # A custom gravity URDF (duo body mount and/or hand payload) does not
+            # match the assembly the auto-discovered calibration was fitted on;
+            # applying that scale/bias would distort the correct model torques.
+            # Load a matching calibration explicitly via calibration_file.
+            auto_calibration_path = default_nero_calibration_path()
+            if auto_calibration_path.exists():
+                self.get_logger().warn(
+                    f"Skipping auto calibration {auto_calibration_path}: a custom "
+                    "gravity URDF is set and the calibration was fitted for the "
+                    "default assembly. Set calibration_file explicitly to override."
+                )
         else:
             auto_calibration_path = default_nero_calibration_path()
             if auto_calibration_path.exists():
@@ -286,6 +304,14 @@ class NeroMitControllerNode(Node):
                     f"Gravity compensation enabled via {self.gravity_backend} using {self.gravity_model.urdf_path} "
                     f"(mounting_rpy={self.gravity_mounting_rpy})"
                 )
+                payload_joint_names = self.gravity_model.joint_names[len(self.joint_names):]
+                self.gravity_payload_joint_names = frozenset(payload_joint_names)
+                if payload_joint_names:
+                    self.get_logger().info(
+                        "Gravity model articulates "
+                        f"{len(payload_joint_names)} payload joints from live feedback: "
+                        f"{payload_joint_names}"
+                    )
             except GravityModelError as exc:
                 self.get_logger().error(str(exc))
                 self.gravity_model = None
@@ -345,6 +371,11 @@ class NeroMitControllerNode(Node):
 
     def _feedback_callback(self, msg: JointState) -> None:
         with self.state_lock:
+            if self.gravity_payload_joint_names:
+                for index, joint_name in enumerate(msg.name):
+                    if joint_name in self.gravity_payload_joint_names and index < len(msg.position):
+                        self.payload_feedback_positions[joint_name] = float(msg.position[index])
+
             state_maps = self._joint_state_maps(msg)
             if state_maps is None:
                 missing = [joint for joint in self.joint_names if joint not in msg.name]
@@ -898,7 +929,10 @@ class NeroMitControllerNode(Node):
             return [float(value) for value in reference.efforts]
 
         gravity_torque = self.gravity_model.compute_gravity(
-            [self.feedback_positions[joint_name] for joint_name in self.joint_names]
+            [self.feedback_positions[joint_name] for joint_name in self.joint_names],
+            extra_joint_positions=(
+                self.payload_feedback_positions if self.gravity_payload_joint_names else None
+            ),
         )
         scaled_torque = scale_gravity_feedforward(
             gravity_torque,

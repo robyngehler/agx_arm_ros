@@ -109,16 +109,23 @@ def _freeze_subtree_joints(urdf_text: str, root_link: str) -> str:
     return ET.tostring(root, encoding="unicode")
 
 
-def _apply_static_omnihand_payload(
+def _apply_omnihand_payload(
     model_path: Path,
     urdf_text: str,
     side: str,
     effector_type: str,
+    hand_payload_mode: str,
 ) -> str:
     if model_path.name != "duo_system.urdf.xacro" or effector_type != "omnihand":
         return urdf_text
 
     if side not in ("left", "right"):
+        return urdf_text
+    if hand_payload_mode == "articulated":
+        # Keep the hand joints movable so the gravity model can track the live
+        # finger pose (the MIT controller feeds hand joint states by name and
+        # resolves the URDF mimic coupling). Unfed joints stay at zero, which
+        # matches the frozen static payload exactly.
         return urdf_text
     return _freeze_subtree_joints(urdf_text, f"{side}_base_link")
 
@@ -131,7 +138,12 @@ def resolve_gravity_urdf_path(
     effector_type: str = "none",
     explicit_gravity_urdf_path: str = "",
     duo_side: str = "",
+    hand_payload_mode: str = "static",
 ) -> str:
+    if hand_payload_mode not in ("static", "articulated"):
+        raise ValueError(
+            f"hand_payload_mode must be 'static' or 'articulated', got '{hand_payload_mode}'"
+        )
     if explicit_gravity_urdf_path.strip():
         return str(Path(explicit_gravity_urdf_path).expanduser().resolve())
 
@@ -189,11 +201,12 @@ def resolve_gravity_urdf_path(
 
         generated_urdf_text = result.stdout
 
-    generated_urdf_text = _apply_static_omnihand_payload(
+    generated_urdf_text = _apply_omnihand_payload(
         model_path,
         generated_urdf_text,
         side,
         effector_type,
+        hand_payload_mode,
     )
     temp_urdf.write(generated_urdf_text)
 

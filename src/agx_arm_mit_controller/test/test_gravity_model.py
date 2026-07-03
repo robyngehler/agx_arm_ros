@@ -42,6 +42,65 @@ def test_pinocchio_gravity_model_returns_actuator_compensation_sign():
     assert model.compute_gravity([0.0, 0.0, 0.0]) == [-1.5, 2.0, -0.25]
 
 
+def test_pinocchio_gravity_model_fills_payload_joints_by_name_and_mimic():
+    captured_q: list[list[float]] = []
+
+    class FakeTau:
+        def __getitem__(self, index):
+            return float(index)
+
+    class FakePin:
+        class utils:
+            @staticmethod
+            def zero(size):
+                return [0.0] * size
+
+        @staticmethod
+        def computeGeneralizedGravity(model, data, q):
+            del model, data
+            captured_q.append(list(q))
+            return FakeTau()
+
+    model = PinocchioGravityModel(
+        urdf_path="/tmp/fake_articulated.urdf",
+        joint_names=["joint1", "joint2", "hand_mcp", "hand_dip"],
+        _pin=FakePin(),
+        _model=SimpleNamespace(nq=4),
+        _data=object(),
+        joint_q_index={"joint1": 0, "joint2": 1, "hand_mcp": 2, "hand_dip": 3},
+        mimic_joints={"hand_dip": ("hand_mcp", 0.9, 0.05)},
+    )
+
+    tau = model.compute_gravity(
+        [0.1, 0.2],
+        extra_joint_positions={"hand_mcp": 1.0, "unknown_joint": 9.9},
+    )
+
+    # only the two actuated (arm) torques come back, sign-flipped
+    assert tau == [-0.0, -1.0]
+    # q: arm by index, hand_mcp by name, hand_dip via mimic coupling
+    assert captured_q == [[0.1, 0.2, 1.0, 0.9 * 1.0 + 0.05]]
+
+
+def test_pinocchio_gravity_model_rejects_partial_fill_without_extras():
+    class FakePin:
+        class utils:
+            @staticmethod
+            def zero(size):
+                return [0.0] * size
+
+    model = PinocchioGravityModel(
+        urdf_path="/tmp/fake_partial.urdf",
+        joint_names=["joint1", "joint2", "hand_mcp"],
+        _pin=FakePin(),
+        _model=SimpleNamespace(nq=3),
+        _data=object(),
+    )
+
+    with pytest.raises(ValueError):
+        model.compute_gravity([0.1, 0.2])
+
+
 def test_pinocchio_gravity_model_accepts_prefixed_flange_frames():
     class FakePlacement:
         def __init__(self):

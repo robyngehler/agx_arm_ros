@@ -471,10 +471,10 @@ one per arm — no free HW channel). Three compounding factors: (a) `ONE_SHOT=on
 the OmniHand's high CANFD IDs = low arbitration priority, so under arm load the hand loses arbitration and
 its frames are dropped -> `请求超时`; idle-hold sends little, so the hand is fine there — exactly the
 observed contrast; (b) no `txqueuelen` was set (kernel default 10) so a 7-frame MIT command burst overran
-the TX ring -> ENOBUFS `[105]`; (c) arm MIT command TX at `control_rate_hz=100`. Fixes applied:
+the TX ring -> ENOBUFS `[105]`; (c) arm MIT command TX at `control_rate_hz=50`. Fixes applied:
 `scripts/activate_native_can.sh` now sets `txqueuelen` (default 1000) and keeps `ONE_SHOT` switchable
 (`ONE_SHOT=off` documented as the fallback if the hand still starves). **First-test strategy (chosen):**
-keep `one-shot on` + deeper TX ring, keep `control_rate_hz` at 100 Hz (a lower rate risks hold
+keep `one-shot on` + deeper TX ring, keep `control_rate_hz` at 50 Hz (a lower rate risks hold
 instability), and instead run a stiffer/more-damped MIT hold (`kp` ~+50%, `kd` ~2.5x in
 `nero_mit_controller_defaults.yaml`). Note: `pub_rate` is **not** a bus lever (ROS republish of cached
 feedback; the arm firmware push rate is fixed). Remaining option if congestion persists: a dedicated hand
@@ -493,6 +493,56 @@ MIT. In the plain teach bring-up neither source exists (no move_group running; d
 `enable_debug_joint_trajectory_topic:=true`), and the teach manager enables MIT **explicitly** after
 `set_normal_mode`, so the sequence is clean. Keep `enable_debug_joint_trajectory_topic:=false` during teach
 except for the deliberate `f` playback, and do not run a MoveIt slice against the same arm while teaching.
+
+### Implementation follow-up (2026-07-03)
+
+**P1' — Hand-aware gravity, implemented.** Two changes on top of the `effector_type:=omnihand` fix:
+
+1. *Articulated hand payload* (`gravity_hand_payload:=articulated`, new default in
+   `start_nero_mit_controller.launch.py`): the gravity URDF slice keeps the finger joints movable
+   instead of freezing them at zero, `PinocchioGravityModel` gained a name→q-index map plus URDF
+   `mimic` re-application, and the MIT controller feeds the live hand joint states (already merged
+   into combined `feedback/joint_states`) into `compute_gravity` each tick. Offline validation on the
+   Jetson (real `duo_system.urdf.xacro` right slice): 26 movable joints, arm joints stay q[0..6],
+   7 mimic couplings resolved, articulated@zero == frozen static to <1e-9 Nm, ~24 µs/call at 50 Hz.
+   Measured fist-vs-open effect on the arm joints is however only ~0.06 Nm — real but small.
+2. *Stale calibration gating — the likely dominant error.* `config/nero_gravity_calibration.json`
+   (May 7, fitted on an upright hand-less log) was auto-loaded into every bring-up and rescaled the
+   model torques of joints 2–4 by ×1.21/×0.72/×0.78 plus bias — whole-Nm distortion of the now-correct
+   duo+hand model. With a custom gravity URDF the MIT controller no longer auto-loads it (warning
+   instead); `calibration_file` stays available for a calibration recorded with hand+mount
+   (`compare_gravity --urdf-path ...` → `fit_gravity_calibration`). **Hardware validation pending:**
+   re-check freedrive neutrality with the OmniHand mounted, fist and open.
+
+**P1'' — Residual gravity error root-caused: stale duo_body_description install (2026-07-03).**
+After P1' the compensation was better but still off. The runtime log gave it away: the gravity model
+articulated only 16 payload joints with **O10** names (`right_ring_abad_joint`, …) instead of the 19
+O12-Pro joints. `start_nero_mit_controller.launch.py` resolved `duo_system.urdf.xacro` from the
+**installed** share dir, and the installed `nero_arm_macro.xacro` still included the legacy
+`xacro/hand.xacro` (O10) — `duo_body_description` had not been rebuilt since the Pro swap (the package
+is copy-installed, not symlinked). Measured impact of the wrong hand (O10 4.45 kg-slice vs Pro
+5.64 kg-slice, hand ~0.6 kg lighter and differently distributed): up to **~4 Nm error on joint1** in a
+stretched pose, ~0.7 Nm on joint6 even at candle — dwarfing the finger-pose effect. Fixes: rebuilt
+`duo_body_description`, and the launch now resolves the xacro **source-tree first** (same rationale as
+the params file: a stale install must not silently redefine the physics). If freedrive is still not
+neutral after this, the next suspects are the vendor URDF hand inertials vs the real hand and the
+mount transform — quantify with freedrive residuals (`~/gravity_feedforward` vs measured effort,
+`compare_gravity --urdf-path <generated>`), then fit a matching calibration.
+
+**P2' — Lossy hand commands, implemented (bridge verify-and-retry + poll throttle).**
+`omnihand_bridge_node` now latches the newest hand target (`control/joint_states` or
+`control/omnihand/joint_trajectory`, latest wins) and re-sends it until the SDK joint readback
+confirms every commanded joint within `command_verify_tolerance_rad` (0.10), up to
+`command_retry_max_attempts` (8; raised from 4 after ~2/10 commands still needed more than
+4 sends on hardware — eventual delivery beats latency) every `command_retry_period_s` (0.3 s). Verification only trusts a
+real readback taken after the last send (the backend caches targets optimistically) and never runs
+while `communication_fault` is set; a stop clears the pending target. Give-up after max attempts is
+logged once (covers fingers-in-contact, e.g. fist on a bottle). In-flight state is visible as
+`command_retry i/n pending` in `feedback/omnihand/status.status_text`. Additionally the SDK joint
+readback is decoupled from `pub_rate` via `joint_read_rate` (default 20 Hz vs the previous 50):
+each poll is a real CANFD request, so this removes ~30 hand request frames/s from the shared bus.
+Validated with the mock backend end-to-end (command → verify → clear) and unit tests
+(`test_omnihand_bridge_retry.py`); shared-bus behavior under MIT load still needs a hardware run.
 
 **P3 — Overcurrent / stall (堵转) & tactile (DEFERRED).** The status message ships empty
 `active_joint_currents_a` / `active_joint_temperatures_c` and `active_joint_over_current` all-false while

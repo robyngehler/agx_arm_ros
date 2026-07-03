@@ -1,14 +1,46 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Mapping, Protocol
+from xml.etree import ElementTree as ET
 
 from .model_metadata import default_nero_urdf_path
 
 
 class GravityModelError(RuntimeError):
     pass
+
+
+def _parse_mimic_joints(urdf_path: str) -> dict[str, tuple[str, float, float]]:
+    """Return {mimic_joint: (source_joint, multiplier, offset)} for movable URDF joints.
+
+    Pinocchio builds mimic joints as independent DoF, so the coupling has to be
+    re-applied when filling q (the OmniHand distal finger joints are vendor
+    mimic joints driven by the active mcp/pip joints).
+    """
+    try:
+        root = ET.parse(urdf_path).getroot()
+    except ET.ParseError:
+        return {}
+
+    mimic_map: dict[str, tuple[str, float, float]] = {}
+    for joint in root.findall("joint"):
+        if joint.attrib.get("type") == "fixed":
+            continue
+        mimic = joint.find("mimic")
+        if mimic is None:
+            continue
+        name = joint.attrib.get("name", "")
+        source = mimic.attrib.get("joint", "")
+        if not name or not source:
+            continue
+        mimic_map[name] = (
+            source,
+            float(mimic.attrib.get("multiplier", 1.0)),
+            float(mimic.attrib.get("offset", 0.0)),
+        )
+    return mimic_map
 
 
 def _resolve_mounting_rpy(mounting_rpy: "list[float] | tuple[float, float, float] | None") -> tuple[float, float, float]:
@@ -24,7 +56,11 @@ class GravityModel(Protocol):
     joint_names: list[str]
     urdf_path: str
 
-    def compute_gravity(self, joint_positions: list[float]) -> list[float]:
+    def compute_gravity(
+        self,
+        joint_positions: list[float],
+        extra_joint_positions: "Mapping[str, float] | None" = None,
+    ) -> list[float]:
         """Return actuator torque needed to compensate gravity at `joint_positions`."""
         ...
 
@@ -40,6 +76,11 @@ class PinocchioGravityModel:
     _model: object
     _data: object
     mounting_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # name -> q index for every 1-DoF movable joint; lets callers set payload
+    # joints (e.g. OmniHand fingers) by name on top of the indexed arm fill.
+    joint_q_index: dict[str, int] = field(default_factory=dict)
+    # mimic joint -> (source joint, multiplier, offset), re-applied on q fill.
+    mimic_joints: dict[str, tuple[str, float, float]] = field(default_factory=dict)
 
     @classmethod
     def from_urdf(
@@ -73,19 +114,55 @@ class PinocchioGravityModel:
 
         data = model.createData()
         joint_names = [name for name in model.names if name not in ("universe",)]
-        return cls(path, joint_names, pin, model, data, rpy)
 
-    def compute_gravity(self, joint_positions: list[float]) -> list[float]:
-        if len(joint_positions) != self.model_dofs:
-            raise ValueError(f"expected {self.model_dofs} joint positions, got {len(joint_positions)}")
+        joint_q_index: dict[str, int] = {}
+        for joint_id in range(1, model.njoints):
+            joint = model.joints[joint_id]
+            if int(joint.nq) == 1:
+                joint_q_index[model.names[joint_id]] = int(joint.idx_q)
+
+        mimic_joints = {
+            name: coupling
+            for name, coupling in _parse_mimic_joints(path).items()
+            if name in joint_q_index and coupling[0] in joint_q_index
+        }
+        return cls(path, joint_names, pin, model, data, rpy, joint_q_index, mimic_joints)
+
+    def compute_gravity(
+        self,
+        joint_positions: list[float],
+        extra_joint_positions: "Mapping[str, float] | None" = None,
+    ) -> list[float]:
+        """Gravity torque for the first len(joint_positions) joints (tree order).
+
+        `joint_positions` fills the leading (arm) DoF by index, exactly like the
+        legacy all-DoF call. `extra_joint_positions` sets trailing payload joints
+        (e.g. live OmniHand finger angles) by URDF joint name; mimic couplings
+        from the URDF are then re-applied. Without extras the model must be
+        fully actuated (frozen-payload URDF), matching the previous contract.
+        """
+        actuated_count = len(joint_positions)
+        if actuated_count > self.model_dofs or (
+            extra_joint_positions is None and actuated_count != self.model_dofs
+        ):
+            raise ValueError(f"expected {self.model_dofs} joint positions, got {actuated_count}")
         q = self._pin.utils.zero(self._model.nq)
         for index, value in enumerate(joint_positions):
             q[index] = value
+        if extra_joint_positions is not None:
+            for joint_name, value in extra_joint_positions.items():
+                q_index = self.joint_q_index.get(joint_name)
+                if q_index is not None and q_index >= actuated_count:
+                    q[q_index] = float(value)
+            for joint_name, (source_name, multiplier, offset) in self.mimic_joints.items():
+                q_index = self.joint_q_index[joint_name]
+                if q_index >= actuated_count:
+                    q[q_index] = multiplier * q[self.joint_q_index[source_name]] + offset
         tau = self._pin.computeGeneralizedGravity(self._model, self._data, q)
         # Pinocchio returns the gravity term from the dynamics equation. The MIT
         # controller and motor feedback use actuator torque sign, which is the
         # opposite direction for static gravity compensation.
-        return [-float(tau[index]) for index in range(self.model_dofs)]
+        return [-float(tau[index]) for index in range(actuated_count)]
 
     def compute_flange_pose(self, joint_positions: list[float]) -> list[float]:
         if len(joint_positions) != self.model_dofs:

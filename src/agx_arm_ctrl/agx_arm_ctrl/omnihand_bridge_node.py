@@ -794,6 +794,11 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("hand_model", DEFAULT_HAND_MODEL)
         self.declare_parameter("backend_type", "mock")
         self.declare_parameter("pub_rate", 50.0)
+        # Hand joint readback is a real CAN request per poll; on the shared
+        # arm+hand bus this competes with the 50 Hz MIT command stream, so the
+        # SDK poll rate is decoupled from the ROS publish rate. <= 0 polls on
+        # every publish tick (legacy behavior).
+        self.declare_parameter("joint_read_rate", 20.0)
         self.declare_parameter("tactile_sample_count", 32)
         self.declare_parameter("joint_states_command_topic", "control/joint_states")
         self.declare_parameter("device_id", 1)
@@ -801,11 +806,32 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("sdk_cfg_path", "")
         self.declare_parameter("sdk_python_dir", "")
         self.declare_parameter("can_interface", "")
+        # Command delivery on the congested shared bus is lossy (one-shot CAN +
+        # low hand arbitration priority drops frames under arm load). Commands
+        # are idempotent position setpoints, so the bridge re-sends the latest
+        # target until the readback confirms it, up to max_attempts. Eventual
+        # delivery matters more than latency here, hence the generous budget
+        # (8 x 0.3 s ~ 2.4 s worst case).
+        self.declare_parameter("command_retry_enabled", True)
+        self.declare_parameter("command_retry_max_attempts", 8)
+        self.declare_parameter("command_retry_period_s", 0.3)
+        self.declare_parameter("command_verify_tolerance_rad", 0.10)
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
         self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
         self.backend_type = str(self.get_parameter("backend_type").value)
         self.pub_rate = float(self.get_parameter("pub_rate").value)
+        self.joint_read_rate = float(self.get_parameter("joint_read_rate").value)
+        self.command_retry_enabled = bool(self.get_parameter("command_retry_enabled").value)
+        self.command_retry_max_attempts = max(
+            1, int(self.get_parameter("command_retry_max_attempts").value)
+        )
+        self.command_retry_period_s = max(
+            0.05, float(self.get_parameter("command_retry_period_s").value)
+        )
+        self.command_verify_tolerance_rad = float(
+            self.get_parameter("command_verify_tolerance_rad").value
+        )
         self.tactile_sample_count = int(self.get_parameter("tactile_sample_count").value)
         self.joint_states_command_topic = str(
             self.get_parameter("joint_states_command_topic").value
@@ -867,6 +893,19 @@ class OmniHandBridgeNode(Node):
 
         self.backend_type = self.backend.backend_name
         self.joint_names = self.backend.get_joint_names()
+        self.joint_name_set = frozenset(self.joint_names)
+
+        # Latest verified-delivery state: the newest hand target replaces any
+        # older pending one (latest wins), and cached_positions holds the last
+        # real SDK readback used both for publishing and for verification.
+        self.pending_command: dict[str, Any] | None = None
+        self.cached_positions: list[float] = list(
+            getattr(self.backend, "positions", [0.0] * len(self.joint_names))
+        )
+        self.last_joint_read_monotonic = 0.0
+        self.joint_read_min_interval_s = (
+            1.0 / self.joint_read_rate if self.joint_read_rate > 0.0 else 0.0
+        )
 
         self.hand_joint_states_pub = self.create_publisher(
             JointState, "feedback/omnihand/joint_states", 10
@@ -894,6 +933,8 @@ class OmniHandBridgeNode(Node):
 
         timer_period = 1.0 / self.pub_rate if self.pub_rate > 0.0 else 0.02
         self.create_timer(timer_period, self._publish_feedback)
+        if self.command_retry_enabled:
+            self.create_timer(self.command_retry_period_s, self._command_retry_tick)
 
         self.get_logger().info(
             "OmniHand bridge started with "
@@ -909,38 +950,131 @@ class OmniHandBridgeNode(Node):
         target_map = {
             joint_name: float(msg.position[index])
             for index, joint_name in enumerate(msg.name)
-            if index < len(msg.position)
+            if index < len(msg.position) and joint_name in self.joint_name_set
         }
         if not target_map:
-            return
-
-        try:
-            self.backend.apply_joint_targets(target_map, "joint_state")
-        except ValueError:
             # Shared control/joint_states frequently contains arm-only updates.
             return
-        except RuntimeError as exc:
-            self.get_logger().warn(f"Ignoring OmniHand joint_state command: {exc}")
-            return
+
+        self._submit_command(target_map, "joint_state")
 
     def _joint_trajectory_callback(self, msg: JointTrajectory) -> None:
-        try:
-            self.backend.apply_trajectory(msg)
-        except ValueError as exc:
-            self.get_logger().warn(f"Rejected OmniHand JointTrajectory: {exc}")
-            return
-        except RuntimeError as exc:
-            self.get_logger().warn(f"Ignoring OmniHand joint_trajectory command: {exc}")
+        if not msg.points:
+            self.get_logger().warn("Rejected OmniHand JointTrajectory: no points")
             return
 
-        unknown_names = [name for name in msg.joint_names if name not in self.joint_names]
+        final_point = msg.points[-1]
+        if len(final_point.positions) != len(msg.joint_names):
+            self.get_logger().warn(
+                "Rejected OmniHand JointTrajectory: joint_names and final point "
+                "positions length mismatch"
+            )
+            return
+
+        unknown_names = [name for name in msg.joint_names if name not in self.joint_name_set]
         if unknown_names:
             self.get_logger().warn(
                 f"Ignored unknown OmniHand joints in trajectory: {', '.join(unknown_names)}"
             )
 
+        target_map = {
+            joint_name: float(position)
+            for joint_name, position in zip(msg.joint_names, final_point.positions, strict=True)
+            if joint_name in self.joint_name_set
+        }
+        if not target_map:
+            self.get_logger().warn(
+                "Rejected OmniHand JointTrajectory: no recognized OmniHand joints"
+            )
+            return
+
+        self._submit_command(target_map, "joint_trajectory")
+
+    def _submit_command(self, target_map: dict[str, float], control_mode: str) -> None:
+        """Send a hand target and keep it pending until the readback confirms it.
+
+        On the shared CAN bus the hand's frames lose arbitration under arm load
+        and get dropped silently (one-shot mode), so a single send is unreliable.
+        Targets are absolute setpoints, so re-sending the latest one is safe.
+        """
+        self.pending_command = {
+            "targets": dict(target_map),
+            "control_mode": control_mode,
+            "attempts": 0,
+            "last_send_monotonic": 0.0,
+        }
+        self._send_pending_command()
+        if not self.command_retry_enabled:
+            self.pending_command = None
+
+    def _send_pending_command(self) -> None:
+        pending = self.pending_command
+        if pending is None:
+            return
+
+        pending["attempts"] += 1
+        pending["last_send_monotonic"] = time.monotonic()
+        try:
+            self.backend.apply_joint_targets(pending["targets"], pending["control_mode"])
+        except (ValueError, RuntimeError) as exc:
+            attempts_left = pending["attempts"] < self.command_retry_max_attempts
+            if self.command_retry_enabled and attempts_left:
+                self.get_logger().warn(
+                    f"OmniHand {pending['control_mode']} command send failed "
+                    f"(attempt {pending['attempts']}/{self.command_retry_max_attempts}), "
+                    f"retrying: {exc}"
+                )
+            else:
+                self.get_logger().warn(
+                    f"Ignoring OmniHand {pending['control_mode']} command: {exc}"
+                )
+                self.pending_command = None
+
+    def _pending_command_verified(self, pending: dict[str, Any]) -> bool:
+        if self.backend.communication_fault:
+            return False
+        # Only trust a real SDK readback taken after the last send; right after
+        # apply_joint_targets the backend caches the target optimistically.
+        if self.last_joint_read_monotonic <= pending["last_send_monotonic"]:
+            return False
+        positions = dict(zip(self.joint_names, self.cached_positions))
+        return all(
+            joint_name in positions
+            and abs(positions[joint_name] - target) <= self.command_verify_tolerance_rad
+            for joint_name, target in pending["targets"].items()
+        )
+
+    def _command_retry_tick(self) -> None:
+        pending = self.pending_command
+        if pending is None:
+            return
+
+        if self._pending_command_verified(pending):
+            if pending["attempts"] > 1:
+                self.get_logger().info(
+                    f"OmniHand {pending['control_mode']} command verified after "
+                    f"{pending['attempts']} attempts"
+                )
+            self.pending_command = None
+            return
+
+        if pending["attempts"] >= self.command_retry_max_attempts:
+            self.get_logger().warn(
+                f"OmniHand {pending['control_mode']} command not verified within "
+                f"{pending['attempts']} attempts (tolerance "
+                f"{self.command_verify_tolerance_rad:.3f} rad); giving up — fingers may be "
+                "in contact or the bus is congested"
+            )
+            self.pending_command = None
+            return
+
+        if time.monotonic() - pending["last_send_monotonic"] >= self.command_retry_period_s:
+            self._send_pending_command()
+
     def _stop_callback(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
         del request
+        # A stop supersedes any in-flight target; never re-send it afterwards.
+        self.pending_command = None
         self.backend.stop()
         response.success = True
         response.message = f"OmniHand {self.backend.backend_name} stop requested"
@@ -949,10 +1083,18 @@ class OmniHandBridgeNode(Node):
     def _publish_feedback(self) -> None:
         stamp = self.get_clock().now().to_msg()
 
+        now = time.monotonic()
+        if (
+            self.joint_read_min_interval_s <= 0.0
+            or now - self.last_joint_read_monotonic >= self.joint_read_min_interval_s
+        ):
+            self.cached_positions = self.backend.read_joint_state()
+            self.last_joint_read_monotonic = now
+
         joint_state = JointState()
         joint_state.header.stamp = stamp
         joint_state.name = list(self.joint_names)
-        joint_state.position = self.backend.read_joint_state()
+        joint_state.position = list(self.cached_positions)
         self.hand_joint_states_pub.publish(joint_state)
 
         status_snapshot = self.backend.read_status()
@@ -971,6 +1113,11 @@ class OmniHandBridgeNode(Node):
         status_msg.active_joint_over_temperature = status_snapshot.active_joint_over_temperature
         status_msg.active_joint_over_current = status_snapshot.active_joint_over_current
         status_msg.status_text = status_snapshot.status_text
+        if self.pending_command is not None:
+            status_msg.status_text += (
+                f"; command_retry {self.pending_command['attempts']}"
+                f"/{self.command_retry_max_attempts} pending"
+            )
         self.status_pub.publish(status_msg)
 
         tactile_snapshot = self.backend.read_tactile()
