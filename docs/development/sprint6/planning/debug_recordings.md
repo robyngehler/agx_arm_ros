@@ -544,6 +544,23 @@ each poll is a real CANFD request, so this removes ~30 hand request frames/s fro
 Validated with the mock backend end-to-end (command → verify → clear) and unit tests
 (`test_omnihand_bridge_retry.py`); shared-bus behavior under MIT load still needs a hardware run.
 
+**P4 — Shaky direct playback of teach recordings (RESOLVED, playback smoothing, 2026-07-03).**
+Recorded trajectories replayed over the MIT debug topic juddered ("jumps between points") while MoveIt
+trajectories ran smoothly through the same controller — so the trajectory data, not the controller or
+rate, was the suspect. Analysis of the real recordings (~/agx_arm_trajectories/teach): sampling is
+dense (20 ms median) but **10–31% of consecutive points carry byte-identical positions** (the recorder
+samples a feedback cache that is not always fresh), so the finite-difference velocities chatter between
+~0 and twice the true value (rms(Δv) ≈ rms(v) — noise at signal strength). The controller reproduces
+that as v_des/kd torque chatter plus a kinked p_des staircase; MoveIt's TOTG output has consistent
+velocities, hence the contrast. Fix: `smooth_recorded_trajectory` in `trajectory_io` — zero-phase
+centered moving average on positions (half-window shrinks symmetrically at the edges: endpoints exact,
+no phase lag), velocities recomputed as central differences of the smoothed signal, endpoints pinned to
+rest. Applied at **playback time** in the teach manager and `execute_saved_trajectory`
+(`--playback-smoothing-window`, default 9 ≈ 180 ms at 50 Hz; `<= 1` disables) so saved recordings stay
+raw and existing recordings benefit without re-teaching. Measured on all five current recordings:
+velocity chatter ↓ 8–11×, path deviation ≤ 7–51 mrad (max at the fastest wave motion). Hardware retest
+pending.
+
 **P3 — Overcurrent / stall (堵转) & tactile (DEFERRED).** The status message ships empty
 `active_joint_currents_a` / `active_joint_temperatures_c` and `active_joint_over_current` all-false while
 the SDK logs `堵转` (stall) — the SDK's stall/current signal is not wired into the ROS diagnostics or a

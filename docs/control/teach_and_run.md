@@ -153,6 +153,13 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
 - `--playback-speed-scale`: direct teach-manager replay speed; `0.25` = quarter-speed, `1.0` = recorded speed.
 - `--playback-lead-in-sec`: inserts a linear blend from the current hold pose to the first recorded waypoint, so the start is not limited to the raw recorded first sample.
 - `--publish-repetitions 1`: recommended for cautious first tests; repeated debug publishes restart the same debug trajectory.
+- `--playback-smoothing-window` (default **9**, on): zero-phase moving average over the recorded
+  positions at playback, velocities recomputed from the smoothed signal. Teach recordings sample a
+  feedback cache, so 10–30% of consecutive points are byte-identical (stale) and the raw
+  finite-difference velocities chatter between ~0 and twice the true value — replayed raw, the arm
+  judders even though MoveIt trajectories run smoothly through the same controller. Measured on real
+  recordings: velocity chatter drops 8–11×, path deviation ≤ ~50 mrad at the fastest motion. The saved
+  JSON stays raw; `<= 1` disables smoothing.
 
 > `--source-joints` are the joint names **as they appear on `feedback/joint_states`** — on this
 > un-namespaced, unprefixed bring-up that is `joint1..joint7` (the tool prints the names it sees if one

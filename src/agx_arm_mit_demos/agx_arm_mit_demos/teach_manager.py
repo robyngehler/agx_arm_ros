@@ -62,6 +62,7 @@ from agx_arm_mit_controller.trajectory_io import (
     recorded_to_joint_trajectory,
     sanitize_trajectory_name,
     save_recorded_trajectory,
+    smooth_recorded_trajectory,
 )
 from agx_arm_coordination.arm_executor import ArmConfig
 
@@ -730,6 +731,10 @@ class TeachManagerNode(Node):
         current_positions = None
         if self.args.playback_lead_in_sec > 0.0:
             current_positions = self._current_positions_for_trajectory(trajectory, dispatched)
+        # Smooth at playback time (raw recordings stay untouched): teach
+        # recordings carry stale-sample staircases whose finite-difference
+        # velocities chatter, which the MIT controller reproduces as judder.
+        trajectory = smooth_recorded_trajectory(trajectory, self.args.playback_smoothing_window)
         full_msg = recorded_to_joint_trajectory(
             trajectory,
             time_scale=1.0 / self.args.playback_speed_scale,
@@ -1054,6 +1059,17 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Blend from the current hold pose to the first recorded waypoint over this many seconds",
+    )
+    parser.add_argument(
+        "--playback-smoothing-window",
+        type=int,
+        default=9,
+        help=(
+            "Zero-phase moving-average window (samples) applied to recorded positions at "
+            "playback, with velocities recomputed from the smoothed signal (9 at 50 Hz "
+            "~ 180 ms). Removes the stale-sample staircase that makes raw playback judder; "
+            "<= 1 disables smoothing."
+        ),
     )
     parser.add_argument("--transition-velocity-scaling", type=float, default=0.10,
                         help="MoveIt velocity scaling for anchor transitions (0,1]")

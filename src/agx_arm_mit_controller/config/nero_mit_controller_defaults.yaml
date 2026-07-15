@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     joint_names: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
-    control_rate_hz: 100.0
+    control_rate_hz: 50.0
     feedback_timeout_s: 0.25
     auto_enable_on_trajectory: true
     hold_final_point: true

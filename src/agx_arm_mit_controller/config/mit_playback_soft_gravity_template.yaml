@@ -1,6 +1,6 @@
 /**:
   ros__parameters:
-    control_rate_hz: 100.0
+    control_rate_hz: 50.0
     gain_ramp_time_s: 1.0
     torque_limit: [4.0, 4.0, 4.0, 4.0, 2.0, 2.0, 2.0]
     kp: [0.6, 0.8, 0.6, 0.8, 0.4, 0.4, 0.3]

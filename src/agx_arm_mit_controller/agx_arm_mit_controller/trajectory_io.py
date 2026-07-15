@@ -102,6 +102,81 @@ def with_finite_difference_velocities(
     return points
 
 
+def smooth_recorded_trajectory(
+    trajectory: RecordedTrajectory,
+    smoothing_window: int,
+) -> RecordedTrajectory:
+    """Return a playback-smoothed copy of a recorded trajectory.
+
+    Teach recordings sample a feedback cache at a fixed rate, so 10-30% of
+    consecutive points carry byte-identical (stale) positions and the
+    finite-difference velocities chatter between ~0 and twice the true value.
+    Replayed raw, that staircase makes the arm judder even though MoveIt
+    trajectories run smoothly through the same controller.
+
+    Positions are filtered with a zero-phase centered moving average whose
+    half-window shrinks symmetrically at the edges (first/last points stay
+    exact, no phase lag), and velocities are recomputed as central differences
+    of the smoothed positions (endpoints at rest). Times, efforts, flange
+    poses, and the stored file are untouched — smoothing is a playback-time
+    step so raw recordings stay the ground truth.
+
+    ``smoothing_window`` is the full window in samples (9 at 50 Hz ~ 180 ms,
+    ~2.5 Hz cutoff — well above hand-taught motion content). Values <= 1
+    return the trajectory unchanged.
+    """
+    if smoothing_window <= 1 or len(trajectory.points) < 3:
+        return trajectory
+
+    points = trajectory.points
+    count = len(points)
+    joint_count = len(points[0].positions)
+    half_window = smoothing_window // 2
+
+    smoothed_positions: list[list[float]] = []
+    for index in range(count):
+        reach = min(half_window, index, count - 1 - index)
+        window_points = points[index - reach: index + reach + 1]
+        smoothed_positions.append(
+            [
+                sum(point.positions[joint] for point in window_points) / len(window_points)
+                for joint in range(joint_count)
+            ]
+        )
+
+    smoothed_points: list[RecordedTrajectoryPoint] = []
+    for index in range(count):
+        if index == 0 or index == count - 1:
+            velocities = [0.0] * joint_count
+        else:
+            dt = max(1e-6, points[index + 1].time_from_start - points[index - 1].time_from_start)
+            velocities = [
+                (smoothed_positions[index + 1][joint] - smoothed_positions[index - 1][joint]) / dt
+                for joint in range(joint_count)
+            ]
+        smoothed_points.append(
+            RecordedTrajectoryPoint(
+                time_from_start=points[index].time_from_start,
+                positions=smoothed_positions[index],
+                velocities=velocities,
+                efforts=list(points[index].efforts),
+                flange_pose=points[index].flange_pose,
+            )
+        )
+
+    metadata = dict(trajectory.metadata)
+    metadata["playback_smoothing_window"] = smoothing_window
+    return RecordedTrajectory(
+        name=trajectory.name,
+        robot=trajectory.robot,
+        joint_names=list(trajectory.joint_names),
+        sample_rate_hz=trajectory.sample_rate_hz,
+        recorded_at=trajectory.recorded_at,
+        points=smoothed_points,
+        metadata=metadata,
+    )
+
+
 def save_recorded_trajectory(trajectory: RecordedTrajectory, file_path: str | Path) -> Path:
     path = Path(file_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
