@@ -265,6 +265,13 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
   --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 ```
 
+> **Auto-detection:** started **without** `--arms` while a namespaced bring-up (e.g.
+> `execution_profile:=duo_arm`/`duo_hand`, or a namespaced single side) is already running, the
+> manager notices there is no un-namespaced MIT stack, finds the complete namespaced stacks in the
+> graph, and rebinds itself automatically (logged as "rebinding automatically (equivalent to
+> --arms ...)"). An explicit `--arms` choice is always respected verbatim; the waiting message now
+> also lists which MIT stacks the graph currently provides.
+
 > **Hands are transparent to dual-arm recording, not recorded themselves.** `--source-joints` only ever
 > names the 7 arm joints; the teach manager looks those up by name in each side's `feedback/joint_states`
 > and ignores everything else, so it behaves identically whether or not that side's bring-up carries an

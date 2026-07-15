@@ -160,6 +160,34 @@ def _build_transition_targets(config: ArmConfig, namespaces: list[str]) -> list[
     return targets
 
 
+_REQUIRED_MIT_SERVICES = (
+    "set_normal_mode",
+    "mit_controller/enable",
+    "mit_controller/freedrive",
+    "mit_controller/hold_current",
+)
+
+
+def _discover_mit_namespaces(node: Node) -> list[str]:
+    """Namespaces that currently provide the full MIT service set.
+
+    Returns "" for an un-namespaced stack and e.g. "left_arm"/"right_arm" for
+    the namespaced Duo bring-ups (components baseline), sorted left before
+    right. Used to rebind the teach manager automatically when it was started
+    without --arms against a namespaced bring-up.
+    """
+    services = {name for name, _ in node.get_service_names_and_types()}
+    marker = "/set_normal_mode"
+    namespaces = []
+    for service_name in services:
+        if not service_name.endswith(marker):
+            continue
+        prefix = service_name[: -len(marker)]  # "" un-namespaced, "/left_arm" otherwise
+        if all(f"{prefix}/{required}" in services for required in _REQUIRED_MIT_SERVICES):
+            namespaces.append(prefix.strip("/"))
+    return sorted(namespaces, key=lambda ns: (_SIDE_ORDER.get(ns, 99), ns))
+
+
 def _resolve_config_path(raw: str) -> Path:
     """Resolve a possibly-relative config path independent of the launch cwd.
 
@@ -964,17 +992,57 @@ class TeachManagerNode(Node):
             f"library={self.library_dir}"
         )
 
+    def _rebind_arms(self, namespaces: list[str]) -> None:
+        """Rebuild the arm endpoints against discovered namespaces.
+
+        The previous endpoints' subscriptions/clients stay registered on the
+        node (their un-namespaced topics simply never fire) — a one-time,
+        harmless leftover in exchange for not tearing the node down.
+        """
+        self.arms = [
+            _ArmEndpoint(self, ns, self.source_joints, self.args.source_topic) for ns in namespaces
+        ]
+        self.arms.sort(key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
+        # Transition targets are namespace-derived — rebuild them for the new arms.
+        self._reload_arm_config()
+
     def wait_for_required_services(self, timeout_s: float) -> None:
-        """Block until every arm's MIT services exist, pointing at the bring-up launch."""
+        """Block until every arm's MIT services exist, pointing at the bring-up launch.
+
+        Started without --arms against a namespaced bring-up (components
+        baseline duo_arm/duo_hand, or a namespaced single side), the manager
+        rebinds itself automatically to the MIT stacks it finds in the graph
+        instead of waiting forever for the un-namespaced default.
+        """
         clients: list[tuple[str, object]] = []
         for arm in self.arms:
             clients.extend(arm.required_clients(self.args.auto_enable_arm))
         deadline = None if timeout_s <= 0.0 else time.monotonic() + timeout_s
         warned = False
+        # Only the implicit un-namespaced default may be rebound; an explicit
+        # --arms choice is respected verbatim.
+        auto_detect = not self.args.arms
         while rclpy.ok():
             missing = [label for label, client in clients if not client.wait_for_service(timeout_sec=0.2)]
             if not missing:
                 return
+
+            discovered = _discover_mit_namespaces(self)
+            if auto_detect and "" not in discovered:
+                namespaced = [ns for ns in discovered if ns]
+                if namespaced:
+                    self.get_logger().info(
+                        "No un-namespaced MIT stack, but found namespaced stack(s) "
+                        f"{namespaced} in the graph — rebinding automatically "
+                        "(equivalent to --arms " + " ".join(namespaced) + ")"
+                    )
+                    self._rebind_arms(namespaced)
+                    clients = []
+                    for arm in self.arms:
+                        clients.extend(arm.required_clients(self.args.auto_enable_arm))
+                    auto_detect = False
+                    continue
+
             if not warned:
                 example = (
                     "  ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py "
@@ -988,11 +1056,16 @@ class TeachManagerNode(Node):
                         "namespace:=right_arm can_port:=can_nero_right\n"
                     )
                 )
+                graph_hint = (
+                    "MIT stacks currently in the graph: "
+                    + (", ".join(ns or "<un-namespaced>" for ns in discovered) if discovered else "none")
+                )
                 self.get_logger().warn(
                     "Waiting for the arm MIT services: " + ", ".join(missing)
                     + ".\nThe teach manager does not start the arm — bring it up first, e.g.:\n"
                     + example
-                    + "(no input_joint_prefix for the teach loop; use --source-joints joint1,...,joint7)"
+                    + "(no input_joint_prefix for the teach loop; use --source-joints joint1,...,joint7)\n"
+                    + graph_hint
                 )
                 warned = True
             if deadline is not None and time.monotonic() >= deadline:

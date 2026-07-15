@@ -89,6 +89,8 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
   --arm-config src/agx_arm_coordination/config/arm_config.yaml \
   --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 # both arms (one keyboard UI, one clock): add --arms left_arm right_arm
+# (or omit it: started without --arms, the manager auto-detects complete
+#  namespaced MIT stacks already in the graph and rebinds itself)
 ```
 
 **MoveIt anchor transitions** (`t` mode in the teach manager) run on baseline 2 with the matching
