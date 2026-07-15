@@ -88,3 +88,37 @@ profiles:
         feedback_joint_prefix: right_arm_
         can_port: can_nero_right
         launch_driver: true
+
+  # Duo MoveIt slice with both OmniHands. Same per-arm MIT + move_group layout as
+  # duo_arm; each instance additionally carries its side's OmniHand (namespaced
+  # bridge on the side bus, per-side articulated gravity URDF, per-side
+  # <side>_omnihand_controller FJT registration, per-side SRDF hand group
+  # left_hand/right_hand incl. the intra-hand collision ACM).
+  duo_hand:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: both_arms
+    effector_type: omnihand
+    launch_omnihand_bridge: true
+    custom_model_xacro_args:
+      use_left_arm: true
+      use_left_hand: true
+      use_right_arm: true
+      use_right_hand: true
+    arm_instances:
+      - name: left_arm
+        namespace: left_arm
+        joint_prefix: left_arm_
+        feedback_joint_prefix: left_arm_
+        can_port: can_nero_left
+        launch_driver: true
+        effector_type: omnihand
+        omnihand_type: left
+      - name: right_arm
+        namespace: right_arm
+        joint_prefix: right_arm_
+        feedback_joint_prefix: right_arm_
+        can_port: can_nero_right
+        launch_driver: true
+        effector_type: omnihand
+        omnihand_type: right

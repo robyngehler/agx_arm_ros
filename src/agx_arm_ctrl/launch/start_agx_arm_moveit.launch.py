@@ -100,6 +100,12 @@ def _instance_runtime_launches(context):
         explicit_joint_prefix,
         explicit_feedback_joint_prefix,
     )
+    # CAN bus resolution: an explicit (non-empty) can_port always wins, then the
+    # profile's registry-derived side bus, then the legacy right-bus fallback.
+    # Without the profile step a left-side profile silently drove the default
+    # right bus and connected the wrong arm.
+    can_port_cli = LaunchConfiguration("can_port").perform(context).strip()
+    resolved_can_port = can_port_cli or profile_values.get("can_port", "") or "can_nero_right"
     use_mit_controller = LaunchConfiguration("use_mit_controller").perform(context).strip() == "true"
     validate_duo_both_arms_contract(
         moveit_profile,
@@ -122,7 +128,7 @@ def _instance_runtime_launches(context):
         instance_namespace = join_relative_namespaces(root_namespace, instance["namespace"])
         common_arguments = {
             "namespace": instance_namespace,
-            "can_port": _value_or_default(instance["can_port"], LaunchConfiguration("can_port").perform(context)),
+            "can_port": _value_or_default(instance["can_port"], resolved_can_port),
             "arm_type": _value_or_default(instance["arm_type"], LaunchConfiguration("arm_type").perform(context)),
             "effector_type": _value_or_default(instance["effector_type"], effector_type),
             "omnihand_type": _value_or_default(instance["omnihand_type"], omnihand_type),
@@ -274,7 +280,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "execution_profile",
                 default_value="manual",
-                choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
+                choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm", "duo_hand"],
                 description=(
                     "Repo-owned execution preset that resolves the mounted Duo model, arm/hand composition, "
                     "prefix/frame defaults, and supported hand wiring from one choice. In the normal wrapper "
@@ -284,8 +290,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "can_port",
-                default_value="can_nero_right",
-                description="CAN port used by the wrapped AGX Arm node. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.",
+                default_value="",
+                description="CAN port used by the wrapped AGX Arm node. Empty resolves the side bus from the execution profile (registry arm.sides.*.can_port), falling back to can_nero_right. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.",
             ),
             DeclareLaunchArgument("arm_type", default_value="nero", choices=["nero"]),
             DeclareLaunchArgument(

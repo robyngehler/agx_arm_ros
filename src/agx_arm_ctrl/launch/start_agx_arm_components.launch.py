@@ -68,13 +68,13 @@ def generate_launch_description():
     )
     can_port_arg = DeclareLaunchArgument(
         "can_port",
-        default_value="can_nero_right",
-        description="CAN port used by the wrapped AGX Arm node. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.",
+        default_value="",
+        description="CAN port used by the wrapped AGX Arm node. Empty resolves the side bus from the execution profile (registry arm.sides.*.can_port), falling back to can_nero_right. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.",
     )
     execution_profile_arg = DeclareLaunchArgument(
         "execution_profile",
         default_value="manual",
-        choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm"],
+        choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm", "duo_hand"],
         description=(
             "Repo-owned execution preset for the wrapped debug and MoveIt launches. "
             "This is the normal source of truth for Duo slice selection: the preset resolves the mounted "

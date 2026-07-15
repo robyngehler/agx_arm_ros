@@ -6,7 +6,7 @@ from typing import Any
 import yaml
 from ament_index_python.packages import get_package_share_directory
 
-from agx_arm_ctrl.motion_registry import motion_profile
+from agx_arm_ctrl.motion_registry import arm_sides, motion_profile
 
 
 PROFILE_CONFIG_RELATIVE_PATH = Path("config") / "execution_profiles.yaml"
@@ -16,6 +16,7 @@ SCALAR_PROFILE_KEYS = (
     "robot_name",
     "moveit_profile",
     "custom_model",
+    "can_port",
     "effector_type",
     "revo2_type",
     "omnihand_type",
@@ -149,6 +150,18 @@ def resolve_execution_profile(
             "arm_tip_frame": tip_frame,
             "tcp_parent_frame": tip_frame,
         }
+        # Single-side Duo profiles also inherit their side bus from the registry
+        # (arm.sides.<side>.can_port), like the OmniHand bridge already does.
+        # Without this a left-side profile silently drove the launch-default
+        # right bus — connecting the RIGHT arm while modeling the left one.
+        # Multi-side profiles carry per-instance can_port in arm_instances.
+        profile_sides = registry_profile.get("sides") or []
+        if len(profile_sides) == 1:
+            side_can_port = str(
+                arm_sides().get(str(profile_sides[0]), {}).get("can_port", "")
+            ).strip()
+            if side_can_port:
+                registry_fill["can_port"] = side_can_port
         for key, value in registry_fill.items():
             if value and key not in resolved:
                 resolved[key] = value

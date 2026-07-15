@@ -67,7 +67,14 @@ def _launch_actions(context):
     custom_model_xacro_args = _resolved_argument(context, profile_values, 'custom_model_xacro_args')
     robot_name = _resolved_argument(context, profile_values, 'robot_name') or 'agx_arm'
     moveit_profile = _resolved_argument(context, profile_values, 'moveit_profile') or 'nero_arm'
-    can_port = LaunchConfiguration('can_port').perform(context).strip()
+    # Explicit can_port wins, then the profile's registry-derived side bus,
+    # then the legacy right-bus fallback (a left profile must not silently
+    # drive the right bus).
+    can_port = (
+        LaunchConfiguration('can_port').perform(context).strip()
+        or profile_values.get('can_port', '')
+        or 'can_nero_right'
+    )
     arm_type = LaunchConfiguration('arm_type').perform(context).strip()
     effector_type = _resolved_argument(context, profile_values, 'effector_type')
     revo2_type = _resolved_argument(context, profile_values, 'revo2_type')
@@ -261,7 +268,7 @@ def generate_launch_description():
     execution_profile_arg = DeclareLaunchArgument(
         'execution_profile',
         default_value='manual',
-        choices=['manual', 'standalone', 'left_arm', 'left_hand', 'right_arm', 'right_hand', 'duo_arm'],
+        choices=['manual', 'standalone', 'left_arm', 'left_hand', 'right_arm', 'right_hand', 'duo_arm', 'duo_hand'],
         description='Repo-owned execution preset for single-arm debug and MIT bringup. Multi-arm profiles are rejected here.',
     )
 
@@ -279,8 +286,8 @@ def generate_launch_description():
 
     can_port_arg = DeclareLaunchArgument(
         'can_port',
-        default_value='can_nero_right',
-        description='CAN port used by the AGX Arm node. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.'
+        default_value='',
+        description='CAN port used by the AGX Arm node. Empty resolves the side bus from the execution profile (registry arm.sides.*.can_port), falling back to can_nero_right. Deprecated legacy names such as can0 or can_nero should not be used for the public runtime path.'
     )
 
     arm_type_arg = DeclareLaunchArgument(

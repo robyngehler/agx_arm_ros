@@ -39,7 +39,7 @@ def validate_duo_both_arms_contract(
         if instance_effector_type and instance_effector_type not in allowed_effectors:
             raise ValueError(
                 f"arm_instances[{index}] sets effector_type '{instance_effector_type}', "
-                "but moveit_profile 'both_arms' is currently arm-only"
+                f"but moveit_profile 'both_arms' only supports {allowed_effectors}"
             )
 
     if requires_follow_with_mit and use_mit_controller and follow != "true":

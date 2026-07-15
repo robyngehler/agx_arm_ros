@@ -378,6 +378,17 @@ def build_moveit_config(context):
         "tcp_offset_xyz": f"{tcp_offset[0]} {tcp_offset[1]} {tcp_offset[2]}",
         "tcp_offset_rpy": f"{tcp_offset[3]} {tcp_offset[4]} {tcp_offset[5]}",
     }
+    # Per-side OmniHand SRDF instantiation for the dual-arm slice: derived from
+    # the arm_instances (each carries its own effector/omnihand side), NOT from
+    # the single top-level effector/omnihand_type pair — that pair can only
+    # describe one hand. Single-arm profiles keep the legacy single-side gates.
+    duo_hand_sides = set()
+    if moveit_profile == DUAL_ARM_MOVEIT_GROUP:
+        duo_hand_sides = {
+            str(instance.get("omnihand_type", "")).strip()
+            for instance in arm_instances
+            if str(instance.get("effector_type", "")).strip() == "omnihand"
+        }
     srdf_mappings = {
         "robot_name": LaunchConfiguration("robot_name").perform(context),
         "arm_type": arm_type,
@@ -393,6 +404,8 @@ def build_moveit_config(context):
         "arm_link_prefix": input_joint_prefix,
         "include_end_effector_groups": _resolve_include_end_effector_groups(custom_model, moveit_profile),
         "include_dual_arm_groups": profile_settings["include_dual_arm_groups"],
+        "include_left_omnihand": "true" if "left" in duo_hand_sides else "false",
+        "include_right_omnihand": "true" if "right" in duo_hand_sides else "false",
         "left_arm_base_frame": profile_settings["left_arm_base_frame"],
         "left_arm_tip_frame": profile_settings["left_arm_tip_frame"],
         "left_mount_body_link": _resolve_mount_body_link(custom_model),

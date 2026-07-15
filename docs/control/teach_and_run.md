@@ -248,11 +248,15 @@ separates the arms (never bring two arms up un-namespaced: both would publish `j
 `feedback/joint_states` and collide).
 
 ```bash
-# one MIT bring-up per arm, each namespaced (own CAN bus, own gravity mounting pose)
+# one MIT bring-up per arm, each namespaced (own CAN bus, own gravity mount, prefer
+# gravity_arm_side over a hand-typed gravity_mounting_rpy — see the bring-up note above)
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-  namespace:=left_arm  can_port:=can_nero_left  gravity_mounting_rpy:="[...]"
+  namespace:=left_arm  can_port:=can_nero_left  gravity_arm_side:=left
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
-  namespace:=right_arm can_port:=can_nero_right gravity_mounting_rpy:="[...]"
+  namespace:=right_arm can_port:=can_nero_right gravity_arm_side:=right
+# add effector_type:=omnihand omnihand_type:=<side> launch_omnihand_bridge:=true
+# omnihand_backend_type:=sdk to either (or both) side(s) for a duo+hands bring-up
+# (see bringup.md's "both arms + both OmniHands" row) — no other change needed below
 
 # one teach manager driving both; record captures both arms on ONE clock
 ros2 run agx_arm_mit_demos agx_arm_teach_manager \
@@ -260,6 +264,16 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
   --arms left_arm right_arm \
   --source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 ```
+
+> **Hands are transparent to dual-arm recording, not recorded themselves.** `--source-joints` only ever
+> names the 7 arm joints; the teach manager looks those up by name in each side's `feedback/joint_states`
+> and ignores everything else, so it behaves identically whether or not that side's bring-up carries an
+> OmniHand (the merged hand joints just sit unused in the same message). Hand poses are driven
+> separately (e.g. `omnihand_exerciser`, or the future grip-action payload API in
+> `gravity_payload_api_plan.md`) — there is currently no "record a hand gesture into a trajectory"
+> path. `t` transitions mode (MoveIt) against a duo+hands bring-up uses
+> `execution_profile:=duo_hand` on the components baseline (offline-validated, hardware run pending —
+> see [duo_both_hands_moveit_gap.md](../development/sprint6/planning/duo_both_hands_moveit_gap.md)).
 
 **Resource choice at save time (not a hardcoded rule).** With two arms, `record` (`n`) and anchor
 (`a`) ask which resource to store the result as: `both_arms` (merged **14-dim**, left then right),

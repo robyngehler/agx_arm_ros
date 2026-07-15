@@ -102,12 +102,16 @@ def test_joint_read_rate_throttles_backend_polling(bridge_node):
         read_calls.append(1)
         return original_read()
 
+    import time
+
     bridge_node.backend.read_joint_state = counting_read
     bridge_node.joint_read_min_interval_s = 3600.0
-    bridge_node.last_joint_read_monotonic = 0.0
+    # force the first poll to be due regardless of system uptime (monotonic
+    # starts near 0 after boot, so `last = 0.0` alone is not reliably stale)
+    bridge_node.last_joint_read_monotonic = time.monotonic() - 7200.0
 
-    bridge_node._publish_feedback()  # first poll always reads
-    bridge_node._publish_feedback()
+    bridge_node._publish_feedback()  # stale -> reads
+    bridge_node._publish_feedback()  # within the 1 h window -> cached
     bridge_node._publish_feedback()
 
     assert len(read_calls) == 1

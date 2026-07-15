@@ -561,6 +561,20 @@ raw and existing recordings benefit without re-teaching. Measured on all five cu
 velocity chatter ↓ 8–11×, path deviation ≤ 7–51 mrad (max at the fastest wave motion). Hardware retest
 pending.
 
+**P5 — left_hand profile drove the RIGHT arm / duo left arm never connected (2026-07-15).** Two
+independent causes. (a) *Software (fixed):* the single-side execution profiles carried no `can_port`
+and the profile resolver did not know the key, so a `left_hand` bring-up silently fell back to the
+launch default `can_nero_right` — the driver connected the right arm while MoveIt modeled the left
+one (the OmniHand bridge resolved its side bus from the registry all along, which is how the log
+gave it away: bridge on `can_nero_left`, driver on `can_nero_right`). Fix: side profiles now inherit
+`arm.sides.<side>.can_port` from the registry (`execution_profiles.py` registry fill, `can_port`
+added to the scalar profile keys); all three wrapper launches resolve explicit CLI > profile >
+`can_nero_right` fallback (can_port launch default is now empty so the wrapper default cannot mask
+the profile). Regression tests in `test_execution_profiles.py`. (b) *Hardware (open):*
+`can_nero_left` is UP/ERROR-ACTIVE but `candump` shows **zero frames** while `can_nero_right`
+streams normal arm feedback — the left arm is not powered/wired/connected on that bus. Check the
+physical side assignment before retesting `duo_arm`/`duo_hand`.
+
 **P3 — Overcurrent / stall (堵转) & tactile (DEFERRED).** The status message ships empty
 `active_joint_currents_a` / `active_joint_temperatures_c` and `active_joint_over_current` all-false while
 the SDK logs `堵转` (stall) — the SDK's stall/current signal is not wired into the ROS diagnostics or a

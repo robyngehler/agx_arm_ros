@@ -71,8 +71,11 @@ motion_profiles:
     base_frame: ""
     tip_frame: ""
     restrictions:
-      # Enforced by agx_arm_ctrl/duo_runtime_contract.py.
-      allowed_effector_types: [none]
+      # Enforced by agx_arm_ctrl/duo_runtime_contract.py. omnihand became legal
+      # once the SRDF omnihand_group macro turned per-side instantiable
+      # (group_name/parent_group/parent_link params) — see the duo_hand
+      # execution profile.
+      allowed_effector_types: [none, omnihand]
       requires_follow_with_mit: true
 
 # --- OmniHand active (controllable) joints -----------------------------------
