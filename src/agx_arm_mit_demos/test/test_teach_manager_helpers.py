@@ -57,3 +57,41 @@ def test_build_transition_targets_for_duo_session_includes_both_and_per_arm_targ
     both_target = targets[0]
     assert both_target.pose_names == ("Idle_L", "Idle_R")
     assert both_target.target_positions == (0.0, 0.1, 0.2, 0.3)
+
+def test_discover_mit_namespaces_finds_complete_stacks_only():
+    from agx_arm_mit_demos.teach_manager import _discover_mit_namespaces
+
+    class FakeNode:
+        def get_service_names_and_types(self):
+            required = [
+                "set_normal_mode",
+                "mit_controller/enable",
+                "mit_controller/freedrive",
+                "mit_controller/hold_current",
+            ]
+            services = []
+            # complete namespaced duo stacks (right listed first: sorting must fix it)
+            for ns in ("/right_arm", "/left_arm"):
+                services.extend((f"{ns}/{name}", ["t"]) for name in required)
+            # incomplete stack must NOT count
+            services.append(("/broken_arm/set_normal_mode", ["t"]))
+            # unrelated service noise
+            services.append(("/rosout/get_parameters", ["t"]))
+            return services
+
+    assert _discover_mit_namespaces(FakeNode()) == ["left_arm", "right_arm"]
+
+
+def test_discover_mit_namespaces_reports_unnamespaced_stack_as_empty_string():
+    from agx_arm_mit_demos.teach_manager import _discover_mit_namespaces
+
+    class FakeNode:
+        def get_service_names_and_types(self):
+            return [
+                ("/set_normal_mode", ["t"]),
+                ("/mit_controller/enable", ["t"]),
+                ("/mit_controller/freedrive", ["t"]),
+                ("/mit_controller/hold_current", ["t"]),
+            ]
+
+    assert _discover_mit_namespaces(FakeNode()) == [""]

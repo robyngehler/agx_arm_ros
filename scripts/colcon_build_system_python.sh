@@ -63,5 +63,44 @@ if [[ "$(command -v python3)" != "/usr/bin/python3" ]]; then
     exit 1
 fi
 
+# Drop stale workspace-install entries from the prefix paths. After a clean
+# `rm -rf install/` the calling shell often still has the old install/setup.bash
+# sourced, so AMENT/CMAKE/COLCON_PREFIX_PATH point at directories that no longer
+# exist and colcon prints a warning per package. Only non-existent paths under
+# this workspace's install/ are removed; external overlays stay untouched.
+filter_stale_install_prefixes() {
+    local var_name="$1" entry filtered=""
+    local -a entries
+    IFS=':' read -r -a entries <<< "${!var_name:-}"
+    for entry in "${entries[@]}"; do
+        if [[ -z "${entry}" ]]; then
+            continue
+        fi
+        if [[ "${entry}" == "${repo_root}/install"* && ! -d "${entry}" ]]; then
+            continue
+        fi
+        filtered+="${filtered:+:}${entry}"
+    done
+    if [[ -n "${filtered}" ]]; then
+        export "${var_name}=${filtered}"
+    else
+        unset "${var_name}" || true
+    fi
+}
+filter_stale_install_prefixes AMENT_PREFIX_PATH
+filter_stale_install_prefixes CMAKE_PREFIX_PATH
+filter_stale_install_prefixes COLCON_PREFIX_PATH
+
+# The OmniHand Pro vendor SDK is upstream input, not a workspace package: it is
+# built by its own vendor/OmniHand-Pro-2025/build.sh (that needs the pip
+# 'build' module, which usually lives in the user site — hidden here by
+# PYTHONNOUSERSITE=1) and consumed at runtime from
+# vendor/OmniHand-Pro-2025/build/agibot_hand_pkg via auto-discovery. Skip it in
+# workspace builds unless the caller names it explicitly.
+skip_args=()
+if [[ " $* " != *"omni_hand_pro_2025"* ]]; then
+    skip_args=(--packages-skip omni_hand_pro_2025)
+fi
+
 cd "${repo_root}"
-colcon build "$@"
+colcon build "${skip_args[@]}" "$@"
