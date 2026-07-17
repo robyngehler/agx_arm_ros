@@ -141,6 +141,8 @@ class AgxArmRosNode(Node):
         )
         self._last_recovery_end_monotonic = 0.0
         self._recovery_cooldown_logged = False
+        self._last_tx_congestion_log = 0.0
+        self._recover_reason = ""
 
         if self.arm_type not in ArmModel.__dict__.values():
             self.get_logger().error(
@@ -572,6 +574,7 @@ class AgxArmRosNode(Node):
             return False
         # Path A: an exception propagated out of a send (raise-style comm model).
         if self._tx_stall_detected:
+            self._recover_reason = f"raised send failures (tx_stall_count={self._tx_stall_count})"
             return True
         # Path B: the comm layer swallowed an ENOBUFS/ENETDOWN and only recorded
         # it (last_error / swallow-style comm model). Classify so a benign error
@@ -581,13 +584,37 @@ class AgxArmRosNode(Node):
         except Exception:
             comm_err = None
         if comm_err and self._is_recoverable_can_error(comm_err):
-            return True
+            if (
+                time.monotonic() - self._last_good_feedback_monotonic
+            ) > self.feedback_timeout:
+                self._recover_reason = f"latched comm error with stale feedback: {comm_err}"
+                return True
+            # Live feedback + latched ENOBUFS = TX congestion (e.g. a foreign
+            # unacked frame retransmitting on the shared bus), NOT a dead bus.
+            # A socket reconnect cannot flush the kernel TX queue, and every
+            # recovery drops control_ready mid-trajectory (observed as MoveIt
+            # GOAL_TOLERANCE_VIOLATED aborts). Consume the latch and stay up;
+            # the stale-feedback check below still catches a genuinely dead bus.
+            self._clear_comm_error()
+            if time.monotonic() - self._last_tx_congestion_log > 10.0:
+                self._last_tx_congestion_log = time.monotonic()
+                self.get_logger().warn(
+                    f"CAN TX congestion (latched: {comm_err}) while feedback is live; "
+                    "staying connected instead of recovering. If this persists, check "
+                    "the shared bus for a retransmitting unacked frame (hand offline?)"
+                )
+            return False
         try:
             if not self.agx_arm.is_ok():
+                self._recover_reason = "driver reports not ok"
                 return True
         except Exception:
+            self._recover_reason = "is_ok() raised"
             return True
         if (time.monotonic() - self._last_good_feedback_monotonic) > self.feedback_timeout:
+            self._recover_reason = (
+                f"no ready feedback for {self.feedback_timeout:.1f} s"
+            )
             return True
         return False
 
@@ -609,8 +636,8 @@ class AgxArmRosNode(Node):
         except Exception:
             is_ok = False
         self.get_logger().error(
-            f"CAN bus stall detected (tx_stall_count={self._tx_stall_count}, "
-            f"is_ok={is_ok}); starting recovery"
+            f"CAN bus stall detected ({self._recover_reason or 'unknown trigger'}; "
+            f"tx_stall_count={self._tx_stall_count}, is_ok={is_ok}); starting recovery"
         )
         try:
             recovered = False

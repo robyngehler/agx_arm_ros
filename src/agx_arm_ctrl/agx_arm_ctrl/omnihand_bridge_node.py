@@ -849,6 +849,13 @@ class OmniHandBridgeNode(Node):
         # successful probes at the slow cadence.
         self._fault_recovery_streak = 0
         self._fault_recovery_streak_needed = 3
+        # A hand that stays unreachable turns every probe into another frame
+        # that may sit in the shared TX path retransmitting (one-shot off).
+        # After this many consecutive failed probes the cadence is stretched
+        # 5x and a single ERROR points at the hand instead of the bus.
+        self._failed_probe_streak = 0
+        self._failed_probe_escalation_threshold = 10
+        self._probe_escalated = False
         self._last_status_snapshot: OmniHandStatusSnapshot | None = None
         self._last_tactile_snapshot: OmniHandTactileSnapshot | None = None
         self.tactile_sample_count = int(self.get_parameter("tactile_sample_count").value)
@@ -1125,21 +1132,41 @@ class OmniHandBridgeNode(Node):
         read_interval = self.joint_read_min_interval_s
         if self._fault_backoff_active:
             read_interval = max(read_interval, self.fault_poll_interval_s)
+            if self._probe_escalated:
+                read_interval *= 5.0
         if read_interval <= 0.0 or now - self.last_joint_read_monotonic >= read_interval:
             self.cached_positions = self.backend.read_joint_state()
             self.last_joint_read_monotonic = now
-            # Hysteresis: stay at the slow probe cadence until the bus has
-            # proven itself with several consecutive clean readbacks.
-            if self._fault_backoff_active and not self._backend_faulted():
-                self._fault_recovery_streak += 1
-                if self._fault_recovery_streak >= self._fault_recovery_streak_needed:
-                    self._fault_backoff_active = False
-                    self._fault_recovery_streak = 0
-                    self.get_logger().info(
-                        "OmniHand backend recovered "
-                        f"({self._fault_recovery_streak_needed} consecutive clean "
-                        "readbacks); normal SDK polling resumed"
-                    )
+            if self._fault_backoff_active:
+                if self._backend_faulted():
+                    self._failed_probe_streak += 1
+                    if (
+                        not self._probe_escalated
+                        and self._failed_probe_streak
+                        >= self._failed_probe_escalation_threshold
+                    ):
+                        self._probe_escalated = True
+                        self.get_logger().error(
+                            f"OmniHand unreachable for {self._failed_probe_streak} "
+                            "consecutive probes; stretching probe cadence 5x. Check the "
+                            "hand (power/connection) — with one-shot off its unacked "
+                            "frames keep retransmitting and congest the shared bus TX "
+                            "path until an `ip link down/up`"
+                        )
+                else:
+                    # Hysteresis: stay at the slow probe cadence until the bus
+                    # has proven itself with consecutive clean readbacks.
+                    self._failed_probe_streak = 0
+                    self._fault_recovery_streak += 1
+                    if self._fault_recovery_streak >= self._fault_recovery_streak_needed:
+                        self._fault_backoff_active = False
+                        self._fault_recovery_streak = 0
+                        self._probe_escalated = False
+                        self.get_logger().info(
+                            "OmniHand backend recovered "
+                            f"({self._fault_recovery_streak_needed} consecutive clean "
+                            "readbacks); normal SDK polling resumed"
+                        )
 
         joint_state = JointState()
         joint_state.header.stamp = stamp

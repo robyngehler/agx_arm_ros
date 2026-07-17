@@ -481,3 +481,30 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   3. Same scenario with the hand bridges NOT launched (`launch_omnihand_bridge:=false`): zero
      FD traffic; if everything stays clean for minutes, hand FD under MIT remains the root
      trigger, and the shared-bus decision (own hand bus / time-sharing / vendor) stands.
+
+### "CAN bus stall" while feedback is provably live — the recovery WAS the failure
+
+- Session 3 (2026-07-17): with cooldown active, the left driver recovered exactly every ~5 s
+  (trigger: latched comm error, `tx_stall_count=0, is_ok=True`) while RViz showed live states,
+  freedrive worked, and planning succeeded — i.e. the bus was NOT stalled. The user-visible
+  failure was trajectory EXECUTION: `GOAL_TOLERANCE_VIOLATED joint5 0.138 > 0.05`, then
+  "start point deviates from current robot state". Each recovery drops `control_ready` for
+  1-2 s mid-trajectory, gapping the 50 Hz MIT stream — the recovery itself aborted the moves.
+- Left/right asymmetry is diagnostic: the LEFT bridge logs `请求发送失败` (SEND failed — frames
+  cannot leave, TX path congested) plus "motor Input size does not match expected motor count"
+  (malformed/partial hand responses); the RIGHT bridge logs `请求超时` (request out, reply
+  late/missing). Interpretation: on the left bus an unacked hand FD frame sits retransmitting
+  (one-shot off + hand not ACKing properly — the known missing-ACK case), intermittently
+  ENOBUFS-ing BOTH processes' sends. RX is unaffected, hence live feedback. => Check the LEFT
+  hand hardware (power/connector/firmware); its malformed responses are the origin.
+- Policy fix (implemented): the watchdog's latched-comm-error path now only triggers a
+  reconnect when feedback is ALSO stale. With live feedback it consumes the latch and logs a
+  throttled "CAN TX congestion ... staying connected" WARN — a socket reconnect cannot flush
+  the kernel TX queue anyway. Recovery still fires on raised send failures, `is_ok()` false,
+  or genuinely stale feedback; the stall log now names its trigger reason.
+- Bridge (implemented): after 10 consecutive failed probes the fault cadence stretches 5x and
+  one ERROR points at the hand ("check power/connection; unacked frames congest the TX path
+  until `ip link down/up`").
+- Operational note: after a jammed-TX session, a fresh bringup can die at init
+  ("Failed to get firmware version" -> process exit) because the stuck frame still occupies
+  the TX path. Always `ip link down/up` (or re-run activate_native_can.sh) before relaunching.
