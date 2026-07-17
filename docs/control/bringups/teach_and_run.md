@@ -18,6 +18,21 @@ the right side (`can_nero_right`); the left side and dual-arm mirror the same co
 | recorded JSON → catalogue `waypoints` | `agx_arm_recorded_to_catalogue` | `agx_arm_mit_demos` |
 | **all of the above from one keyboard UI** | `agx_arm_teach_manager` | `agx_arm_mit_demos` |
 
+## Emergency stop / runaway
+
+> The Nero firmware has **no MIT command watchdog**: it executes the last received MIT command
+> (including velocity/torque) indefinitely. Killing nodes, stopping the command stream, or even
+> downing the CAN link does NOT stop a moving arm — silence is not a safe state (runaway observed
+> live during a teach recording). Software mitigations now in place: the MIT controller streams a
+> damped stop instead of pausing on stale feedback (and on shutdown), and the driver sends a damped
+> MIT zero before every recovery disconnect. If the arm still moves unexpectedly:
+>
+> 1. `ros2 service call /left_arm/emergency_stop std_srvs/srv/Empty` (and/or `/right_arm/...`) —
+>    this is now unconditional best-effort: damped MIT zero (works without feedback), then
+>    position-hold, else electronic emergency stop.
+> 2. The physical e-stop remains the only guaranteed stop while the firmware lacks a command
+>    watchdog (vendor escalation pending).
+
 ## Primary path: the teach manager
 
 `agx_arm_teach_manager` is **the** entry point for teaching — freedrive, trajectory recording,

@@ -508,3 +508,32 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
 - Operational note: after a jammed-TX session, a fresh bringup can die at init
   ("Failed to get firmware version" -> process exit) because the stuck frame still occupies
   the TX path. Always `ip link down/up` (or re-run activate_native_can.sh) before relaunching.
+
+### SAFETY: runaway during a teach recording — firmware executes the last MIT command forever
+
+- Incident (2026-07-17): during a recording the left bus entered the stall regime and the arm
+  KEPT MOVING at the last commanded joint velocity. Killing MoveIt did nothing; killing the
+  teach manager did nothing; a relaunch did nothing; `ip link set ... down` did nothing
+  IMMEDIATELY. Only a full bus up + components.launch relaunch (reconnect + re-enable)
+  stopped the motion.
+- Root cause: the Nero firmware has NO command watchdog in MIT mode — it executes the last
+  received MIT command (position/velocity/kp/kd/torque) indefinitely. Every ROS-side
+  "safety" reaction that stops the command stream (mit_controller "Paused MIT command
+  publishing", driver recovery gating control_ready, killing processes, downing the link)
+  therefore leaves a MOVING setpoint active in the firmware. Silence is not a safe state.
+- Fixes (implemented, need hardware validation):
+  - mit_controller: on stale feedback it now STREAMS a damped-stop command (kp=0, v=0,
+    kd=freedrive_kd) instead of going silent; the frozen gravity feedforward is kept for a
+    1 s grace then ramped to zero over 2 s (a feedforward frozen for a pose the arm has left
+    can drive it; pure damping can only brake). On node shutdown it publishes 5 damped-stop
+    commands as the firmware's final setpoint.
+  - driver `emergency_stop` service is now UNCONDITIONAL best-effort (it previously refused
+    with "not connected"/"not enabled"/"no valid joint angles" — exactly in the runaway
+    conditions): damped MIT zero first (needs no feedback), then position-hold at the current
+    pose when feedback is valid, else `electronic_emergency_stop()` as the hard fallback.
+  - driver `_recover_bus` sends a damped MIT zero BEFORE disconnecting, so the firmware's
+    active setpoint during the recovery gap is a stop, not the last motion.
+- Residual gap (cannot be fixed in software): if the driver process is dead or the bus is
+  down, nothing can reach the firmware and the last command keeps executing. Escalate the
+  missing MIT command watchdog (command timeout -> damped stop in firmware) to the arm
+  vendor; until then treat the physical e-stop as the only guaranteed stop.

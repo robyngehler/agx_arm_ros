@@ -155,6 +155,7 @@ class NeroMitControllerNode(Node):
         self.trajectory_start_monotonic = 0.0
         self.hold_reference: Optional[SampledTrajectoryPoint] = None
         self.last_stale_feedback_log = 0.0
+        self._stale_since_monotonic: Optional[float] = None
         self.gravity_model: Optional[GravityModel] = None
         self.calibration_model: Optional[CalibrationModel] = None
         self.leader_mode_active = False
@@ -975,11 +976,22 @@ class NeroMitControllerNode(Node):
 
             if not self._has_fresh_feedback():
                 now = time.monotonic()
+                if self._stale_since_monotonic is None:
+                    self._stale_since_monotonic = now
                 if now - self.last_stale_feedback_log > 1.0:
-                    self.get_logger().warn("Paused MIT command publishing because feedback is stale")
+                    self.get_logger().warn(
+                        "Feedback is stale; streaming damped-stop MIT commands (dead-man)"
+                    )
                     self.last_stale_feedback_log = now
                 self._set_execution_state(ExecutionState.STALE_FEEDBACK)
+                # Dead-man: the firmware executes the LAST received MIT command
+                # indefinitely — going silent here left a moving arm moving
+                # (runaway observed live during a teach recording). Stream a
+                # kd-damped zero-velocity command instead so the firmware's
+                # active setpoint is a stop, not the last motion.
+                self._publish_damped_stop_command(now - self._stale_since_monotonic)
                 return
+            self._stale_since_monotonic = None
 
             if self.freedrive_active:
                 self._publish_freedrive_command()
@@ -1039,6 +1051,44 @@ class NeroMitControllerNode(Node):
             self._publish_reference(reference)
             self._publish_gravity_feedforward(cmd.torque)
 
+    # Dead-man torque schedule: keep the frozen gravity feedforward through a
+    # short grace window (a stale blip in freedrive must not sag the arm), then
+    # ramp it to zero — a feedforward frozen for a pose the arm has left can
+    # actively drive it, while pure kd damping can only brake.
+    STALE_STOP_TORQUE_GRACE_S = 1.0
+    STALE_STOP_TORQUE_RAMP_S = 2.0
+
+    def _publish_damped_stop_command(self, stale_duration_s: float) -> None:
+        joint_count = len(self.joint_names)
+        positions = [0.0] * joint_count
+        torques = [0.0] * joint_count
+        if all(name in self.feedback_positions for name in self.joint_names):
+            positions = [self.feedback_positions[name] for name in self.joint_names]
+            ramp_progress = (
+                stale_duration_s - self.STALE_STOP_TORQUE_GRACE_S
+            ) / self.STALE_STOP_TORQUE_RAMP_S
+            torque_scale = 1.0 - min(max(ramp_progress, 0.0), 1.0)
+            if torque_scale > 0.0:
+                reference = SampledTrajectoryPoint(
+                    positions=tuple(positions),
+                    velocities=(0.0,) * joint_count,
+                    efforts=(0.0,) * joint_count,
+                )
+                feedforward = self._compute_feedforward(reference)
+                torques = [
+                    torque_scale * clamp(float(feedforward[index]), self.torque_limit[index])
+                    for index in range(joint_count)
+                ]
+
+        cmd = MoveMITMsg()
+        cmd.joint_index = list(range(1, joint_count + 1))
+        cmd.p_des = [float(value) for value in positions]
+        cmd.v_des = [0.0] * joint_count
+        cmd.kp = [0.0] * joint_count
+        cmd.kd = [float(value) for value in self.freedrive_kd]
+        cmd.torque = torques
+        self.move_mit_pub.publish(cmd)
+
     def _publish_freedrive_command(self) -> None:
         """Zero-force, gravity-compensated command so the arm is back-drivable.
 
@@ -1096,6 +1146,17 @@ def main(args: Optional[list[str]] = None) -> None:
     try:
         executor.spin()
     finally:
+        # Best-effort dead-man on shutdown: the firmware keeps executing the
+        # last MIT command after our stream stops, so leave it a damped stop
+        # as the final setpoint (pure kd damping, zero torque). Requires the
+        # arm driver to still be up to reach the bus.
+        try:
+            if node.enabled:
+                for _ in range(5):
+                    node._publish_damped_stop_command(float("inf"))
+                    time.sleep(0.02)
+        except Exception:
+            pass
         executor.remove_node(node)
         node.destroy_node()
         if rclpy.ok():

@@ -631,6 +631,15 @@ class AgxArmRosNode(Node):
         self._last_feedback_advance_monotonic = (
             time.monotonic() - self.feedback_timeout - 1.0
         )
+        # Before tearing the link down, override any moving last MIT command in
+        # the firmware with a damped zero: during recovery nothing streams, and
+        # the firmware otherwise keeps executing the last command it received
+        # (runaway observed live during a teach recording).
+        if self.is_mit_mode or self._current_motion_mode == 'mit':
+            try:
+                self._send_damped_stop_mit()
+            except Exception:
+                pass
         try:
             is_ok = self.agx_arm.is_ok()
         except Exception:
@@ -1284,31 +1293,67 @@ class AgxArmRosNode(Node):
             self.get_logger().error(f"Failed to move to home position: {str(e)}")
         return response
 
-    def _emergency_stop_callback(self, request, response):
-        """Emergency stop: use is_switch_seamlessly flag to decide MIT vs move_j."""
+    def _send_damped_stop_mit(self, kd: float = 1.0) -> None:
+        """Zero-velocity, kp=0, kd-damped MIT command for every joint.
+
+        Needs NO feedback, so it works exactly when the readiness checks fail —
+        the situation in which the firmware would otherwise keep executing the
+        last (possibly moving) MIT command it received.
+        """
+        self.agx_arm.set_auto_set_motion_mode_enabled(False)
         try:
-            if not self._check_arm_ready():
-                self.get_logger().warn("Agx_arm is not connected, cannot perform emergency stop")
-                return response
-            if not self.enable_flag:
-                self.get_logger().warn("Agx_arm is not enabled, cannot perform emergency stop")
-                return response
+            for joint_index in range(1, self.arm_joint_count + 1):
+                self.agx_arm.move_mit(
+                    joint_index=joint_index,
+                    p_des=0.0,
+                    v_des=0.0,
+                    kp=0.0,
+                    kd=kd,
+                    t_ff=0.0,
+                )
+        finally:
+            self.agx_arm.set_auto_set_motion_mode_enabled(True)
 
-            js = self.agx_arm.get_joint_angles()
-            if js is None or js.hz <= 0:
-                self.get_logger().warn("No valid joint angles, cannot perform emergency stop")
-                return response
+    def _emergency_stop_callback(self, request, response):
+        """Best-effort, UNCONDITIONAL stop.
 
-            q = list(js.msg)
-            if not self.is_switch_seamlessly:
-                self.agx_arm.move_js(q)
-                self.is_mit_mode = True
-                self._current_motion_mode = 'js'
+        Deliberately not gated on readiness or enable state: during a runaway
+        (stalled feedback, recovery in progress) those checks are exactly what
+        is broken, and the firmware keeps executing the last MIT command it
+        received. Order: damped MIT zero (needs no feedback) -> position hold
+        at the current pose when feedback is trustworthy -> electronic
+        emergency stop as the last resort when it is not.
+        """
+        try:
+            if self.is_mit_mode or self._current_motion_mode == 'mit':
+                try:
+                    self._send_damped_stop_mit()
+                except Exception as e:
+                    self.get_logger().error(f"Damped MIT stop failed: {e}")
+
+            js = None
+            try:
+                js = self.agx_arm.get_joint_angles()
+            except Exception:
+                js = None
+
+            if js is not None and js.hz > 0:
+                q = list(js.msg)
+                if not self.is_switch_seamlessly:
+                    self.agx_arm.move_js(q)
+                    self.is_mit_mode = True
+                    self._current_motion_mode = 'js'
+                else:
+                    self.agx_arm.move_j(q)
+                    self.is_mit_mode = False
+                    self._current_motion_mode = 'j'
+                self.get_logger().info(f"Emergency stop command sent to {self.arm_type}")
             else:
-                self.agx_arm.move_j(q)
-                self.is_mit_mode = False
-                self._current_motion_mode = 'j'
-            self.get_logger().info(f"Emergency stop command sent to {self.arm_type}")
+                # No trustworthy pose to hold: hard stop is the only safe option.
+                self.agx_arm.electronic_emergency_stop()
+                self.get_logger().warn(
+                    "Emergency stop without valid feedback: sent electronic emergency stop"
+                )
         except Exception as e:
             self.get_logger().error(f"Emergency stop failed: {e}")
         return response
