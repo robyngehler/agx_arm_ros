@@ -109,28 +109,38 @@ It exposes the bridge's full ROS surface on its own:
   `feedback/omnihand/tactile_raw`
 - service `control/omnihand/stop`
 
-To actually *drive* it, use the exerciser (`ros2 run agx_arm_ctrl omnihand_exerciser`),
-which publishes named active-joint poses to the command topic and can call stop:
+To actually *drive* it, use the exerciser (`ros2 run agx_arm_ctrl omnihand_exerciser`).
+It sends named active-joint poses over the same path MoveIt uses — the per-side
+`FollowJointTrajectory` action (falling back to the bridge's
+`control/omnihand/joint_trajectory` topic when the action server is not up) — and
+can call stop. By default it resolves the Duo side namespace (`left_arm`/`right_arm`)
+from the motion registry; against the **standalone root-namespace bridge shown above,
+pass `--namespace ''`**:
 
 ```bash
 ros2 run agx_arm_ctrl omnihand_exerciser --list
-ros2 run agx_arm_ctrl omnihand_exerciser --side right --gesture fist
-ros2 run agx_arm_ctrl omnihand_exerciser --side right --sequence open,fist,open --stop
+ros2 run agx_arm_ctrl omnihand_exerciser --namespace '' --side right --gesture fist
+ros2 run agx_arm_ctrl omnihand_exerciser --namespace '' --side right --sequence open,fist,open --stop
+# against the Duo bringup (namespaced bridges) the default resolution applies:
+ros2 run agx_arm_ctrl omnihand_exerciser --model o12_pro --side left --gesture zero
 ```
 
 Watch feedback in another terminal:
 
 ```bash
-ros2 topic echo /feedback/omnihand/joint_states
+ros2 topic echo /feedback/omnihand/joint_states     # standalone bridge
+ros2 topic echo /left_arm/feedback/omnihand/joint_states  # Duo bringup
 ros2 topic echo /feedback/omnihand/status
 ```
 
 The poses are the vendor SDK active-joint presets (from the SDK
 `demo_set_motion.py`); they are tuned for a specific hand side, but the bridge
 clamps every target to the selected side's joint limits, so they are safe on
-either side. `open` (all zeros) is side-agnostic and the safe default. While
-holding a pose the exerciser republishes at `--rate`, so it also doubles as a
-ROS-side command-traffic generator for combined load tests.
+either side. `open` (all zeros) is side-agnostic and the safe default. In the
+default action mode delivery is verified by the bridge's readback-based retry;
+the legacy `--topic` mode republishes JointState commands at `--rate` while
+holding a pose, so it still doubles as a ROS-side command-traffic generator for
+combined load tests.
 
 ## Notes
 
