@@ -15,7 +15,7 @@ RESTART_MS="${5:-100}"
 TX_QUEUE_LEN="${6:-256}"
 SAMPLE_POINT="${7:-0.8}"
 DSAMPLE_POINT="${8:-0.8}"
-ONE_SHOT="${9:-on}"
+ONE_SHOT="${9:-off}"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then

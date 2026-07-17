@@ -19,3 +19,5 @@ oculus_reader/oculus_reader
 .thumbs
 /ros2-copilot-template
 /agx_arm_sim
+# transient TDC sweep run outputs (scripts/can_tdc_sweep.py writes to cwd)
+tdc_sweep_results*.csv
