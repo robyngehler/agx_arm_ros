@@ -816,6 +816,13 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("command_retry_max_attempts", 8)
         self.declare_parameter("command_retry_period_s", 0.3)
         self.declare_parameter("command_verify_tolerance_rad", 0.10)
+        # When the backend reports a communication fault (请求超时 storms), every
+        # further periodic SDK poll is a real CANFD request that feeds the bus
+        # error flood — with one-shot off a failing FD frame already keeps the
+        # CAN controller retransmitting. Back off to a slow single-probe cadence
+        # until one readback succeeds, instead of hammering at joint_read_rate
+        # plus status plus tactile.
+        self.declare_parameter("fault_poll_interval_s", 2.0)
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
         self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
@@ -832,6 +839,12 @@ class OmniHandBridgeNode(Node):
         self.command_verify_tolerance_rad = float(
             self.get_parameter("command_verify_tolerance_rad").value
         )
+        self.fault_poll_interval_s = max(
+            0.0, float(self.get_parameter("fault_poll_interval_s").value)
+        )
+        self._fault_backoff_active = False
+        self._last_status_snapshot: OmniHandStatusSnapshot | None = None
+        self._last_tactile_snapshot: OmniHandTactileSnapshot | None = None
         self.tactile_sample_count = int(self.get_parameter("tactile_sample_count").value)
         self.joint_states_command_topic = str(
             self.get_parameter("joint_states_command_topic").value
@@ -1080,14 +1093,34 @@ class OmniHandBridgeNode(Node):
         response.message = f"OmniHand {self.backend.backend_name} stop requested"
         return response
 
+    def _backend_faulted(self) -> bool:
+        return bool(getattr(self.backend, "communication_fault", False))
+
     def _publish_feedback(self) -> None:
         stamp = self.get_clock().now().to_msg()
 
         now = time.monotonic()
-        if (
-            self.joint_read_min_interval_s <= 0.0
-            or now - self.last_joint_read_monotonic >= self.joint_read_min_interval_s
-        ):
+        # Fault backoff: while the backend is faulted, only a slow joint-read
+        # probe goes onto the bus; status/tactile reads are skipped entirely and
+        # the cached snapshots are republished. A single successful probe clears
+        # the backend fault and normal polling resumes on the next tick.
+        faulted = self._backend_faulted()
+        if faulted and not self._fault_backoff_active:
+            self._fault_backoff_active = True
+            if self.fault_poll_interval_s > 0.0:
+                self.get_logger().warn(
+                    "OmniHand backend communication fault; backing off SDK polling "
+                    f"to one probe every {self.fault_poll_interval_s:.1f} s until a "
+                    "readback succeeds"
+                )
+        elif not faulted and self._fault_backoff_active:
+            self._fault_backoff_active = False
+            self.get_logger().info("OmniHand backend recovered; normal SDK polling resumed")
+
+        read_interval = self.joint_read_min_interval_s
+        if faulted:
+            read_interval = max(read_interval, self.fault_poll_interval_s)
+        if read_interval <= 0.0 or now - self.last_joint_read_monotonic >= read_interval:
             self.cached_positions = self.backend.read_joint_state()
             self.last_joint_read_monotonic = now
 
@@ -1097,7 +1130,9 @@ class OmniHandBridgeNode(Node):
         joint_state.position = list(self.cached_positions)
         self.hand_joint_states_pub.publish(joint_state)
 
-        status_snapshot = self.backend.read_status()
+        if not self._backend_faulted() or self._last_status_snapshot is None:
+            self._last_status_snapshot = self.backend.read_status()
+        status_snapshot = self._last_status_snapshot
         status_msg = OmniHandStatus()
         status_msg.header.stamp = stamp
         status_msg.hand_side = self.hand_side
@@ -1120,7 +1155,9 @@ class OmniHandBridgeNode(Node):
             )
         self.status_pub.publish(status_msg)
 
-        tactile_snapshot = self.backend.read_tactile()
+        if not self._backend_faulted() or self._last_tactile_snapshot is None:
+            self._last_tactile_snapshot = self.backend.read_tactile()
+        tactile_snapshot = self._last_tactile_snapshot
         tactile_msg = OmniHandTactileRaw()
         tactile_msg.header.stamp = stamp
         tactile_msg.hand_side = self.hand_side

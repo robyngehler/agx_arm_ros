@@ -406,3 +406,38 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
 - `start_agx_arm_components.launch.py` now defaults to 50 Hz (matching the MIT controller's
   own default), halving per-bus MIT frame load and the driver CPU load that fed the false
   bus-stall storms. `docs/assets/control/single_vs_multi_arm_control_chain.md` updated.
+
+### Bus meltdown when the teach manager enables MIT with hands on the shared bus (one-shot off)
+
+- Symptom (2026-07-17): components.launch (duo_hand, sdk backend) runs clean until the teach
+  manager enables the MIT controllers; then a cascading storm: both bridges spam `请求超时` +
+  "motor Input size does not match expected motor count", both drivers loop "CAN bus stall
+  detected (tx_stall_count=0, is_ok=True)" -> recovery every ~0.5 s, MIT controllers pause on
+  stale feedback, the teach manager's `mit_controller/enable` call times out. Restarting
+  components.launch resumes the storm IMMEDIATELY; only `ip link down/up` clears it.
+- Bus statistics after the storm (both side buses, symmetric): ~25 000 bus-errors, ~170 000
+  RX dropped, error-warn/error-passive counters set, **bus-off 2 / re-started 2** — the bus was
+  physically in an error storm, not just busy.
+- Mechanism: the sprint-6 finding "hand FD frames are error-flagged while the arm streams MIT"
+  (0 % FD delivery under MIT, TDCO-independent) combines with `one-shot off`: every failed hand
+  FD frame is now **retransmitted by the M_CAN controller indefinitely**, each attempt drawing
+  another error flag (~+1 bus_error per attempt) — an unbounded error flood that starves the
+  arm's classic traffic (driver sends fail -> comm-error recovery path, hence the 0.5 s cadence
+  independent of feedback_timeout). A stuck FD frame keeps retransmitting from the controller
+  TX FIFO even after the ROS processes die, which is why only a link down/up (FIFO flush)
+  recovers and why a relaunch re-storms instantly (the bridges' first 20 Hz readback probes
+  refill the loop).
+- Trade-off now explicit: on the shared bus with an MIT-streaming arm the hand is broken either
+  way — `one-shot on` = silent drops (hand dead under load, bus stays healthy), `one-shot off`
+  = eventual delivery when the arm pauses BUT unbounded error storm while it streams.
+- Mitigation (implemented): the bridge now backs off all periodic SDK polling to a single probe
+  per `fault_poll_interval_s` (default 2 s) while the backend reports a communication fault,
+  and skips status/tactile reads entirely (cached snapshots republished) until one readback
+  succeeds. This stops the 20 Hz+ request stream from feeding the flood but cannot fix FD
+  delivery under MIT streaming.
+- Open decision (needs hardware/vendor input): (a) move the hands to their own CANFD bus
+  (USB adapter path, `scripts/omnihand_canfd_activate.sh`), (b) bus time-sharing (pause the
+  MIT stream around hand commands), or (c) vendor escalation of the arm firmware's FD
+  tolerance in MIT/CAN_CTRL mode. Until decided: with hands on the shared bus, do not run
+  hand SDK traffic while MIT is enabled, or bring the bus up with `ONE_SHOT=on` for
+  arm-only sessions.
