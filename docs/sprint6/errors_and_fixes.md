@@ -209,3 +209,200 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   by `omnihand_type` (overridable with the `can_interface` parameter / launch arg) and exports
   `OMNIHAND_SOCKETCAN_IFACE` before `create_hand`. It logs the resolved interface and its source.
   Validated on the Jetson: bridge opens `can_nero_right` and starts with `backend_type=vendor_sdk`.
+
+## 2026-07-16 (CANFD TDC on the new transceiver + "bridge doesn't spawn")
+
+### Constant `请求超时` on all OmniHand CANFD requests after swapping the bus transceiver
+
+- Symptom: with the new (unknown-delay) transceiver and `tdc_offset=0x200`, every SDK
+  request times out (`[ERROR]: CANFD ID: 0x00130101 请求超时`, `motor Input size does not
+  match expected motor count`); with the old TJA1051T/3 and `0x800`, ~8/10 commands landed.
+- Cause: `tdc_offset` is the raw M_CAN TDCR register; TDCO sits in bits [14:8] in CAN-clock
+  ticks (20 ns at the 50 MHz mttcan clock). One 5 Mbit data bit = 10 ticks, so TDCO=8
+  (`0x800`) puts the secondary sample point at 80 % of the bit — consistent with
+  `dsample-point 0.8`. `0x200` (TDCO=2) samples at 20 %, inside the transceiver-delayed
+  edge, producing bit errors on every BRS frame. Verified live: a read-only SDK worker at
+  `0x200` scores 0/5 successful joint readbacks on `can_nero_left`.
+- Fix/tooling: `scripts/can_tdc_sweep.py` sweeps `tdc_offset` per side bus (down →
+  sysfs write → validated 1M/5M FD timing → up), measures SDK readback success rate,
+  latency, and `bus_error` counter deltas per value, optionally verifies a fist→zero
+  motion cycle, ranks the values, and restores (or `--apply-best` applies) the winner.
+  Persist the winner via `TDCR_VALUE=0x... sudo bash scripts/activate_native_can.sh`.
+- First idle-bus sweep (2026-07-16, new transceiver): TDCO 0 fails hard, TDCO 1 is
+  flaky (left 10/10, right 5/10, and 0x0/0x100 flipped between runs), TDCO 2..15 all
+  pass 100 % — so `0x200` is not broken per se on an idle bus; the permanent `请求超时`
+  the bridge sees must involve arm bus load. An idle bus does NOT discriminate inside
+  the plateau; two-stage method: (1) idle sweep maps the raw window, (2) re-sweep the
+  plateau with `--arm-load` (arm bringup without hand bridges, MIT controller actively
+  commanding — idle-hold is not load) and `--passes 3+`; per-trial bus pkt/s is logged
+  and low-load trials are flagged. The recommendation is the CENTER of the longest
+  clean TDCO window (edge values are marginal), and the motion check judges delivery
+  by progress-from-baseline toward the target (absolute command==readback tolerance is
+  not calibrated on the Pro and fails even when the hand visibly moves).
+- Second sweep under "arm stack running" (2026-07-16): still ~96-100 % everywhere with
+  no TDCO-correlated pattern — the ~2200 pkt/s were almost pure RX (firmware feedback
+  push at 200 Hz). Merely launching the bringup is NOT the failure regime: the MIT
+  controller starts DISABLED and transmits nothing. The real load regime needs, per
+  arm namespace (`enable_agx_arm` is already auto; NO manual `set_motion_mode` needed —
+  the driver handshakes `set_motion_mode('mit')` on the first `move_mit` command):
+  `ros2 service call /<ns>/mit_controller/enable std_srvs/srv/SetBool "{data: true}"`
+  then `ros2 service call /<ns>/mit_controller/hold_current std_srvs/srv/Empty` — the
+  controller then streams 7 move_mit frames per tick at control_rate_hz (~700 tx/s per
+  arm). `agx_arm_test_position_hold --leave-mit-enabled --no-wait` runs the full
+  sequence (now accepts `--ros-args -r __ns:=/left_arm`; previously argparse rejected
+  ROS args). The sweep now logs per-trial TX pkt/s and flags trials below ~150 tx/s as
+  `low-tx-load(mit-not-streaming?)`.
+- Observation during sweeps with the arm stack up: `agx_arm_ctrl_single` fires
+  "CAN bus stall detected (tx_stall_count=0, is_ok=True); starting recovery" every few
+  seconds (trigger: >0.5 s without good feedback — `feedback_timeout`), recovering on
+  attempt 1 each time. Each per-value interface down/up causes at least one such gap;
+  the observed frequency was higher than the trial cadence, so either the hand
+  worker's FD traffic or the recovery cycle itself also stalls the vendor feedback
+  parser — unverified. The recovery re-enable spam itself perturbs the bus, so for
+  sweep runs consider `bus_recovery_enabled:=false` (or a larger `feedback_timeout`)
+  on the arm driver and re-enable it for production.
+
+### "CAN bus stall" storm under active MIT streaming is a false positive — the bus is clean
+
+- Reproduction (2026-07-16, duo_arm, NO hand attached to the session): enable both MIT
+  controllers (`mit_controller/enable` + `hold_current`); after ~30-50 s each
+  `agx_arm_ctrl_single` enters a strictly periodic (~7.4 s) recovery storm:
+  "CAN bus stall detected (tx_stall_count=0, is_ok=True)".
+- Measured evidence that the CAN side is innocent: 65 s passive `candump` on
+  `can_nero_left` during the storm regime shows 139 844 frames (~2 150/s, IDs
+  0x251-257/0x261-267/0x2A1-2A9) with a **maximum inter-frame gap of 26.5 ms** on any
+  feedback ID (bus-wide max 6.7 ms). The stall trigger requires >500 ms of parsed-
+  feedback silence — the frames never stopped; the *parsing/accounting* did. Both
+  driver processes sit at ~100 % of a core while MIT streams; the vendor-lib readiness
+  check is `get_joint_angles().hz > 0`, where `hz` is pyAgxArm's FPSManager 0.1 s
+  window delta — one starved 0.1 s window in a GIL-saturated Python process reads as
+  hz==0, and 0.5 s of that trips `feedback_timeout`. Each recovery then does a full
+  disconnect/reconnect/re-enable, which is itself the main disturbance.
+- Follow-up observation in the same session: later BOTH drivers silently stopped
+  forwarding MIT commands entirely — `control/move_mit` flows at 100 Hz on both arms
+  (ROS side) but candump shows **zero** 0x15A-0x160 TX frames on either bus, while
+  feedback keeps publishing with live payloads. The arms are then NOT actively
+  regulated although the MIT controllers stream. Verify real TX load with
+  `timeout 5 candump can_nero_left,15A:7F0 | wc -l` (~3 500 expected at 100 Hz).
+- The user's console (driver stdout, not captured in launch.log) confirmed the
+  cascade: three freshness checks interact — (1) the vendor 0.1 s fps window feeds
+  `_check_arm_ready` (`hz > 0`), so a starved window rejects every move_mit callback
+  with "Agx_arm is not connected, cannot control" at exactly the 100 Hz command rate;
+  (2) the driver watchdog (`feedback_timeout` 0.5 s of hz==0) then runs the
+  disconnect/reconnect recovery; (3) the MIT controller separately logs "Paused MIT
+  command publishing because feedback is stale" when the driver's publish loop gaps
+  long enough. Under CPU saturation the system oscillates between storm phases and
+  quiet-but-dead phases (controllers streaming, drivers rejecting silently). All
+  three trip while candump shows uninterrupted 130-200/s feedback frames per ID.
+### Hand CANFD requests fail 100 % while the arm MIT stream is active — NOT a TDC problem
+
+- Setup: driver-fix build (timestamp-based readiness), MIT controllers actively
+  streaming (verified 700 tx/s per bus via kernel counters — NOTE: neither pyAgxArm
+  (`local_loopback: False` in can_comm.py) nor the OmniHand SDK enable SocketCAN
+  local loopback, so candump shows NEITHER of our own TX streams; use
+  `/sys/class/net/<if>/statistics/tx_packets` to verify TX, never candump.
+- Result: TDC sweep under load scores **0/1050 readbacks across TDCO 2..15** on both
+  buses, ~+1 `bus_error` per request. Error-frame capture
+  (`candump -e "can_nero_left,0:0,#FFFFFFFF"`) shows exactly one
+  `20000088` frame per attempt: protocol-violation **tx-recessive-bit-error** +
+  bus-error — during our FD-BRS transmission another node pulled the bus dominant
+  (typical for a receiver that is not FD-tolerant issuing an error flag).
+- Differential facts: (1) pure MIT classic streaming, 15 s, both buses: **zero** bus
+  errors — classic TX/RX is flawless; (2) hand FD requests with the arm connected and
+  pushing feedback but NO Jetson TX: **100 %** success at TDCO 2..15; (3) hand FD
+  requests while MIT streams: **0 %**, TDCO-independent, both arms (fw 1.06 + 1.11).
+- Conclusion: TDC/transceiver timing is NOT the lever (sweep now prints "no
+  recommendation" when everything scores 0 %). Two live hypotheses: (A) the Nero
+  firmware's CAN controller is not FD-tolerant while in MIT/CAN_CTRL mode and error-
+  flags every FD frame (digital, deterministic); (B) signal-integrity of the new
+  transceiver under dense back-to-back traffic (analog — would explain why the old
+  TJA1051T/3 got ~8/10 with app-level retries and the new transceiver gets 0).
+  Discriminating experiments: sweep one value with `--one-shot off` (does controller
+  retransmission ever get a frame through?); lower `mit_control_rate_hz` (10, then
+  50 — density vs. mode); scope the FD frame under load vs. idle. If FD-under-MIT
+  stays structurally dead, move the hands to their own bus
+  (`scripts/omnihand_canfd_activate.sh`, USB CAN-FD adapter path) or take the FD
+  tolerance question to the arm vendor.
+
+- Fix (implemented 2026-07-16): `_check_arm_ready` now treats the kernel RX timestamp
+  of the last parsed feedback frame as the authoritative liveness signal — the arm is
+  ready as long as that timestamp keeps advancing within `feedback_timeout` (advance
+  is dated with the local monotonic clock, so no cross-clock comparison); the
+  instantaneous `hz > 0` window remains only as a fallback for transports that never
+  populate frame timestamps. `feedback_timeout` default raised 0.5 -> 2.0 s. A
+  recovery expires the advance window first so `_wait_for_feedback` demands a
+  genuinely new frame after the reconnect. Note the bringup default is
+  `mit_control_rate_hz` 100 (the components launch overrides the node/config 50);
+  lowering it to 50 remains the quickest CPU-load lever if the driver still pegs a
+  core. Longer term the driver hot path belongs out of Python.
+
+### `duo_hand` bringup "does not spawn" the OmniHand bridge
+
+- Symptom: after `start_agx_arm_components.launch.py ... execution_profile:=duo_hand
+  omnihand_backend_type:=sdk`, hand commands do nothing; a manually launched
+  `start_omnihand_bridge.launch.py` works. The hand only reacts once the teach manager runs.
+- Cause: the bridge IS spawned — launch logs show two `omnihand_bridge` processes — but one
+  per arm instance inside the `/left_arm` and `/right_arm` namespaces, subscribing to
+  `/left_arm/control/joint_states` + `/left_arm/control/omnihand/joint_trajectory` (same for
+  right). Commands published to the root-level topics (which the manual root-namespace bridge
+  serves) never reach them; the teach manager works because it auto-discovers the prefixed
+  topics. Also: the profile-spawned Python nodes buffer stdout, so the bridge init line and
+  SDK errors may not appear in `launch.log` — check `ros2 node list | grep omnihand` and
+  `ros2 param get /left_arm/omnihand_bridge_node backend_type` instead.
+- Note: `enable_debug_joint_trajectory_topic:=true` is silently dropped by
+  `start_agx_arm_components.launch.py` — the argument is not declared/forwarded there; set it
+  on the MIT controller launch level if needed.
+
+## 2026-07-17 (one-shot off default, exerciser vs MoveIt, freedrive start state)
+
+### `one-shot off` promoted to the default bus configuration
+
+- With `ONE_SHOT=off` (now the default in `scripts/activate_native_can.sh` and
+  `scripts/omnihand_canfd_activate.sh`) the hand error flood under arm load drops to a
+  periodic `CANFD ID: 0x00200101 请求超时` roughly every 2 s — retransmission gets most hand
+  frames through the arbitration pressure that one-shot silently dropped. TDCR sweeps
+  (`scripts/can_tdc_sweep.py`, promoted to `scripts/`) confirmed TDC timing is NOT the lever:
+  wide flat TDCO window when idle, 0 % under MIT load at every TDCO. Stable docs updated:
+  `docs/assets/omnihand/omnihand_canfd_setup.md`, `docs/control/bringup.md`,
+  `docs/control/teach_and_run.md`.
+
+### Exerciser command never reaches the hand while MoveIt trajectories move it
+
+- Symptom: with the Duo bringup, `omnihand_exerciser --gesture ...` never moves the hand no
+  matter how often it is sent, while RViz/MoveIt-planned hand trajectories execute promptly.
+- Cause: not a bus problem. Both paths converge in the bridge's `_submit_command` (identical
+  CAN behavior, including readback-verified retry). The difference is ROS-side routing: the
+  Duo bringup namespaces each bridge (`/left_arm`, `/right_arm` from the motion registry), and
+  MoveIt reaches it via the namespaced `<side>_omnihand_controller/follow_joint_trajectory`
+  action, while the exerciser published `JointState` to root-level `control/joint_states`,
+  which nothing subscribes to.
+- Fix: `omnihand_exerciser` now uses the MoveIt path by default — it resolves the side
+  namespace from the motion registry and sends a `FollowJointTrajectory` goal (falling back
+  to the namespaced `control/omnihand/joint_trajectory` topic when the action server is not
+  up, e.g. a standalone bridge; pass `--namespace ''` for the root-namespace solo bringup).
+  The old shared-topic publish remains behind an explicit `--topic`.
+
+### MoveIt plans from the pre-freedrive state after dragging the arm
+
+- Symptom: after moving the arm in freedrive/drag mode, RViz `<current>` start state and
+  planning still use the old pose.
+- Cause: in leader/drag mode the firmware disables the normal joint-state CAN push
+  (`enable_can_push=DISABLE`), so `agx_arm_ctrl_single_node._publish_joint_states` returned
+  early (`get_joint_angles().hz <= 0`) and `feedback/joint_states` froze at the pre-freedrive
+  pose; the joint-state merger kept republishing that frozen message, so move_group's current
+  state monitor never saw the dragged pose. The live signal during drag is
+  `feedback/leader_joint_angles`, which MoveIt never consumes.
+- Fix: `_publish_joint_states` now uses the same frame-advance liveness rule as
+  `_check_arm_ready` (instantaneous `hz` starves under GIL pressure) and, when the normal
+  stream is silent in leader mode, republishes the leader-angle stream (plus
+  gripper/hand/omnihand joints) onto `feedback/joint_states` so MoveIt keeps tracking. The
+  merger additionally stamps the merged message with the newest source stamp instead of the
+  last source in the list (one stalled source no longer freezes the merged header stamp).
+- Hardware validation still pending: verify in RViz that the `<current>` start state follows
+  the arm during drag mode and that planning starts from the dragged pose.
+
+### `mit_control_rate_hz` bringup default lowered 100 -> 50
+
+- `start_agx_arm_components.launch.py` now defaults to 50 Hz (matching the MIT controller's
+  own default), halving per-bus MIT frame load and the driver CPU load that fed the false
+  bus-stall storms. `docs/assets/control/single_vs_multi_arm_control_chain.md` updated.

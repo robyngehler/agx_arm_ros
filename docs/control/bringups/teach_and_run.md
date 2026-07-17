@@ -118,9 +118,16 @@ free-runs without the arm).
 >   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
 >   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.
 > - keep `control_rate_hz` at its 50 Hz default (do **not** drop it — a lower rate risks hold instability);
->   handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`) instead.
+>   handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`) instead. The MIT
+>   launch args (`start_agx_arm_moveit.launch.py`, `start_multi_agx_arm_rviz.launch.py`) default
+>   `mit_control_rate_hz` to 50 (was 100), which halves both the per-bus MIT frame load and the driver CPU
+>   load that starved the feedback parser.
 > - do **not** treat `ONE_SHOT=off` as a normal runtime mode. It is transport-history context only and can
 >   reintroduce retransmission buildup on the arm side.
+> - **TDC/TDCR offset tuning is not a lever here:** `scripts/can_tdc_sweep.py` sweeps showed a wide flat
+>   TDCO window (`0x200`–`0xF00` all pass on an idle bus) and 0 % hand delivery under MIT load at every
+>   TDCO — keep the validated `TDCR_VALUE=0x800` and treat hand starvation as an arbitration/retransmission
+>   issue, not a transceiver-timing one.
 > - **`pub_rate` is not the bus lever:** it only sets the ROS republish rate of already-cached feedback (the
 >   arm firmware push rate is fixed), so lowering it does not reduce CAN traffic — it only makes teach
 >   recording sample staler feedback. Leave it at its default.
