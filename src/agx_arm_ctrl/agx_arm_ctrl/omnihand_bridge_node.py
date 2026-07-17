@@ -843,6 +843,12 @@ class OmniHandBridgeNode(Node):
             0.0, float(self.get_parameter("fault_poll_interval_s").value)
         )
         self._fault_backoff_active = False
+        # Hysteresis: one lucky probe must not flip the bridge back to full-rate
+        # polling on a bus that is still congested (fault -> recover -> burst ->
+        # fault oscillation). Full rate resumes only after this many consecutive
+        # successful probes at the slow cadence.
+        self._fault_recovery_streak = 0
+        self._fault_recovery_streak_needed = 3
         self._last_status_snapshot: OmniHandStatusSnapshot | None = None
         self._last_tactile_snapshot: OmniHandTactileSnapshot | None = None
         self.tactile_sample_count = int(self.get_parameter("tactile_sample_count").value)
@@ -1105,24 +1111,35 @@ class OmniHandBridgeNode(Node):
         # the cached snapshots are republished. A single successful probe clears
         # the backend fault and normal polling resumes on the next tick.
         faulted = self._backend_faulted()
-        if faulted and not self._fault_backoff_active:
-            self._fault_backoff_active = True
-            if self.fault_poll_interval_s > 0.0:
-                self.get_logger().warn(
-                    "OmniHand backend communication fault; backing off SDK polling "
-                    f"to one probe every {self.fault_poll_interval_s:.1f} s until a "
-                    "readback succeeds"
-                )
-        elif not faulted and self._fault_backoff_active:
-            self._fault_backoff_active = False
-            self.get_logger().info("OmniHand backend recovered; normal SDK polling resumed")
+        if faulted:
+            self._fault_recovery_streak = 0
+            if not self._fault_backoff_active:
+                self._fault_backoff_active = True
+                if self.fault_poll_interval_s > 0.0:
+                    self.get_logger().warn(
+                        "OmniHand backend communication fault; backing off SDK polling "
+                        f"to one probe every {self.fault_poll_interval_s:.1f} s until "
+                        f"{self._fault_recovery_streak_needed} consecutive readbacks succeed"
+                    )
 
         read_interval = self.joint_read_min_interval_s
-        if faulted:
+        if self._fault_backoff_active:
             read_interval = max(read_interval, self.fault_poll_interval_s)
         if read_interval <= 0.0 or now - self.last_joint_read_monotonic >= read_interval:
             self.cached_positions = self.backend.read_joint_state()
             self.last_joint_read_monotonic = now
+            # Hysteresis: stay at the slow probe cadence until the bus has
+            # proven itself with several consecutive clean readbacks.
+            if self._fault_backoff_active and not self._backend_faulted():
+                self._fault_recovery_streak += 1
+                if self._fault_recovery_streak >= self._fault_recovery_streak_needed:
+                    self._fault_backoff_active = False
+                    self._fault_recovery_streak = 0
+                    self.get_logger().info(
+                        "OmniHand backend recovered "
+                        f"({self._fault_recovery_streak_needed} consecutive clean "
+                        "readbacks); normal SDK polling resumed"
+                    )
 
         joint_state = JointState()
         joint_state.header.stamp = stamp
@@ -1130,7 +1147,7 @@ class OmniHandBridgeNode(Node):
         joint_state.position = list(self.cached_positions)
         self.hand_joint_states_pub.publish(joint_state)
 
-        if not self._backend_faulted() or self._last_status_snapshot is None:
+        if not self._fault_backoff_active or self._last_status_snapshot is None:
             self._last_status_snapshot = self.backend.read_status()
         status_snapshot = self._last_status_snapshot
         status_msg = OmniHandStatus()
@@ -1155,7 +1172,7 @@ class OmniHandBridgeNode(Node):
             )
         self.status_pub.publish(status_msg)
 
-        if not self._backend_faulted() or self._last_tactile_snapshot is None:
+        if not self._fault_backoff_active or self._last_tactile_snapshot is None:
             self._last_tactile_snapshot = self.backend.read_tactile()
         tactile_snapshot = self._last_tactile_snapshot
         tactile_msg = OmniHandTactileRaw()

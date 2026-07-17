@@ -441,3 +441,43 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   tolerance in MIT/CAN_CTRL mode. Until decided: with hands on the shared bus, do not run
   hand SDK traffic while MIT is enabled, or bring the bus up with `ONE_SHOT=on` for
   arm-only sessions.
+
+### The driver recovery loop is a storm amplifier: latched comm error + no cooldown
+
+- Counter-observation to the pure bus story (2026-07-17, second session): after a restart the
+  stack runs quiet, stays quiet for a while after the teach manager starts (hand faults only
+  every few seconds, bridge backoff engaging/releasing), then "tips" into the storm. During
+  the storm the LEFT driver recovered every 60-100 ms ("recovery succeeded on attempt 1" ->
+  1-20 ms later "stall detected"), far below any feedback_timeout — so a software loop, not a
+  bus timeout, drives the recovery cadence.
+- Mechanism (pyAgxArm `can_comm.py` + `driver_context.py`): send/recv ENOBUFS is swallowed but
+  **latched** in `comm.last_error`; it is only cleared by a clean **data** frame in recv —
+  **error frames never clear it** (`if not msg.is_error_frame`). The node's watchdog path B
+  (`has_comm_error()` + ENOBUFS classify) therefore stays armed during an error-frame-dominated
+  phase. Reconnect clears the latch, but the recovery's OWN sends (enable x7, set_speed,
+  set_tcp) hit the congested bus and re-latch a fresh ENOBUFS before the next publish-loop
+  iteration -> immediate re-trigger -> self-sustaining 60-100 ms disconnect/enable loop that
+  itself floods the bus. This is the amplifier that turns "hand FD frames failing" into the
+  full cascade; it predates the 2026-07-16/17 driver changes but was previously masked by the
+  0.5 s feedback_timeout storms having a different rhythm.
+- Fixes (implemented):
+  - driver: `bus_recovery_cooldown_s` (default 5 s) — after a completed recovery the watchdog
+    holds off; one WARN when a re-trigger is suppressed. Plus `_clear_comm_error()` at the end
+    of recovery so errors latched by the recovery's own sends never count as a fresh trigger.
+  - bridge: fault backoff now has hysteresis — full-rate polling resumes only after 3
+    consecutive clean readbacks at the slow cadence (one lucky probe no longer flips the
+    bridge back into a 20 Hz+ request burst on a still-congested bus).
+- What is still NOT explained by code alone: why several minutes of MoveIt hand testing
+  (2026-07-16 evening, one-shot off) stayed clean. Most plausible: the MIT controllers were
+  never enabled in that session (they start DISABLED; RViz hand planning does not enable
+  them), so the arms never streamed and hand FD delivery worked. Needs confirmation.
+- Discriminating A/B for the next hardware run (order matters):
+  1. Baseline: teach-manager scenario with the new cooldown build; watch
+     `ip -statistics link show can_nero_left` bus-errors slope BEFORE vs AFTER the tipping
+     point (if it still tips).
+  2. Same scenario with `bus_recovery_enabled:=false` on both drivers: if the bus-error slope
+     and the tipping vanish, the recovery loop was the main driver; if bus-errors still climb
+     (~1 per hand request) and the stack tips, the FD-retransmit flood is primary.
+  3. Same scenario with the hand bridges NOT launched (`launch_omnihand_bridge:=false`): zero
+     FD traffic; if everything stays clean for minutes, hand FD under MIT remains the root
+     trigger, and the shared-bus decision (own hand bus / time-sharing / vendor) stands.

@@ -105,6 +105,14 @@ class AgxArmRosNode(Node):
         self.declare_parameter("feedback_timeout", 2.0)
         self.declare_parameter("bus_recovery_link_reset", False)
         self.declare_parameter("bus_recovery_max_attempts", 3)
+        # Minimum quiet time after a completed recovery before the watchdog may
+        # fire again. Without it a congested (error-storming) bus re-latches a
+        # comm error during the recovery's OWN enable/config sends, and the
+        # watchdog re-triggers on the very next publish-loop iteration — a
+        # 60-100 ms disconnect/enable loop that floods the sick bus further.
+        # Recovering more often than this cannot help: if one full reconnect
+        # did not restore the bus, an immediate second one will not either.
+        self.declare_parameter("bus_recovery_cooldown_s", 5.0)
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
@@ -128,6 +136,11 @@ class AgxArmRosNode(Node):
         self.bus_recovery_max_attempts = max(
             1, int(self.get_parameter("bus_recovery_max_attempts").value)
         )
+        self.bus_recovery_cooldown_s = max(
+            0.0, float(self.get_parameter("bus_recovery_cooldown_s").value)
+        )
+        self._last_recovery_end_monotonic = 0.0
+        self._recovery_cooldown_logged = False
 
         if self.arm_type not in ArmModel.__dict__.values():
             self.get_logger().error(
@@ -543,6 +556,20 @@ class AgxArmRosNode(Node):
         # so the normal startup warm-up is never mistaken for a stall.
         if not self._had_control_ready:
             return False
+        # Cooldown after a completed recovery: a still-congested bus latches
+        # fresh comm errors during the recovery's own sends, and re-recovering
+        # immediately only adds disconnect/enable bursts to the flood.
+        if (
+            time.monotonic() - self._last_recovery_end_monotonic
+        ) < self.bus_recovery_cooldown_s:
+            if not self._recovery_cooldown_logged:
+                self._recovery_cooldown_logged = True
+                self.get_logger().warn(
+                    "Bus watchdog re-triggered within "
+                    f"{self.bus_recovery_cooldown_s:.1f} s of the last recovery; "
+                    "holding off (bus likely still congested)"
+                )
+            return False
         # Path A: an exception propagated out of a send (raise-style comm model).
         if self._tx_stall_detected:
             return True
@@ -640,7 +667,27 @@ class AgxArmRosNode(Node):
             # Avoid an immediate re-trigger of the feedback watchdog right after
             # recovery; the publish loop re-arms control_ready on fresh feedback.
             self._last_good_feedback_monotonic = time.monotonic()
+            # Consume any comm error latched by the recovery's OWN sends
+            # (enable/set_speed/set_tcp on a congested bus): pyAgxArm's
+            # last_error is only cleared by a clean DATA frame — error frames
+            # never clear it — so during an error storm one latched ENOBUFS
+            # would otherwise re-trigger the watchdog on the next iteration.
+            self._clear_comm_error()
+            self._last_recovery_end_monotonic = time.monotonic()
+            self._recovery_cooldown_logged = False
             self._recovery_in_progress = False
+
+    def _clear_comm_error(self) -> None:
+        try:
+            comm = None
+            if hasattr(self.agx_arm, "get_comm"):
+                comm = self.agx_arm.get_comm()
+            elif hasattr(self.agx_arm, "_ctx"):
+                comm = self.agx_arm._ctx.get_comm()
+            if comm is not None and hasattr(comm, "last_error"):
+                comm.last_error = None
+        except Exception:
+            pass
 
     def _reset_can_link(self) -> bool:
         """Bring the SocketCAN interface down/up to flush the qdisc and reset
