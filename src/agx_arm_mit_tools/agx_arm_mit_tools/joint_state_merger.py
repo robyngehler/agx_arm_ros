@@ -9,12 +9,19 @@ from sensor_msgs.msg import JointState
 from .joint_state_name_adapter import adapt_joint_names
 
 
+def _stamp_ns(message: JointState) -> int:
+    return int(message.header.stamp.sec) * 1_000_000_000 + int(message.header.stamp.nanosec)
+
+
 def _merged_joint_state(messages: Sequence[JointState | None], joint_prefixes: Sequence[str]) -> JointState:
     merged = JointState()
     for message, joint_prefix in zip(messages, joint_prefixes):
         if message is None:
             continue
-        merged.header = message.header
+        # Newest source stamp wins; taking the last source's header instead
+        # would freeze the whole merged stream on one stalled source.
+        if _stamp_ns(message) >= _stamp_ns(merged):
+            merged.header = message.header
         merged.name.extend(adapt_joint_names(message.name, joint_prefix, "prepend"))
         merged.position.extend(list(message.position))
         merged.velocity.extend(list(message.velocity))

@@ -97,7 +97,12 @@ class AgxArmRosNode(Node):
         # whole launch is restarted.
         self.declare_parameter("bus_recovery_enabled", True)
         self.declare_parameter("bus_recovery_tx_error_threshold", 1)
-        self.declare_parameter("feedback_timeout", 0.5)
+        # Frames older than this (kernel RX timestamp of the last parsed
+        # feedback frame) count as a dead bus. 0.5 s proved far too tight: the
+        # instantaneous readiness signal starves for hundreds of ms under GIL
+        # pressure while candump shows uninterrupted feedback, so the watchdog
+        # tore down healthy links every ~7 s during active MIT streaming.
+        self.declare_parameter("feedback_timeout", 2.0)
         self.declare_parameter("bus_recovery_link_reset", False)
         self.declare_parameter("bus_recovery_max_attempts", 3)
 
@@ -156,6 +161,12 @@ class AgxArmRosNode(Node):
         self._had_control_ready = False
         self._recovery_in_progress = False
         self._last_good_feedback_monotonic = time.monotonic()
+        # Feedback-frame progress tracking for _check_arm_ready: the vendor
+        # frame timestamp advancing is the ground truth for a live bus; the
+        # local monotonic clock dates our last observation of an advance, so
+        # no cross-clock-domain comparison is ever needed.
+        self._last_feedback_frame_ts = None
+        self._last_feedback_advance_monotonic = time.monotonic()
         # TX stall is detected node-side from caught send exceptions, so it works
         # regardless of how the underlying pyAgxArm comm reports ENOBUFS.
         self._tx_stall_count = 0
@@ -340,9 +351,27 @@ class AgxArmRosNode(Node):
 
     def _check_arm_ready(self) -> bool:
         joint_states = self.agx_arm.get_joint_angles()
-        if joint_states is None or joint_states.hz <= 0:
+        if joint_states is None:
             return False
-        return True
+        # hz is pyAgxArm's instantaneous 0.1 s fps window. In a GIL-saturated
+        # process (active MIT streaming pegs this node at ~100 % of a core) a
+        # starved window reads 0 while candump shows uninterrupted feedback,
+        # which used to reject every command and feed the recovery storm. The
+        # authoritative liveness signal is the kernel RX timestamp of the last
+        # parsed frame: as long as it keeps advancing within feedback_timeout
+        # the arm is ready, whatever the instantaneous window says.
+        if self._feedback_frame_advancing(joint_states.timestamp):
+            return True
+        return joint_states.hz > 0
+
+    def _feedback_frame_advancing(self, frame_ts: float) -> bool:
+        if frame_ts != self._last_feedback_frame_ts:
+            self._last_feedback_frame_ts = frame_ts
+            self._last_feedback_advance_monotonic = time.monotonic()
+            return True
+        return (
+            time.monotonic() - self._last_feedback_advance_monotonic
+        ) <= self.feedback_timeout
 
     def _leader_feedback_fresh(self) -> bool:
         """True when the leader-angle stream is actively reporting.
@@ -542,6 +571,12 @@ class AgxArmRosNode(Node):
         # command reaches a half-torn-down bus during recovery.
         self.control_ready = False
         self._control_ready_logged = False
+        # Expire the frame-advance window so _wait_for_feedback demands a
+        # genuinely NEW frame after the reconnect instead of passing on the
+        # pre-recovery grace period.
+        self._last_feedback_advance_monotonic = (
+            time.monotonic() - self.feedback_timeout - 1.0
+        )
         try:
             is_ok = self.agx_arm.is_ok()
         except Exception:
@@ -693,7 +728,21 @@ class AgxArmRosNode(Node):
 
     def _publish_joint_states(self):
         joint_states = self.agx_arm.get_joint_angles()
-        if joint_states is None or joint_states.hz <= 0:
+        # Same rule as _check_arm_ready: the instantaneous hz window starves
+        # under GIL pressure while frames still arrive, so the advancing frame
+        # timestamp is what decides whether the normal stream is alive.
+        normal_stream_alive = joint_states is not None and (
+            joint_states.hz > 0 or self._feedback_frame_advancing(joint_states.timestamp)
+        )
+        if not normal_stream_alive:
+            # In leader/drag (freedrive) mode the firmware disables the normal
+            # joint-state push, so without this fallback feedback/joint_states
+            # freezes at the pre-freedrive pose and MoveIt keeps planning from
+            # the stale state. The leader-angle stream carries the live joint
+            # positions of the dragged arm; republish them here so the shared
+            # feedback surface keeps tracking the freedriven pose.
+            if self._leader_mode_active:
+                self._publish_leader_states_as_joint_states()
             return
 
         velocitys = []
@@ -722,6 +771,24 @@ class AgxArmRosNode(Node):
         joints_data.extend(self._get_omnihand_joint_data())
         if joints_data:
             msg.name, msg.position, msg.velocity, msg.effort =map(list, zip(*joints_data))
+            self.joint_states_pub.publish(msg)
+
+    def _publish_leader_states_as_joint_states(self):
+        leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+        if leader_joint_angles is None:
+            return
+
+        msg = JointState()
+        msg.header.stamp = self._float_to_ros_time(leader_joint_angles.timestamp)
+        joints_data = [
+            (joint_name, position, 0.0, 0.0)
+            for joint_name, position in zip(self.arm_joint_names, leader_joint_angles.msg)
+        ]
+        joints_data.extend(self._get_gripper_joint_data())
+        joints_data.extend(self._get_hand_joint_data())
+        joints_data.extend(self._get_omnihand_joint_data())
+        if joints_data:
+            msg.name, msg.position, msg.velocity, msg.effort = map(list, zip(*joints_data))
             self.joint_states_pub.publish(msg)
 
     def _publish_pose(self):

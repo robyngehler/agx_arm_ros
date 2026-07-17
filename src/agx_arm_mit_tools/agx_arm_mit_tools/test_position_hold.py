@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import time
 
 import rclpy
@@ -142,8 +143,11 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--report-interval", type=float, default=1.0, help="How often to print drift summaries during the hold")
 	parser.add_argument("--no-auto-enable-arm", action="store_true", help="Skip calling enable_agx_arm before the test")
 	parser.add_argument("--leave-mit-enabled", action="store_true", help="Do not disable MIT when the test exits")
+	parser.add_argument("--no-wait", action="store_true", help="Capture and hold immediately instead of waiting for Enter (for scripted runs)")
 	parser.add_argument("--joint-names", nargs="+", default=DEFAULT_JOINT_NAMES, help="Joint names to track during the hold test")
-	return parser.parse_args()
+	# Strip ROS arguments so the tool works namespaced, e.g.
+	# `... --duration 30 --ros-args -r __ns:=/left_arm` for the Duo bringup.
+	return parser.parse_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
 
 
 def _format_joint_drift(joint_names: list[str], drifts: list[float]) -> str:
@@ -159,7 +163,7 @@ def main() -> None:
 	if args.report_interval <= 0.0:
 		raise ValueError("--report-interval must be > 0")
 
-	rclpy.init()
+	rclpy.init(args=sys.argv)
 	node = PositionHoldTestNode(args.joint_names)
 	try:
 		if not node.wait_for_services(args.service_timeout):
@@ -176,8 +180,11 @@ def main() -> None:
 		if not node.wait_for_fresh_feedback(args.feedback_timeout):
 			raise RuntimeError("Did not receive fresh feedback/joint_states before MIT hold test")
 
-		print("Place the robot at the pose you want to test, then press Enter to capture and hold it.")
-		input()
+		if args.no_wait:
+			print("Capturing and holding the current pose (--no-wait).")
+		else:
+			print("Place the robot at the pose you want to test, then press Enter to capture and hold it.")
+			input()
 
 		if not node.wait_for_fresh_feedback(args.feedback_timeout):
 			raise RuntimeError("Did not receive fresh feedback/joint_states when capturing hold pose")
