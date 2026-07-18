@@ -1,22 +1,22 @@
 # Repository Structure
 
-status: ACTIVE_DUO_BASELINE
-last_updated: 2026-07-02
+status: ACTIVE_MIGRATION_BASELINE
+last_updated: 2026-07-18
 
 ## Purpose
 
-This document defines the current canonical workspace structure of the Duo baseline (through the
-coordination/teach/duo work). It is based on the repo as it exists today, not on a future rename pass.
+This document defines the current canonical workspace structure of the Duo baseline and the current
+documentation split during the cleanup migration.
 
 ## Current Workspace Roles
 
 | Surface | Current Path | Role | Rule |
 | --- | --- | --- | --- |
 | Canonical robot description | `src/agx_arm_sim/agx_arm_description` | Source of truth for Nero, Revo2, and repo-owned OmniHand description assets | Reuse directly for canonical shared assets; do not create another long-term description source of truth. |
-| Duo system staging description | `src/duo_body_description` | Temporary staging package for Duo body plus configurable right/left arm-hand system assembly and description-only bringup | Use for Sprint 3 and Sprint 4 body-mounted system bringup; do not copy full Nero or OmniHand asset trees into it unnecessarily. |
+| Duo system staging description | `src/duo_body_description` | Current staging package for Duo body plus configurable right or left arm-hand system assembly and description-only bringup | Use as the documented staging surface; do not copy full Nero or OmniHand asset trees into it unnecessarily. |
 | MoveIt baseline | `src/agx_arm_moveit` | Current Nero MoveIt configuration, fake `ros2_control`, RViz, and OmniHand simulation profile | Reuse directly and generalize in place; do not fork a second MoveIt package for the Duo system baseline. |
 | Runtime arm bridge | `src/agx_arm_ctrl` | Real arm ROS node, launch surfaces, and control-facing integration points | Reuse directly for runtime integration; add OmniHand bridge work without breaking the current arm path. |
-| MIT controller runtime | `src/agx_arm_mit_controller` | Integrated `FollowJointTrajectory` execution, MIT command generation, shared trajectory/gravity libraries, and curated controller configs | Reuse directly; keep production controller semantics stable while Sprint 2 standardizes interfaces around it. |
+| MIT controller runtime | `src/agx_arm_mit_controller` | Integrated `FollowJointTrajectory` execution, MIT command generation, shared trajectory/gravity libraries, and curated controller configs | Reuse directly; keep production controller semantics stable while the current baseline continues to harden the interfaces around it. |
 | MIT demos | `src/agx_arm_mit_demos` | Interactive leader recording, saved-trajectory playback, and wakeword teach-and-trigger workflows | Keep app-layer demo entry points here instead of the controller runtime package. |
 | MIT tools | `src/agx_arm_mit_tools` | Debug bridges, hold validation, gravity comparison/calibration, and other non-production helpers | Keep bridge/debug/calibration entry points here so runtime ownership stays narrow. |
 | Custom ROS messages | `src/agx_arm_msgs` | Repo-owned message layer for controller and future OmniHand-specific diagnostics | Extend here for OmniHand-specific status and tactile messages. |
@@ -28,14 +28,16 @@ coordination/teach/duo work). It is based on the repo as it exists today, not on
 
 | Surface | Current Path | Role |
 | --- | --- | --- |
-| Global docs hub and cross-cutting status | `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md` | Global navigation plus repo-wide checklist, fixes, and open questions without duplicating sprint-local notes |
-| Operational bringup + teach SoT | `docs/control` | How to run the system: `bringup.md` (launch/argument matrix) and `teach_and_run.md` |
+| Global docs hub and cross-cutting status | `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`, `docs/target/README.md` | Global navigation plus repo-wide checklist, fixes, open questions, and the active migration target |
+| Operational bringup + teach SoT | `docs/control` | How to run the system: `environment.md`, `bringups/launches.md`, and `teach_and_run.md` |
 | Component, runtime, and integration docs | `docs/assets` | Asset/repo inventories plus OmniHand, MIT, and control component docs |
-| Development coordination and working notes | `docs/development` | Roadmap, progress, component routing, plus per-sprint logs and working sets |
-| Human repository structure | `docs/project` | Workspace structure and architecture (agent workflow/naming rules live in `.claude/rules` and `.github/instructions`) |
+| Stable sprint entrypoints | `docs/sprint1/` through `docs/sprint6/` | First-class sprint-level targets, checklists, errors, and open questions during the migration |
+| Development coordination and historical working notes | `docs/development` | Roadmap, progress, component routing, and the existing sprint-local evidence that is still being migrated |
+| Human repository structure | `docs/project` | Workspace structure, architecture, and stable component ownership |
 | Copilot-native guidance | `.github` plus `AGENTS.md` | Repo-local Copilot instructions, skills, agents, and the durable engineering contract |
 
-The future `docs/planning`, `docs/simulation`, `docs/hand`, and related trees are still valid targets, but they should be created when there is stable content to promote into them.
+The future `docs/simulation`, `docs/hand`, and related trees are still valid targets, but they should
+be created only when there is stable content to promote into them.
 
 ## Source Tree Boundaries
 
@@ -59,9 +61,9 @@ Treat these directories as generated or runtime-managed:
 
 ## Current Structure Rules
 
-1. Keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package, but allow `src/duo_body_description` as the documented Sprint 3 and Sprint 4 staging package for body-mounted system bringup.
+1. Keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package, but allow `src/duo_body_description` as the documented Duo staging package for body-mounted system bringup.
 2. Do not split off a new MoveIt package for the Duo system unless the current package becomes unmaintainable.
-3. Keep the OmniHand adapter below ROS and keep the public ROS bridge repo-owned inside `src/agx_arm_ctrl` during Sprint 2.
+3. Keep the OmniHand adapter below ROS and keep the public ROS bridge repo-owned inside `src/agx_arm_ctrl` in the current baseline.
 4. Add hand-specific runtime surfaces in a way that preserves the current Nero arm runtime path.
 5. Keep the integrated MIT action server and `/control/move_mit` ownership in `src/agx_arm_mit_controller`.
 6. Put demo applications and workflow tooling under `src/agx_arm_mit_demos` or `src/agx_arm_mit_tools` rather than widening the controller runtime package.
@@ -69,6 +71,7 @@ Treat these directories as generated or runtime-managed:
 8. Keep Sprint 6 task orchestration in `src/agx_arm_coordination` (coordinator + performer routing + YAML graph/catalogue loader); do not move the OmniHand skill controller out of `src/agx_arm_ctrl` or fork a second arm execution path for it.
 9. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
 10. Keep repo-wide checklist, error-and-fix, and open-question summaries in top-level `docs/*.md`; do not duplicate those same summaries again under top-level `docs/development/`.
+11. Keep `docs/development/` focused on roadmap, progress, component routing, and historical working evidence while the first-class `docs/sprintX/` surfaces are filled in.
 
 ## Current Deliverables Anchored To This Structure
 
@@ -76,7 +79,7 @@ Treat these directories as generated or runtime-managed:
 - `.claude/rules/generated-vs-source-assets.md`
 - `.claude/rules/local-agent-workflow.md`
 - `.claude/rules/ros2-development.md`
-- `docs/project/repo_interaction_diagrams.md`
+- `docs/project/architecture.md`
 - `AGENTS.md` and the Copilot-native `.github/` guidance mirrors
 - repo-owned OmniHand bridge skeleton and message extensions aligned with the package boundaries above
-- Duo body system staging package and Sprint 3/Sprint 4 documentation aligned with the package boundaries above
+- Duo body system staging package and the current sprint documentation aligned with the package boundaries above

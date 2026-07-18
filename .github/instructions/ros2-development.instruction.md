@@ -20,18 +20,20 @@ Load this instruction for ROS2-native questions and decisions.
 ## Value Capture
 
 - top-level `docs/*.md` for global navigation and repo-wide checklist, fixes, and open questions
-- `docs/project/` for stable structure, naming, workflow, and ROS2 practice decisions
+- `docs/control/` for how to run the system (environment, bringup launch/arguments, teach loop)
+- `docs/project/` for stable structure, architecture, naming, workflow, and ROS2 practice decisions
 - `docs/assets/` for stable runtime and bridge contracts
 - `docs/assets/` for stable factual inventories and validation state
+- `docs/sprintN/` for sprint-level targets, checklist, errors, and open questions
 - top-level `docs/development/` docs only for roadmap, progress, and component routing
-- `docs/development/sprintN/` for discovery, checklist, error/fix, and blocker tracking
-- use `docs/development/sprint4/` for the current Duo body system implementation record
+- `docs/development/sprintN/` for detailed historical discovery, checklist, error/fix, and blocker tracking during the migration, delete after cleanup
+- use `docs/sprint6/` for the current top-level sprint routing and `docs/development/sprint6/` for the detailed working record
 - keep `.github/` guidance synchronized with the stable docs it mirrors
 
 ## Validation
 
 - run diagnostics on touched files
-- prefer `colcon build --packages-select ...` for touched packages
-- run `colcon test --packages-select ...` when relevant tests exist
+- prefer `bash ./scripts/colcon_build_system_python.sh --packages-select ...` for touched-package builds when the environment supports it
+- run `colcon test --packages-select ...` from a system-Python ROS shell when relevant tests exist
 - say explicitly when hardware validation could not be run
 - when Python environment drift is part of the issue, use `scripts/colcon_build_system_python.sh` for builds and `scripts/run_in_ros_conda.sh` for optional runtime commands

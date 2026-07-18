@@ -1,6 +1,6 @@
 # OmniHand Asset Validation
 
-source_document: docs/development/sprint1/assets/omnihand_asset_validation.md
+promotion_origin: Sprint 1 repository and asset discovery pass
 promotion_date: 2026-05-12
 
 component: OmniHand Pro SDK, model, and integration surfaces

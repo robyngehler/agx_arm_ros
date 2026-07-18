@@ -1,6 +1,6 @@
 # AGV CAD Inventory
 
-source_document: docs/development/sprint1/assets/agv_cad_inventory.md
+promotion_origin: Sprint 1 repository and asset discovery pass
 promotion_date: 2026-05-12
 
 component: AGV/base CAD, mount geometry, and base-description artifacts

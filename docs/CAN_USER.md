@@ -14,7 +14,7 @@ sudo apt update && sudo apt install can-utils ethtool
 
 ## 0 当前原生工作流：`activate_native_can.sh`
 
-当前 Duo 真机基线路径优先使用 Jetson 原生 `mttcan` side bus 上的 `scripts/activate_native_can.sh`。这也是 `docs/control/bringup.md` 和当前 arm-plus-hand 运行时采用的路径。
+当前 Duo 真机基线路径优先使用 Jetson 原生 `mttcan` side bus 上的 `scripts/activate_native_can.sh`。这也是 `docs/control/bringups/launches.md` 和当前 arm-plus-hand 运行时采用的路径。
 
 ```bash
 cd ~/agx_arm_ws/src/agx_arm_ros

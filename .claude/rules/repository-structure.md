@@ -42,10 +42,11 @@ Use the current workspace layout as the implementation truth during the active D
 ## Documentation Split
 
 - top-level `docs/*.md`: global docs hub and repo-wide checklist, fixes, and open questions
-- `docs/control/`: how to run the system — bringup launch/argument matrix and the teach loop
+- `docs/control/`: how to run the system — environment rules, bringup launch matrix, and the teach loop
 - `docs/assets/`: stable factual inventories, validation state, and OmniHand/runtime integration decisions
-- `docs/development/`: fixed roadmap, progress, and component-routing docs plus sprint working folders
-- `docs/project/`: stable package, naming, and workflow policy
+- `docs/sprintN/`: first-class sprint targets, checklists, errors, and open questions
+- `docs/development/`: fixed roadmap, progress, and component-routing docs plus historical sprint working folders
+- `docs/project/`: stable package, architecture, naming, and workflow policy
 - `.claude/`: concise Claude-Code-native rule, skill, and agent layer
 
 ## Escalation Rule

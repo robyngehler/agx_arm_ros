@@ -13,7 +13,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 1. `README.md` and `README_EN.md` for repository overview.
 2. `docs/README.md` plus top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, and `docs/open_questions.md` for global docs routing and cross-cutting status.
 3. This file for durable engineering constraints.
-4. `docs/control/` for how to run the system (bringup launch/argument matrix, teach loop).
+4. `docs/control/` for how to run the system (`environment.md`, `bringups/launches.md`, teach loop).
 5. `docs/assets/` for component architecture, validation, and OmniHand/runtime integration docs.
 6. `docs/project/` for human-facing repository structure and architecture.
 7. `.github/instructions/` and `.claude/rules/` for agent workflow, naming, and ROS2-practice rules (these do not live in `docs/`).
@@ -45,16 +45,34 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 
 ## Documentation And Source Rules
 
-- Treat `.github/instructions/` and `.claude/rules/` as the agent-facing rule layer (workflow, naming, package, ROS2 practice); keep them consistent with the human docs under `docs/project/` and `docs/assets/`.
+- Treat `.github/instructions/` and `.claude/rules/` as the agent-facing rule layer (workflow, naming, package, ROS2 practice); keep them consistent with the human docs under `docs/control/`, `docs/project/`, and `docs/assets/`.
 - Keep `docs/README.md` and the top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, and `docs/open_questions.md` aligned with any cross-cutting documentation restructuring.
 - Update `docs/assets/` when an OmniHand or runtime component contract (command, feedback, launch, package) changes.
-- Update `docs/project/` when repository structure or architecture changes; update `.github/instructions/` and `.claude/rules/` when workflow, naming, or package-split rules change.
+- Update `docs/project/` when repository structure or architecture changes; update `docs/control/` when environment or launch workflows change; update `.github/instructions/` and `.claude/rules/` when workflow, naming, or package-split rules change.
+- Treat `docs/sprintX/` as the first-class sprint entrypoints and keep detailed historical evidence in `docs/development/sprintX/` until it is fully promoted or moved.
 - Treat `.github/`, `docs/`, `src/`, `scripts/`, `config/`, and `vendor/` as source-managed.
 - Do not treat `build/`, `install/`, `log/`, or transient run outputs as canonical source.
+
+## Hardware Access And Platform Rules
+
+- Default to no hardware access until the user explicitly grants it for the current session.
+- Before any hardware-touching action, ask whether hardware access is allowed. This includes `sudo` CAN bringup scripts, real arm or OmniHand launches, direct ROS hardware tests, and vendor SDK probes against live devices.
+- If hardware access is granted, `sudo` is allowed for repo workflows because the password is intentionally disabled in the intended hardware environment.
+- Distinguish Jetson or other `aarch64` ROS plus hardware sessions from x86 or editor-only sessions. Do not present x86 checks as a substitute for CAN timing or live-device validation.
+
+## Environment And Build Rules
+
+- Use `docs/control/environment.md` as the operational source of truth for wrappers, overlays, and platform split.
+- Use `scripts/colcon_build_system_python.sh` for workspace builds.
+- Run `colcon test` from a system-Python ROS shell, not from Conda.
+- Use `scripts/run_in_ros_conda.sh -- <command>` for Conda-backed runtime commands.
+- Do not mix manual `conda activate` with `source install/setup.bash` in one shell flow.
+- Treat `vendor/OmniHand-Pro-2025` as upstream input, not as a default workspace package to build with repo-wide `colcon build`.
 
 ## Validation Rules
 
 - Prefer package-scoped `colcon build --packages-select ...` while iterating.
+- Prefer the repo wrapper for those builds when the environment supports it.
 - Run diagnostics on touched files.
 - For launch, message, or bridge changes, include at least one executable package-level validation step.
 - If live hardware validation cannot be run, say so explicitly.

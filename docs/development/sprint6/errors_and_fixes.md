@@ -52,7 +52,7 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   'tests_require'` warning, sourced from `/home/user/.local/.../setuptools`.
 - Cause: Python-env drift — the bare build picks up the user-site (`~/.local`) setuptools, whose
   `setup.py develop --uninstall` cleanup step (run by colcon on a prior install) is unsupported.
-  Same class as `docs/project/python_environment_workflow.md` "Common Failure Pattern".
+  Same class as `docs/control/environment.md` "Common failure patterns".
 - Fix: build through the repo wrapper, which filters conda/miniforge from PATH, sets
   `PYTHONNOUSERSITE=1`, and forces `/usr/bin/python3`:
   `bash ./scripts/colcon_build_system_python.sh --packages-select agx_arm_ctrl agx_arm_coordination`.

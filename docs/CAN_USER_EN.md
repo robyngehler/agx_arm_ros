@@ -14,7 +14,7 @@ These two tools are used to configure the CAN module.
 
 ## 0 Current native workflow: `activate_native_can.sh`
 
-The current Duo hardware-first baseline uses `scripts/activate_native_can.sh` on the Jetson native `mttcan` side buses. This is the path used by `docs/control/bringup.md` and the current arm-plus-hand runtime.
+The current Duo hardware-first baseline uses `scripts/activate_native_can.sh` on the Jetson native `mttcan` side buses. This is the path used by `docs/control/bringups/launches.md` and the current arm-plus-hand runtime.
 
 ```bash
 cd ~/agx_arm_ws/src/agx_arm_ros

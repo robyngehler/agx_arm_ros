@@ -1,15 +1,15 @@
 ---
-description: "Use when creating, moving, or extending package surfaces in agx_arm_ros. Covers the current Sprint 2 through Sprint 4 package boundaries and where new work belongs."
+description: "Use when creating, moving, or extending package surfaces in agx_arm_ros. Covers the current package boundaries and where new work belongs."
 ---
 
 # Repository Structure
 
-Use the current workspace layout as the implementation truth during the active Sprint 2 through Sprint 4 baseline.
+Use the current workspace layout as the implementation truth during the active Duo baseline and docs migration.
 
 ## Canonical Package Roles
 
 - `src/agx_arm_sim/agx_arm_description`: canonical long-term description package for Nero, Revo2, and repo-owned OmniHand assets
-- `src/duo_body_description`: current Sprint 3 and Sprint 4 staging package for Duo body plus configurable arm-hand system assembly
+- `src/duo_body_description`: current Duo staging package for Duo body plus configurable arm-hand system assembly
 - `src/agx_arm_moveit`: current MoveIt baseline and simulation path
 - `src/agx_arm_ctrl`: runtime arm bridge, launch surfaces, and current end-effector integration point
 - `src/agx_arm_mit_controller`: runtime MIT controller node, shared trajectory/gravity libraries, and curated controller configs
@@ -23,7 +23,7 @@ Use the current workspace layout as the implementation truth during the active S
 
 - keep the OmniHand bridge and the OmniHand skill controller in `src/agx_arm_ctrl` for now
 - keep Sprint 6 task orchestration (coordinator, performer routing, YAML graph/catalogue loader) in `src/agx_arm_coordination`; route `Trajectory+both_arms` through the existing FollowJointTrajectory path rather than forking arm execution
-- keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and use `src/duo_body_description` only as the documented Sprint 3 and Sprint 4 staging surface
+- keep `src/agx_arm_sim/agx_arm_description` as the canonical long-term description package and use `src/duo_body_description` only as the documented Duo staging surface
 - do not fork a second MoveIt package for the same Nero or Duo baseline
 - keep production MIT execution ownership in `src/agx_arm_mit_controller`
 - place app-layer demos under `src/agx_arm_mit_demos` instead of the controller runtime package
@@ -35,10 +35,12 @@ Use the current workspace layout as the implementation truth during the active S
 ## Documentation Split
 
 - top-level `docs/*.md`: global docs hub and repo-wide checklist, fixes, and open questions
+- `docs/control/`: stable operational workflow, environment rules, and launch entrypoints
 - `docs/assets/`: stable factual inventories and validation state
 - `docs/assets/`: stable OmniHand and runtime integration decisions
-- `docs/development/`: fixed roadmap, progress, and component-routing docs plus sprint working folders
-- `docs/project/`: stable package, naming, and workflow policy
+- `docs/sprintN/`: first-class sprint targets, checklist, errors, and open questions
+- `docs/development/`: fixed roadmap, progress, and component-routing docs plus historical sprint working folders
+- `docs/project/`: stable package, architecture, naming, and workflow policy
 - `.github/`: concise Copilot-native instruction, skill, and agent layer
 
 ## Escalation Rule

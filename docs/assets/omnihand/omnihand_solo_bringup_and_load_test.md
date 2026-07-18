@@ -53,7 +53,7 @@ active-joint readback rejecting a padded vector, which the load test detects and
 handles by using the open pose as the sweep reference.
 
 This is the measurement to close the **"measure hand load first"** open item in
-`docs/development/sprint5/planning/can_transport_decision.md` before sharing a
+`docs/sprint5/evidence/can_transport_decision.md` before sharing a
 side bus between the arm and its hand. Measure the hand alone first, then the
 arm alone (`logs/arm.pcap` is the existing arm baseline), then the sum.
 
@@ -147,7 +147,7 @@ ROS-side command-traffic generator for combined load tests.
   is harmless because it is a dedicated `python3.10` invocation, not `ros2`.
 - Never prefix a `ros2` command with an inline `PYTHONPATH=...`: it replaces
   ROS's `PYTHONPATH` instead of appending, the same "PYTHONPATH shadowing"
-  failure described in `docs/project/python_environment_workflow.md`.
+  failure described in `docs/control/environment.md`.
 - The load test is read-only unless `--with-commands` is given, and restores the
   baseline pose on exit.
 - The exerciser only sends commands the bridge already accepts; it adds no new

@@ -20,7 +20,7 @@ that define that contract.
 1. Confirm whether the change belongs in `agx_arm_ctrl`, `agx_arm_msgs`, or stable docs.
 2. Preserve the shared agx_arm-centric control surface unless the task explicitly changes the public contract.
 3. Keep OmniHand-specific diagnostics in `agx_arm_msgs` and hand-only debug topics under `feedback/omnihand/*`.
-4. Keep the bridge in `agx_arm_ctrl` during Sprint 2 unless a new package boundary is explicitly justified.
+4. Keep the bridge in `agx_arm_ctrl` in the current baseline unless a new package boundary is explicitly justified.
 5. Update `docs/assets/` and any mirrored `.claude/rules/` when the runtime contract changes.
 6. Validate with diagnostics plus a package-scoped build.
 
@@ -29,4 +29,4 @@ that define that contract.
 - bridge and launch wiring follow current package boundaries
 - command and feedback surfaces match the current docs
 - `.claude/` mirrors stay consistent with stable docs
-- `colcon build --packages-select agx_arm_ctrl agx_arm_msgs` or an equivalent narrow validation was run
+- `bash ./scripts/colcon_build_system_python.sh --packages-select agx_arm_ctrl agx_arm_msgs` or an equivalent narrow validation was run

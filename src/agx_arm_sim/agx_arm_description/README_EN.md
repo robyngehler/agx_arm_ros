@@ -37,7 +37,7 @@ ros2 launch agx_arm_description display_control.launch.py \
 
 ## Cross references
 
-- `../../../../docs/control/bringup.md` for current operational bringup
+- `../../../../docs/control/bringups/launches.md` for current operational bringup
 - `../../../../docs/project/repository_structure.md` for package ownership and staging rules
 - `./agx_arm_urdf/README_EN.md` for the lower-level description asset tree
 

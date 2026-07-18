@@ -13,7 +13,7 @@ Current fix:
 - old public runtime names such as `can0` and `can_nero` are deprecated
 - the USB `nero` role now also targets `can_nero_right` by default to stay aligned with the current single-arm baseline
 
-See `control/bringup.md` and `CAN_USER_EN.md`.
+See `control/bringups/launches.md` and `CAN_USER_EN.md`.
 
 ## pyAgxArm source drift
 
@@ -24,7 +24,7 @@ Current fix:
 - `scripts/setup_agx_arm_runtime_env.sh` now installs `vendor/pyAgxArm` first
 - it falls back to `../pyAgxArm` only when the vendored checkout is unavailable
 
-See `project/python_environment_workflow.md` and `project/control_layer_and_dependencies.md`.
+See `control/environment.md` and `project/control_layer_and_dependencies.md`.
 
 ## Build Python versus runtime Python
 
@@ -32,11 +32,46 @@ Problem: mixing Conda and ROS build shells hides ROS dependencies and creates fa
 
 Current fix:
 
-- use `scripts/colcon_build_system_python.sh` for `colcon build` and `colcon test`
+- use `scripts/colcon_build_system_python.sh` for workspace builds
+- keep `colcon test` on a system-Python ROS shell
 - use `scripts/run_in_ros_conda.sh -- <command>` for Conda-backed runtime commands
 - append to `PYTHONPATH`; do not replace it
 
-See `project/python_environment_workflow.md`.
+See `control/environment.md`.
+
+## Shared arm-plus-hand CAN saturation and unsafe recovery
+
+Problem: the current shared-bus runtime still has unsafe failure modes when arm and OmniHand traffic
+compete on the same side bus.
+
+Current findings:
+
+- the Stall-CAN detection in `agx_arm_ctrl` depends too much on a timer, so heavy CPU load can
+	make the timer stall and trigger a CAN reset even when the bus is still working
+- the current probing and recovery path is incomplete and can worsen downstream failure handling
+- `ONE_SHOT=off` can let hand and arm traffic progress in parallel, but it is not a stable fix; it
+	reintroduces retransmission buildup risk on the arm side
+- missing ACK can trigger retry spam and bus overflow, which can also take down the arm path while
+	the last commanded arm behavior remains active until CAN is brought down and up and the
+	controller is restarted
+
+Current safe guidance:
+
+- the current stable operating rule is: keep `one-shot on`, keep the arm active while the arm is
+	being controlled, and switch to explicit hand-command windows only after the arm has settled into
+	a safe static hold
+- keep `one-shot on` as the default arm-stable baseline
+- treat `ONE_SHOT=off` only as a historical or offline transport experiment, not as a recommended runtime mode
+- prefer explicit hand-command windows where active arm control is paused or frozen while the arm is
+	already in a safe static hold, instead of sustained concurrent arm and hand command pressure
+- reduce hand-side error spam and unnecessary shared-bus traffic; the bridge `joint_read_rate` is a
+	real CAN lever, while ROS `pub_rate` is not
+- after a missing-ACK or overflow event, do not resume motion until the CAN interface has been
+	cycled and the affected controller stack has been restarted
+
+Status: stable fix pending, but the current operating policy is settled for safety reasons. See
+`control/teach_and_run.md` for the current shared-bus runtime guidance and `target/README.md` for
+the migration-level tracking.
 
 ## Implicit wrapper defaults
 
@@ -45,6 +80,6 @@ Problem: wrapper examples that omit `execution_profile` fall back to `manual`, w
 Current fix:
 
 - package README examples now set explicit profiles such as `right_arm`, `right_hand`, or `duo_arm`
-- operational launch matrices stay in `control/bringup.md`
+- operational launch matrices stay in `control/bringups/launches.md`
 
-See `control/bringup.md`, `src/agx_arm_moveit/README_EN.md`, and `src/agx_arm_mit_controller/README.md`.
+See `control/bringups/launches.md`, `src/agx_arm_moveit/README_EN.md`, and `src/agx_arm_mit_controller/README.md`.

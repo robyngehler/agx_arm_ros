@@ -3,7 +3,7 @@
 How to teach and run coordinated arm(+hand) motions — single arm, either side, or both arms
 simultaneously — by **reusing** the MIT demo/tools instead of building new motion code. Examples use
 the right side (`can_nero_right`); the left side and dual-arm mirror the same commands (see
-[bringup.md](bringup.md) for the argument matrix).
+[bringups/launches.md](bringups/launches.md) for the launch matrix).
 
 ## Tool reuse map (no new motion stack)
 
@@ -111,13 +111,16 @@ free-runs without the arm).
 > IDs are high (low arbitration priority), so under arm load with `one-shot on` the hand loses arbitration,
 > its frames are dropped, and the bridge goes silent (`请求超时`) the moment the MIT controller starts — while
 > idle-hold is fine. To keep the hand alive on the shared bus:
-> - **first tests: keep `one-shot on` (the validated arm ENOBUFS mitigation) and just deepen the TX ring** —
+> - **current stable operating rule: keep `one-shot on` and switch control ownership explicitly** —
+>   when a hand action is needed, let the arm settle into a safe static hold and then give the hand a
+>   short command window instead of sustaining concurrent arm and hand command pressure on the same bus.
+> - **for headroom under that policy, deepen the TX ring** —
 >   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
 >   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.
 > - keep `control_rate_hz` at its 50 Hz default (do **not** drop it — a lower rate risks hold instability);
 >   handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`) instead.
-> - only if the hand still starves under arm load, fall back to `ONE_SHOT=off` (lets hand frames retry) — but
->   then watch the arm for ENOBUFS, since retransmission buildup returns.
+> - do **not** treat `ONE_SHOT=off` as a normal runtime mode. It is transport-history context only and can
+>   reintroduce retransmission buildup on the arm side.
 > - **`pub_rate` is not the bus lever:** it only sets the ROS republish rate of already-cached feedback (the
 >   arm firmware push rate is fixed), so lowering it does not reduce CAN traffic — it only makes teach
 >   recording sample staler feedback. Leave it at its default.
@@ -256,7 +259,7 @@ ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
   namespace:=right_arm can_port:=can_nero_right gravity_arm_side:=right
 # add effector_type:=omnihand omnihand_type:=<side> launch_omnihand_bridge:=true
 # omnihand_backend_type:=sdk to either (or both) side(s) for a duo+hands bring-up
-# (see bringup.md's "both arms + both OmniHands" row) — no other change needed below
+# (see bringups/launches.md's "both arms + both OmniHands" launch-matrix row) — no other change needed below
 
 # one teach manager driving both; record captures both arms on ONE clock
 ros2 run agx_arm_mit_demos agx_arm_teach_manager \
@@ -332,7 +335,7 @@ that constrains only the working arm and leaves the other free) — coordinator 
 ## Step A — bring up the side (example: right)
 
 ```bash
-# clean system-python build (see ../project/python_environment_workflow.md); the ~/.local cmake shim
+# clean system-python build (see ../control/environment.md); the ~/.local cmake shim
 # must not shadow /usr/bin/cmake for ament_cmake packages.
 bash ./scripts/colcon_build_system_python.sh --packages-select \
   agx_arm_msgs agx_arm_ctrl agx_arm_coordination agx_arm_mit_controller agx_arm_mit_demos

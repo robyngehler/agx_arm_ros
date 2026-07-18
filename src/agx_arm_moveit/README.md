@@ -45,7 +45,7 @@ sudo apt-get install -y \
 sudo apt-get install -y ros-$ROS_DISTRO-trac-ik-kinematics-plugin
 ```
 
-若 Humble / Jetson 主机没有该 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
+若 Humble / Jetson 主机没有该 apt 包，请参考英文复现实录 `../../docs/sprint3/evidence/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 
 若系统区域设置不是英文，启动前请设置：
 
@@ -103,7 +103,7 @@ ros2 launch agx_arm_moveit start_moveit.launch.py arm_type:=nero load_simple_obs
 
 ### 2.2 控制真实机械臂
 
-当前规范的启动矩阵、CAN 命名以及 teach 与 MoveIt 的分工请以 `../../docs/control/bringup.md` 为准。下面示例统一对齐到当前右侧原生路径。
+当前规范的启动矩阵、CAN 命名以及 teach 与 MoveIt 的分工请以 `../../docs/control/bringups/launches.md` 为准。下面示例统一对齐到当前右侧原生路径。
 
 推荐使用新的公共组件启动面来走原生 MIT 执行路径：
 
@@ -257,7 +257,7 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 - `start_agx_arm_moveit.launch.py` 现在是规范的一键 MoveIt 包装启动名。`start_single_agx_arm_moveit.launch.py` 保留为兼容别名；底层 `start_single_agx_arm.launch.py` 仍准确对应单个驱动实例。
 - `moveit_profile:=right_arm`、`moveit_profile:=left_arm` 与 `moveit_profile:=both_arms` 已落地为第一批 Duo profile。在共享 `agx_arm_ctrl` 包装启动面上，`execution_profile:=left_hand|right_hand` 现在已经解析出第一批 hand-aware 单臂 config path；`both_arms` 与 `execution_profile:=duo_arm` 仍按设计保持 arm-only。
 - `start_agx_arm_components.launch.py` 提供新的公共 agx_arm_ctrl 组件启动面，包含 `manual_vendor`、`debug_soft_target`、`moveit_mit` 三种模式。
-- 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
+- 当前 MoveIt 基线要求 TRAC-IK；若 Humble / Jetson 主机没有可用的 apt 包，请参考英文复现实录 `../../docs/sprint3/evidence/trac_ik_humble_jetson_repro.md` 中的独立 overlay 构建方法。
 - `nero_tool0` 现在由 Nero 规范描述包直接提供，`tcp_link` 继续作为 TCP 与交互式规划目标参考帧。
 - `config/simple_obstacles.json` 只提供早期规划验证的保守基线；进入真机执行前仍应根据现场工装与工作空间自行调整。
 - `share/agx_arm_moveit/scripts/plan_pose_smoke_test.py` 提供当前 Sprint 3 使用的仓库内近 home 位姿 OMPL 规划烟雾测试。

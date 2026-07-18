@@ -49,7 +49,7 @@ code changes:
   joint entries merged in by `effector_type:=omnihand` are silently ignored, so hands present or
   not does not change arm-recording behavior
 
-See `docs/control/bringup.md` for the resulting bring-up row and `docs/control/teach_and_run.md` for
+See `docs/control/bringups/launches.md` for the resulting launch-matrix row and `docs/control/teach_and_run.md` for
 the teach-manager caveat (it never records or replays hand joints; hand gestures are driven by a
 separate tool such as `omnihand_exerciser`).
 

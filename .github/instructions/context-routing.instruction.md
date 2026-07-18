@@ -12,7 +12,7 @@ This repository is intentionally organized so Copilot can load only the guidance
 2. Read `docs/README.md` and the matching top-level `docs/checklist.md`, `docs/errors_and_fixes.md`, or `docs/open_questions.md` when the task is cross-cutting or documentation-heavy.
 3. Read `AGENTS.md` for the durable engineering contract.
 4. Load one file from `.github/instructions/` that matches the task.
-5. Read the matching canonical docs under `docs/project/` or `docs/assets/` when a public contract or workflow decision is involved.
+5. Read the matching canonical docs under `docs/control/`, `docs/project/`, or `docs/assets/` when a public contract or workflow decision is involved.
 6. Load a skill from `.github/skills/` only when the task needs a repeatable workflow.
 
 ## Choose Instructions When
@@ -35,6 +35,9 @@ This repository is intentionally organized so Copilot can load only the guidance
 - generated-versus-source decisions: `generated-vs-source-assets.instruction.md`
 - local change order and promotion workflow: `local-agent-workflow.instruction.md`
 - OmniHand runtime contract and bridge surface: `omnihand-bridge.instruction.md`
+- operational workflow: `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/teach_and_run.md`
+- stable architecture and component ownership: `docs/project/architecture.md`, `docs/project/components/README.md`
+- current sprint entrypoint: `docs/sprint6/` with detailed historical evidence under `docs/development/sprint6/`
 - global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 
 ## Context Minimization Rules

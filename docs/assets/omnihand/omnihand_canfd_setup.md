@@ -105,14 +105,13 @@ python3.10 python/example/demo_get_hardware_info.py
 
 The Sprint 2 conclusion that *native Jetson mttcan cannot do CAN FD with BRS* was a
 **transceiver/wiring limitation**, not a driver limit. With the TJA1051T/3 and the correct sysfs
-TDCR setting, native FD+BRS works, so the ZLG-adapter path was dropped. The Sprint 2
-investigation docs (`docs/development/sprint2/*omnihand*`, `*canfd*`) are kept as history and
-point here.
+TDCR setting, native FD+BRS works, so the ZLG-adapter path was dropped. The consolidated Sprint 2
+history now lives in `docs/sprint2/evidence/omnihand_canfd_transport_history.md`.
 
 ## Open
 
 - Bus-load budget when the arm and hand share one side bus — see
-  `docs/development/sprint5/planning/can_transport_decision.md`. Measure the
+  `docs/sprint5/evidence/can_transport_decision.md`. Measure the
   hand's own load first with the vendor-level load test in
   `omnihand_solo_bringup_and_load_test.md`.
 

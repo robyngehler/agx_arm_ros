@@ -26,8 +26,8 @@ The selected architecture is no longer only proposed. The first simulation-orien
 - `control/omnihand/joint_trajectory` remains available as a bridge-specific compatibility path,
 - `agx_arm_ctrl` can now aggregate bridge joint state into combined `feedback/joint_states` when `effector_type:=omnihand`,
 - the shared `start_single_agx_arm*` launch wrappers now pass `omnihand_type` through and can optionally start the bridge,
-- the bridge stays in `agx_arm_ctrl` as the Sprint 2 runtime integration point,
-- Sprint 2 workspace-policy docs now exist under `docs/project`,
+- the bridge stays in `agx_arm_ctrl` as the current runtime integration point,
+- current workspace-policy docs now live under `docs/project`,
 - and the current left-hand smoke path launches successfully through `agx_arm_moveit` with mock hardware.
 
 What remains open:

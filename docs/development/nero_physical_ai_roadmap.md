@@ -279,7 +279,7 @@ this roadmap's thematic phase numbering. Current state (see
 
 ### Adjacent Demo Tooling Note
 
-The current workspace also contains a wakeword-triggered motion-demo slice around `agx_arm_wakeword_motion_manager` and the external `wakeword-benchmark` listener. This is not a direct roadmap gate by itself, but it is a useful integration path for later TTS-driven and interaction-driven demos. Keep the detailed workflow note in `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md`.
+The current workspace also contains a wakeword-triggered motion-demo slice around `agx_arm_wakeword_motion_manager` and the external `wakeword-benchmark` listener. This is not a direct roadmap gate by itself, but it is a useful integration path for later TTS-driven and interaction-driven demos. Keep the historical workflow lineage in `docs/sprint2/evidence/mit_runtime_history.md`.
 
 ## Sprint 1: Asset Audit and Model Baseline
 
@@ -945,7 +945,9 @@ Keep exactly one top-level document for each cross-sprint concern:
 
 ### 8.2 Sprint Working Folders
 
-Keep sprint-local discovery, checklists, implementation details, and issue logs inside `docs/development/sprintN/`.
+Use `docs/sprintN/` as the user-facing sprint entrypoints. Keep detailed historical discovery,
+checklists, implementation details, and issue logs inside `docs/development/sprintN/` only while
+the migration is still in progress.
 
 Each sprint folder should own at least:
 
@@ -956,7 +958,7 @@ Each sprint folder should own at least:
 
 Add optional subfolders such as `assets/`, `control/`, `hand/`, `planning/`, or `simulation/` only when the sprint needs them.
 
-Promote stable outputs into `docs/assets/` or `docs/project/` when they become canonical. Keep `.github/` as the concise agent-facing mirror of those stable docs rather than a competing documentation tree.
+Promote stable outputs into `docs/assets/`, `docs/control/`, or `docs/project/` when they become canonical. Keep `.github/` as the concise agent-facing mirror of those stable docs rather than a competing documentation tree.
 
 ---
 

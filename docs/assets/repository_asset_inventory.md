@@ -1,6 +1,6 @@
 # Repository Asset Inventory
 
-source_document: docs/development/sprint1/assets/repository_asset_inventory.md
+promotion_origin: Sprint 1 repository and asset discovery pass
 promotion_date: 2026-05-12
 
 ## Summary Matrix
@@ -25,7 +25,7 @@ promotion_date: 2026-05-12
 | Package | Role In Sprint 1 | Reuse Guidance |
 | --- | --- | --- |
 | `agx_arm_ctrl` | Runtime bridge to AgileX arm control topics, launch entry points, and the repo-owned OmniHand bridge surface | Reuse as-is; it is the current ROS2 hardware/control surface. |
-| `duo_body_description` | Sprint 3 and Sprint 4 staging package for body-mounted Duo description assembly and bringup | Reuse only for the current Duo staging slice; do not let it become a second long-term source of truth. |
+| `duo_body_description` | Current Duo staging package for body-mounted Duo description assembly and bringup | Reuse only for the current Duo staging slice; do not let it become a second long-term source of truth. |
 | `agx_arm_mit_controller` | Current MIT, gravity, calibration, and trajectory replay workflow | Reuse directly; it already contains the controller-side model assumptions Sprint 1 needs to document. |
 | `agx_arm_moveit` | Unified MoveIt2 config for Nero, AgileX gripper, Revo2, and the repo-owned OmniHand simulation path | Reuse directly; `nero_arm` remains the baseline single-arm group, while the first Duo-aware `right_arm` / `left_arm` / `both_arms` outputs are now landed. `both_arms` is still planning-only on `demo.launch.py`, and `tcp_link` remains distinct from the canonical `nero_tool0` flange alias. |
 | `agx_arm_msgs` | Custom message layer used by the controller and OmniHand bridge stack | Reuse directly. |

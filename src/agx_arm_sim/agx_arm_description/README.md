@@ -9,7 +9,7 @@
 - 控制兼容入口：`display_control.launch.py`（参数名与 `agx_arm_ctrl` / `agx_arm_moveit` 保持一致）
 - 附加资源：相机支架、RealSense D435 挂载逻辑、已确认的 USD 资产
 
-当前 OmniHand 在该包中的支持范围仍以描述、仿真与可视化集成为主；真机 ROS bridge、CAN bringup 与运行时控制归 `src/agx_arm_ctrl` 所有，当前可执行路径以 `docs/control/bringup.md` 为准。
+当前 OmniHand 在该包中的支持范围仍以描述、仿真与可视化集成为主；真机 ROS bridge、CAN bringup 与运行时控制归 `src/agx_arm_ctrl` 所有，当前可执行路径以 `docs/control/bringups/launches.md` 为准。
 
 ## 包结构
 

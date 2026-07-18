@@ -19,8 +19,8 @@ multi-arm path differ in interaction frequency, and why ENOBUFS shows up almost 
 - ENOBUFS is therefore **not** amplified by per-bus traffic or by wrong command routing. It is
   amplified by **shared resources**: one USB host serving two `gs_usb` adapters, and CPU
   contention starving the RX/echo-consume path. Both accelerate the `gs_usb` TX-echo slot leak.
-  Resolved by migrating the arms to native `mttcan` with `one-shot on` — see
-  `../../development/sprint5/planning/can_transport_decision.md`.
+   Resolved by migrating the arms to native `mttcan` with `one-shot on` — see
+   `../../sprint5/evidence/can_transport_decision.md`.
 
 ---
 

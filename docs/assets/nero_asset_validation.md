@@ -1,6 +1,6 @@
 # Nero Asset Validation
 
-source_document: docs/development/sprint1/assets/nero_asset_validation.md
+promotion_origin: Sprint 1 repository and asset discovery pass
 promotion_date: 2026-05-12
 
 component: Nero arm model, planning, and simulation assets
@@ -48,7 +48,7 @@ Local Nero URDF/Xacro and mesh assets are good enough for current MoveIt use. `s
 
 ### Controller Readiness
 
-Local Nero assets are also good enough for the current MIT gravity and playback workflow. The validated workflow in `docs/development/sprint2/control/mit_trajectory_recording_and_playback.md` and `src/agx_arm_mit_controller/README.md` is built around the canonical Nero URDF plus `config/nero_gravity_calibration.json`.
+Local Nero assets are also good enough for the current MIT gravity and playback workflow. The historical workflow lineage in `docs/sprint2/evidence/mit_runtime_history.md` and `src/agx_arm_mit_controller/README.md` is built around the canonical Nero URDF plus `config/nero_gravity_calibration.json`.
 
 ### Simulation Readiness
 

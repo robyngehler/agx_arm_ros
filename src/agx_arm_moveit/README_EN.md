@@ -45,7 +45,7 @@ If `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` is available in your apt metadata
 sudo apt-get install -y ros-$ROS_DISTRO-trac-ik-kinematics-plugin
 ```
 
-On ROS 2 Humble / Jetson, `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` may be absent from the configured apt metadata. In that case, build TRAC-IK in a separate overlay and source it before this workspace. A reproducible reference is documented in [TRAC-IK Humble / Jetson repro](../../docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md).
+On ROS 2 Humble / Jetson, `ros-$ROS_DISTRO-trac-ik-kinematics-plugin` may be absent from the configured apt metadata. In that case, build TRAC-IK in a separate overlay and source it before this workspace. A reproducible reference is documented in [TRAC-IK Humble / Jetson repro](../../docs/sprint3/evidence/trac_ik_humble_jetson_repro.md).
 
 If your locale is not English, set:
 
@@ -103,7 +103,7 @@ This calls `scripts/apply_simple_obstacles.py` and seeds the planning scene from
 
 ### 2.2 Control the real arm
 
-For the current operational launch matrix, CAN naming, and teach-vs-MoveIt split, use `../../docs/control/bringup.md` as the source of truth. The examples below mirror the current right-side native path.
+For the current operational launch matrix, CAN naming, and teach-vs-MoveIt split, use `../../docs/control/bringups/launches.md` as the source of truth. The examples below mirror the current right-side native path.
 
 Recommended common bringup for native MIT execution:
 

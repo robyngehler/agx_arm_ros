@@ -17,9 +17,9 @@ the task.
 3. `AGENTS.md` is imported above and carries the durable rules.
 4. Read the single most relevant file from `.claude/rules/` for the task. Path-scoped rules also
    auto-load when you touch matching files.
-5. Consult the matching human doc under `docs/project/` (repo structure) or `docs/assets/` (component
-   and runtime contracts) when the task changes package boundaries, public runtime contracts, or
-   component architecture. Naming and ROS2-practice rules live in `.claude/rules/`.
+5. Consult the matching human doc under `docs/control/`, `docs/project/`, or `docs/assets/` when the
+  task changes operational workflow, package boundaries, public runtime contracts, or component
+  architecture. Naming and ROS2-practice rules live in `.claude/rules/`.
 6. Use a skill from `.claude/skills/` only when the task needs a reusable workflow.
 
 ## Source Of Truth Order
@@ -46,9 +46,10 @@ Do not load every rule by default. Match context to the task.
 - source versus generated asset rules: `.claude/rules/generated-vs-source-assets.md`
 - local workflow and promotion order: `.claude/rules/local-agent-workflow.md`
 - OmniHand bridge contract and runtime surface: `.claude/rules/omnihand-bridge.md`
-- how to run the system (bringup + teach): `docs/control/bringup.md`, `docs/control/teach_and_run.md`
+- how to run the system (environment + bringup + teach): `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/teach_and_run.md`
 - global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
-- current working notes: `docs/development/sprint6/` (coordinator, dual-arm teach, duo trajectory sync)
+- current sprint entrypoint: `docs/sprint6/`
+- historical working notes: `docs/development/sprint6/` (coordinator, dual-arm teach, duo trajectory sync)
 
 The files under `.claude/rules/` are the canonical agent-facing rule layer (workflow, naming,
 package-split, ROS2 practice). The human docs under `docs/project/` and `docs/assets/` describe repo
@@ -76,13 +77,14 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - prefer shared `control/joint_states` and combined `feedback/joint_states` for coordinated
   arm-plus-hand flows
 - use repo-owned `agx_arm_msgs` messages for OmniHand-specific diagnostics and tactile payloads
-- use `.claude/rules/ros2-development.md` for ROS2-native questions and value-capture decisions
+- ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
+- use `docs/control/environment.md` and `.claude/rules/ros2-development.md` for environment and ROS2-native decisions
 - update stable docs when public contracts change
 - keep `.claude/` guidance in sync with the stable docs it mirrors
 
 ## Quick Runtime Reference
 
-- build touched packages: `colcon build --packages-select <pkg_name>`
-- run package tests: `colcon test --packages-select <pkg_name>`
-- source overlay: `source install/setup.bash`
+- build touched packages: `bash ./scripts/colcon_build_system_python.sh --packages-select <pkg_name>`
+- run package tests from a system-Python ROS shell: `colcon test --packages-select <pkg_name>`
+- Conda runtime command: `bash ./scripts/run_in_ros_conda.sh -- <command>`
 - inspect runtime graph: `ros2 node list`, `ros2 topic list`, `ros2 service list`

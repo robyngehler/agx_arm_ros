@@ -19,6 +19,8 @@ Read these first when changing package boundaries or OmniHand integration surfac
 
 - `AGENTS.md`
 - `CLAUDE.md`
+- `docs/control/environment.md`
+- `docs/control/bringups/launches.md`
 - `.claude/rules/ros2-development.md`
 - `docs/assets/repository_asset_inventory.md`
 - `docs/assets/nero_asset_validation.md`
@@ -41,12 +43,14 @@ Read these first when changing package boundaries or OmniHand integration surfac
 - keep the OmniHand bridge in `agx_arm_ctrl` in the current baseline
 - keep the public ROS contract agx_arm-centric
 - make description and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable Duo target
-- keep sprint-local evidence in `docs/development/sprintN/` and keep only roadmap, progress, and component routing at the top of `docs/development/`
+- keep sprint entrypoints in `docs/sprintN/` and keep detailed historical evidence in `docs/development/sprintN/` only for migration, delete if the cleanup is done, also delete this reference to the old architecture afterwards; keep only roadmap, progress, and component routing at the top of `docs/development/`
 - do not map OmniHand onto the Revo2-specific message contract
+- ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
 - keep `.claude/` guidance in sync with the stable docs it mirrors
 
 ## Validation Expectations
 
 - use editor diagnostics for touched files
-- prefer `colcon build --packages-select ...` for message, launch, and bridge work
+- prefer `bash ./scripts/colcon_build_system_python.sh --packages-select ...` for message, launch, and bridge work when the environment supports it
+- run `colcon test --packages-select ...` from a system-Python ROS shell when relevant tests exist
 - call out explicitly when hardware validation could not be run in the current environment
