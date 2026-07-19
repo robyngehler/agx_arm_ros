@@ -143,7 +143,7 @@ This combined bringup now defaults to `use_mit_controller:=true`, so MoveIt send
 Revo2 example:
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
   can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=revo2 \

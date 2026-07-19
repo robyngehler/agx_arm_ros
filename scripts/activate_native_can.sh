@@ -2,7 +2,8 @@
 #
 # activate_native_can.sh — bring up the Jetson NATIVE CAN controllers (mttcan,
 # 40-pin header) as per-side CAN FD buses for the Duo system. This is the
-# standard, validated transport (see docs/development/sprint5/).
+# standard, validated transport (see docs/sprint5/evidence/can_transport_decision.md
+# and docs/errors_and_fixes.md).
 #
 # Convention (sprint5):
 #   can0 -> can_nero_right   (right side: right arm + right OmniHand)
@@ -25,9 +26,9 @@
 # the sysfs path is the only confirmed method.
 #
 #   one-shot on : every frame is a single attempt; an unacknowledged frame is
-#                 dropped instead of retransmitted forever (this is what removed
-#                 the arm ENOBUFS stalls). Note: it also makes hand frames
-#                 single-attempt — drop ONE_SHOT below if the hand needs retries.
+#                 dropped instead of retransmitted forever. This remains the
+#                 stable shared-bus baseline because it avoids retransmission
+#                 buildup after missing ACK or bus contention.
 #   restart-ms  : auto-recover from bus-off.
 #   txqueuelen  : socket TX ring depth. The mttcan/kernel default (10) is tiny,
 #                 so an arm command burst (7 MIT frames per control cycle) can
@@ -40,17 +41,18 @@
 #   arbitration priority), with ONE_SHOT=on the hand LOSES arbitration to the arm
 #   and its single-attempt frames are dropped -> "请求超时" / the bridge goes silent
 #   the moment the MIT controller starts (idle-hold sends little, so the hand is
-#   fine there). To keep the hand alive on a shared bus, prefer ONE_SHOT=off with
-#   a deeper TX_QUEUE_LEN so hand frames get retried and arm bursts still fit; also
-#   lower the arm MIT command rate (control_rate_hz) to cut arm TX. See
-#   docs/control/teach_and_run.md (bus load) and the sprint6 debug recordings.
+#   fine there). Historical ONE_SHOT=off experiments can improve hand progress
+#   under load, but they also reintroduce retransmission buildup and are not the
+#   recommended runtime baseline. Prefer ONE_SHOT=on plus explicit hand-command
+#   windows once the arm is in a safe static hold. See
+#   docs/control/bringups/teach_and_run.md and docs/sprint6/errors_and_fixes.md.
 #
 # Usage:
 #   sudo bash activate_native_can.sh                 # both side buses (defaults)
 #   sudo bash activate_native_can.sh right           # right side only
 #   sudo bash activate_native_can.sh left            # left side only
 #   FD=0 sudo bash activate_native_can.sh            # classic-only (arm, no hand)
-#   ONE_SHOT=off TX_QUEUE_LEN=1000 sudo bash activate_native_can.sh  # shared arm+hand bus
+#   ONE_SHOT=off TX_QUEUE_LEN=1000 sudo bash activate_native_can.sh  # historical shared arm+hand experiment only
 #   TDCR_VALUE=0x900 sudo bash activate_native_can.sh  # override TDCR for a different transceiver
 #
 # Idempotent: an interface already renamed to its target is reconfigured in place.
@@ -62,7 +64,7 @@ SAMPLE_POINT="${SAMPLE_POINT:-0.8}"
 DBITRATE="${DBITRATE:-5000000}"
 DSAMPLE_POINT="${DSAMPLE_POINT:-0.8}"
 RESTART_MS="${RESTART_MS:-100}"
-ONE_SHOT="${ONE_SHOT:-on}"      # "off" allows retransmission (prefer off on a shared arm+hand bus)
+ONE_SHOT="${ONE_SHOT:-on}"      # stable shared-bus baseline; set off only for controlled transport experiments
 TX_QUEUE_LEN="${TX_QUEUE_LEN:-1000}"  # socket TX ring depth; kernel default (10) is too small for arm command bursts
 FD="${FD:-1}"                   # 1 = CAN FD (arm+hand), 0 = classic only (arm)
 TDCR_VALUE="${TDCR_VALUE:-0x800}" # TJA1051T/3 (Adafruit CAN Pal) validated value

@@ -2,19 +2,38 @@
 
 Repo-wide documentation and consistency checklist.
 
-## Current migration pass
+## Execution Sprint Snapshot
 
-- [x] Re-audited the repo against the target structure and refreshed `docs/target/README.md` as the active control document.
+| Sprint | Area | Status | Summary |
+| --- | --- | --- | --- |
+| 1 | Asset audit and model baseline | complete | Stable asset inventories and validation docs are promoted; missing AGV CAD and broader USD coverage remain external gaps. |
+| 2 | Common environment and OmniHand bridge direction | complete | Shared ROS semantics, package boundaries, and the repo-owned OmniHand bridge direction are established. |
+| 3 | Nero planning and control hardening | complete | TRAC-IK + OMPL planning, `/compute_ik`, and the MIT execution path are validated. |
+| 4 | Duo body + OmniHand system baseline | complete | Body-mounted Duo staging, prefixed multi-arm MoveIt, and per-arm hand-aware profiles are landed. |
+| 5 | CAN transport + arm-plus-hand | complete | Native `mttcan` CAN FD side buses and pinned `pyAgxArm` runtime are the baseline; shared-bus caveats remain operational guidance. |
+| 6 | Coordinated tasks + skill layer | active | Coordinator, dual-arm teach flow, and semantic OmniHand skill abstraction are the current focus. |
+
+## Current System Focus
+
+- finish Sprint 6 hardware validation for tactile thresholds, grasp presets, shared-bus timing under sustained motion, and the Hefeweizen demo ladder
+- keep the public ROS surface agx_arm-centric and keep arm execution per-arm at the MIT action boundary while coordination grows above it
+- keep the shared arm-plus-hand CAN caveat explicit in the control docs until the bus-load budget is fully signed off on hardware
+
+## Documentation cleanup closure
+
+- [x] Re-audited the repo against the target structure and reduced `docs/target/README.md` to the stable repo target and documentation-ownership surface.
 - [x] Created `docs/control/environment.md` as the new canonical page for Python environments, ROS overlays, and build or test wrappers.
-- [x] Started promoting the latest shared arm-plus-hand CAN findings into `docs/errors_and_fixes.md`.
-- [x] Split `docs/control/bringup.md` into `docs/control/bringups/launches.md` and kept `bringup.md` as a compatibility pointer.
+- [x] Promoted the latest shared arm-plus-hand CAN findings into `docs/errors_and_fixes.md` and aligned script comments with the stable safety guidance.
+- [x] Retired the old control launch shim in favor of `docs/control/bringups/launches.md`.
 - [x] Rewrite `README.md` and `README_EN.md` into short repo entrypoints that route into `docs/`.
 - [x] Created `docs/project/architecture.md` and the stable component index under `docs/project/`.
-- [x] Created first-class `docs/sprint1/` through `docs/sprint6/` migration entrypoints while detailed evidence still lives under `docs/development/sprintX/`.
+- [x] Created first-class `docs/sprint1/` through `docs/sprint6/` sprint surfaces and migrated their retained evidence out of the old development tree.
 - [x] Align `AGENTS.md`, `CLAUDE.md`, `.claude/`, and `.github/` with the migrated docs surfaces, hardware gate, and platform split.
-- [x] Added `docs/target/legacy_doc_inventory.md` as the repo-wide cleanup inventory for old docs and compatibility shims.
+- [x] Removed the separate legacy-doc inventory once repo-wide references were clean; git history and sprint evidence are now the audit trail.
 - [x] Retired the duplicate top-level `docs/development` checklist, error, question, and mismatch trackers.
-- [ ] Consolidate overlapping historical proposal and investigation families before deleting their source files.
+- [x] Consolidated the main overlapping historical proposal and investigation families before deleting their source files.
+- [x] Moved the thematic Physical AI roadmap into `docs/project/roadmap_and_phases.md` and folded the old progress tracker into this checklist.
+- [x] Moved the pre-sprint Physical AI brainstorm into `docs/sprint_physAI/brainstorm.md`.
 
 ## Earlier cleanup baseline
 
@@ -25,13 +44,13 @@ Repo-wide documentation and consistency checklist.
 - [x] Reprioritized `docs/CAN_USER.md` and `docs/CAN_USER_EN.md` so native `mttcan` is the current first path and USB role-based setup is clearly fallback.
 - [x] Normalized `agx_arm_moveit` and `agx_arm_mit_controller` README examples to explicit execution profiles and current CAN naming.
 - [x] Added `src/agx_arm_sim/agx_arm_description/README_EN.md` to restore the English documentation path.
-- [x] Marked the Sprint 2 MIT workflow note as historical and redirected active workflow references to `docs/control/teach_and_run.md`.
-- [x] Temporarily added cross-sprint `docs/development/checklist.md`, `docs/development/errors_and_fixes.md`, and `docs/development/open_questions.md` during the earlier cleanup pass; these duplicate trackers are now retired again.
+- [x] Marked the Sprint 2 MIT workflow note as historical and redirected active workflow references to `docs/control/bringups/teach_and_run.md`.
+- [x] Temporarily added duplicate cross-sprint top-level trackers during the earlier cleanup pass; those compatibility surfaces are now retired again.
 - [x] Aligned active OmniHand bringup docs and runtime error text with the bridge's SDK auto-discovery path.
 - [x] Re-scoped the Chinese `agx_arm_description` package README so live OmniHand bridge ownership points at `agx_arm_ctrl` instead of future-work language.
 - [x] Removed historical OmniHand asset docs from `docs/assets/omnihand/`, promoted the surviving active-joint mapping under a stable filename, and redirected active references to the stable validation docs.
 
-## Still open
+## Resolved repo-wide decisions
 
 - [x] Deprecated launch defaults and public runtime names such as `can0` and `can_nero` in favor of `can_nero_right` and `can_nero_left`.
-- [ ] Decide how much operational launch detail should stay in package-local READMEs versus moving entirely into `docs/control/`.
+- [x] Package-local READMEs may keep package-local behavior, parameters, and focused examples, but the canonical system bringup matrix stays in `docs/control/`.

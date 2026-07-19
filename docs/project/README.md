@@ -7,12 +7,12 @@ Stable repository structure, architecture decisions, and component ownership.
 - `repository_structure.md`: package ownership, staging boundaries, and documentation split
 - `architecture.md`: stable runtime, launch, and configuration interaction diagrams
 - `components/README.md`: stable component index and owning surfaces
+- `components/implementation_map.md`: cross-component ownership and doc routing map
+- `roadmap_and_phases.md`: long-term Physical AI roadmap and thematic phase sequence
 - `control_layer_and_dependencies.md`: pyAgxArm control-layer pin and dependency ownership
-- `python_environment_workflow.md`: compatibility pointer to the canonical control environment doc
-- `repo_interaction_diagrams.md`: compatibility pointer to `architecture.md`
 
 ## Scope
 
 Keep durable repo-level structure and architecture decisions here. Environment and launch usage live
-under `../control/`. Sprint-local discovery and historical evidence stay under `../development/`
-until promoted or migrated into first-class `../sprintX/` surfaces.
+under `../control/`. Sprint-local evidence now lives directly in the matching `../sprintX/`
+surfaces.

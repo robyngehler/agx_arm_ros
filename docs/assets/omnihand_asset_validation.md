@@ -4,7 +4,7 @@ promotion_origin: Sprint 1 repository and asset discovery pass
 promotion_date: 2026-05-12
 
 component: OmniHand Pro SDK, model, and integration surfaces
-repository_or_source: current workspace (`agx_arm_ros`, `pyAgxArm`, `vendor/OmniHand-Pro-2025`)
+repository_or_source: current workspace (`agx_arm_ros`, `vendor/pyAgxArm`, `vendor/OmniHand-Pro-2025`)
 inspection_date: 2026-06-04
 status: SIMULATION_READY_DEVICE_ENUM_CONFIRMED
 integration_decision: WRAPPER_FIRST
@@ -20,21 +20,20 @@ found_artifacts:
 - MoveIt support for `effector_type:=omnihand` and `omnihand_type:=left|right` under `src/agx_arm_moveit`
 - repo-owned OmniHand bridge node and launch surface under `src/agx_arm_ctrl`
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `agx_arm_msgs/OmniHandTactileRaw`
-- validated mock-hardware launch path through `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
+- validated mock-hardware launch path through `ros2 launch agx_arm_moveit start_moveit.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
 - validated Jetson `aarch64` hardware-info probe through the socket-backed vendor SDK using `OMNIHAND_SOCKETCAN_IFACE=can_nero_right`
 missing_artifacts:
-- non-mock backend support behind the repo-owned OmniHand bridge
-- validated safe active-joint command and readback loop on the current live device path
-- validated runtime evidence for the combined arm-plus-hand path beyond the current mock bridge surface
+- broader calibrated runtime evidence for the combined arm-plus-hand path under sustained coordinated motion
+- per-object tactile grasp calibration and stable production presets for the current O12 Pro hardware path
 - a documented upstream-sync and patch-submission workflow for the workspace-owned GitHub fork
 interface_notes:
-- the vendor README describes OmniHand 2025 as `10 active + 6 passive DOF` with `400+` tactile points
+- the vendor README describes the earlier OmniHand 2025 baseline as `10 active + 6 passive DOF` with `400+` tactile points; the current repo hardware path is the O12 Pro model with 12 active joints
 - the vendor SDK documents CANFD with ZLG USBCANFD adapters as the primary supported transport
 - the current non-mock hardware-backed effector path in `src/agx_arm_ctrl` has validated arm-side support for `agx_gripper` and `revo2`; the repo-owned OmniHand bridge now also has a validated `backend_type:=sdk` path against the live OmniHand Pro (O12) over native SocketCAN (`backend_type=vendor_sdk`, command + status + tactile readback on the Jetson right hand), with the mock backend retained for off-hardware development
 - the current agx_arm stack already switches planning, description, and fake-controller profiles by `effector_type`, so OmniHand can be introduced as another repo-owned effector profile without exposing vendor ROS topics as the public contract
 - the local launch and naming contract is now frozen for the simulation slice: `effector_type:=omnihand`, `omnihand_type:=left|right`, and normalized `left_*` / `right_*` joint names
 - the repo-owned mock bridge already publishes `feedback/omnihand/joint_states`, `feedback/omnihand/status`, and `feedback/omnihand/tactile_raw`, and it exposes `control/omnihand/stop` plus the compatibility `control/omnihand/joint_trajectory` input
-- `pyAgxArm` exposes end-effector drivers for `agx_gripper` and `revo2`, not OmniHand
+- `vendor/pyAgxArm` exposes end-effector drivers for `agx_gripper` and `revo2`, not OmniHand
 - the vendor ROS2 API doc exposes left/right topic families under `/agihand/omnihand/{left,right}/...`
 - current local hand messages are Revo2-specific and should not be reused as the OmniHand long-term interface
 - a local vendor patch now allows a socket-backed Python build/import path on `aarch64` for isolated testing, and the unpacked Python package can be refreshed without local wheel tooling
@@ -67,6 +66,6 @@ These are useful only as design references while OmniHand is still isolated from
 
 - `src/agx_arm_sim/agx_arm_description/agx_arm_urdf/revo2/urdf/` contains an articulated hand model for Revo2.
 - `src/agx_arm_moveit` already handles a dexterous-hand branch through `effector_type:=revo2`.
-- `pyAgxArm/protocols/can_protocol/drivers/effector/` contains end-effector driver patterns for AgileX gripper and Revo2.
+- `vendor/pyAgxArm/protocols/can_protocol/drivers/effector/` contains end-effector driver patterns for AgileX gripper and Revo2.
 
 Do not treat those artifacts as OmniHand validation; they are only local references alongside the vendored Agibot SDK.

@@ -23,5 +23,6 @@ This index points to the stable component surfaces that matter for the current b
 
 - `../architecture.md`: cross-component runtime and launch flow
 - `../repository_structure.md`: package ownership and documentation boundaries
+- `implementation_map.md`: component ownership and evidence-routing map
 - `../../control/bringups/launches.md`: runnable system entrypoints
 - `../../control/environment.md`: environment, wrapper, and platform rules

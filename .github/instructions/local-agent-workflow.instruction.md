@@ -36,7 +36,7 @@ Read these first when changing package boundaries or OmniHand integration surfac
 - keep the OmniHand bridge in `agx_arm_ctrl` in the current baseline
 - keep the public ROS contract agx_arm-centric
 - make description and bringup surfaces arm-count-aware from the start, with `body + right arm + right OmniHand` as the current executable Duo target
-- keep sprint entrypoints in `docs/sprintN/` and keep detailed historical evidence in `docs/development/sprintN/`; keep only roadmap, progress, and component routing at the top of `docs/development/`
+- keep sprint entrypoints in `docs/sprintN/` and keep any surviving historical evidence inside the matching sprint surface; do not recreate `docs/development/sprintN/`
 - do not map OmniHand onto the Revo2-specific message contract
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
 - keep `.github/` guidance in sync with the stable docs it mirrors

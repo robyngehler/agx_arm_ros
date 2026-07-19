@@ -12,10 +12,10 @@ OmniHand 集成、协调执行以及相关文档。
 ## 文档入口
 
 - `docs/README.md`：全局文档导航
-- `docs/target/README.md`：当前文档清理目标、迁移阶段与控制结论
+- `docs/target/README.md`：当前仓库目标与文档归属规则
 - `docs/control/environment.md`：系统 Python、Conda、ROS overlay、build/test wrapper 与平台边界
 - `docs/control/bringups/launches.md`：当前规范启动矩阵
-- `docs/control/teach_and_run.md`：teach、record、replay 与协调执行工作流
+- `docs/control/bringups/teach_and_run.md`：teach、record、replay 与协调执行工作流
 - `docs/project/architecture.md`：组件关系与 Mermaid 架构图
 - `docs/project/repository_structure.md`：包边界、文档分层与稳定职责
 - `docs/checklist.md`：全局迁移与集成状态
@@ -53,5 +53,5 @@ OmniHand 集成、协调执行以及相关文档。
 ## 运行提示
 
 - 实际 bringup 与脚本矩阵以 `docs/control/bringups/launches.md` 为准
-- teach/replay 与共享 CAN 运行注意事项以 `docs/control/teach_and_run.md` 为准
+- teach/replay 与共享 CAN 运行注意事项以 `docs/control/bringups/teach_and_run.md` 为准
 - 当前共享 arm-plus-hand CAN 仍有已知风险，见 `docs/errors_and_fixes.md`

@@ -4,7 +4,7 @@ description: "Use when creating, moving, or extending package surfaces in agx_ar
 
 # Repository Structure
 
-Use the current workspace layout as the implementation truth during the active Duo baseline and docs migration.
+Use the current workspace layout as the implementation truth during the active Duo baseline.
 
 ## Canonical Package Roles
 
@@ -36,11 +36,9 @@ Use the current workspace layout as the implementation truth during the active D
 
 - top-level `docs/*.md`: global docs hub and repo-wide checklist, fixes, and open questions
 - `docs/control/`: stable operational workflow, environment rules, and launch entrypoints
-- `docs/assets/`: stable factual inventories and validation state
-- `docs/assets/`: stable OmniHand and runtime integration decisions
-- `docs/sprintN/`: first-class sprint targets, checklist, errors, and open questions
-- `docs/development/`: fixed roadmap, progress, and component-routing docs plus historical sprint working folders
-- `docs/project/`: stable package, architecture, naming, and workflow policy
+- `docs/assets/`: stable factual inventories, validation state, and OmniHand/runtime integration decisions
+- `docs/sprintN/`: first-class sprint targets, checklist, errors, open questions, and retained evidence
+- `docs/project/`: stable package, architecture, naming, workflow policy, and long-term roadmap
 - `.github/`: concise Copilot-native instruction, skill, and agent layer
 
 ## Escalation Rule

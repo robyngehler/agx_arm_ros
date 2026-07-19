@@ -70,8 +70,8 @@ Current safe guidance:
 	cycled and the affected controller stack has been restarted
 
 Status: stable fix pending, but the current operating policy is settled for safety reasons. See
-`control/teach_and_run.md` for the current shared-bus runtime guidance and `target/README.md` for
-the migration-level tracking.
+`control/bringups/teach_and_run.md` for the current shared-bus runtime guidance and
+`target/README.md` for the repo-level policy tracking.
 
 ## Implicit wrapper defaults
 

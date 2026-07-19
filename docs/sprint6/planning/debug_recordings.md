@@ -461,7 +461,7 @@ rides as a rigid payload). The documented teach bring-up passed only `gravity_ar
 mount (tilt) was correct but the ~1 kg hand was absent. Verified by regenerating the gravity URDF: 4.58 kg
 (hand-less) vs 5.64 kg with `effector_type:=omnihand` (+1.04 kg hand, still 7 movable joints). The URDF
 carries real hand inertia (palm 0.83 kg + fingers), so the machinery was complete — only the flag was
-missing. Fix: `docs/control/teach_and_run.md` now requires `effector_type:=omnihand` on the bring-up
+missing. Fix: `docs/control/bringups/teach_and_run.md` now requires `effector_type:=omnihand` on the bring-up
 (harmless side effect: the driver merges `feedback/omnihand/joint_states` into combined feedback, no extra
 CAN traffic).
 

@@ -24,10 +24,10 @@ Load this instruction for ROS2-native questions and decisions.
 - `docs/project/` for stable structure, architecture, naming, workflow, and ROS2 practice decisions
 - `docs/assets/` for stable runtime and bridge contracts
 - `docs/assets/` for stable factual inventories and validation state
-- `docs/sprintN/` for sprint-level targets, checklist, errors, and open questions
-- top-level `docs/development/` docs only for roadmap, progress, and component routing
-- `docs/development/sprintN/` for detailed historical discovery, checklist, error/fix, and blocker tracking during the migration, delete after cleanup
-- use `docs/sprint6/` for the current top-level sprint routing and `docs/development/sprint6/` for the detailed working record
+- `docs/sprintN/` for sprint-level targets, checklist, errors, open questions, and retained evidence
+- `docs/project/roadmap_and_phases.md` for long-term roadmap intent and thematic phases
+- `docs/checklist.md` for current sprint status and cross-sprint blockers
+- use `docs/sprint6/` for the current top-level sprint routing and `docs/sprint6/planning/` plus `docs/sprint6/reference/` for the detailed working record
 - keep `.github/` guidance synchronized with the stable docs it mirrors
 
 ## Validation

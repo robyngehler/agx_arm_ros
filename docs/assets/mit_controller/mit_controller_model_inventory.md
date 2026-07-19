@@ -4,7 +4,7 @@ promotion_origin: Sprint 1 repository and asset discovery pass
 promotion_date: 2026-05-12
 
 component: Nero MIT controller model, gravity, and trajectory interfaces
-repository_or_source: `src/agx_arm_mit_controller`, related docs in `docs/development/`, and Nero API docs in `pyAgxArm`
+repository_or_source: `src/agx_arm_mit_controller`, related stable docs in `docs/project/` and `docs/sprint*/`, and Nero API docs in `vendor/pyAgxArm`
 inspection_date: 2026-05-11
 status: CONFIRMED
 found_artifacts:
@@ -34,7 +34,7 @@ interface_notes:
 - prefixed Duo follow-mode consumers now use a separate JointState name adapter in `agx_arm_mit_tools`; the MIT controller itself stays on the canonical unprefixed `feedback/joint_states` contract
 - the first shared Duo RViz debug surface now keeps one MIT controller plus one soft-target bridge per arm namespace, while the shared robot-level Duo description consumes merged prefixed feedback and a shared GUI JointState topic
 - the current `both_arms` runtime contract remains arm-only: coordinated planning stays at the shared robot level, but execution still decomposes into one per-arm `arm_controller/follow_joint_trajectory` action server per MIT controller namespace
-- the current `both_arms` runtime and RViz debug surfaces reject hand-aware end-effectors; dual-arm OmniHand execution remains open work until the SRDF, collision, and ownership semantics stabilize
+- the MIT controller runtime itself stays arm-only: even when higher-level wrappers expose `duo_hand`, each controller instance still owns only one seven-joint Nero arm and does not execute hand joints directly
 - the package now also includes a long-lived motion-manager node that exposes `~/trigger_motion` for external wakeword-triggered playback over a curated trajectory library
 - the wakeword-oriented motion-manager is ongoing application work and should not yet be treated as a frozen Sprint 2 runtime contract
 - default gravity behavior is Pinocchio-based with `gravity_feedforward_sign: -1.0`
@@ -63,7 +63,7 @@ The current controller assumes a seven-joint Nero model with joint names:
 joint1 joint2 joint3 joint4 joint5 joint6 joint7
 ```
 
-This matches the root MoveIt package and pyAgxArm Nero definitions.
+This matches the root MoveIt package and the vendored pyAgxArm Nero definitions.
 
 ### Canonical URDF Lookup
 

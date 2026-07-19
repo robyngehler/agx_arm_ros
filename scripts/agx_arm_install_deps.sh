@@ -54,7 +54,7 @@ if apt-cache show "$trac_ik_pkg" >/dev/null 2>&1; then
 else
     echo "  ! $trac_ik_pkg not found in apt metadata."
     echo "    On ROS 2 Humble / Jetson, use the source-build fallback documented in"
-    echo "    docs/development/sprint3/planning/trac_ik_humble_jetson_repro.md"
+    echo "    docs/sprint3/evidence/trac_ik_humble_jetson_repro.md"
 fi
 
 sudo apt-get install -y "${moveit_extra_packages[@]}"

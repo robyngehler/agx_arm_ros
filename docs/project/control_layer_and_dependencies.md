@@ -13,7 +13,7 @@ layer silently ran a frozen, non-editable pyAgxArm snapshot from 2026-04-09 in
 `~/.local/lib/python3.10/site-packages`, while all newer development (Nero v112 driver, comm
 error-recovery rework) lived only in a conda **base / python 3.13** editable install that
 cannot even import `rclpy`. See `../assets/control/single_vs_multi_arm_control_chain.md` and
-`../development/sprint5/errors_and_fixes.md` for the bus work this surfaced during.
+`../sprint5/evidence/can_transport_decision.md` for the bus work this surfaced during.
 
 ## Current control-layer source (the pin)
 

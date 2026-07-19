@@ -25,7 +25,7 @@ The selected architecture is no longer only proposed. The first simulation-orien
 - the bridge now accepts the shared `control/joint_states` surface used by the rest of `agx_arm_ctrl`,
 - `control/omnihand/joint_trajectory` remains available as a bridge-specific compatibility path,
 - `agx_arm_ctrl` can now aggregate bridge joint state into combined `feedback/joint_states` when `effector_type:=omnihand`,
-- the shared `start_single_agx_arm*` launch wrappers now pass `omnihand_type` through and can optionally start the bridge,
+- the shared `agx_arm_ctrl` launch wrappers now pass `omnihand_type` through, can optionally start the bridge, and still expose the older `start_single_agx_arm*` names only as compatibility aliases,
 - the bridge stays in `agx_arm_ctrl` as the current runtime integration point,
 - current workspace-policy docs now live under `docs/project`,
 - and the current left-hand smoke path launches successfully through `agx_arm_moveit` with mock hardware.
@@ -241,7 +241,9 @@ Example active-joint set for the left hand:
 - `left_pinky_abad_joint`
 - `left_pinky_pip_joint`
 
-The backend maps those local names to the vendor-declared active-joint order recorded in `docs/assets/omnihand/omnihand_active_joint_map.md`.
+The backend maps those local names through the repo-owned hand-model definitions. The older
+vendor-declared O10 active-joint order in `docs/assets/omnihand/omnihand_active_joint_map.md` is
+kept only as a historical reference.
 
 ### Topics, Actions, And Services
 
@@ -417,7 +419,7 @@ For the current local repo workflow:
     - add `effector_type:=omnihand` and mock `ros2_control` support,
     - add the first repo-owned OmniHand messages and mock-backed bridge skeleton,
     - aggregate bridge joint state into the shared `feedback/joint_states` path through `agx_arm_ctrl`,
-    - extend the shared `start_single_agx_arm*` launch wrappers with OmniHand bridge arguments,
+    - extend the shared `agx_arm_ctrl` wrapper family with OmniHand bridge arguments,
     - document repository structure, naming, generated-vs-source policy, and local workflow under `docs/project`.
 
 - still open under Sprint 2:
@@ -425,7 +427,7 @@ For the current local repo workflow:
     - decide whether the initial bridge remains inside `agx_arm_ctrl` or is split into a dedicated package once the real backend exists,
     - align the bridge command surface with the longer-term controller or action model once the non-mock backend is available.
 
-For the canonical roadmap and progress pair in `docs/development/nero_physical_ai_roadmap.md` and `docs/development/nero_physical_ai_progress.md`, the work spans several logical sprints:
+For the canonical roadmap and current status pair in `docs/project/roadmap_and_phases.md` and `docs/checklist.md`, the work spans several logical sprints:
 
 - roadmap Sprint 1:
     - discovery and decision capture

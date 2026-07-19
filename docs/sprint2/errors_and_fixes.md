@@ -34,5 +34,5 @@ Problem:
 
 Fix:
 
-- the stable operational workflow moved into `docs/control/teach_and_run.md`
+- the stable operational workflow moved into `docs/control/bringups/teach_and_run.md`
 - the remaining historical rationale now lives in `evidence/mit_runtime_history.md`

@@ -1,7 +1,7 @@
 # Architecture
 
-status: ACTIVE_MIGRATION_BASELINE
-last_updated: 2026-07-18
+status: ACTIVE_BASELINE
+last_updated: 2026-07-19
 
 This document is the stable architecture reference for the current Duo baseline. It focuses on how
 the repo-owned runtime surfaces interact, how launch files compose them, and where the public ROS

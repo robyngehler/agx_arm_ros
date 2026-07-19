@@ -13,10 +13,10 @@ now live under `docs/`.
 ## Documentation entrypoints
 
 - `docs/README.md`: global documentation hub
-- `docs/target/README.md`: active documentation target, migration phases, and control-session findings
+- `docs/target/README.md`: repo documentation target and ownership rules
 - `docs/control/environment.md`: system Python, Conda, ROS overlay, build and test wrappers, and platform split
 - `docs/control/bringups/launches.md`: canonical launch matrix
-- `docs/control/teach_and_run.md`: teach, record, replay, and coordination-facing motion workflow
+- `docs/control/bringups/teach_and_run.md`: teach, record, replay, and coordination-facing motion workflow
 - `docs/project/architecture.md`: stable component relationships and Mermaid diagrams
 - `docs/project/repository_structure.md`: package boundaries, documentation split, and stable ownership
 - `docs/checklist.md`: global migration and integration status
@@ -54,5 +54,5 @@ now live under `docs/`.
 ## Runtime notes
 
 - the authoritative bringup and script matrix is `docs/control/bringups/launches.md`
-- teach, replay, and shared-bus operating guidance lives in `docs/control/teach_and_run.md`
+- teach, replay, and shared-bus operating guidance lives in `docs/control/bringups/teach_and_run.md`
 - the shared arm-plus-hand CAN path still has known hazards; see `docs/errors_and_fixes.md`

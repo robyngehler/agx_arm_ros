@@ -9,7 +9,8 @@ DEFAULT_BITRATE="${2:-1000000}"
 # USB hardware address (optional parameter)
 USB_ADDRESS="${3}"
 
-# CAN bus hardening (see docs/development/nero_bus_problem_proposal.md):
+# CAN bus hardening for the USB adapter path (see docs/CAN_USER.md,
+# docs/CAN_USER_EN.md, and docs/errors_and_fixes.md):
 # restart-ms enables bus-off auto-recovery; a larger txqueuelen absorbs TX
 # bursts so a brief stall does not immediately surface as ENOBUFS; berr-reporting
 # (best-effort) exposes bus-error counters for diagnostics.

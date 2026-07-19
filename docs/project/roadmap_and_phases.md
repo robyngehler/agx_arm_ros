@@ -12,8 +12,8 @@ Use this file as the canonical roadmap only.
 
 Companion coordination docs:
 
-- `docs/development/nero_physical_ai_progress.md`: current overall progress, active sprint focus, and cross-sprint blockers
-- `docs/development/component_implementation_map.md`: system components, canonical code locations, and where sprint-level details live
+- `docs/checklist.md`: current overall sprint status, active focus, and cross-sprint blockers
+- `docs/project/components/implementation_map.md`: system components, canonical code locations, and where sprint-level details live
 
 ---
 
@@ -264,17 +264,19 @@ Recover
 
 ### Current Local Sequencing Note
 
-The execution sprints (`docs/development/sprintN/`) are the work iterations and have diverged from
-this roadmap's thematic phase numbering. Current state (see
-`docs/development/nero_physical_ai_progress.md` for detail):
+The execution sprints (`docs/sprintN/`) are the work iterations and have diverged from this
+roadmap's thematic phase numbering. Current state (see `docs/checklist.md` for the current
+status snapshot):
 
 - Execution sprints 1–4 are **complete**: asset baseline; common environment + OmniHand bridge with
   the vendor SDK backend; Nero planning/control hardening (TRAC-IK + OMPL); and the Duo body
   baseline with shared macro/xacro URDF, dynamic SRDF, arm-count-aware MoveIt, successful OMPL +
   TRAC-IK Duo planning, and a joint arm + OmniHand bringup with small live movements.
-- Execution **sprint 5 is active**: native `mttcan` CAN FD transport (`one-shot`, arm + hand per
-  side bus), `pyAgxArm` submodule pinning, and preparing the first demo task (Hefeweizen pouring).
-  It sits ahead of this roadmap's thematic phase 5 (AGV/base), which stays external.
+- Execution **sprint 5 is complete**: native `mttcan` CAN FD transport (`one-shot`, arm + hand per
+  side bus) and `vendor/pyAgxArm` pinning are the settled baseline.
+- Execution **sprint 6 is active**: coordination, Duo-hand runtime hardening, and the first demo
+  task path (Hefeweizen pouring).
+  These execution sprints sit ahead of this roadmap's thematic phase 5 (AGV/base), which stays external.
 - Simulation and Isaac work stay behind the first validated Duo body system baseline instead of leading it.
 
 ### Adjacent Demo Tooling Note
@@ -939,15 +941,14 @@ The development docs now follow a fixed two-tier model.
 
 Keep exactly one top-level document for each cross-sprint concern:
 
-- `docs/development/nero_physical_ai_roadmap.md`: roadmap, phases, and sprint intent
-- `docs/development/nero_physical_ai_progress.md`: overall progress monitoring and active-priority tracking
-- `docs/development/component_implementation_map.md`: component ownership, canonical code paths, and document routing
+- `docs/project/roadmap_and_phases.md`: roadmap, phases, and sprint intent
+- `docs/checklist.md`: overall progress monitoring and active-priority tracking
+- `docs/project/components/implementation_map.md`: component ownership, canonical code paths, and document routing
 
 ### 8.2 Sprint Working Folders
 
 Use `docs/sprintN/` as the user-facing sprint entrypoints. Keep detailed historical discovery,
-checklists, implementation details, and issue logs inside `docs/development/sprintN/` only while
-the migration is still in progress.
+checklists, implementation details, and issue logs inside the matching sprint surface itself.
 
 Each sprint folder should own at least:
 

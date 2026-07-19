@@ -96,7 +96,7 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   arm_type:=nero
 ```
 
-For the current bringup matrix and the teach workflow, prefer `docs/control/bringups/launches.md` and `docs/control/teach_and_run.md` over duplicating launch combinations in package-local notes.
+For the current bringup matrix and the teach workflow, prefer `docs/control/bringups/launches.md` and `docs/control/bringups/teach_and_run.md` over duplicating launch combinations in package-local notes.
 
 ## Demo Package
 
@@ -116,7 +116,7 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager --arm-config src/agx_arm_coordi
 ros2 run agx_arm_mit_demos agx_arm_wakeword_motion_manager -- --auto-enable-arm --start-mode idle
 ```
 
-For the current record, replay, anchor-capture, and teach-manager walkthrough, see `docs/control/teach_and_run.md`. Keep `docs/sprint2/evidence/mit_runtime_history.md` only as the historical Sprint 2 workflow note.
+For the current record, replay, anchor-capture, and teach-manager walkthrough, see `docs/control/bringups/teach_and_run.md`. Keep `docs/sprint2/evidence/mit_runtime_history.md` only as the historical Sprint 2 workflow note.
 
 ## Tools Package
 

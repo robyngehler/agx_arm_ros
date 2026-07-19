@@ -631,7 +631,7 @@ src/agx_arm_coordination/
   scheduler/resource model
   launch/config files
 
-docs/development/sprint6/planning/
+docs/sprint6/planning/
   this proposal
   architecture_and_repo_integration.md
   hand_skill_backend_mapping.md

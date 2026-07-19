@@ -35,4 +35,4 @@ step before interface bringup and configures the side buses for the current stab
 
 Keep this note only for the decision rationale behind the native CAN migration and the rejection of
 two arms on one bus. The current operational guidance lives in `../../control/bringups/launches.md`,
-`../../control/teach_and_run.md`, and `../../assets/omnihand/omnihand_canfd_setup.md`.
+`../../control/bringups/teach_and_run.md`, and `../../assets/omnihand/omnihand_canfd_setup.md`.

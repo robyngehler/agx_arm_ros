@@ -3,7 +3,7 @@
 Status: consolidated historical design note.
 
 Do not use it as an operational runbook. The current runtime behavior and teach workflow now live in
-`../../control/bringups/launches.md`, `../../control/teach_and_run.md`, and the stable controller docs.
+`../../control/bringups/launches.md`, `../../control/bringups/teach_and_run.md`, and the stable controller docs.
 
 ## Original goal
 

@@ -21,8 +21,8 @@ simulation_track_status: SHARED_COMMAND_SURFACE_LANDED
 	- the current host can now retrieve live OmniHand hardware information through `OMNIHAND_SOCKETCAN_IFACE=can_nero_right`
 - The remaining Phase 1 blocker is now narrower:
 	- device enumeration is no longer blocked on the current host
-	- no safe command-response loop has been validated yet
-	- the repo-owned ROS bridge now has a first non-mock `backend_type:=sdk` path with active 10-joint command support and live readback
+	- no fully calibrated production command-response loop has been validated yet
+	- the repo-owned ROS bridge now has a first non-mock `backend_type:=sdk` path with active 12-joint O12 Pro command support and live readback
 - Result: Phase 1 build/import, device-enumeration, ROS-side readback, and the first guarded command path are now complete on the current host, while broader motion hardening and production safety promotion into the agx_arm runtime remain open
 
 ## Current Simulation Slice
@@ -33,18 +33,18 @@ The repo has already landed the first simulation-oriented OmniHand integration s
 - Nero attachment xacros now exist for left and right OmniHand variants
 - `display.launch.py` and `display_control.launch.py` now expose OmniHand visualization and control-compatible launch arguments
 - `agx_arm_moveit` now supports `effector_type:=omnihand` plus `omnihand_type:=left|right`
-- MoveIt fake `ros2_control`, controller YAML, SRDF groups, and initial positions now cover the 10 active OmniHand joints
+- MoveIt fake `ros2_control`, controller YAML, SRDF groups, and initial positions now cover the 12 active O12 Pro joints in the current baseline
 - repo-owned `agx_arm_msgs/OmniHandStatus` and `OmniHandTactileRaw` messages now exist
 - a first repo-owned `omnihand_bridge` mock backend and launch surface now exist in `src/agx_arm_ctrl`
 - the bridge now also supports a first `backend_type:=sdk` active-control backend behind the same repo-owned ROS topics
 - the bridge now consumes the shared `control/joint_states` surface used by the rest of `agx_arm_ctrl`
 - `control/omnihand/joint_trajectory` remains as a bridge-specific compatibility input
 - `agx_arm_ctrl` can now merge bridge joint state into combined `feedback/joint_states` when `effector_type:=omnihand`
-- the shared `start_single_agx_arm*`, MIT, and component wrapper launches now pass OmniHand bridge arguments through to the runtime layer
+- the shared `agx_arm_ctrl` wrapper family, its older `start_single_agx_arm*` compatibility aliases, the MIT launch, and the component wrapper launches now pass OmniHand bridge arguments through to the runtime layer
 - the bridge remains in `src/agx_arm_ctrl` as the active package boundary in the current baseline
 - current workspace-policy docs now live under `docs/project`
 - the current validated smoke path is:
-  - `ros2 launch agx_arm_moveit demo.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
+	- `ros2 launch agx_arm_moveit start_moveit.launch.py effector_type:=omnihand omnihand_type:=left use_rviz:=false db:=false`
 
 What is still missing from the simulation-first track:
 
@@ -61,7 +61,7 @@ This plan intentionally defers direct overlay of the vendor ROS2 packages into `
 ## Why Wrapper-First
 
 - The current runtime already integrates end-effectors through thin local wrappers rather than by embedding vendor ROS nodes directly.
-- The current hand message surface is Revo2-specific and does not match OmniHand's 10 active joints plus richer diagnostics and tactile data.
+- The current hand message surface is Revo2-specific and does not match OmniHand's current 12 active O12 Pro joints plus richer diagnostics and tactile data.
 - The vendor ROS node is coupled to a transport and topic layout that is not yet validated on this `aarch64` host.
 - The vendor asset bundle still needs normalization before it can serve as a local description package.
 
@@ -128,13 +128,13 @@ Recommended artifact output:
 
 - one minimal smoke-test script
 - one tested environment note with adapter model, architecture, and library provenance
-- one joint-name and motor-index mapping table derived from working runtime observations
+- one active-joint naming and motor-index mapping table derived from working runtime observations
 
 Exit criteria:
 
 - device enumeration succeeds
 - at least one safe command-response loop succeeds
-- a stable 10-joint naming map exists for the active joints
+- a stable active-joint naming map exists for the current hardware path
 
 Current state:
 
@@ -179,7 +179,7 @@ Objective: expose the validated adapter to the ROS stack without reusing the Rev
 
 Tasks:
 
-- publish `sensor_msgs/JointState` for the 10 active joints
+- publish `sensor_msgs/JointState` for the current active joints
 - publish raw status and diagnostics topics for device health and errors
 - publish tactile data through a dedicated raw topic or message family after the adapter surface is stable
 - define command topics or actions that match the OmniHand joint model instead of forcing the current six-channel Revo2 schema

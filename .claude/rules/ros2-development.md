@@ -33,9 +33,9 @@ Load this rule for ROS2-native questions and decisions.
 - `docs/control/` for how to run the system (environment, bringup launch/arguments, teach loop)
 - `docs/project/` for stable structure, architecture, naming, workflow, and ROS2 practice decisions
 - `docs/assets/` for stable runtime and bridge contracts, factual inventories, and validation state
-- `docs/sprintN/` for sprint-level targets, checklist, errors, and open questions
-- top-level `docs/development/` docs only for roadmap, progress, and component routing
-- `docs/development/sprintN/` for detailed historical discovery, planning, and evidence while the migration is still in progress
+- `docs/sprintN/` for sprint-level targets, checklist, errors, open questions, and retained evidence
+- `docs/project/roadmap_and_phases.md` for long-term roadmap intent and thematic phases
+- `docs/checklist.md` for current sprint status and cross-sprint blockers
 - keep `.claude/` guidance synchronized with the stable docs it mirrors
 
 ## Validation

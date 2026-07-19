@@ -88,8 +88,11 @@ sudo ip link set can0 name can_nero_right
 sudo ip link set can_nero_right up
 ```
 
-`one-shot on` makes every frame a single attempt (the arm-stability fix). It also applies to hand
-frames; if the hand needs retransmission, bring the bus up with `ONE_SHOT=off`.
+`one-shot on` makes every frame a single attempt and remains the stable shared-bus safety
+baseline. It also applies to hand frames. Historical transport experiments used `ONE_SHOT=off` to
+explore retransmission behavior, but that mode is not the recommended runtime baseline; use it only
+for controlled offline investigation and follow `docs/errors_and_fixes.md` plus
+`docs/control/bringups/teach_and_run.md` for the current operating policy.
 
 ## Hardware preflight (below ROS)
 

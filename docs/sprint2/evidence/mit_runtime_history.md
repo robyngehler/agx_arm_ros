@@ -3,7 +3,7 @@
 Status: historical Sprint 2 summary only.
 
 Do not use this file as a runnable control guide. The canonical operational workflow lives in
-`../../control/bringups/launches.md` and `../../control/teach_and_run.md`.
+`../../control/bringups/launches.md` and `../../control/bringups/teach_and_run.md`.
 
 ## Why this file still exists
 

@@ -36,7 +36,7 @@ Do not load every instruction by default. Match context to the task.
 - local workflow and promotion order: `.github/instructions/local-agent-workflow.instruction.md`
 - OmniHand bridge contract and runtime surface: `.github/instructions/omnihand-bridge.instruction.md`
 - current sprint entrypoint: `docs/sprint6/`
-- detailed historical working notes: `docs/development/sprint6/`
+- detailed planning and reference notes: `docs/sprint6/planning/`, `docs/sprint6/reference/`
 - global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 
 These instructions are concise Copilot-native mirrors of the current stable docs under `docs/project/` and `docs/assets/`.

@@ -10,20 +10,16 @@
 
 ## 如果你要运行当前 MoveIt
 
-请使用：
+当前规范入口请先看 `../../../docs/control/bringups/launches.md`。这个历史目录不再维护仓库级启动矩阵。
+
+如果你只是想调用当前包级 MoveIt 仿真入口，可使用：
 
 ```bash
 ros2 launch agx_arm_moveit demo.launch.py arm_type:=nero
 ```
 
-真实机械臂一键启动：
-
-```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
-   can_port:=can_nero_right \
-   arm_type:=nero \
-   effector_type:=agx_gripper
-```
+如果你要启动真实机械臂，请回到 `../../../docs/control/bringups/launches.md`，并优先使用当前规范的
+`start_agx_arm_components.launch.py` 或 `start_agx_arm_moveit.launch.py` 路径，而不是从这个历史目录复制旧的一键命令。
 
 旧的公开运行时名称如 `can0`、`can_nero` 仅可视为历史痕迹；当前对外运行时接口请统一使用 `can_nero_right` 或 `can_nero_left`。
 

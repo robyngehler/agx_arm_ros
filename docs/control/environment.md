@@ -1,7 +1,7 @@
 # Environment
 
-status: ACTIVE_MIGRATION_BASELINE
-last_updated: 2026-07-18
+status: ACTIVE_BASELINE
+last_updated: 2026-07-19
 
 ## Purpose
 
@@ -130,4 +130,4 @@ of raw `colcon build`.
 ## Related operational docs
 
 - `bringups/launches.md`: current launch matrix
-- `teach_and_run.md`: teach, replay, and coordination-facing workflow guidance
+- `bringups/teach_and_run.md`: teach, replay, and coordination-facing workflow guidance

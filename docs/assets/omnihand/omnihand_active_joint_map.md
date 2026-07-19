@@ -1,17 +1,25 @@
 # OmniHand Active Joint Map
 
-status: VENDOR_DECLARED_BASELINE
-runtime_verification: PENDING
+status: LEGACY_O10_VENDOR_BASELINE
+runtime_verification: HISTORICAL_ONLY
 last_updated: 2026-05-12
 source_documents:
 - `vendor/OmniHand-Pro-2025/document/en/API_CPP.md`
 - `vendor/OmniHand-Pro-2025/document/en/API_PYTHON.md`
 
+Current stable repo runtime note:
+
+- the current hardware-backed baseline uses the OmniHand Pro O12 model with 12 active joints
+- this document is kept only as the earlier O10 vendor-declared mapping reference that informed the
+	first wrapper-first design work
+
 ## Purpose
 
-This document records the vendor-declared active-joint order and limits that the repo uses as its baseline mapping reference.
+This document records the earlier vendor-declared O10 active-joint order and limits that were used
+as the first mapping reference during early wrapper design.
 
-It is a mapping baseline for scripting, bridge work, and later runtime validation. It is not a claim that every value below has already been verified on live hardware.
+It is a historical mapping reference only. It is not the current stable runtime contract and it is
+not a claim that every value below was verified on the current O12 hardware path.
 
 ## Finger Grouping
 

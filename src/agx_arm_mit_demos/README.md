@@ -31,4 +31,4 @@ This package also owns:
 - `agx_arm_recorded_to_catalogue`
 - `agx_arm_wakeword_motion_manager`
 
-Use `docs/control/teach_and_run.md` for the canonical teach, capture, replay, and coordination-facing conversion flow instead of reconstructing that workflow from the individual CLIs.
+Use `docs/control/bringups/teach_and_run.md` for the canonical teach, capture, replay, and coordination-facing conversion flow instead of reconstructing that workflow from the individual CLIs.

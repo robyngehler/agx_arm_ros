@@ -1,10 +1,9 @@
 # Global Open Questions
 
-Cross-cutting decisions that are still intentionally open after the current cleanup pass.
+Cross-cutting decisions that remain intentionally open after the documentation cleanup closure.
 
-## Package README scope
-
-How much operational launch detail should package-local READMEs keep once `docs/control/` is treated as the canonical launch matrix?
+The repo-routing and documentation-ownership questions are closed. The remaining items here are
+runtime or contract questions.
 
 ## OmniHand command surface
 

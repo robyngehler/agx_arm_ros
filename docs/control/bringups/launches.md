@@ -1,7 +1,7 @@
 # Launches
 
-status: ACTIVE_MIGRATION_BASELINE
-last_updated: 2026-07-18
+status: ACTIVE_BASELINE
+last_updated: 2026-07-19
 
 How to start the current system. Two steps: bring up the baseline that owns the runtime graph, then
 add the matching tool or demo on top.
@@ -91,7 +91,7 @@ For both arms, add `--arms left_arm right_arm` or let the manager auto-detect co
 MIT stacks.
 
 MoveIt anchor transitions use the same `execution_profile` family as the components baseline. See
-`../teach_and_run.md` for the full flow.
+`teach_and_run.md` for the full flow.
 
 ## Demos
 
@@ -101,12 +101,12 @@ Hefeweizen coordinator: start the components baseline with `mode:=moveit_mit`, t
 ros2 launch agx_arm_coordination start_hefeweizen_demo.launch.py
 ```
 
-The staged dry-run and live sequence remains in `../teach_and_run.md`.
+The staged dry-run and live sequence remains in `teach_and_run.md`.
 
 ## References
 
 - `../environment.md`: build, test, and runtime wrapper rules
-- `../teach_and_run.md`: teach loop, gravity, bus details, and coordinator-facing motion flow
+- `teach_and_run.md`: teach loop, gravity, bus details, and coordinator-facing motion flow
 - `../../assets/control/single_vs_multi_arm_control_chain.md`: per-arm versus Duo interaction analysis
 - `../../assets/omnihand/omnihand_canfd_setup.md`: CAN transport and hardware bringup details
-- `../../development/sprint6/planning/duo_both_hands_moveit_gap.md`: current duo-hand validation gap
+- `../../sprint6/planning/duo_both_hands_moveit_gap.md`: current duo-hand validation gap

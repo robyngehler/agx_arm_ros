@@ -143,7 +143,7 @@ ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
 带 Revo2 的一键启动示例：
 
 ```bash
-ros2 launch agx_arm_ctrl start_single_agx_arm_moveit.launch.py \
+ros2 launch agx_arm_ctrl start_agx_arm_moveit.launch.py \
   can_port:=can_nero_right \
   arm_type:=nero \
   effector_type:=revo2 \

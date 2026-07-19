@@ -45,9 +45,9 @@ This repository is organized so Claude Code loads only the guidance needed for t
 - generated-versus-source decisions: `.claude/rules/generated-vs-source-assets.md`
 - local change order and promotion workflow: `.claude/rules/local-agent-workflow.md`
 - OmniHand runtime contract and bridge surface: `.claude/rules/omnihand-bridge.md`
-- how to run the system (environment, bringup launch/arguments, teach loop): `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/teach_and_run.md`
+- how to run the system (environment, bringup launch/arguments, teach loop): `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/bringups/teach_and_run.md`
 - stable architecture and component ownership: `docs/project/architecture.md`, `docs/project/components/README.md`
-- current sprint entrypoint: `docs/sprint6/` with detailed historical evidence still under `docs/development/sprint6/`
+- current sprint entrypoint: `docs/sprint6/` with detailed planning and reference notes under `docs/sprint6/planning/` and `docs/sprint6/reference/`
 - global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 
 ## Context Minimization Rules

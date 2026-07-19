@@ -14,4 +14,6 @@ Stable component facts, validation state, and runtime integration notes.
 
 ## Scope
 
-Keep stable factual inventories and component/runtime notes here. Historical or superseded document-level records should stay in `../development/`, not in `assets/`.
+Keep stable factual inventories and component/runtime notes here. Historical or superseded
+document-level records should stay in the matching `../sprintX/` surface or in git history, not in
+`assets/`.

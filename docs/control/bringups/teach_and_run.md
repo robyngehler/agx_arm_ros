@@ -3,7 +3,7 @@
 How to teach and run coordinated arm(+hand) motions — single arm, either side, or both arms
 simultaneously — by **reusing** the MIT demo/tools instead of building new motion code. Examples use
 the right side (`can_nero_right`); the left side and dual-arm mirror the same commands (see
-[bringups/launches.md](bringups/launches.md) for the launch matrix).
+[launches.md](launches.md) for the launch matrix).
 
 ## Tool reuse map (no new motion stack)
 
@@ -283,7 +283,7 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
 > `gravity_payload_api_plan.md`) — there is currently no "record a hand gesture into a trajectory"
 > path. `t` transitions mode (MoveIt) against a duo+hands bring-up uses
 > `execution_profile:=duo_hand` on the components baseline (offline-validated, hardware run pending —
-> see [duo_both_hands_moveit_gap.md](../development/sprint6/planning/duo_both_hands_moveit_gap.md)).
+> see [duo_both_hands_moveit_gap.md](../../sprint6/planning/duo_both_hands_moveit_gap.md)).
 
 **Resource choice at save time (not a hardcoded rule).** With two arms, `record` (`n`) and anchor
 (`a`) ask which resource to store the result as: `both_arms` (merged **14-dim**, left then right),
@@ -372,7 +372,7 @@ ros2 run agx_arm_mit_demos agx_arm_capture_anchor_pose \
   with the group's `joint_names` (the `_R` half of `both_arms`).
 - Default source topic is `feedback/joint_states` (override with `--source-topic`).
 - Repeat for every `*_R` anchor. Rebuild `agx_arm_coordination` (or symlink-install) afterwards.
-- Record the measured vectors in `../development/sprint6/planning/hefeweizen_validation_log.md`.
+- Record the measured vectors in `../../sprint6/planning/hefeweizen_validation_log.md`.
 
 ## Step C — teach the functional trajectories (cap opener, pour)
 
@@ -440,7 +440,7 @@ ros2 topic echo /feedback/joint_states                # effort[] = measured moto
 
 Persist the values that work into `nero_mit_controller_defaults.yaml`.
 
-## Calibration still owed on hardware (see ../development/sprint6/planning/hefeweizen_validation_log.md)
+## Calibration still owed on hardware (see ../../sprint6/planning/hefeweizen_validation_log.md)
 
 - replace the `zero` / `fist_vendor_demo` presets with measured O12 `open` / glass / bottle
   grasp poses; tactile `contact_threshold` / `stable_samples` per object (mock tactile is all

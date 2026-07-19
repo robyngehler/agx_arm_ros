@@ -1,6 +1,9 @@
 # Control Chain: Single-Arm vs. Duo Multi-Arm (Method & State Reference)
 
-**Status:** Analysis · **Date:** 2026-06-12 · Resolution: `../../development/sprint5/`
+This is an analytical reference, not a runnable bringup guide. Use `../../control/bringups/` for
+the operational launch and teach surfaces.
+
+**Status:** Analysis · **Date:** 2026-06-12 · Resolution: `../../sprint5/evidence/can_transport_decision.md`
 
 Purpose: a human-usable map of *which method/topic talks to the `agx_arm_ctrl` driver, how
 often, and in which state* — so we can see exactly where the single-arm path and the Duo

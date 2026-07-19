@@ -4,7 +4,7 @@ Status: historical design note.
 
 Do not use this file as an implementation guide. The integrated MIT action-server path is already
 part of the current runtime, and the stable operational workflow now lives in
-`../../control/bringups/launches.md` and `../../control/teach_and_run.md`.
+`../../control/bringups/launches.md` and `../../control/bringups/teach_and_run.md`.
 
 ## Original goal
 

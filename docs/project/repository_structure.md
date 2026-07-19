@@ -1,12 +1,12 @@
 # Repository Structure
 
-status: ACTIVE_MIGRATION_BASELINE
-last_updated: 2026-07-18
+status: ACTIVE_BASELINE
+last_updated: 2026-07-19
 
 ## Purpose
 
-This document defines the current canonical workspace structure of the Duo baseline and the current
-documentation split during the cleanup migration.
+This document defines the current canonical workspace structure of the Duo baseline and the stable
+documentation split after the cleanup pass.
 
 ## Current Workspace Roles
 
@@ -22,18 +22,17 @@ documentation split during the cleanup migration.
 | Custom ROS messages | `src/agx_arm_msgs` | Repo-owned message layer for controller and future OmniHand-specific diagnostics | Extend here for OmniHand-specific status and tactile messages. |
 | Activity coordination | `src/agx_arm_coordination` | Sprint 6 Activity-DAG coordinator, coordinator-internal performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks | Keep orchestration here; the OmniHand skill controller stays in `src/agx_arm_ctrl` and arm execution reuses the existing `both_arms`/per-arm FollowJointTrajectory path. |
 | Vendored OmniHand SDK | `vendor/OmniHand-Pro-2025` | Third-party SDK, vendor ROS examples, and upstream asset source | Keep vendored; treat as upstream input, not as the public repo contract. |
-| Python reference workspace | `pyAgxArm` | Nero SDK, MDH tooling, and end-effector driver examples | Reuse as reference or backend support, not as the canonical ROS integration surface. |
+| Vendored Python SDK workspace | `vendor/pyAgxArm` | Pinned Nero SDK fork, MDH tooling, and end-effector driver examples | Reuse as backend support and reference, not as the canonical ROS integration surface. |
 
 ## Documentation Layout
 
 | Surface | Current Path | Role |
 | --- | --- | --- |
-| Global docs hub and cross-cutting status | `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`, `docs/target/README.md` | Global navigation plus repo-wide checklist, fixes, open questions, and the active migration target |
-| Operational bringup + teach SoT | `docs/control` | How to run the system: `environment.md`, `bringups/launches.md`, and `teach_and_run.md` |
+| Global docs hub and cross-cutting status | `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`, `docs/target/README.md` | Global navigation plus repo-wide checklist, fixes, open questions, and the repo documentation target |
+| Operational bringup + teach SoT | `docs/control` | How to run the system: `environment.md`, `bringups/launches.md`, and `bringups/teach_and_run.md` |
 | Component, runtime, and integration docs | `docs/assets` | Asset/repo inventories plus OmniHand, MIT, and control component docs |
-| Stable sprint entrypoints | `docs/sprint1/` through `docs/sprint6/` | First-class sprint-level targets, checklists, errors, and open questions during the migration |
-| Development coordination and historical working notes | `docs/development` | Roadmap, progress, component routing, and the existing sprint-local evidence that is still being migrated |
-| Human repository structure | `docs/project` | Workspace structure, architecture, and stable component ownership |
+| Stable sprint entrypoints | `docs/sprint1/` through `docs/sprint6/` | Sprint-level targets, checklists, errors, open questions, and retained evidence |
+| Human repository structure | `docs/project` | Workspace structure, architecture, stable component ownership, and long-term roadmap surfaces |
 | Copilot-native guidance | `.github` plus `AGENTS.md` | Repo-local Copilot instructions, skills, agents, and the durable engineering contract |
 
 The future `docs/simulation`, `docs/hand`, and related trees are still valid targets, but they should
@@ -50,7 +49,6 @@ Treat these directories as source-managed:
 - `tools/`
 - `config/`
 - `scripts/`
-- `pyAgxArm/`
 
 Treat these directories as generated or runtime-managed:
 
@@ -70,8 +68,8 @@ Treat these directories as generated or runtime-managed:
 7. Generalize description and launch surfaces to be arm-count-aware from the start; the first executable Duo target is `body + right arm + right OmniHand`, then mirror to the left side.
 8. Keep Sprint 6 task orchestration in `src/agx_arm_coordination` (coordinator + performer routing + YAML graph/catalogue loader); do not move the OmniHand skill controller out of `src/agx_arm_ctrl` or fork a second arm execution path for it.
 9. Prefer promotion into this stable docs tree over adding more ad hoc sprint notes once a decision is settled.
-10. Keep repo-wide checklist, error-and-fix, and open-question summaries in top-level `docs/*.md`; do not duplicate those same summaries again under top-level `docs/development/`.
-11. Keep `docs/development/` focused on roadmap, progress, component routing, and historical working evidence while the first-class `docs/sprintX/` surfaces are filled in.
+10. Keep repo-wide checklist, error-and-fix, and open-question summaries in top-level `docs/*.md`; do not recreate a duplicate development-layer summary surface.
+11. Keep roadmap intent in `docs/project/roadmap_and_phases.md`, current status in `docs/checklist.md`, and component routing in `docs/project/components/implementation_map.md`.
 
 ## Current Deliverables Anchored To This Structure
 

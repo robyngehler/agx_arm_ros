@@ -9,6 +9,7 @@
 | 目录 | 说明 |
 |------|------|
 | `nero/` | Nero 本体、夹爪、Revo2 组合所需的 URDF/Xacro 与 mesh 资源 |
+| `omnihand/` | 当前仓库归一化后的 OmniHand 描述、URDF 与 mesh 资源 |
 | `revo2/` | Revo2 手模型与 mesh 资源 |
 | `README.md` / `README_EN.md` | 当前资产树说明 |
 | `LICENSE` | 上游许可证保留 |
@@ -23,6 +24,10 @@ agx_arm_urdf/
 ├── nero/
 │   ├── meshes/
 │   └── urdf/
+├── omnihand/
+│   ├── meshes/
+│   ├── meshes_pro/
+│   └── urdf/
 └── revo2/
     ├── meshes/
     └── urdf/
@@ -34,6 +39,7 @@ agx_arm_urdf/
 - `nero/urdf/nero_with_gripper_description.xacro`
 - `nero/urdf/nero_with_left_revo2_description.xacro`
 - `nero/urdf/nero_with_right_revo2_description.xacro`
+- `omnihand/urdf/`
 - `revo2/urdf/revo2_left_hand.urdf`
 - `revo2/urdf/revo2_right_hand.urdf`
 

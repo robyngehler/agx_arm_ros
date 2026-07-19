@@ -4,7 +4,7 @@ promotion_origin: Sprint 1 repository and asset discovery pass
 promotion_date: 2026-05-12
 
 component: Nero arm model, planning, and simulation assets
-repository_or_source: agx_arm_ros (`src/agx_arm_sim/agx_arm_description`, `src/agx_arm_moveit`, `src/agx_arm_mit_controller`) and pyAgxArm (`docs/nero`, MDH tooling)
+repository_or_source: agx_arm_ros (`src/agx_arm_sim/agx_arm_description`, `src/agx_arm_moveit`, `src/agx_arm_mit_controller`) and `vendor/pyAgxArm` (`docs/nero`, MDH tooling)
 inspection_date: 2026-05-21
 status: PARTIALLY_AVAILABLE
 found_artifacts:
@@ -15,7 +15,7 @@ found_artifacts:
 - Unified MoveIt package `src/agx_arm_moveit` with `arm_type:=nero` support
 - MIT controller gravity/model tooling under `src/agx_arm_mit_controller`
 - Confirmed compiled USD asset `src/agx_arm_sim/agx_arm_description/urdf/USD/nero_gripper_d435/nero_gripper_d435.usd`
-- pyAgxArm Nero API docs and MDH/FK comparison surfaces
+- vendored pyAgxArm Nero API docs and MDH/FK comparison surfaces
 missing_artifacts:
 - a promoted Isaac asset set beyond the currently confirmed sim-backed package content
 - stable promoted documentation for the Humble / Jetson TRAC-IK source-build fallback beyond the current Sprint 3 working note

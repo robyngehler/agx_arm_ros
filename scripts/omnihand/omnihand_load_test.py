@@ -360,7 +360,7 @@ def main() -> int:
     print(
         "\nCross-check against the captured bus: compare the candump/pcap frame\n"
         "rate and bus utilization with the SDK call rate above. See\n"
-        "docs/development/sprint5/planning/can_transport_decision.md for the\n"
+        "docs/sprint5/evidence/can_transport_decision.md for the\n"
         "arm-side budget this hand load adds to."
     )
     return 0
