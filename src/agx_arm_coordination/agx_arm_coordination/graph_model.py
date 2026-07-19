@@ -6,7 +6,7 @@ running ROS graph. The coordinator node drives it; the performer executes the
 batches it hands back.
 
 Adapted from the cetibar Activity-DAG coordinator (see
-docs/development/sprint6/reference/) onto our robot_id / resource set.
+docs/sprint6/reference/) onto our robot_id / resource set.
 
 Model:
 

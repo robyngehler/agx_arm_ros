@@ -1,7 +1,7 @@
 """Merge per-arm recordings into one synchronized duo (both_arms) trajectory.
 
 This is the linchpin for real dual-arm time-sync (see
-``docs/control/teach_and_run.md``): genuine
+``docs/control/bringups/teach_and_run.md``): genuine
 simultaneous motion needs **one** ``both_arms`` trajectory with a single time
 parameterization — two separate per-arm goals to move_group serialize. So both
 the teach-side (Option B: store a duo action) and the coordinator (Option A: two

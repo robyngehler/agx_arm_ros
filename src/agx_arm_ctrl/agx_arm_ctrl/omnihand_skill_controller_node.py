@@ -6,7 +6,7 @@ This node (one per side, launched as ``/left_hand/omnihand_skill_controller`` /
 motion confirmed by tactile feedback, and holds/releases according to policy.
 It is the bottom of the coordinator stack.
 
-Contract (see docs/development/sprint6/planning/hand_skill_backend_mapping.md):
+Contract (see docs/sprint6/planning/hand_skill_backend_mapping.md):
 
 - the public layer carries only ``skill_name``; the ``skill_name -> backend
   motion + target preset`` mapping lives in ``config/omnihand_skills.yaml`` and

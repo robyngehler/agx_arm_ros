@@ -10,7 +10,7 @@
 # `zero` and grasps close toward `fist_vendor_demo` until tactile contact stops
 # them. Once a flat `open` and calibrated glass/bottle grasp poses are measured
 # on hardware, point the skills at those names here — the skill_name stays the
-# same end to end. See docs/development/sprint6/planning/hand_skill_backend_mapping.md.
+# same end to end. See docs/sprint6/planning/hand_skill_backend_mapping.md.
 
 omnihand_skills:
   open_hand:

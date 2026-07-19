@@ -1,5 +1,5 @@
 # Shared action catalogue + resources for the Hefeweizen demo (sprint 6).
-# Canonical machine-readable form of docs/development/sprint6/planning/
+# Canonical machine-readable form of docs/sprint6/planning/
 # hefeweizen_activity_graph.md. The MVP YAML store behind the db_bridge-style
 # contract (get_action_detail / get_activity_plan / validate_activity).
 #

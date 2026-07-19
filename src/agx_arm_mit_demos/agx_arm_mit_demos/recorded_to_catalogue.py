@@ -1,7 +1,7 @@
 """Convert a recorded leader trajectory into catalogue ``waypoints``.
 
 Closes the teach-loop gap noted in
-``docs/control/teach_and_run.md`` (Step C): the
+``docs/control/bringups/teach_and_run.md`` (Step C): the
 leader recorder saves a dense ``RecordedTrajectory`` JSON, but the coordinator's
 ``arm_executor`` replays a *catalogue* action's ``waypoints:`` (a short list of
 ``positions`` + ``time_from_start_sec``). This tool downsamples a recording to a
