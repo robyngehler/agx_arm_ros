@@ -22,7 +22,7 @@ documentation split after the cleanup pass.
 | Custom ROS messages | `src/agx_arm_msgs` | Repo-owned message layer for controller and future OmniHand-specific diagnostics | Extend here for OmniHand-specific status and tactile messages. |
 | Activity coordination | `src/agx_arm_coordination` | Sprint 6 Activity-DAG coordinator, coordinator-internal performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks | Keep orchestration here; the OmniHand skill controller stays in `src/agx_arm_ctrl` and arm execution reuses the existing `both_arms`/per-arm FollowJointTrajectory path. |
 | Vendored OmniHand SDK | `vendor/OmniHand-Pro-2025` | Third-party SDK, vendor ROS examples, and upstream asset source | Keep vendored; treat as upstream input, not as the public repo contract. |
-| Vendored Python SDK workspace | `vendor/pyAgxArm` | Pinned Nero SDK fork, MDH tooling, and end-effector driver examples | Reuse as backend support and reference, not as the canonical ROS integration surface. |
+| Vendored Python SDK runtime pin | `vendor/pyAgxArm` | Pinned Nero SDK fork, MDH tooling, and end-effector driver examples used by the repo runtime baseline | Keep this as the repo-owned runtime pin; do active upstream sync and local SDK development in an external checkout, then retag and bump this vendor pin. |
 
 ## Documentation Layout
 
@@ -56,6 +56,10 @@ Treat these directories as generated or runtime-managed:
 - `install/`
 - `log/`
 - `logs/` when used for run outputs or analysis artifacts rather than curated references
+
+An external sibling checkout such as `../pyAgxArm` is outside this repo. It is part of the SDK
+development workflow, not part of the repo-owned source tree here: pull upstream there, land local
+changes there, tag the fork there, then advance `vendor/pyAgxArm` in this workspace.
 
 ## Current Structure Rules
 

@@ -88,7 +88,9 @@ bash ./scripts/setup_agx_arm_runtime_env.sh
 ```
 
 The environment script installs `vendor/pyAgxArm` first and falls back to `../pyAgxArm` only when
-the vendored copy is unavailable.
+the vendored copy is unavailable. The vendored copy is the normal runtime baseline inside this repo;
+the sibling checkout exists to support the external pyAgxArm development workflow that prepares new
+tags or commits before `vendor/pyAgxArm` is bumped.
 
 Run ROS commands through the runtime wrapper instead of activating Conda manually:
 

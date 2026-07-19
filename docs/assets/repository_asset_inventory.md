@@ -14,7 +14,7 @@ promotion_date: 2026-05-12
 | MIT controller package | `src/agx_arm_mit_controller` | CONFIRMED | Trajectory playback, hold test, gravity model, calibration, recorder, and launch surfaces. |
 | Hardware bridge | `src/agx_arm_ctrl` | CONFIRMED | ROS2 control node, launch entry points, and the repo-owned OmniHand bridge surface used by the rest of the workspace. |
 | Removed root description path | `src/agx_arm_description` | REMOVED | Legacy duplicate package removed after canonicalizing the sim-backed package and bundling the Nero/Revo2 asset tree there. |
-| Vendored Python SDK workspace | `vendor/pyAgxArm` | CONFIRMED | Vendored `pyAgxArm` submodule providing the pinned Nero SDK, MDH kinematics, demos, and effector support for AgileX gripper and Revo2. |
+| Vendored Python SDK runtime pin | `vendor/pyAgxArm` | CONFIRMED | Vendored `pyAgxArm` submodule providing the pinned Nero SDK baseline used by runtime, install, and validation flows inside this repo. |
 | OmniHand-specific repo/package | `vendor/OmniHand-Pro-2025` | PARTIALLY_AVAILABLE | Vendored SDK with C++/Python APIs, ROS2 node/message packages, and URDF/mesh assets; the repo-owned bridge exists separately and the vendor ROS surface is not the public contract. |
 | AGV/base description or CAD | workspace-wide | MISSING | No local AGV repo, CAD export, or mount package found. |
 
@@ -39,6 +39,12 @@ promotion_date: 2026-05-12
 | `utiles/mdh_kinematics` | MDH FK surface referenced by MIT gravity tooling | Reuse as a comparison/debug surface, not as the sole model source. |
 | `protocols/can_protocol/drivers/effector` | AgileX gripper and Revo2 effector drivers | Reuse as local examples only; they do not provide OmniHand support. |
 
+### External `pyAgxArm` development checkout (outside this repo)
+
+| Surface | Current Role | Reuse Guidance |
+| --- | --- | --- |
+| sibling or external checkout such as `../pyAgxArm` | upstream-sync, local development, rebase, and tag-preparation workspace for the team fork | Not part of this repo's source tree. Pull vendor changes there, land local patches there, push and tag the fork there, then bump `vendor/pyAgxArm` in `agx_arm_ros` to the new tag or commit. |
+
 ## File Format Inventory
 
 | Format | Status | Confirmed Examples |
@@ -61,6 +67,7 @@ promotion_date: 2026-05-12
 - `src/duo_body_description` is the current staging package for body-mounted Duo system assembly and description-only bringup; promote stable outputs back into the canonical packages instead of treating it as a second long-term description source.
 - The asset tree at that path is now committed directly in-repo and pruned to `nero/`, `revo2/`, and README/license material.
 - The tracked vendor submodules in this workspace are `vendor/pyAgxArm` and `vendor/OmniHand-Pro-2025`.
+- `vendor/pyAgxArm` is the pinned runtime source inside this repo; upstream-sync and feature development happen in a separate external `pyAgxArm` checkout before that pin is advanced.
 
 ### Controller Model Source Candidate
 
@@ -74,5 +81,6 @@ This is usable now and aligned with the Sprint 1 canonical package decision.
 - Reuse `src/duo_body_description` as the current Duo system staging package while the body-mounted description layer is still being validated; keep long-term ownership in the canonical packages.
 - Reuse `src/agx_arm_moveit` as the current planning baseline; it now carries the roadmap-facing `nero_arm` / `nero_tool0` semantics in a monolithic active surface plus a TRAC-IK-based MoveIt configuration.
 - Reuse `src/agx_arm_mit_controller` for gravity, trajectory replay, recorder, and calibration workflows.
-- Reuse `vendor/pyAgxArm` for SDK access, firmware selection, MDH comparison, and effector examples.
+- Reuse `vendor/pyAgxArm` for runtime SDK access, firmware selection, MDH comparison, and effector examples.
+- Use the external `pyAgxArm` checkout only when preparing upstream pulls, local SDK changes, and the next `vendor/pyAgxArm` pin update.
 - Do not start OmniHand or AGV implementation from scratch inside this repo until the missing upstream/vendor artifacts are actually available.

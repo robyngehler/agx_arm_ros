@@ -30,6 +30,7 @@ Repo-wide documentation and consistency checklist.
 - [x] Created first-class `docs/sprint1/` through `docs/sprint6/` sprint surfaces and migrated their retained evidence out of the old development tree.
 - [x] Align `AGENTS.md`, `CLAUDE.md`, `.claude/`, and `.github/` with the migrated docs surfaces, hardware gate, and platform split.
 - [x] Removed the separate legacy-doc inventory once repo-wide references were clean; git history and sprint evidence are now the audit trail.
+- [x] Clarified `vendor/pyAgxArm` as the in-repo runtime pin and the external `pyAgxArm` checkout as the upstream-sync and pin-preparation workflow.
 - [x] Retired the duplicate top-level `docs/development` checklist, error, question, and mismatch trackers.
 - [x] Consolidated the main overlapping historical proposal and investigation families before deleting their source files.
 - [x] Moved the thematic Physical AI roadmap into `docs/project/roadmap_and_phases.md` and folded the old progress tracker into this checklist.

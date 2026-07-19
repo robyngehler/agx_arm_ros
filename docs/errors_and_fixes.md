@@ -17,12 +17,15 @@ See `control/bringups/launches.md` and `CAN_USER_EN.md`.
 
 ## pyAgxArm source drift
 
-Problem: docs described `vendor/pyAgxArm` as the runtime pin while the runtime environment script still preferred the sibling checkout.
+Problem: the docs did not clearly separate the pinned repo runtime source from the external
+pyAgxArm development checkout.
 
 Current fix:
 
 - `scripts/setup_agx_arm_runtime_env.sh` now installs `vendor/pyAgxArm` first
 - it falls back to `../pyAgxArm` only when the vendored checkout is unavailable
+- the sibling or external `pyAgxArm` checkout remains the place for upstream pulls, local SDK
+	changes, tagging, and preparing the next `vendor/pyAgxArm` pin
 
 See `control/environment.md` and `project/control_layer_and_dependencies.md`.
 
