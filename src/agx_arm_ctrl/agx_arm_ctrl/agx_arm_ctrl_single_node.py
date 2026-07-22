@@ -203,6 +203,10 @@ class AgxArmRosNode(Node):
         # recovery trigger category -> count, surfaced on every recovery so a
         # CPU-stress run shows what actually drove each reconnect.
         self._recovery_reason_counts = {}
+        # Set by the emergency-stop service when a stop cannot be verified in
+        # feedback: the heavyweight link-reset recovery must run on the publish
+        # thread (which owns the connection), never from the service thread.
+        self._force_recovery = False
 
     def _log_parameters(self):
         self.get_logger().info(f"can_port: {self.can_port}")
@@ -637,6 +641,13 @@ class AgxArmRosNode(Node):
     def _should_recover_bus(self) -> bool:
         if not self.bus_recovery_enabled or self._recovery_in_progress:
             return False
+        # Explicit escalation from an unverified emergency stop: bypass the
+        # warm-up and cooldown gates — this is a requested safety recovery.
+        if self._force_recovery:
+            self._force_recovery = False
+            return self._trigger_recovery(
+                "forced_estop", "forced recovery after unverified emergency stop"
+            )
         # Only arm the watchdog once the bus has been healthy at least once,
         # so the normal startup warm-up is never mistaken for a stall.
         if not self._had_control_ready:
@@ -1415,16 +1426,55 @@ class AgxArmRosNode(Node):
         finally:
             self.agx_arm.set_auto_set_motion_mode_enabled(True)
 
+    # An emergency stop is only trustworthy if the arm is confirmed stopped in
+    # feedback: under ENOBUFS the SDK silently drops the stop command and still
+    # returns success (plan section 1.3.2), so the command alone proves nothing.
+    ESTOP_VELOCITY_THRESHOLD_RAD_S = 0.05
+    ESTOP_VERIFY_TIMEOUT_S = 0.5
+
+    def _arm_velocities_settled(
+        self,
+        threshold_rad_s: float = ESTOP_VELOCITY_THRESHOLD_RAD_S,
+        timeout_s: float = ESTOP_VERIFY_TIMEOUT_S,
+        poll_s: float = 0.02,
+    ) -> bool:
+        """Poll motor feedback until every joint velocity is under threshold.
+
+        Returns True only when the arm is confirmed stopped within the timeout.
+        Missing feedback (a dead bus) can never be confirmed stopped, so it
+        deliberately fails verification rather than reporting a phantom success.
+        """
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            velocities = []
+            try:
+                for joint_index in range(1, self.arm_joint_count + 1):
+                    ms = self.agx_arm.get_motor_states(joint_index)
+                    if ms is None:
+                        velocities = None
+                        break
+                    velocities.append(abs(float(ms.msg.velocity)))
+            except Exception:
+                velocities = None
+            if velocities and all(v < threshold_rad_s for v in velocities):
+                return True
+            time.sleep(poll_s)
+        return False
+
     def _emergency_stop_callback(self, request, response):
-        """Best-effort, UNCONDITIONAL stop.
+        """Best-effort, UNCONDITIONAL, feedback-VERIFIED stop.
 
         Deliberately not gated on readiness or enable state: during a runaway
         (stalled feedback, recovery in progress) those checks are exactly what
         is broken, and the firmware keeps executing the last MIT command it
-        received. Order: damped MIT zero (needs no feedback) -> position hold
-        at the current pose when feedback is trustworthy -> electronic
-        emergency stop as the last resort when it is not.
+        received. Order: damped MIT zero (needs no feedback) -> position hold at
+        the current pose when feedback is trustworthy -> electronic emergency
+        stop when it is not. Each stage is then VERIFIED in feedback (joint
+        velocities settle); if not verified it escalates to a hard electronic
+        stop and finally requests a bus-recovery link reset, and it never logs a
+        plain success when the arm is not confirmed stopped.
         """
+        stopped = False
         try:
             if self.is_mit_mode or self._current_motion_mode == 'mit':
                 try:
@@ -1455,8 +1505,40 @@ class AgxArmRosNode(Node):
                 self.get_logger().warn(
                     "Emergency stop without valid feedback: sent electronic emergency stop"
                 )
+
+            # Verify the stop actually took effect in feedback.
+            stopped = self._arm_velocities_settled()
+            if stopped:
+                self.get_logger().info(
+                    f"Emergency stop verified: {self.arm_type} joints settled"
+                )
+            else:
+                self.get_logger().error(
+                    "Emergency stop NOT verified (joints still moving or no feedback) — "
+                    "escalating to electronic emergency stop"
+                )
+                try:
+                    self.agx_arm.electronic_emergency_stop()
+                except Exception as e:
+                    self.get_logger().error(f"electronic_emergency_stop failed: {e}")
+                stopped = self._arm_velocities_settled()
+                if not stopped:
+                    # Last resort: hand the heavyweight link-reset recovery to the
+                    # publish thread (owns the connection). This also flushes a
+                    # stuck moving MIT setpoint the firmware would keep executing.
+                    self.get_logger().error(
+                        "Emergency stop STILL not verified after electronic stop — "
+                        "requesting bus-recovery link reset. Firmware has no MIT "
+                        "command watchdog: use the physical e-stop."
+                    )
+                    self._force_recovery = True
         except Exception as e:
             self.get_logger().error(f"Emergency stop failed: {e}")
+        if not stopped:
+            self.get_logger().error(
+                f"EMERGENCY STOP UNVERIFIED for {self.arm_type} — do not trust the "
+                "software stop; use the physical e-stop"
+            )
         return response
 
     def _exit_teach_mode_callback(self, request, response):

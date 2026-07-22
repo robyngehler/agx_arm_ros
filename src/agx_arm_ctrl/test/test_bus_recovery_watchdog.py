@@ -59,6 +59,7 @@ def _make_node(*, is_ok: bool, frame_ts: float, node_feedback_age_s: float,
     node.bus_recovery_cooldown_s = 0.0
     node._last_recovery_end_monotonic = now - 100.0
     node._recovery_cooldown_logged = False
+    node._force_recovery = False
     node._tx_stall_detected = False
     node._tx_stall_count = 0
     node.feedback_timeout = 0.25
