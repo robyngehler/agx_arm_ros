@@ -844,7 +844,16 @@ class NeroMitControllerNode(Node):
                         )
 
                     if not self._has_fresh_feedback():
+                        # Mirror the position-limit abort: never leave the stale
+                        # trajectory armed, or a feedback comeback snaps the arm to
+                        # a far-ahead point. Feedback is not fresh here, so we
+                        # cannot capture a hold now — clear it and let the control
+                        # loop recapture the current pose when feedback returns.
+                        self.active_trajectory = None
+                        self.hold_reference = None
+                        self.holding_final_point = False
                         self.active_goal_handle = None
+                        self._set_execution_state(ExecutionState.CANCELING_TO_HOLD)
                         goal_handle.abort()
                         return self._failed_result(
                             FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED,
@@ -978,6 +987,15 @@ class NeroMitControllerNode(Node):
                 now = time.monotonic()
                 if self._stale_since_monotonic is None:
                     self._stale_since_monotonic = now
+                    # Drop any active trajectory the instant feedback goes stale:
+                    # its start clock keeps running through the outage, so a
+                    # feedback comeback would sample a far-ahead point and snap
+                    # the arm with MIT gains. Recapture the current pose as the
+                    # hold reference when feedback returns instead.
+                    if self.active_trajectory is not None:
+                        self.active_trajectory = None
+                        self.hold_reference = None
+                        self.holding_final_point = False
                 if now - self.last_stale_feedback_log > 1.0:
                     self.get_logger().warn(
                         "Feedback is stale; streaming damped-stop MIT commands (dead-man)"
