@@ -12,6 +12,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from builtin_interfaces.msg import Time
 from std_srvs.srv import SetBool, Empty, Trigger
+from std_msgs.msg import Bool
+from rclpy.qos import QoSProfile, DurabilityPolicy
 from geometry_msgs.msg import Pose, PoseStamped, PoseArray
 from scipy.spatial.transform import Rotation as R
 
@@ -113,6 +115,10 @@ class AgxArmRosNode(Node):
         # Recovering more often than this cannot help: if one full reconnect
         # did not restore the bus, an immediate second one will not either.
         self.declare_parameter("bus_recovery_cooldown_s", 5.0)
+        # After a bus recovery, refuse new motion until an operator/supervisor
+        # explicitly clears the fault, instead of silently re-arming control on
+        # the next healthy tick (plan Phase 1 item 6 / Phase 2 item 3).
+        self.declare_parameter("require_fault_ack", True)
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
@@ -139,6 +145,11 @@ class AgxArmRosNode(Node):
         self.bus_recovery_cooldown_s = max(
             0.0, float(self.get_parameter("bus_recovery_cooldown_s").value)
         )
+        self.require_fault_ack = bool(self.get_parameter("require_fault_ack").value)
+        # After a recovery the node latches this and refuses new motion until
+        # clear_fault_lockout is called; feedback keeps flowing throughout.
+        self._fault_lockout = False
+        self._fault_lockout_logged = False
         self._last_recovery_end_monotonic = 0.0
         self._recovery_cooldown_logged = False
         self._last_tx_congestion_log = 0.0
@@ -287,6 +298,27 @@ class AgxArmRosNode(Node):
 
             self.agx_arm.set_speed_percent(self.speed_percent)
             self.agx_arm.set_tcp_offset(self.tcp_offset)
+        self._check_tx_observability_contract()
+
+    def _check_tx_observability_contract(self) -> None:
+        """Warn loudly at startup if the pinned SDK lacks TX-error observability.
+
+        The silent-TX-loss safety signal (plan section 1.3.2) depends on the
+        vendor fork's send-error counters. If they are absent — a stale submodule
+        pin or a backend without the fork — the node otherwise degrades to no
+        signal silently, so surface it here instead of losing it quietly.
+        """
+        if hasattr(self.agx_arm, "get_send_error_count"):
+            self.get_logger().info(
+                "TX-loss observability: SDK send-error counters available"
+            )
+        else:
+            self.get_logger().warn(
+                "TX-loss observability UNAVAILABLE: arm backend has no "
+                "get_send_error_count() (vendor/pyAgxArm fork missing or stale "
+                "pin). Silently-dropped arm commands will NOT be surfaced; update "
+                "the pinned submodule to the TX-observability fork."
+            )
 
     def _init_effector(self):
         self.gripper: Optional[AgxGripperWrapper] = None
@@ -321,6 +353,13 @@ class AgxArmRosNode(Node):
         self.arm_status_pub = self.create_publisher(
             AgxArmStatus, "feedback/arm_status", 1
         )
+        # Latched so a late-joining coordinator/supervisor sees the current fault
+        # state; True means motion is refused until clear_fault_lockout.
+        self.fault_lockout_pub = self.create_publisher(
+            Bool, "feedback/fault_lockout",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self._publish_fault_lockout()
         self.leader_joint_angles_pub = self.create_publisher(
             JointState, "feedback/leader_joint_angles", 1
         )
@@ -375,6 +414,9 @@ class AgxArmRosNode(Node):
         self.create_service(SetBool, "enable_agx_arm", self._enable_callback)
         self.create_service(Empty, "move_home", self._move_home_callback)
         self.create_service(Empty, "emergency_stop", self._emergency_stop_callback)
+        self.create_service(
+            Trigger, "clear_fault_lockout", self._clear_fault_lockout_callback
+        )
         if self.is_nero:
             self.create_service(Trigger, "set_normal_mode", self._set_normal_mode_callback)
             self.create_service(Trigger, "set_leader_mode", self._set_leader_mode_callback)
@@ -441,6 +483,17 @@ class AgxArmRosNode(Node):
         return self.agx_arm is not None and self.agx_arm.is_ok()
 
     def _check_can_control(self) -> bool:
+        if self._fault_lockout:
+            # After a bus recovery the node holds an explicit fault lockout and
+            # refuses ALL new motion until clear_fault_lockout is called, instead
+            # of silently re-arming on the next healthy tick.
+            if not self._fault_lockout_logged:
+                self._fault_lockout_logged = True
+                self.get_logger().warn(
+                    "Arm in fault lockout after recovery; motion refused until "
+                    "clear_fault_lockout is called"
+                )
+            return False
         if self._hand_window_active:
             # A hand window owns the shared side bus and the arm is parked in a
             # driver-level hold. Drop ALL arm command ingress here (the shared
@@ -464,6 +517,41 @@ class AgxArmRosNode(Node):
                 self.get_logger().warn("Agx_arm is in teach mode, cannot control")
                 return False
         return True
+
+    def _publish_fault_lockout(self) -> None:
+        try:
+            self.fault_lockout_pub.publish(Bool(data=self._fault_lockout))
+        except Exception:
+            pass
+
+    def _enter_fault_lockout(self, reason: str) -> None:
+        """Latch a fault lockout so no new motion is accepted until cleared."""
+        if not self.require_fault_ack:
+            return
+        self.control_ready = False
+        self._control_ready_logged = False
+        if not self._fault_lockout:
+            self._fault_lockout = True
+            self._fault_lockout_logged = False
+            self.get_logger().error(
+                f"FAULT LOCKOUT engaged ({reason}); refusing new motion until "
+                "clear_fault_lockout is called. Verify the arm before re-enabling."
+            )
+            self._publish_fault_lockout()
+
+    def _clear_fault_lockout_callback(self, request, response):
+        del request
+        was_locked = self._fault_lockout
+        self._fault_lockout = False
+        self._fault_lockout_logged = False
+        self._last_good_feedback_monotonic = time.monotonic()
+        self._publish_fault_lockout()
+        response.success = True
+        response.message = (
+            "fault lockout cleared" if was_locked else "no fault lockout was active"
+        )
+        self.get_logger().warn(response.message)
+        return response
 
     def _create_pose_cmd(self, pose: Pose) -> list:
         quaternion = [
@@ -883,6 +971,10 @@ class AgxArmRosNode(Node):
             self._last_recovery_end_monotonic = time.monotonic()
             self._recovery_cooldown_logged = False
             self._recovery_in_progress = False
+            # Hold an explicit fault lockout after recovery: the publish loop
+            # would otherwise re-arm control_ready on the next healthy tick and
+            # silently accept motion. Requires clear_fault_lockout to release.
+            self._enter_fault_lockout(self._recover_reason or "bus recovery")
 
     def _clear_comm_error(self) -> None:
         try:

@@ -76,3 +76,17 @@ def test_backend_without_counter_api_is_noop():
     node = _node(object())  # no get_send_error_count
     node._surface_silent_tx_loss()  # must not raise
     assert node._logger.warnings == []
+
+
+def test_contract_check_warns_when_counter_api_absent():
+    # #6: the safety signal must not degrade silently — a stale pin / missing
+    # fork is surfaced loudly at startup.
+    node = _node(object())  # no get_send_error_count
+    node._check_tx_observability_contract()
+    assert any("UNAVAILABLE" in w for w in node._logger.warnings)
+
+
+def test_contract_check_is_quiet_when_counter_api_present():
+    node = _node(_CountingArm(0))  # fork present
+    node._check_tx_observability_contract()
+    assert node._logger.warnings == []

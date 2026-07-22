@@ -89,6 +89,8 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
     node.is_mit_mode = True
     node._current_motion_mode = 'mit'
     node._leader_mode_active = False
+    node._fault_lockout = False
+    node._fault_lockout_logged = False
     node._last_good_feedback_monotonic = time.monotonic()
     node._last_feedback_frame_ts = None
     node._last_feedback_advance_monotonic = time.monotonic()
