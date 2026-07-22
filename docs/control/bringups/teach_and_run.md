@@ -129,6 +129,13 @@ free-runs without the arm).
 > - **current stable operating rule: keep `one-shot on` and switch control ownership explicitly** —
 >   when a hand action is needed, let the arm settle into a safe static hold and then give the hand a
 >   short command window instead of sustaining concurrent arm and hand command pressure on the same bus.
+> - **the driver owns that switch via two verified services** (Nero, `agx_arm_ctrl`):
+>   `prepare_hand_window` quiesces the arm into a normal-mode static hold, drops streamed MIT commands at
+>   the driver gateway, and returns success only once feedback confirms the arm is settled and not left
+>   backdrivable; `resume_arm_control` re-admits MIT commands after checking feedback is healthy and no
+>   comm fault is latched. Clearing pending hand commands (`control/omnihand/stop`) before resume is the
+>   caller's job. The coordinator's `right_can_bus`/`left_can_bus` tokens already serialize same-side arm
+>   and hand actions, so these services are the execution primitive under that scheduling contract.
 > - **for headroom under that policy, deepen the TX ring** —
 >   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
 >   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.

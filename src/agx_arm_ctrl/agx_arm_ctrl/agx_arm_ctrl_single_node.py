@@ -167,6 +167,10 @@ class AgxArmRosNode(Node):
         # leader-angle stream instead of mistaking that silence for a stall.
         self._leader_mode_active = False
         self._current_motion_mode = None  # tracks last mode ctrl sent to hardware
+        # Step-and-settle hand window: while active the arm is parked in a
+        # driver-level normal-mode hold and incoming MIT commands are dropped at
+        # this gateway, so the OmniHand owns the shared side CAN bus (plan §3).
+        self._hand_window_active = False
         self.enable_flag = False
         self.control_ready = False
         self._control_ready_logged = False
@@ -368,6 +372,12 @@ class AgxArmRosNode(Node):
         if self.is_nero:
             self.create_service(Trigger, "set_normal_mode", self._set_normal_mode_callback)
             self.create_service(Trigger, "set_leader_mode", self._set_leader_mode_callback)
+            self.create_service(
+                Trigger, "prepare_hand_window", self._prepare_hand_window_callback
+            )
+            self.create_service(
+                Trigger, "resume_arm_control", self._resume_arm_control_callback
+            )
         if not self.is_switch_seamlessly:
             self.create_service(Empty, "exit_teach_mode", self._exit_teach_mode_callback)
 
@@ -1260,6 +1270,11 @@ class AgxArmRosNode(Node):
             self._handle_send_failure("_move_js_callback", e)
 
     def _move_mit_callback(self, msg: MoveMITMsg):
+        if self._hand_window_active:
+            # A hand window owns the shared side bus and the arm is parked in a
+            # driver-level normal-mode hold; drop arm MIT commands here (the last
+            # hop to hardware) until resume_arm_control reopens the side.
+            return
         if not self._check_can_control():
             return
 
@@ -1595,6 +1610,135 @@ class AgxArmRosNode(Node):
             response.success = False
             response.message = f"Failed to switch to normal mode: {e}"
             self.get_logger().error(response.message)
+        return response
+
+    def _arm_ctrl_mode(self):
+        """Current firmware ctrl_mode from feedback, or None if unreadable."""
+        try:
+            status = self.agx_arm.get_arm_status()
+        except Exception:
+            return None
+        if status is None:
+            return None
+        return status.msg.ctrl_mode
+
+    def _capture_hold_pose(self):
+        """Current joint pose from trustworthy live feedback, or None."""
+        try:
+            js = self.agx_arm.get_joint_angles()
+        except Exception:
+            return None
+        alive = js is not None and (
+            js.hz > 0 or self._feedback_frame_advancing(js.timestamp)
+        )
+        if not alive:
+            return None
+        return list(js.msg)
+
+    def _prepare_hand_window_callback(self, request, response):
+        """Quiesce the arm into a VERIFIED normal-mode hold so the OmniHand can
+        own the shared side bus (plan section 3).
+
+        Every mode change is confirmed by feedback readback (ctrl_mode + joint
+        velocities), never fire-and-forget: the SDK silently drops mode frames
+        under bus saturation (section 1.3.2), which is exactly when a handoff
+        runs. Returns success only when the arm is confirmed held and quiet.
+        """
+        del request
+        if not self.is_nero:
+            response.success = False
+            response.message = "prepare_hand_window is only supported for Nero"
+            return response
+        if self._recovery_in_progress or self._force_recovery:
+            response.success = False
+            response.message = "cannot open a hand window while recovering the bus"
+            return response
+        if not self.enable_flag or not self._check_arm_connected():
+            response.success = False
+            response.message = "arm not connected/enabled"
+            return response
+        hold_pose = self._capture_hold_pose()
+        if hold_pose is None:
+            response.success = False
+            response.message = "no trustworthy feedback to capture a hold pose"
+            self.get_logger().error(response.message)
+            return response
+        # Gate MIT forwarding first so no streamed arm command races the handoff.
+        self._hand_window_active = True
+        try:
+            if self.is_mit_mode or self._current_motion_mode == 'mit':
+                self._send_damped_stop_mit()
+            self.agx_arm.set_normal_mode()
+            self.is_mit_mode = False
+            self._leader_mode_active = False
+            self._current_motion_mode = None
+            self.agx_arm.move_j(hold_pose)
+            self._current_motion_mode = 'j'
+            self._last_good_feedback_monotonic = time.monotonic()
+        except Exception as e:
+            self._hand_window_active = False
+            response.success = False
+            response.message = f"failed to command normal-mode hold: {e}"
+            self.get_logger().error(response.message)
+            return response
+        # Verify: arm settled in feedback AND not left backdrivable (teaching).
+        settled = self._arm_velocities_settled()
+        ctrl_mode = self._arm_ctrl_mode()
+        teaching = (
+            ctrl_mode is not None
+            and ctrl_mode == self.agx_arm.ARM_STATUS.CtrlMode.TEACHING_MODE
+        )
+        if settled and not teaching:
+            response.success = True
+            response.message = "hand window open: arm held in normal mode, MIT quiesced"
+            self.get_logger().info(response.message)
+        else:
+            self._hand_window_active = False
+            response.success = False
+            response.message = (
+                f"hold not verified (settled={settled}, ctrl_mode={ctrl_mode}); "
+                "hand window NOT opened"
+            )
+            self.get_logger().error(response.message)
+        return response
+
+    def _resume_arm_control_callback(self, request, response):
+        """Reopen the shared side bus for arm MIT control after a hand window.
+
+        Verifies healthy arm feedback and no latched comm fault before
+        re-admitting MIT commands. Clearing pending hand commands
+        (control/omnihand/stop) is the caller's job — the driver owns the arm
+        side only. The MIT controller re-captures its own hold reference when it
+        resumes, so no far-ahead trajectory is replayed here.
+        """
+        del request
+        if not self.is_nero:
+            response.success = False
+            response.message = "resume_arm_control is only supported for Nero"
+            return response
+        if self._recovery_in_progress or self._force_recovery:
+            response.success = False
+            response.message = "cannot resume arm control while recovering the bus"
+            return response
+        if self._feedback_actually_stale():
+            response.success = False
+            response.message = "arm feedback is stale; not resuming"
+            self.get_logger().error(response.message)
+            return response
+        try:
+            comm_err = self.agx_arm.has_comm_error() and self.agx_arm.get_comm_error()
+        except Exception:
+            comm_err = None
+        if comm_err and self._is_recoverable_can_error(comm_err):
+            response.success = False
+            response.message = f"comm fault present ({comm_err}); not resuming"
+            self.get_logger().error(response.message)
+            return response
+        self._hand_window_active = False
+        self._last_good_feedback_monotonic = time.monotonic()
+        response.success = True
+        response.message = "arm control resumed: MIT commands re-admitted"
+        self.get_logger().info(response.message)
         return response
 
     def _set_leader_mode_callback(self, request, response):
