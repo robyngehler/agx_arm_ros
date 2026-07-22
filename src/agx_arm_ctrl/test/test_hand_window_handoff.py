@@ -14,8 +14,9 @@ from std_srvs.srv import Trigger
 
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
 
-_NOT_TEACHING = 0x00
-_TEACHING = 0x02
+_CAN_CTRL = 0x01   # active holding mode (verified hold)
+_STANDBY = 0x00    # idle — NOT a hold (e.g. V112 set_normal_mode no-op leaves it here)
+_TEACHING = 0x02   # backdrivable
 
 
 class _FakeLogger:
@@ -30,7 +31,7 @@ class _FakeLogger:
 
 
 class _FakeArm:
-    def __init__(self, *, velocity=0.0, ctrl_mode=_NOT_TEACHING, hz=1.0,
+    def __init__(self, *, velocity=0.0, ctrl_mode=_CAN_CTRL, hz=1.0,
                  frame_ts=1.0, comm_err=None):
         self.velocity = velocity
         self.ctrl_mode = ctrl_mode
@@ -96,7 +97,7 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
 
 
 def test_prepare_hand_window_opens_on_verified_hold():
-    arm = _FakeArm(velocity=0.0, ctrl_mode=_NOT_TEACHING)
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL)
     node = _node(arm)
     resp = node._prepare_hand_window_callback(None, Trigger.Response())
     assert resp.success is True
@@ -106,7 +107,7 @@ def test_prepare_hand_window_opens_on_verified_hold():
 
 
 def test_prepare_hand_window_fails_and_reverts_when_not_settled():
-    arm = _FakeArm(velocity=0.5, ctrl_mode=_NOT_TEACHING)  # never settles
+    arm = _FakeArm(velocity=0.5, ctrl_mode=_CAN_CTRL)  # never settles
     node = _node(arm)
     resp = node._prepare_hand_window_callback(None, Trigger.Response())
     assert resp.success is False
@@ -119,6 +120,18 @@ def test_prepare_hand_window_fails_if_left_in_teaching_mode():
     resp = node._prepare_hand_window_callback(None, Trigger.Response())
     assert resp.success is False
     assert node._hand_window_active is False
+
+
+def test_prepare_hand_window_fails_if_ctrl_mode_not_a_hold():
+    # V112 honesty: set_normal_mode is a firmware no-op, so if the arm is left in
+    # STANDBY (or any non-CAN_CTRL mode) the readback must fail verification
+    # instead of claiming a hold the firmware never entered.
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_STANDBY)
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is False
+    assert node._hand_window_active is False
+    assert "hold NOT verified" in resp.message
 
 
 def test_prepare_hand_window_rejected_while_recovering():

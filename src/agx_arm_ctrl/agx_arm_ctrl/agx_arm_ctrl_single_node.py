@@ -1658,6 +1658,27 @@ class AgxArmRosNode(Node):
             self.get_logger().error(response.message)
         return response
 
+    # Nero feedback ctrl_mode values that mean the arm is under active command
+    # control and holding position (a hand window needs a firm hold, not a
+    # backdrivable or idle arm): CAN_CTRL=0x01, TCP_CTRL=0x08.
+    _HOLD_CTRL_MODES = frozenset({0x01, 0x08})
+
+    def _ctrl_mode_is_hold(self, ctrl_mode) -> bool:
+        """True only when the readback confirms an active holding ctrl_mode.
+
+        This is the source of truth for the handoff, NOT the set_normal_mode
+        call: on Nero V112 that call is a firmware no-op (leader/follower only),
+        so a hand window must be verified by what the arm actually reports, never
+        by assuming the mode switch took. Backdrivable modes (TEACHING=0x02,
+        LINKAGE_TEACHING_INPUT=0x06), STANDBY, and UNKNOWN all fail here.
+        """
+        if ctrl_mode is None:
+            return False
+        try:
+            return int(ctrl_mode) in self._HOLD_CTRL_MODES
+        except (TypeError, ValueError):
+            return False
+
     def _arm_ctrl_mode(self):
         """Current firmware ctrl_mode from feedback, or None if unreadable."""
         try:
@@ -1727,23 +1748,26 @@ class AgxArmRosNode(Node):
             response.message = f"failed to command normal-mode hold: {e}"
             self.get_logger().error(response.message)
             return response
-        # Verify: arm settled in feedback AND not left backdrivable (teaching).
+        # Verify by readback, not by assuming set_normal_mode took (it is a
+        # no-op on V112): the arm must be settled in feedback AND report an
+        # active holding ctrl_mode (CAN_CTRL/TCP_CTRL), else we do not claim a
+        # safe hold and the hand window is not opened.
         settled = self._arm_velocities_settled()
         ctrl_mode = self._arm_ctrl_mode()
-        teaching = (
-            ctrl_mode is not None
-            and ctrl_mode == self.agx_arm.ARM_STATUS.CtrlMode.TEACHING_MODE
-        )
-        if settled and not teaching:
+        held = self._ctrl_mode_is_hold(ctrl_mode)
+        if settled and held:
             response.success = True
-            response.message = "hand window open: arm held in normal mode, MIT quiesced"
+            response.message = (
+                f"hand window open: arm settled and holding (ctrl_mode={ctrl_mode}), "
+                "MIT quiesced"
+            )
             self.get_logger().info(response.message)
         else:
             self._hand_window_active = False
             response.success = False
             response.message = (
-                f"hold not verified (settled={settled}, ctrl_mode={ctrl_mode}); "
-                "hand window NOT opened"
+                f"hold NOT verified (settled={settled}, holding={held}, "
+                f"ctrl_mode={ctrl_mode}); hand window not opened"
             )
             self.get_logger().error(response.message)
         return response
