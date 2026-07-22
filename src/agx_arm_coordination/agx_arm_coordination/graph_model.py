@@ -16,7 +16,9 @@ Model:
   edges; nodes sharing a ``sync_flag`` form a barrier group.
 - **resources**: each ``robot_id`` occupies a set of physical units; two actions
   conflict when their unit sets intersect. ``both_arms`` occupies both per-arm
-  units, so it conflicts with ``left_arm`` and ``right_arm`` (graph doc §Resources).
+  units, so it conflicts with ``left_arm`` and ``right_arm``. Each side's arm and
+  hand also share one physical CAN bus (``left_can_bus`` / ``right_can_bus``), so
+  same-side arm and hand actions conflict too (graph doc §Resources).
 """
 
 from __future__ import annotations
@@ -26,14 +28,20 @@ from typing import Any
 
 
 # robot_id -> set of physical units it occupies. Intersection => resource
-# conflict. both_arms holds both per-arm units, so it serializes against either
-# per-arm action; the two hands are independent of each other and of the arms.
+# conflict. Each side's arm and hand share ONE physical CAN bus (only two mttcan
+# channels, one per arm), so same-side arm and hand actions conflict on the shared
+# ``*_can_bus`` unit and are never scheduled concurrently — this encodes the
+# Step-and-Settle rule that the arm owns the side bus and the hand only gets
+# explicit windows (docs/sprint6/planning/shared_can_step_and_settle_integration_plan.md
+# §1.7, §4). both_arms holds both per-arm units and both side buses.
 ROBOT_UNITS: dict[str, frozenset[str]] = {
-    "left_arm": frozenset({"left_arm"}),
-    "right_arm": frozenset({"right_arm"}),
-    "both_arms": frozenset({"left_arm", "right_arm"}),
-    "left_hand": frozenset({"left_hand"}),
-    "right_hand": frozenset({"right_hand"}),
+    "left_arm": frozenset({"left_arm", "left_can_bus"}),
+    "right_arm": frozenset({"right_arm", "right_can_bus"}),
+    "both_arms": frozenset(
+        {"left_arm", "right_arm", "left_can_bus", "right_can_bus"}
+    ),
+    "left_hand": frozenset({"left_hand", "left_can_bus"}),
+    "right_hand": frozenset({"right_hand", "right_can_bus"}),
 }
 
 ACTIONTYPE_GRIPPER = "Gripper"

@@ -31,7 +31,19 @@ def test_both_arms_conflicts_with_each_per_arm():
     assert conflicts("both_arms", "right_arm")
     assert not conflicts("left_arm", "right_arm")
     assert not conflicts("left_hand", "right_hand")
-    assert not conflicts("both_arms", "left_hand")
+    # both_arms owns both side CAN buses, so it now blocks either hand too.
+    assert conflicts("both_arms", "left_hand")
+
+
+def test_same_side_arm_and_hand_share_can_bus():
+    # Each side's arm and hand share one physical CAN bus, so they conflict and
+    # cannot run concurrently (Step-and-Settle: the arm owns the side bus, the
+    # hand only gets explicit windows). Opposite sides stay independent.
+    assert conflicts("right_arm", "right_hand")
+    assert conflicts("left_arm", "left_hand")
+    assert not conflicts("right_arm", "left_hand")
+    assert not conflicts("left_arm", "right_hand")
+    assert conflicts("both_arms", "right_hand")
 
 
 def test_units_for_unknown_is_empty():

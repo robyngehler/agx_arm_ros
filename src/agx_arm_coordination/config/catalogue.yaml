@@ -16,7 +16,11 @@ resources:
   R_BOTH_ARMS:  { robots: [both_arms] }
   R_LEFT_HAND:  { robots: [left_hand] }
   R_RIGHT_HAND: { robots: [right_hand] }
-  # CAN-bus tokens deferred until sprint-5 bus-load validation shows contention.
+  # Side CAN-bus contention is confirmed: each side's arm and hand share one
+  # physical bus, so graph_model.ROBOT_UNITS now gives left_arm/left_hand a shared
+  # left_can_bus unit (and right_can_bus for the right side). Same-side arm and
+  # hand actions therefore conflict and are serialized automatically — no extra
+  # resource rows needed here (the tokens live in ROBOT_UNITS, not the catalogue).
 
 actions:
   # --- Hand skills (Gripper) ------------------------------------------------
