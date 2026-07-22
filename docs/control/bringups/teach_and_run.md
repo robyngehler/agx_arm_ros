@@ -136,13 +136,20 @@ free-runs without the arm).
 > - **current stable operating rule: keep `one-shot on` and switch control ownership explicitly** —
 >   when a hand action is needed, let the arm settle into a safe static hold and then give the hand a
 >   short command window instead of sustaining concurrent arm and hand command pressure on the same bus.
-> - **the driver owns that switch via two verified services** (Nero, `agx_arm_ctrl`):
->   `prepare_hand_window` quiesces the arm into a normal-mode static hold, drops streamed MIT commands at
->   the driver gateway, and returns success only once feedback confirms the arm is settled and not left
->   backdrivable; `resume_arm_control` re-admits MIT commands after checking feedback is healthy and no
->   comm fault is latched. Clearing pending hand commands (`control/omnihand/stop`) before resume is the
->   caller's job. The coordinator's `right_can_bus`/`left_can_bus` tokens already serialize same-side arm
->   and hand actions, so these services are the execution primitive under that scheduling contract.
+> - **the driver owns that switch via two readback-verified services** (Nero, `agx_arm_ctrl`):
+>   `prepare_hand_window` captures the current pose, commands a static hold, and gates **all** arm command
+>   ingress at the driver (`_check_can_control`: the MIT gateway, `move_j`/`js`, pose/line/circle, and the
+>   follow path). It returns success **only** once feedback confirms the arm settled (velocities → 0) **and**
+>   `ctrl_mode` reads an active holding mode (`CAN_CTRL`/`TCP_CTRL`) — not by assuming `set_normal_mode`
+>   took, which is a firmware no-op on V112. `resume_arm_control` re-admits arm commands after verifying
+>   feedback is live and no comm fault is latched. Clearing pending hand commands (`control/omnihand/stop`)
+>   is the caller's job. The coordinator calls `prepare_hand_window` before every hand action and
+>   `resume_arm_control` after it (on the side's `{left,right}_can_bus` token), so these services are the
+>   wired execution primitive — for the MVP flow *arm moves → quiesce → hand acts → resume → arm moves*
+>   (a held grasp is assumed to need no active connection, so concurrent grasp-and-carry is out of scope).
+> - **after a bus recovery the arm holds a fault lockout**: `_check_can_control` refuses all motion and
+>   `feedback/fault_lockout` latches `true` until `clear_fault_lockout` is called — recovery no longer
+>   silently re-arms motion (disable with `require_fault_ack:=false`).
 > - **for headroom under that policy, deepen the TX ring** —
 >   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
 >   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.
