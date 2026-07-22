@@ -186,6 +186,23 @@ class AgxArmRosNode(Node):
         # regardless of how the underlying pyAgxArm comm reports ENOBUFS.
         self._tx_stall_count = 0
         self._tx_stall_detected = False
+        # Phase-0 watchdog instrumentation: tell a genuinely dead bus apart from
+        # local scheduling starvation. Active MIT streaming pegs this node near
+        # 100 % of a core, which stalls the publish loop and the FPS-based
+        # is_ok()/hz signals without the CAN bus ever going down. A loop gap this
+        # large means the "staleness" the watchdog sees may be local, not the bus.
+        self._loop_overrun_threshold_s = max(2.0 / self.pub_rate, 0.2)
+        self._last_loop_monotonic = 0.0
+        self._last_loop_gap_s = 0.0
+        self._max_loop_gap_s = 0.0
+        self._loop_overrun_count = 0
+        # recoveries suppressed because the kernel RX timestamp proved the bus
+        # was still live while a starvation-sensitive signal read stale/not-ok.
+        self._loop_overrun_suppressions = 0
+        self._last_overrun_log_monotonic = 0.0
+        # recovery trigger category -> count, surfaced on every recovery so a
+        # CPU-stress run shows what actually drove each reconnect.
+        self._recovery_reason_counts = {}
 
     def _log_parameters(self):
         self.get_logger().info(f"can_port: {self.can_port}")
@@ -484,6 +501,28 @@ class AgxArmRosNode(Node):
 
         # publishing loop
         while rclpy.ok():
+            # P0 instrumentation: measure how late this iteration is before the
+            # recovery check runs, so a stale-feedback trigger can be attributed
+            # to local scheduling starvation vs a real dead bus.
+            now = time.monotonic()
+            if self._last_loop_monotonic:
+                self._last_loop_gap_s = now - self._last_loop_monotonic
+                if self._last_loop_gap_s > self._loop_overrun_threshold_s:
+                    self._loop_overrun_count += 1
+                    self._max_loop_gap_s = max(
+                        self._max_loop_gap_s, self._last_loop_gap_s
+                    )
+                    if now - self._last_overrun_log_monotonic > 5.0:
+                        self._last_overrun_log_monotonic = now
+                        self.get_logger().warn(
+                            "publish-loop overrun: "
+                            f"{self._last_loop_gap_s * 1000:.0f} ms gap "
+                            f"(> {self._loop_overrun_threshold_s * 1000:.0f} ms; "
+                            f"count={self._loop_overrun_count}, "
+                            f"peak={self._max_loop_gap_s * 1000:.0f} ms). Feedback "
+                            "'staleness' this cycle may be local starvation, not a dead bus."
+                        )
+            self._last_loop_monotonic = now
             # P1: detect a stalled bus (TX ENOBUFS slot leak or stale feedback)
             # and re-establish the link instead of dead-locking until restart.
             # Never let recovery bookkeeping crash the publish loop.
@@ -551,6 +590,50 @@ class AgxArmRosNode(Node):
             if self._tx_stall_count >= self.bus_recovery_tx_error_threshold:
                 self._tx_stall_detected = True
 
+    def _trigger_recovery(self, category: str, reason: str) -> bool:
+        """Record why recovery fired and return True to start it."""
+        self._recover_reason = reason
+        self._recovery_reason_counts[category] = (
+            self._recovery_reason_counts.get(category, 0) + 1
+        )
+        return True
+
+    def _feedback_actually_stale(self) -> bool:
+        """Kernel-RX-timestamp confirmation that the bus is genuinely silent.
+
+        The FPS window (`is_ok()`/`hz`) and the node-observed feedback clock both
+        go stale under local CPU starvation without the bus going down. The
+        kernel receive timestamp of the last parsed frame is the ground truth:
+        frames queue in the socket buffer and carry their true arrival times when
+        the node resumes, so a still-advancing timestamp means the bus is live.
+        """
+        try:
+            joint_states = self.agx_arm.get_joint_angles()
+        except Exception:
+            return True
+        if joint_states is None:
+            return True
+        return not self._feedback_frame_advancing(joint_states.timestamp)
+
+    def _suppress_recovery_as_starvation(self, signal: str) -> bool:
+        """Count and log a recovery suppressed because the bus is still live.
+
+        Returns False so the caller stays connected. The bus is confirmed alive
+        by the kernel RX timestamp, so refresh the node-observed feedback clock
+        to stop a stale-age trigger from re-firing on the next tick.
+        """
+        self._loop_overrun_suppressions += 1
+        self._last_good_feedback_monotonic = time.monotonic()
+        if time.monotonic() - self._last_overrun_log_monotonic > 5.0:
+            self._last_overrun_log_monotonic = time.monotonic()
+            self.get_logger().warn(
+                f"{signal} but kernel feedback frames are still advancing "
+                f"(last loop gap {self._last_loop_gap_s * 1000:.0f} ms, "
+                f"suppressions={self._loop_overrun_suppressions}); treating as "
+                "local starvation, not recovering"
+            )
+        return False
+
     def _should_recover_bus(self) -> bool:
         if not self.bus_recovery_enabled or self._recovery_in_progress:
             return False
@@ -574,8 +657,10 @@ class AgxArmRosNode(Node):
             return False
         # Path A: an exception propagated out of a send (raise-style comm model).
         if self._tx_stall_detected:
-            self._recover_reason = f"raised send failures (tx_stall_count={self._tx_stall_count})"
-            return True
+            return self._trigger_recovery(
+                "send_failure",
+                f"raised send failures (tx_stall_count={self._tx_stall_count})",
+            )
         # Path B: the comm layer swallowed an ENOBUFS/ENETDOWN and only recorded
         # it (last_error / swallow-style comm model). Classify so a benign error
         # never forces a heavyweight reconnect.
@@ -587,8 +672,10 @@ class AgxArmRosNode(Node):
             if (
                 time.monotonic() - self._last_good_feedback_monotonic
             ) > self.feedback_timeout:
-                self._recover_reason = f"latched comm error with stale feedback: {comm_err}"
-                return True
+                return self._trigger_recovery(
+                    "comm_error_stale",
+                    f"latched comm error with stale feedback: {comm_err}",
+                )
             # Live feedback + latched ENOBUFS = TX congestion (e.g. a foreign
             # unacked frame retransmitting on the shared bus), NOT a dead bus.
             # A socket reconnect cannot flush the kernel TX queue, and every
@@ -606,16 +693,26 @@ class AgxArmRosNode(Node):
             return False
         try:
             if not self.agx_arm.is_ok():
-                self._recover_reason = "driver reports not ok"
-                return True
+                # is_ok() is FPS-based (SDK monitor thread) and false-triggers
+                # under whole-process CPU/GIL saturation. Only recover when the
+                # kernel RX timestamp confirms the bus is actually silent.
+                if self._feedback_actually_stale():
+                    return self._trigger_recovery("not_ok", "driver reports not ok")
+                return self._suppress_recovery_as_starvation("is_ok() reads false")
         except Exception:
-            self._recover_reason = "is_ok() raised"
-            return True
+            return self._trigger_recovery("is_ok_raised", "is_ok() raised")
         if (time.monotonic() - self._last_good_feedback_monotonic) > self.feedback_timeout:
-            self._recover_reason = (
-                f"no ready feedback for {self.feedback_timeout:.1f} s"
+            # The node-observed feedback clock is stale, but a publish-loop stall
+            # ages it without the bus going down. Confirm with the kernel RX
+            # timestamp before the heavyweight reconnect.
+            if self._feedback_actually_stale():
+                return self._trigger_recovery(
+                    "stale_feedback",
+                    f"no ready feedback for {self.feedback_timeout:.1f} s",
+                )
+            return self._suppress_recovery_as_starvation(
+                f"no node-observed feedback for {self.feedback_timeout:.1f} s"
             )
-            return True
         return False
 
     def _recover_bus(self):
@@ -646,7 +743,11 @@ class AgxArmRosNode(Node):
             is_ok = False
         self.get_logger().error(
             f"CAN bus stall detected ({self._recover_reason or 'unknown trigger'}; "
-            f"tx_stall_count={self._tx_stall_count}, is_ok={is_ok}); starting recovery"
+            f"tx_stall_count={self._tx_stall_count}, is_ok={is_ok}); starting recovery "
+            f"[reasons so far: {self._recovery_reason_counts}; "
+            f"loop overruns: {self._loop_overrun_count} "
+            f"(peak {self._max_loop_gap_s * 1000:.0f} ms); "
+            f"starvation suppressions: {self._loop_overrun_suppressions}]"
         )
         try:
             recovered = False
