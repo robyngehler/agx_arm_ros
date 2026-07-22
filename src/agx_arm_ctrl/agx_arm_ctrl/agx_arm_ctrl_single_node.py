@@ -211,6 +211,12 @@ class AgxArmRosNode(Node):
         # feedback: the heavyweight link-reset recovery must run on the publish
         # thread (which owns the connection), never from the service thread.
         self._force_recovery = False
+        # Silent-TX-loss surfacing: the forked SDK counts send() failures that
+        # the swallow-style comm model would otherwise hide once an RX frame
+        # clears last_error (plan section 1.3.2). Track the last observed count
+        # so a rising count can be logged even while feedback looks healthy.
+        self._last_send_error_count = 0
+        self._last_tx_loss_log = 0.0
 
     def _log_parameters(self):
         self.get_logger().info(f"can_port: {self.can_port}")
@@ -548,6 +554,8 @@ class AgxArmRosNode(Node):
             except Exception as e:
                 self.get_logger().error(f"bus recovery check failed: {e}")
 
+            self._surface_silent_tx_loss()
+
             if self.agx_arm.is_ok():
                 if self._check_arm_ready():
                     self._last_good_feedback_monotonic = time.monotonic()
@@ -647,6 +655,40 @@ class AgxArmRosNode(Node):
                 "local starvation, not recovering"
             )
         return False
+
+    def _surface_silent_tx_loss(self) -> None:
+        """Log commands the SDK dropped silently while feedback looked healthy.
+
+        On the shared bus this is usually the hand losing arbitration, not a dead
+        arm, so it is surfaced (not turned into a heavyweight recovery): a rising
+        forked send-error count while RX keeps flowing is the only evidence that
+        arm commands are being dropped (plan section 1.3.2).
+        """
+        get_count = getattr(self.agx_arm, "get_send_error_count", None)
+        if get_count is None:
+            return
+        try:
+            count = int(get_count())
+        except Exception:
+            return
+        if count <= self._last_send_error_count:
+            self._last_send_error_count = count
+            return
+        dropped = count - self._last_send_error_count
+        self._last_send_error_count = count
+        now = time.monotonic()
+        if now - self._last_tx_loss_log <= 5.0:
+            return
+        self._last_tx_loss_log = now
+        try:
+            last = self.agx_arm.get_last_send_error()
+        except Exception:
+            last = None
+        self.get_logger().warn(
+            f"silent TX loss: {dropped} send(s) dropped (total {count}) while feedback "
+            f"is live (last: {last}); arm commands may not be reaching the firmware. On "
+            "the shared bus this is usually hand-frame arbitration loss, not a dead arm."
+        )
 
     def _should_recover_bus(self) -> bool:
         if not self.bus_recovery_enabled or self._recovery_in_progress:
