@@ -139,6 +139,23 @@ def test_move_mit_dropped_while_hand_window_active():
     assert arm.move_mit_calls == 0
 
 
+def test_all_arm_ingress_gated_only_by_hand_window():
+    # Every arm command callback funnels through _check_can_control(), so gating
+    # there blocks MIT AND move_j/js/pose/line/circle and the follow path. Prove
+    # the hand window is the sole difference on an otherwise-controllable node.
+    node = _node(_FakeArm())
+    node.control_ready = True
+    node.enable_flag = True
+    node.is_switch_seamlessly = True
+    node._check_arm_ready = lambda: True
+
+    node._hand_window_active = False
+    assert node._check_can_control() is True
+
+    node._hand_window_active = True
+    assert node._check_can_control() is False
+
+
 def test_resume_arm_control_reopens_side():
     arm = _FakeArm(frame_ts=5.0)
     node = _node(arm)

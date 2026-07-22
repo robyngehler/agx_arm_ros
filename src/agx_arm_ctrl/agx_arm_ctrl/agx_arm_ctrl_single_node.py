@@ -441,6 +441,13 @@ class AgxArmRosNode(Node):
         return self.agx_arm is not None and self.agx_arm.is_ok()
 
     def _check_can_control(self) -> bool:
+        if self._hand_window_active:
+            # A hand window owns the shared side bus and the arm is parked in a
+            # driver-level hold. Drop ALL arm command ingress here (the shared
+            # control/joint_states follow path, move_j/js, pose/line/circle, and
+            # MIT) so no client can inject arm frames until resume_arm_control.
+            # Silent by design — a quiesced window drops commands as normal.
+            return False
         if not self.control_ready:
             # Startup warm-up: ignore incoming control commands until a valid
             # joint state stream is available.
@@ -1312,11 +1319,8 @@ class AgxArmRosNode(Node):
             self._handle_send_failure("_move_js_callback", e)
 
     def _move_mit_callback(self, msg: MoveMITMsg):
-        if self._hand_window_active:
-            # A hand window owns the shared side bus and the arm is parked in a
-            # driver-level normal-mode hold; drop arm MIT commands here (the last
-            # hop to hardware) until resume_arm_control reopens the side.
-            return
+        # Arm command ingress (incl. the hand-window gate) is centralized in
+        # _check_can_control(); MIT is dropped there while a hand window is open.
         if not self._check_can_control():
             return
 
