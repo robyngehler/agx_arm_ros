@@ -41,6 +41,7 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.action import PerformActivity, PerformAction
@@ -115,6 +116,8 @@ class _Child:
 
 
 class _HandChild(_Child):
+    side: str = ""  # arm side whose hand window was opened for this action
+
     def _interpret_result(self, wrapper) -> None:
         result = wrapper.result
         self.mark(bool(result.success), result.message or result.final_state)
@@ -141,6 +144,13 @@ class CoordinatorNode(Node):
 
         self.declare_parameter("config_dir", "")
         self.declare_parameter("hand_action_template", "/{side}_hand/perform")
+        # Driver-side step-and-settle handoff services, per arm side. Before a
+        # hand action runs on a shared side bus the arm is quiesced into a
+        # verified hold (prepare_hand_window) and reopened afterwards
+        # (resume_arm_control), so the hand actually owns the bus.
+        self.declare_parameter("arm_service_template", "/{side}_arm")
+        self.declare_parameter("handoff_enabled", True)
+        self.declare_parameter("handoff_timeout_sec", 5.0)
         self.declare_parameter("arm_dry_run", False)
         self.declare_parameter("poll_period_sec", 0.05)
         self.declare_parameter("goal_accept_timeout_sec", 5.0)
@@ -156,6 +166,9 @@ class CoordinatorNode(Node):
             )
         config_dir = Path(config_dir_param)
         self.hand_action_template = str(self.get_parameter("hand_action_template").value)
+        self.arm_service_template = str(self.get_parameter("arm_service_template").value)
+        self.handoff_enabled = bool(self.get_parameter("handoff_enabled").value)
+        self.handoff_timeout = float(self.get_parameter("handoff_timeout_sec").value)
         self.arm_dry_run = bool(self.get_parameter("arm_dry_run").value)
         self.poll_period = float(self.get_parameter("poll_period_sec").value)
         self.goal_accept_timeout = float(self.get_parameter("goal_accept_timeout_sec").value)
@@ -172,11 +185,23 @@ class CoordinatorNode(Node):
 
         # Child action clients (created once, reused per activity run).
         self._hand_clients: dict[str, ActionClient] = {}
+        self._prepare_clients: dict[str, object] = {}
+        self._resume_clients: dict[str, object] = {}
         for side in ("left", "right"):
             name = self.hand_action_template.format(side=side)
             self._hand_clients[side] = ActionClient(
                 self, PerformAction, name, callback_group=self._cb_group
             )
+            arm_ns = self.arm_service_template.format(side=side)
+            self._prepare_clients[side] = self.create_client(
+                Trigger, f"{arm_ns}/prepare_hand_window", callback_group=self._cb_group
+            )
+            self._resume_clients[side] = self.create_client(
+                Trigger, f"{arm_ns}/resume_arm_control", callback_group=self._cb_group
+            )
+        # Sides whose arm is currently quiesced for a hand window (prepared but
+        # not yet resumed), so any exit path can reopen them.
+        self._open_hand_windows: set[str] = set()
         # Arm motion goes through the MoveIt multi-arm slice: anchor->anchor via
         # MoveGroup (collision-aware plan + execute), recorded replay via
         # ExecuteTrajectory. MoveIt fans a both_arms plan out to the per-arm
@@ -237,12 +262,63 @@ class CoordinatorNode(Node):
             return self._dispatch_arm(action_no, action, activity_id)
         raise DispatchError(f"unhandled routing kind '{decision.kind}'")
 
+    def _call_trigger_sync(self, client, label: str) -> tuple[bool, str]:
+        """Call a Trigger service and wait for its result (bounded)."""
+        if not client.wait_for_service(timeout_sec=self.handoff_timeout):
+            return False, f"{label}: service unavailable"
+        future = client.call_async(Trigger.Request())
+        deadline = time.monotonic() + self.handoff_timeout
+        while rclpy.ok() and not future.done():
+            if time.monotonic() > deadline:
+                return False, f"{label}: timed out"
+            time.sleep(self.poll_period)
+        resp = future.result()
+        if resp is None:
+            return False, f"{label}: no response"
+        return bool(resp.success), resp.message or ""
+
+    def _open_hand_window(self, side: str) -> None:
+        """Quiesce the arm on ``side`` into a verified hold before a hand action.
+
+        Raises DispatchError if the arm cannot be safely parked, so a hand action
+        never runs while the arm still streams on the shared side bus.
+        """
+        if not self.handoff_enabled or side in self._open_hand_windows:
+            return
+        ok, msg = self._call_trigger_sync(
+            self._prepare_clients[side], f"prepare_hand_window[{side}]"
+        )
+        if not ok:
+            raise DispatchError(f"could not open hand window on {side}: {msg}")
+        self._open_hand_windows.add(side)
+        self.get_logger().info(f"hand window opened on {side} (arm quiesced): {msg}")
+
+    def _resume_hand_window(self, side: str) -> None:
+        """Reopen the arm side after a hand action (best-effort)."""
+        if not side or side not in self._open_hand_windows:
+            return
+        ok, msg = self._call_trigger_sync(
+            self._resume_clients[side], f"resume_arm_control[{side}]"
+        )
+        self._open_hand_windows.discard(side)
+        if ok:
+            self.get_logger().info(f"arm control resumed on {side}: {msg}")
+        else:
+            self.get_logger().error(f"resume_arm_control failed on {side}: {msg}")
+
+    def _resume_all_hand_windows(self) -> None:
+        for side in list(self._open_hand_windows):
+            self._resume_hand_window(side)
+
     def _dispatch_hand(self, action_no, action, decision, activity_id) -> _Child:
         client = self._hand_clients[decision.side]
         if not client.wait_for_server(timeout_sec=self.goal_accept_timeout):
             raise DispatchError(
                 f"hand skill controller for {decision.robot_id} not available"
             )
+        # Quiesce the arm on this side into a verified hold before the hand takes
+        # the shared bus; raises if the arm cannot be safely parked.
+        self._open_hand_window(decision.side)
         goal = PerformAction.Goal()
         goal.action_id = action.action_id
         goal.actiontype_id = action.actiontype_id
@@ -250,6 +326,7 @@ class CoordinatorNode(Node):
         goal.activity_id = activity_id
         goal.metadata_json = json.dumps(action.metadata)
         child = _HandChild(action_no, action.action_id)
+        child.side = decision.side
         child.attach_goal_future(client.send_goal_async(goal))
         return child
 
@@ -440,10 +517,12 @@ class CoordinatorNode(Node):
 
         completed: set[int] = set()
         running: dict[int, _Child] = {}
+        self._open_hand_windows.clear()
 
         while rclpy.ok() and not scheduler.is_complete(completed):
             if goal_handle.is_cancel_requested:
                 self._cancel_children(running)
+                self._resume_all_hand_windows()
                 result.success = False
                 result.message = "canceled"
                 result.completed_nodes = len(completed)
@@ -485,6 +564,9 @@ class CoordinatorNode(Node):
                 if child.success:
                     for covered_no in child.action_nos:
                         completed.add(covered_no)
+                    if isinstance(child, _HandChild):
+                        # Hand action done: reopen the arm side it quiesced.
+                        self._resume_hand_window(child.side)
                     self._event("completed", activity_id=activity_id,
                                 action_id=child.action_id, state="completed",
                                 message=child.message)
@@ -506,6 +588,7 @@ class CoordinatorNode(Node):
 
             time.sleep(self.poll_period)
 
+        self._resume_all_hand_windows()
         result.success = True
         result.message = f"activity '{activity_id}' complete"
         result.completed_nodes = len(completed)
@@ -518,6 +601,7 @@ class CoordinatorNode(Node):
                completed_count, message) -> PerformActivity.Result:
         self.get_logger().error(f"aborting '{activity_id}': {message}")
         self._cancel_children(running)
+        self._resume_all_hand_windows()
         result.success = False
         result.message = message
         result.failed_action_id = failed_action_id
