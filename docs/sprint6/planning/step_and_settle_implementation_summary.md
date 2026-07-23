@@ -65,6 +65,18 @@ Baseline: plan commit `13cde02`. All work below sits on top of it.
   held grasp is assumed to need no active connection; the flow is strictly sequential (arm moves → quiesce
   → hand acts → resume → arm moves). The coordinator hand-hold tracking was implemented then reverted.
 
+## 8b. Post-review remediation (2026-07-23)
+
+Closes three plan items an integration review found still open. Ordered by theme.
+
+| Problem | Fix | Rationale |
+|---|---|---|
+| Phase 5 gap: the operator-facing `agx_arm_duo_soft_estop` only fanned into `mit_controller/cancel_trajectory` + `hold_current`, bypassing the verified, self-escalating driver e-stop — the central e-stop was the *weakest* stop path (plan §1.5, §5). | The duo e-stop now issues the instant soft hold on every arm, then hard-escalates each side to the hand-coordinated recovery service (below), falling back to the arm driver's own verified `emergency_stop` when that node is absent. | The operator button must reach the same last-resort stop+recover the driver already implements, not a strictly weaker path. |
+| Plan §2.2 deliverable 2 (programmatic recovery) was missing: disconnect recovery existed only as the operator-run `scripts/recover_shared_can_arm.sh`, so the coordinator/supervisor could not invoke it in-graph. | New `agx_arm_shared_can_recovery` node (`agx_arm_mit_tools`) exposes a per-side `recover_<side>` Trigger mirroring the script's order (cancel → **stop hand before any link reset** → verified arm e-stop that self-escalates to a bus-recovery link reset → wait for feedback → force+verify normal mode → re-check hand). The bash script stays as the sudo-capable, ROS-graph-independent fallback. Launched alongside the duo e-stop in the multi-arm MoveIt bringup. | Automation needs the same disconnect-safe sequence the operator has, without shelling out. |
+| The `agx_arm_ctrl` `emergency_stop` was an `Empty` service: its verified/`UNVERIFIED` result and any forced-recovery lockout were log-only, unreadable by a supervisor (plan §2.4). | `emergency_stop` is now a `Trigger`: `success` is True only when the arm is confirmed stopped; `message` reports the result and, when the last resort forced a recovery, `fault_lockout=latched`. **Public ROS contract change** (`std_srvs/Empty` → `std_srvs/Trigger`); the recovery helper and duo e-stop updated to match. | A stop service must return whether the stop is trustworthy, not only log it. |
+| Fault-lockout coordination was implicit: neither the script nor a recovery path told the initiator that motion stays refused until `clear_fault_lockout`. | The recovery service and script now **report** `fault_lockout=latched` back to the caller and never clear it themselves — deliberate re-arming stays the initiator's decision. | Recovery is a fault; clearing the lockout is a separate, deliberate act by whoever owns re-arming. |
+| The `resume_arm_control` docstring over-promised that "the MIT controller re-captures its own hold reference when it resumes". | Docstring corrected: resume only reopens the gate; the MIT loop keeps its window-open hold reference (equal to the parked pose), so any sag yields a small, bounded, intended position correction — not a snap. | State what the code guarantees, not more. |
+
 ## 9. Open / hardware-dependent
 
 - **V112 `set_normal_mode` no-op:** `prepare_hand_window` now fails honestly (reporting the real `ctrl_mode`)
@@ -78,5 +90,8 @@ Baseline: plan commit `13cde02`. All work below sits on top of it.
 ## Validation
 
 Unit tests green across the touched packages (`agx_arm_ctrl`, `agx_arm_coordination`,
-`agx_arm_mit_controller`, `agx_arm_mit_demos`, plus the vendor fork's comm test). Runtime and hardware
-paths (service calls, hand feedback/command, mode readback on real firmware) need on-robot verification.
+`agx_arm_mit_controller`, `agx_arm_mit_demos`, plus the vendor fork's comm test). The §8b remediation
+adds pure-helper tests for the recovery ordering (`test_shared_can_recovery.py`: hand-stop before arm
+e-stop before normal-mode), the duo e-stop path helpers, and the script's Trigger e-stop + lockout
+handoff — all green. Runtime and hardware paths (service calls, hand feedback/command, mode readback on
+real firmware, and the in-graph `recover_<side>` sequence end to end) need on-robot verification.

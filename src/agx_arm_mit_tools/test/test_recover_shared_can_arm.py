@@ -65,6 +65,17 @@ def test_unprefixed_namespace_for_teach_setup():
     assert "/right_arm/" not in out
 
 
+def test_emergency_stop_called_as_trigger_and_lockout_handoff_reported():
+    # The e-stop is now a Trigger (so it reports verified/unverified and any
+    # forced-recovery lockout), and the script must NOT clear the lockout: it
+    # tells the operator to call clear_fault_lockout deliberately instead.
+    code, out = _run("right", ARM_NS="right_arm")
+    assert code == 0, out
+    assert "service(Trigger) /right_arm/emergency_stop" in out
+    assert "/right_arm/clear_fault_lockout" in out
+    assert "does not clear it" in out
+
+
 def test_bad_side_argument_is_rejected():
     code, out = _run("bogus")
     assert code == 2

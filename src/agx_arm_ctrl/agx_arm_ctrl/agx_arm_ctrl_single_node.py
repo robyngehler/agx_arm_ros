@@ -413,7 +413,7 @@ class AgxArmRosNode(Node):
     def _setup_services(self):
         self.create_service(SetBool, "enable_agx_arm", self._enable_callback)
         self.create_service(Empty, "move_home", self._move_home_callback)
-        self.create_service(Empty, "emergency_stop", self._emergency_stop_callback)
+        self.create_service(Trigger, "emergency_stop", self._emergency_stop_callback)
         self.create_service(
             Trigger, "clear_fault_lockout", self._clear_fault_lockout_callback
         )
@@ -1626,8 +1626,15 @@ class AgxArmRosNode(Node):
         velocities settle); if not verified it escalates to a hard electronic
         stop and finally requests a bus-recovery link reset, and it never logs a
         plain success when the arm is not confirmed stopped.
+
+        Returns a Trigger result so a supervisor can act on the outcome:
+        ``success`` is True only when the arm is CONFIRMED stopped in feedback;
+        ``message`` states the verified/unverified result and, when the last
+        resort forced a bus recovery, that a fault lockout will latch and the
+        caller must call ``clear_fault_lockout`` before re-arming motion.
         """
         stopped = False
+        recovery_requested = False
         try:
             if self.is_mit_mode or self._current_motion_mode == 'mit':
                 try:
@@ -1685,13 +1692,30 @@ class AgxArmRosNode(Node):
                         "command watchdog: use the physical e-stop."
                     )
                     self._force_recovery = True
+                    recovery_requested = True
         except Exception as e:
             self.get_logger().error(f"Emergency stop failed: {e}")
-        if not stopped:
+        if stopped:
+            response.success = True
+            response.message = f"{self.arm_type} confirmed stopped (joints settled)"
+        else:
             self.get_logger().error(
                 f"EMERGENCY STOP UNVERIFIED for {self.arm_type} — do not trust the "
                 "software stop; use the physical e-stop"
             )
+            response.success = False
+            if recovery_requested:
+                # The publish thread will run _recover_bus and latch a fault
+                # lockout; the caller (supervisor/operator) owns clearing it.
+                response.message = (
+                    f"{self.arm_type} NOT confirmed stopped — forced bus recovery "
+                    "requested; fault_lockout=latched, call clear_fault_lockout "
+                    "before re-arming. Use the physical e-stop if it still moves."
+                )
+            else:
+                response.message = (
+                    f"{self.arm_type} NOT confirmed stopped — use the physical e-stop"
+                )
         return response
 
     def _exit_teach_mode_callback(self, request, response):
@@ -1870,8 +1894,16 @@ class AgxArmRosNode(Node):
         Verifies healthy arm feedback and no latched comm fault before
         re-admitting MIT commands. Clearing pending hand commands
         (control/omnihand/stop) is the caller's job — the driver owns the arm
-        side only. The MIT controller re-captures its own hold reference when it
-        resumes, so no far-ahead trajectory is replayed here.
+        side only.
+
+        Resume behaviour, stated honestly: this service only reopens the gate. It
+        does NOT force the (separate) MIT controller to recapture a hold — during
+        the window its commands were dropped at the gate while it kept streaming
+        the hold_reference it held at window-open. That reference equals the pose
+        parked here by prepare_hand_window, so no far-ahead trajectory is
+        replayed. If the arm sagged slightly under the normal-mode hold, the MIT
+        loop applies a small, bounded position correction back to that reference
+        when the gate reopens — intended and generally desirable, not a snap.
         """
         del request
         if not self.is_nero:

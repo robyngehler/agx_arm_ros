@@ -199,19 +199,29 @@ def _instance_runtime_launches(context):
         )
 
     if len(instances) > 1 and use_mit_controller:
+        duo_arm_namespaces = [
+            join_relative_namespaces(root_namespace, instance["namespace"])
+            for instance in instances
+        ]
         actions.append(
             Node(
                 package="agx_arm_mit_tools",
                 executable="agx_arm_duo_soft_estop",
                 namespace=root_namespace,
-                parameters=[
-                    {
-                        "arm_namespaces": [
-                            join_relative_namespaces(root_namespace, instance["namespace"])
-                            for instance in instances
-                        ],
-                    }
-                ],
+                parameters=[{"arm_namespaces": duo_arm_namespaces}],
+            )
+        )
+        # Hand-coordinated shared-CAN recovery service: the hard-escalation
+        # target the duo e-stop delegates to (stop hand -> verified arm e-stop ->
+        # bus recovery -> verify normal mode). Runs alongside so the escalation
+        # is wired end to end; the arm driver's own emergency_stop is the
+        # fallback if this node is absent.
+        actions.append(
+            Node(
+                package="agx_arm_mit_tools",
+                executable="agx_arm_shared_can_recovery",
+                namespace=root_namespace,
+                parameters=[{"arm_namespaces": duo_arm_namespaces}],
             )
         )
 

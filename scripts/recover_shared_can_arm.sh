@@ -78,9 +78,12 @@ call_empty "$(ns mit_controller/hold_current)" || log "  hold_current unreachabl
 log "2/8 stop the OmniHand"
 call_trigger "$(ns control/omnihand/stop)" >/dev/null || log "  omnihand/stop unreachable (continuing)"
 
-# 3. verified driver emergency stop
+# 3. verified driver emergency stop (Trigger: reports verified/unverified and,
+#    on a forced last-resort recovery, fault_lockout=latched)
 log "3/8 driver emergency stop (damped MIT zero, verified, escalates)"
-call_empty "$(ns emergency_stop)" || log "  emergency_stop unreachable (continuing)"
+es_out="$(call_trigger "$(ns emergency_stop)")"
+if echo "$es_out" | grep -qi "fault_lockout=latched"; then estop_lockout=1; else estop_lockout=0; fi
+log "  emergency_stop: ${es_out:-<unreachable, continuing>}"
 
 # 4. flush the link
 log "4/8 CAN link reset: $IFACE down/up (needs sudo)"
@@ -114,12 +117,20 @@ fi
 log "7/8 re-check hand backend (survival across down/up is UNTESTED, plan 6.2.5)"
 call_trigger "$(ns control/omnihand/stop)" >/dev/null || log "  hand still unreachable — bridge may need restart"
 
-# 8. explicit success gate
+# 8. explicit success gate.
+#    Fault-lockout handoff: the link down/up (step 4) makes the arm ctrl node's
+#    own watchdog run a recovery and LATCH a fault lockout, and a forced e-stop
+#    recovery latches it too. This script deliberately does NOT clear it —
+#    re-arming motion is the operator's decision. Call the arm node's
+#    clear_fault_lockout service when you have verified the arm is safe.
 if [ "$fb_ok" = 1 ] && [ "$nm_ok" = 1 ]; then
-  log "8/8 RECOVERY OK — feedback live and normal mode verified. Re-enable motion deliberately."
+  log "8/8 RECOVERY OK — feedback live and normal mode verified."
+  log "     Arm is in fault lockout (estop_lockout=$estop_lockout, and the link reset"
+  log "     latches it): motion stays refused until you deliberately call"
+  log "     '$(ns clear_fault_lockout)' (std_srvs/srv/Trigger). This script does not clear it."
   exit 0
 else
-  log "8/8 RECOVERY INCOMPLETE — do NOT re-enable arm motion (fb_ok=$fb_ok nm_ok=$nm_ok)."
+  log "8/8 RECOVERY INCOMPLETE — do NOT clear the fault lockout or re-enable motion (fb_ok=$fb_ok nm_ok=$nm_ok)."
   log "     Firmware has no MIT command watchdog: use the PHYSICAL e-stop if the arm still moves."
   exit 1
 fi
