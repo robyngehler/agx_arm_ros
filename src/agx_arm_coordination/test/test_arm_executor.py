@@ -39,6 +39,41 @@ def _traj(robot_id, metadata):
     return Action(action_id="a", actiontype_id="Trajectory", robot_id=robot_id, metadata=metadata)
 
 
+def test_explicit_robot_id_poses_load_and_resolve():
+    cfg = ArmConfig.from_dict({
+        "arm_executor": {
+            "poses": {
+                "handoff": {"robot_id": "both_arms", "q": [0.1, 0.2, 0.3, 0.4]},
+                "tee": {"robot_id": "right_arm", "q": [1.0, 1.1]},
+                "Idle_R": [2.0, 2.1],  # legacy bare list
+            },
+        }
+    })
+    assert cfg.poses["handoff"] == (0.1, 0.2, 0.3, 0.4)
+    assert cfg.pose_robot_id("handoff") == "both_arms"
+    assert cfg.pose_robot_id("tee") == "right_arm"
+    # Legacy bare list has no stored robot_id -> inferred from the _R suffix.
+    assert cfg.pose_robot_id("Idle_R") == "right_arm"
+    # Unknown / un-suffixed bare name resolves to no side.
+    assert cfg.pose_robot_id("nope") == ""
+
+
+def test_explicit_both_arms_pose_plans_as_one_endpoint():
+    cfg = ArmConfig.from_dict({
+        "arm_executor": {
+            "groups": {
+                "both_arms": {"planning_group": "both_arms", "joint_names": ["l1", "l2", "r1", "r2"]},
+            },
+            "poses": {"handoff": {"robot_id": "both_arms", "q": [0.1, 0.2, 0.3, 0.4]}},
+        }
+    })
+    plan = ArmTrajectoryPlanner(cfg).plan(
+        _traj("both_arms", {"to_pose": "handoff", "velocity_scaling": 1.0})
+    )
+    assert isinstance(plan, MoveGroupPlan)
+    assert plan.target_positions == (0.1, 0.2, 0.3, 0.4)
+
+
 def test_anchor_endpoint_builds_movegroup_plan_in_order():
     plan = PLANNER.plan(_traj("both_arms", {"to_pose": ["B_L", "B_R"], "velocity_scaling": 1.0}))
     assert isinstance(plan, MoveGroupPlan)

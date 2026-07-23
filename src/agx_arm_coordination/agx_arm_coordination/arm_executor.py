@@ -99,12 +99,31 @@ class ArmConfig:
         defaults: ArmDefaults,
         move_group_action: str = _DEFAULT_MOVE_GROUP_ACTION,
         execute_trajectory_action: str = _DEFAULT_EXECUTE_TRAJECTORY_ACTION,
+        pose_robot_ids: dict[str, str] | None = None,
     ) -> None:
         self.groups = groups
         self.poses = poses
+        # Explicit robot_id per pose (both_arms/left_arm/right_arm). Empty for a
+        # legacy bare-list pose, whose side is then inferred from an _L/_R suffix.
+        self.pose_robot_ids = pose_robot_ids or {}
         self.defaults = defaults
         self.move_group_action = move_group_action
         self.execute_trajectory_action = execute_trajectory_action
+
+    def pose_robot_id(self, name: str) -> str:
+        """Resource a pose belongs to: explicit ``robot_id``, else _L/_R suffix.
+
+        The stored ``robot_id`` is authoritative; the suffix is only a fallback
+        for legacy bare-list poses so old configs keep resolving.
+        """
+        explicit = self.pose_robot_ids.get(name, "")
+        if explicit:
+            return explicit
+        if name.endswith("_L"):
+            return "left_arm"
+        if name.endswith("_R"):
+            return "right_arm"
+        return ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ArmConfig":
@@ -129,10 +148,21 @@ class ArmConfig:
                 planning_group = planning_group or moveit_group(name)
             groups[name] = ArmGroup(planning_group=planning_group, joint_names=joint_names)
 
-        poses = {
-            str(name): tuple(float(v) for v in vec)
-            for name, vec in (data.get("poses") or {}).items()
-        }
+        # Each pose is either a bare list (legacy, side from _L/_R suffix) or a
+        # mapping {robot_id: <both_arms|left_arm|right_arm>, q: [...]} that stores
+        # the resource explicitly (chosen at capture time, so it survives renames
+        # and lets both_arms be one 14-DoF entry rather than a paired _L/_R hack).
+        poses: dict[str, tuple[float, ...]] = {}
+        pose_robot_ids: dict[str, str] = {}
+        for name, entry in (data.get("poses") or {}).items():
+            name = str(name)
+            if isinstance(entry, dict):
+                vec = entry.get("q", entry.get("joints", []))
+                poses[name] = tuple(float(v) for v in vec)
+                pose_robot_ids[name] = str(entry.get("robot_id", ""))
+            else:
+                poses[name] = tuple(float(v) for v in entry)
+                pose_robot_ids[name] = ""
         raw_def = data.get("defaults") or {}
         defaults = ArmDefaults(
             base_move_time_sec=float(raw_def.get("base_move_time_sec", 4.0)),
@@ -146,6 +176,7 @@ class ArmConfig:
             execute_trajectory_action=str(
                 data.get("execute_trajectory_action", _DEFAULT_EXECUTE_TRAJECTORY_ACTION)
             ),
+            pose_robot_ids=pose_robot_ids,
         )
 
     @classmethod

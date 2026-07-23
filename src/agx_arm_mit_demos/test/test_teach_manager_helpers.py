@@ -31,8 +31,71 @@ def _config() -> ArmConfig:
     })
 
 
+def _config_explicit() -> ArmConfig:
+    # Resource stored explicitly via robot_id (the new form): both_arms is ONE
+    # 4-DoF entry, single sides carry robot_id, and names are free of _L/_R.
+    return ArmConfig.from_dict({
+        "arm_executor": {
+            "groups": {
+                "both_arms": {
+                    "planning_group": "both_arms",
+                    "joint_names": ["l1", "l2", "r1", "r2"],
+                },
+                "left_arm": {"planning_group": "left_arm", "joint_names": ["l1", "l2"]},
+                "right_arm": {"planning_group": "right_arm", "joint_names": ["r1", "r2"]},
+            },
+            "poses": {
+                "handoff": {"robot_id": "both_arms", "q": [0.0, 0.1, 0.2, 0.3]},
+                "tee_lifted": {"robot_id": "right_arm", "q": [2.0, 2.1]},
+                "park": {"robot_id": "left_arm", "q": [3.0, 3.1]},
+            },
+        }
+    })
+
+
 def test_transition_robot_ids_default_to_right_arm_for_un_namespaced_session():
     assert _transition_robot_ids([""]) == ("right_arm",)
+
+
+def test_build_transition_targets_uses_explicit_both_arms_entry():
+    targets = _build_transition_targets(_config_explicit(), ["left_arm", "right_arm"])
+    by_label = {t.label: t for t in targets}
+    # One explicit 14-DoF-style both_arms entry, named freely (no _L/_R pairing).
+    assert "both_arms:handoff" in by_label
+    both = by_label["both_arms:handoff"]
+    assert both.pose_names == ("handoff",)
+    assert both.target_positions == (0.0, 0.1, 0.2, 0.3)
+    # Single sides resolve by stored robot_id, not by name suffix.
+    assert by_label["tee_lifted"].robot_id == "right_arm"
+    assert by_label["park"].robot_id == "left_arm"
+
+
+def test_build_transition_targets_single_side_uses_explicit_robot_id():
+    # An un-suffixed right_arm pose is picked up for a right-only session.
+    targets = _build_transition_targets(_config_explicit(), [""])
+    labels = [t.label for t in targets]
+    assert labels == ["tee_lifted"]
+    assert targets[0].robot_id == "right_arm"
+
+
+def test_update_pose_writes_explicit_robot_id_and_round_trips(tmp_path):
+    from agx_arm_mit_demos.capture_anchor_pose import update_pose_in_config
+
+    cfg_path = tmp_path / "arm_config.yaml"
+    cfg_path.write_text(
+        "arm_executor:\n  poses:\n    seed_R: [0.0, 0.0]\n", encoding="utf-8"
+    )
+    update_pose_in_config(cfg_path, "handoff", [0.1, 0.2, 0.3, 0.4], 3, robot_id="both_arms")
+    assert "handoff: {robot_id: both_arms, q: [0.100, 0.200, 0.300, 0.400]}" in cfg_path.read_text()
+
+    cfg = ArmConfig.from_file(cfg_path)
+    assert cfg.poses["handoff"] == (0.1, 0.2, 0.3, 0.4)
+    assert cfg.pose_robot_id("handoff") == "both_arms"
+
+    # Without robot_id it stays a legacy bare list (side from the _R suffix).
+    update_pose_in_config(cfg_path, "legacy_R", [5.0, 6.0], 3)
+    cfg2 = ArmConfig.from_file(cfg_path)
+    assert cfg2.pose_robot_id("legacy_R") == "right_arm"
 
 
 def test_build_transition_targets_for_single_right_arm_filters_right_targets_only():

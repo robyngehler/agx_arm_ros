@@ -93,6 +93,19 @@ class TransitionTarget:
 _SIDE_ORDER = {"left_arm": 0, "right_arm": 1}
 
 
+def _resource_robot_id(resource: str) -> str:
+    """robot_id an anchor capture is stored under for the chosen resource.
+
+    The resource is picked in the UI before saving, so the side is known: it is
+    stored explicitly rather than encoded in an _L/_R name suffix. An
+    un-namespaced single arm resolves to the right side (see
+    ``_transition_robot_ids``).
+    """
+    if resource in ("both_arms", "left_arm", "right_arm"):
+        return resource
+    return "right_arm"
+
+
 def _transition_robot_ids(namespaces: list[str]) -> tuple[str, ...]:
     ids: list[str] = []
     names = [ns for ns in namespaces if ns]
@@ -124,8 +137,31 @@ def _build_transition_targets(config: ArmConfig, namespaces: list[str]) -> list[
         if group is None:
             continue
         if robot_id == "both_arms":
-            left = {name[:-2]: name for name in config.poses if name.endswith("_L")}
-            right = {name[:-2]: name for name in config.poses if name.endswith("_R")}
+            # Explicit both_arms anchors: one 14-DoF entry (robot_id: both_arms).
+            for pose_name, vector in sorted(config.poses.items()):
+                if config.pose_robot_id(pose_name) != "both_arms":
+                    continue
+                if len(vector) != len(group.joint_names):
+                    continue
+                targets.append(
+                    TransitionTarget(
+                        label=f"both_arms:{pose_name}",
+                        robot_id=robot_id,
+                        planning_group=group.planning_group,
+                        joint_names=group.joint_names,
+                        pose_names=(pose_name,),
+                        target_positions=tuple(float(v) for v in vector),
+                    )
+                )
+            # Legacy fallback: pair bare-list _L/_R poses by stem into both_arms.
+            left = {
+                name[:-2]: name for name in config.poses
+                if config.pose_robot_id(name) == "left_arm" and name.endswith("_L")
+            }
+            right = {
+                name[:-2]: name for name in config.poses
+                if config.pose_robot_id(name) == "right_arm" and name.endswith("_R")
+            }
             for stem in sorted(set(left) & set(right)):
                 pose_names = (left[stem], right[stem])
                 positions = _pose_vector(config, pose_names)
@@ -143,9 +179,11 @@ def _build_transition_targets(config: ArmConfig, namespaces: list[str]) -> list[
                 )
             continue
 
-        suffix = "_L" if robot_id == "left_arm" else "_R"
+        # Single side: poses whose resolved robot_id is this side.
         for pose_name, vector in sorted(config.poses.items()):
-            if not pose_name.endswith(suffix) or len(vector) != len(group.joint_names):
+            if config.pose_robot_id(pose_name) != robot_id:
+                continue
+            if len(vector) != len(group.joint_names):
                 continue
             targets.append(
                 TransitionTarget(
@@ -639,11 +677,17 @@ class TeachManagerNode(Node):
             self.get_logger().warn("no pose name given; capture aborted")
             return
 
+        # Store the resource EXPLICITLY (robot_id: {both_arms|left_arm|right_arm})
+        # instead of encoding the side in an _L/_R name suffix. A both_arms
+        # capture is one 14-DoF entry (left then right), a single side is one
+        # 7-DoF entry — the resource is known from the UI selection, so both the
+        # transition builder here and the coordinator's arm_executor read it back
+        # by robot_id, and renaming the pose no longer breaks side detection.
         if resource == "both_arms":
-            ordered = sorted(self.arms, key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
-            arms = ordered
+            arms = sorted(self.arms, key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
         else:
             arms = [next((a for a in self.arms if (a.namespace or "nero") == resource), self.arms[0])]
+        robot_id = _resource_robot_id(resource)
 
         vector: list[float] = []
         for arm in arms:
@@ -651,19 +695,20 @@ class TeachManagerNode(Node):
                 self, lambda a=arm: a.latest, arm.source_joints,
                 self.args.settle_sec, self.args.feedback_timeout,
             )
-            vector.extend(averaged[name] for name in arm.source_joints)
+            vector.extend(averaged[joint] for joint in arm.source_joints)
 
+        formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
         try:
-            note = update_pose_in_config(self.arm_config_path, pose_name, vector, self.args.precision)
+            note = update_pose_in_config(
+                self.arm_config_path, pose_name, vector, self.args.precision, robot_id=robot_id
+            )
         except OSError as exc:
             # Do not tear down the whole teach session over a bad config path;
             # the captured pose is printed so it can still be pasted manually.
-            formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
             self.get_logger().error(f"could not write anchor pose to {self.arm_config_path}: {exc}")
-            self.get_logger().error(f"captured vector for '{pose_name}' ({resource}): {formatted}")
+            self.get_logger().error(f"captured vector for '{pose_name}' ({robot_id}): {formatted}")
             return
-        formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
-        self.get_logger().info(f"{note}: {pose_name} ({resource}, {len(vector)}-dim) = {formatted}")
+        self.get_logger().info(f"{note}: {pose_name} ({robot_id}, {len(vector)}-dim) = {formatted}")
         self.get_logger().info("rebuild agx_arm_coordination (or symlink-install) for a launched coordinator")
         self._reload_arm_config()
 

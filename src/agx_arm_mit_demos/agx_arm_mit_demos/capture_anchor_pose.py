@@ -89,15 +89,27 @@ def _format_vector(values: list[float], precision: int) -> str:
     return "[" + ", ".join(f"{v:.{precision}f}" for v in values) + "]"
 
 
-def update_pose_in_config(config_path: Path, pose_name: str, vector: list[float], precision: int) -> str:
+def update_pose_in_config(
+    config_path: Path,
+    pose_name: str,
+    vector: list[float],
+    precision: int,
+    robot_id: Optional[str] = None,
+) -> str:
     """Replace (or insert) a single anchor pose line under ``poses:``.
 
     Returns a short human-readable note about what changed. Only the one pose
     line is touched; comments and the rest of the file are preserved.
+
+    When ``robot_id`` is given the entry is written as a one-line flow mapping
+    ``name: {robot_id: <id>, q: [...]}`` so the resource (both_arms / left_arm /
+    right_arm) is stored explicitly instead of encoded in an _L/_R name suffix.
+    Without it the legacy bare-list form ``name: [...]`` is written.
     """
     text = config_path.read_text(encoding="utf-8")
     lines = text.splitlines()
-    formatted = _format_vector(vector, precision)
+    vec = _format_vector(vector, precision)
+    formatted = f"{{robot_id: {robot_id}, q: {vec}}}" if robot_id else vec
 
     # Existing entry: "<indent><pose_name>: <anything>"
     entry_re = re.compile(rf"^(\s+){re.escape(pose_name)}:\s*.*$")
@@ -146,6 +158,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--settle-sec", type=float, default=0.5, help="Averaging window once data arrives")
     parser.add_argument("--timeout-sec", type=float, default=10.0, help="Give up if no data within this time")
     parser.add_argument("--precision", type=int, default=5, help="Decimal places stored per joint")
+    parser.add_argument(
+        "--robot-id",
+        default=None,
+        choices=["both_arms", "left_arm", "right_arm"],
+        help="Store the resource explicitly as {robot_id, q} instead of a bare suffixed list",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the captured vector but do not write")
     return parser.parse_args()
 
@@ -174,7 +192,9 @@ def main() -> None:
     if args.dry_run:
         print("dry-run: not writing")
         return
-    note = update_pose_in_config(config_path, args.pose_name, vector, args.precision)
+    note = update_pose_in_config(
+        config_path, args.pose_name, vector, args.precision, robot_id=args.robot_id
+    )
     print(f"{note} in {config_path}")
     print("rebuild agx_arm_coordination (or symlink-install) for a launched coordinator to use it")
 

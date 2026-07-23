@@ -27,26 +27,15 @@ arm_executor:
     base_move_time_sec: 4.0
     min_move_time_sec: 1.5
 
-  # Named anchor poses (per-arm 7-DoF vectors). ALL ZEROS = placeholder.
+  # Named anchor poses. Preferred form stores the resource explicitly:
+  #   my_pose: {robot_id: right_arm, q: [7 values]}        # single side (7-DoF)
+  #   both_pose: {robot_id: both_arms, q: [14 values]}     # left then right (14-DoF)
+  # Legacy bare lists still load; their side is inferred from an _L/_R suffix
+  # (e.g. Can_Pre_Grip_L/_R below pair into a both_arms target). An un-suffixed
+  # bare list has no resolvable side — re-capture it or add robot_id.
   poses:
-    Pre_Fill_R: [1.66703, 0.11962, -1.11054, 1.41560, -0.08919, 0.18569, 0.72309]
-    Place_R: [1.21335, 1.36619, 0.38333, 1.73549, 0.95110, 0.16132, 0.18221]
-    Init_R: [0.84774, 0.51608, 0.13842, 1.88497, 0.18368, -0.03299, 0.15038]
-    Front_R: [1.73130, 0.62441, -1.06425, 1.34072, 0.41069, 0.43546, 0.70765]
-    Grip_R: [1.21814, 1.28083, 0.36266, 1.80392, 1.09280, 0.21433, 0.20075]
-    Idle_L:         [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Idle_R: [1.78704, 1.41370, 0.99854, 2.19459, 1.79893, 0.71138, 0.09964]
-    Pre_Grip_L:     [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Pre_Grip_R: [1.11844, 1.08135, 0.34961, 1.88480, 0.66729, -0.03252, 0.18432]
-    grasp_L:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    grasp_R:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Post_Grip_L:    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Post_Grip_R: [1.28006, 1.35319, 0.38338, 1.46512, 1.03968, 0.29060, 0.21427]
-    Init_Working_L: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Init_Working_R: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Pre_Place_L:    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Pre_Place_R:    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    place_L:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    place_R:        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Post_Place_L:   [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    Post_Place_R:   [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    tee_can_lifted: [-1.01760, 1.13305, -0.62230, 1.86082, -0.76046, -0.18490, -0.11242]
+    tee_can_gripped: [-0.98428, 1.10430, -0.58289, 2.11632, -0.74541, -0.09681, -0.21839]
+    Can_Pre_Grip_L: [-1.57301, 0.87507, -0.96183, 2.03577, 0.85242, 0.02890, 0.59647]
+    Can_Pre_Grip_R: [-0.27917, 0.36214, 0.88836, 1.35757, -0.09837, 0.25604, 1.38918]
+
