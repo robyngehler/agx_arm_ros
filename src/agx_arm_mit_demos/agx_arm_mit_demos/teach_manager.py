@@ -42,8 +42,11 @@ import argparse
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import re
 import time
 from typing import Optional
+
+import yaml
 
 from action_msgs.msg import GoalStatus
 from moveit_msgs.action import ExecuteTrajectory, MoveGroup
@@ -77,6 +80,7 @@ class ManagerState(str, Enum):
     RECORD = "record"
     PLAYBACK = "playback"
     TRANSITIONS = "transitions"
+    HAND = "hand"
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,58 @@ class TransitionTarget:
 
 # Registry side order for a both_arms concatenation (left then right).
 _SIDE_ORDER = {"left_arm": 0, "right_arm": 1}
+
+
+def _load_hand_gestures(path: Path) -> tuple[list[str], dict[str, list[float]]]:
+    """Read (active_joint_order, {gesture_name: vector}) from a gesture YAML.
+
+    Same file the omnihand_skill_controller reads (omnihand_pro_gestures.yaml),
+    so a skill captured here is immediately usable as a preset. Returns empty
+    structures if the file is missing or malformed rather than raising.
+    """
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return [], {}
+    order = [str(j) for j in (data.get("omnihand_active_joint_order") or [])]
+    gestures = {
+        str(name): [float(v) for v in vec]
+        for name, vec in (data.get("omnihand_gestures") or {}).items()
+        if isinstance(vec, (list, tuple))
+    }
+    return order, gestures
+
+
+def _update_gesture_in_config(path: Path, name: str, vector: list[float], precision: int) -> str:
+    """Insert or replace one gesture line under ``omnihand_gestures:``.
+
+    Line-based like ``update_pose_in_config`` so comments and the joint-order
+    header are preserved; only the single gesture line is touched.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    formatted = "[" + ", ".join(f"{v:.{precision}f}" for v in vector) + "]"
+    entry_re = re.compile(rf"^(\s+){re.escape(name)}:\s*.*$")
+    for i, line in enumerate(lines):
+        if entry_re.match(line):
+            indent = entry_re.match(line).group(1)
+            lines[i] = f"{indent}{name}: {formatted}"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return f"updated existing gesture '{name}'"
+    block_idx = next(
+        (i for i, ln in enumerate(lines) if re.match(r"^\s*omnihand_gestures:\s*$", ln)), None
+    )
+    if block_idx is None:
+        raise RuntimeError(f"no 'omnihand_gestures:' block in {path}")
+    child_indent = "  "
+    for line in lines[block_idx + 1:]:
+        if line.strip() and not line.lstrip().startswith("#"):
+            m = re.match(r"^(\s+)\S", line)
+            if m:
+                child_indent = m.group(1)
+            break
+    lines.insert(block_idx + 1, f"{child_indent}{name}: {formatted}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return f"inserted new gesture '{name}'"
 
 
 def _resource_robot_id(resource: str) -> str:
@@ -266,6 +322,14 @@ class _ArmEndpoint:
         self.hold_current_client = node.create_client(Empty, self._name("mit_controller/hold_current"))
         self.cancel_client = node.create_client(Empty, self._name("mit_controller/cancel_trajectory"))
         self.enable_arm_client = node.create_client(SetBool, self._name("enable_agx_arm"))
+        # Driver-side step-and-settle handshake: quiesce this arm into a verified
+        # hold before a hand command, resume it after.
+        self.prepare_hand_window_client = node.create_client(
+            Trigger, self._name("prepare_hand_window")
+        )
+        self.resume_arm_control_client = node.create_client(
+            Trigger, self._name("resume_arm_control")
+        )
         self.trajectory_pub = node.create_publisher(
             JointTrajectory, self._name("mit_controller/joint_trajectory"), 10
         )
@@ -339,6 +403,16 @@ class _ArmEndpoint:
         request.data = enabled
         return self._call(self.enable_arm_client, request, "enable_agx_arm", timeout_s)
 
+    def call_prepare_hand_window(self, timeout_s: float) -> tuple[bool, str]:
+        return self._call(
+            self.prepare_hand_window_client, Trigger.Request(), "prepare_hand_window", timeout_s
+        )
+
+    def call_resume_arm_control(self, timeout_s: float) -> tuple[bool, str]:
+        return self._call(
+            self.resume_arm_control_client, Trigger.Request(), "resume_arm_control", timeout_s
+        )
+
     def required_clients(self, include_enable_arm: bool) -> list[tuple[str, object]]:
         clients = [
             (self._name("set_normal_mode"), self.set_normal_mode_client),
@@ -389,7 +463,136 @@ class TeachManagerNode(Node):
             self, ExecuteTrajectory, self._execute_trajectory_action_name()
         )
 
+        # Hand mode: capture/replay OmniHand skills from the gesture catalogue.
+        raw_hand = args.hand_gestures or "src/agx_arm_ctrl/config/omnihand_pro_gestures.yaml"
+        self.hand_gesture_path = _resolve_config_path(raw_hand)
+        self.hand_joint_order: list[str] = []
+        self.hand_gestures: dict[str, list[float]] = {}
+        self.hand_names: list[str] = []
+        self.hand_selected_index = 0
+        self._reload_hand_gestures()
+        self.hand_latest: Optional[JointState] = None
+        self.create_subscription(JointState, args.hand_feedback_topic, self._on_hand_feedback, 20)
+        self.hand_command_pub = self.create_publisher(JointState, args.hand_command_topic, 10)
+        self._hand_arm = next(
+            (a for a in self.arms if a.namespace == args.hand_arm.strip("/")), self.arms[0]
+        )
+
         self.refresh_library()
+
+    # --- hand mode -----------------------------------------------------------
+
+    def _on_hand_feedback(self, msg: JointState) -> None:
+        self.hand_latest = msg
+
+    def _reload_hand_gestures(self) -> None:
+        order, gestures = _load_hand_gestures(self.hand_gesture_path)
+        self.hand_joint_order = order
+        self.hand_gestures = gestures
+        self.hand_names = sorted(gestures)
+        self.hand_selected_index = min(self.hand_selected_index, max(0, len(self.hand_names) - 1))
+
+    @property
+    def hand_enabled(self) -> bool:
+        return bool(self.hand_joint_order) and self.hand_gesture_path.exists()
+
+    def selected_hand_skill(self) -> Optional[str]:
+        if not self.hand_names:
+            return None
+        return self.hand_names[self.hand_selected_index % len(self.hand_names)]
+
+    def select_next_hand_skill(self, step: int) -> None:
+        if not self.hand_names:
+            return
+        self.hand_selected_index = (self.hand_selected_index + step) % len(self.hand_names)
+        self.get_logger().info(f"hand skill selected: {self.selected_hand_skill()}")
+
+    def enter_hand_mode(self) -> None:
+        if not self.hand_enabled:
+            self.get_logger().warn(
+                f"hand mode unavailable: no gestures loaded from {self.hand_gesture_path} "
+                "(set --hand-gestures)"
+            )
+            return
+        self.state = ManagerState.HAND
+        self.get_logger().info(
+            f"HAND mode ({self._hand_arm.label} gates the window): "
+            f"'c' capture, 'f' replay, '[' ']' select. skills: {self.hand_names}"
+        )
+        self.print_status()
+
+    def _with_hand_window(self, label: str, fn) -> None:
+        """Run a hand op inside a prepare/resume handshake on the hand's arm."""
+        ok, msg = self._hand_arm.call_prepare_hand_window(self.args.service_timeout)
+        if not ok:
+            self.get_logger().error(f"{label} aborted: prepare_hand_window failed ({msg})")
+            return
+        try:
+            fn()
+        finally:
+            rok, rmsg = self._hand_arm.call_resume_arm_control(self.args.service_timeout)
+            if not rok:
+                self.get_logger().error(f"resume_arm_control failed after {label}: {rmsg}")
+
+    def capture_hand_skill(self, key_reader: TerminalKeyReader) -> None:
+        if not self.hand_enabled:
+            self.get_logger().warn("hand mode not available; cannot capture")
+            return
+        name = self.prompt_line(key_reader, "Hand skill name (e.g. open_flat): ").strip()
+        if not name:
+            self.get_logger().warn("no skill name given; capture aborted")
+            return
+
+        def _do() -> None:
+            try:
+                averaged = average_joint_positions(
+                    self, lambda: self.hand_latest, self.hand_joint_order,
+                    self.args.settle_sec, self.args.feedback_timeout,
+                )
+            except RuntimeError as exc:
+                self.get_logger().error(f"hand capture failed: {exc}")
+                return
+            vector = [averaged[j] for j in self.hand_joint_order]
+            try:
+                note = _update_gesture_in_config(
+                    self.hand_gesture_path, name, vector, self.args.precision
+                )
+            except (OSError, RuntimeError) as exc:
+                formatted = "[" + ", ".join(f"{v:.{self.args.precision}f}" for v in vector) + "]"
+                self.get_logger().error(
+                    f"could not write gesture to {self.hand_gesture_path}: {exc}"
+                )
+                self.get_logger().error(f"captured '{name}': {formatted}")
+                return
+            self.get_logger().info(f"{note} ({len(vector)}-dim); rebuild agx_arm_ctrl to install")
+            self._reload_hand_gestures()
+
+        self._with_hand_window(f"capture '{name}'", _do)
+
+    def play_hand_skill(self) -> None:
+        skill = self.selected_hand_skill()
+        if skill is None:
+            self.get_logger().warn("no hand skill selected")
+            return
+        vector = self.hand_gestures.get(skill)
+        if not vector or len(vector) != len(self.hand_joint_order):
+            self.get_logger().error(f"skill '{skill}' has no vector matching the joint order")
+            return
+
+        def _do() -> None:
+            msg = JointState()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.name = list(self.hand_joint_order)
+            msg.position = [float(v) for v in vector]
+            self.hand_command_pub.publish(msg)
+            self.get_logger().info(
+                f"published hand skill '{skill}'; settling {self.args.hand_settle_sec}s"
+            )
+            end = time.monotonic() + self.args.hand_settle_sec
+            while rclpy.ok() and time.monotonic() < end:
+                rclpy.spin_once(self, timeout_sec=0.05)
+
+        self._with_hand_window(f"replay '{skill}'", _do)
 
     @property
     def is_dual(self) -> bool:
@@ -967,15 +1170,22 @@ class TeachManagerNode(Node):
         if key == "t":
             self.enter_transition_mode()
             return
+        if key == "g":
+            self.enter_hand_mode()
+            return
         if key == "[":
             if self.state == ManagerState.TRANSITIONS:
                 self.select_next_transition(-1)
+            elif self.state == ManagerState.HAND:
+                self.select_next_hand_skill(-1)
             else:
                 self.select_next(-1)
             return
         if key == "]":
             if self.state == ManagerState.TRANSITIONS:
                 self.select_next_transition(1)
+            elif self.state == ManagerState.HAND:
+                self.select_next_hand_skill(1)
             else:
                 self.select_next(1)
             return
@@ -987,6 +1197,12 @@ class TeachManagerNode(Node):
             return
         if self.state == ManagerState.RECORD and key == "n":
             self.record_sample(key_reader)
+            return
+        if self.state == ManagerState.HAND and key == "c":
+            self.capture_hand_skill(key_reader)
+            return
+        if self.state == ManagerState.HAND and key == "f":
+            self.play_hand_skill()
             return
         if self.state == ManagerState.PLAYBACK and key == "f":
             self.playback_selected()
@@ -1009,13 +1225,15 @@ class TeachManagerNode(Node):
             "\nTeach manager keys:\n"
             "  i -> idle / freedrive (MIT zero-force, gravity-compensated)\n"
             "  r -> record mode      p -> playback mode      t -> transitions mode\n"
-            "  a -> capture current pose as a named anchor (-> arm_config.yaml)\n"
+            "  g -> hand mode        a -> capture current pose as a named anchor\n"
             "  w -> convert selected recording -> catalogue waypoints\n"
-            "  [ / ] -> select previous / next item (recording or anchor target)\n"
+            "  [ / ] -> select previous / next item (recording, anchor, or hand skill)\n"
             "  s -> status   h -> help   q -> quit\n"
             "Record mode:   n -> record a new trajectory\n"
             "Playback mode: f -> play selected   c -> cancel active trajectory\n"
             "Transitions:  f -> plan selected target, press f again -> execute cached plan, c -> clear cached plan\n"
+            "Hand mode:    c -> capture current hand pose as a skill, f -> replay selected skill\n"
+            "              (each wraps in a prepare_hand_window/resume_arm_control handshake)\n"
             "With two arms, record/anchor ask which resource to save "
             "(both_arms -> merged 14-dim, or one side -> 7-dim).\n"
         )
@@ -1207,6 +1425,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--auto-enable-arm", action="store_true", help="Call enable_agx_arm before mode switches")
     parser.add_argument("--no-keyboard", action="store_true")
     parser.add_argument("--urdf-path", default="")
+    # Hand mode ('g'): capture ('c') / replay ('f') OmniHand skills, each wrapped
+    # in a per-command prepare_hand_window/resume_arm_control handshake.
+    parser.add_argument(
+        "--hand-gestures", default="",
+        help="Path to omnihand_pro_gestures.yaml; enables hand mode ('g') when set/resolvable",
+    )
+    parser.add_argument(
+        "--hand-feedback-topic", default="feedback/omnihand/joint_states",
+        help="OmniHand JointState feedback topic read for skill capture",
+    )
+    parser.add_argument(
+        "--hand-command-topic", default="control/omnihand/joint_states",
+        help="OmniHand JointState command topic a replayed skill is published to",
+    )
+    parser.add_argument(
+        "--hand-arm", default="",
+        help="Arm namespace whose prepare/resume services gate the window (default: first arm)",
+    )
+    parser.add_argument(
+        "--hand-settle-sec", type=float, default=2.0,
+        help="Dwell after publishing a hand skill before resuming arm control",
+    )
     return parser.parse_args()
 
 

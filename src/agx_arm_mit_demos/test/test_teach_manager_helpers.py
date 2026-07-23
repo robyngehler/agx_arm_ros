@@ -1,6 +1,22 @@
 from agx_arm_coordination.arm_executor import ArmConfig
 
-from agx_arm_mit_demos.teach_manager import _build_transition_targets, _transition_robot_ids
+from agx_arm_mit_demos.teach_manager import (
+    _build_transition_targets,
+    _load_hand_gestures,
+    _transition_robot_ids,
+    _update_gesture_in_config,
+)
+
+
+_GESTURE_YAML = (
+    "omnihand_model: o12_pro\n"
+    "omnihand_active_joint_order:\n"
+    "  - thumb_roll_joint\n"
+    "  - index_mcp_joint\n"
+    "omnihand_gestures:\n"
+    "  # bootstrap\n"
+    "  zero: [0.0, 0.0]\n"
+)
 
 
 def _config() -> ArmConfig:
@@ -96,6 +112,36 @@ def test_update_pose_writes_explicit_robot_id_and_round_trips(tmp_path):
     update_pose_in_config(cfg_path, "legacy_R", [5.0, 6.0], 3)
     cfg2 = ArmConfig.from_file(cfg_path)
     assert cfg2.pose_robot_id("legacy_R") == "right_arm"
+
+
+def test_load_hand_gestures_reads_order_and_vectors(tmp_path):
+    path = tmp_path / "gestures.yaml"
+    path.write_text(_GESTURE_YAML, encoding="utf-8")
+    order, gestures = _load_hand_gestures(path)
+    assert order == ["thumb_roll_joint", "index_mcp_joint"]
+    assert gestures == {"zero": [0.0, 0.0]}
+
+
+def test_load_hand_gestures_missing_file_is_empty(tmp_path):
+    order, gestures = _load_hand_gestures(tmp_path / "nope.yaml")
+    assert order == [] and gestures == {}
+
+
+def test_update_gesture_inserts_and_round_trips(tmp_path):
+    path = tmp_path / "gestures.yaml"
+    path.write_text(_GESTURE_YAML, encoding="utf-8")
+
+    note = _update_gesture_in_config(path, "open_flat", [0.1, 0.2], 3)
+    assert "inserted" in note
+    _, gestures = _load_hand_gestures(path)
+    assert gestures["open_flat"] == [0.1, 0.2]
+    assert gestures["zero"] == [0.0, 0.0]  # header + existing gesture preserved
+
+    # Re-capturing the same name updates in place, not duplicates.
+    note2 = _update_gesture_in_config(path, "open_flat", [0.3, 0.4], 3)
+    assert "updated" in note2
+    _, gestures2 = _load_hand_gestures(path)
+    assert gestures2["open_flat"] == [0.3, 0.4]
 
 
 def test_build_transition_targets_for_single_right_arm_filters_right_targets_only():
