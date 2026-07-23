@@ -5,9 +5,11 @@ import time
 import rclpy
 from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
@@ -43,6 +45,12 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         )
         self.declare_parameter("feedback_timeout_s", 0.5)
         self.declare_parameter("goal_margin_s", 0.25)
+        # Step-and-settle handshake: quiesce the same-side arm into a verified
+        # hold for the duration of a hand trajectory so MoveIt hand execution
+        # owns the shared side bus instead of losing arbitration under arm MIT.
+        self.declare_parameter("handshake_enabled", True)
+        self.declare_parameter("arm_service_ns", "")
+        self.declare_parameter("handshake_timeout_s", 5.0)
 
         hand_side = str(self.get_parameter("omnihand_type").value)
         if hand_side not in ("left", "right"):
@@ -55,13 +63,29 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         feedback_topic = str(self.get_parameter("feedback_topic").value)
         self.feedback_timeout_s = float(self.get_parameter("feedback_timeout_s").value)
         self.goal_margin_s = float(self.get_parameter("goal_margin_s").value)
+        self.handshake_enabled = bool(self.get_parameter("handshake_enabled").value)
+        self.handshake_timeout_s = float(self.get_parameter("handshake_timeout_s").value)
+        arm_ns = str(self.get_parameter("arm_service_ns").value).strip("/")
 
         self.feedback_positions: dict[str, float] = {}
         self.feedback_velocities: dict[str, float] = {}
         self.last_feedback_time = 0.0
+        self._window_open = False
 
         self.trajectory_pub = self.create_publisher(JointTrajectory, trajectory_topic, 10)
         self.create_subscription(JointState, feedback_topic, self._feedback_callback, 20)
+
+        # Reentrant group so the handshake service futures are serviced while the
+        # action execute callback is spinning on them.
+        self._cb_group = ReentrantCallbackGroup()
+        prepare_name = f"/{arm_ns}/prepare_hand_window" if arm_ns else "prepare_hand_window"
+        resume_name = f"/{arm_ns}/resume_arm_control" if arm_ns else "resume_arm_control"
+        self.prepare_client = self.create_client(
+            Trigger, prepare_name, callback_group=self._cb_group
+        )
+        self.resume_client = self.create_client(
+            Trigger, resume_name, callback_group=self._cb_group
+        )
 
         self.action_server = ActionServer(
             self,
@@ -70,6 +94,7 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             execute_callback=self._execute_callback,
             goal_callback=self._goal_callback,
             cancel_callback=self._cancel_callback,
+            callback_group=self._cb_group,
         )
 
     def _feedback_callback(self, msg: JointState) -> None:
@@ -150,10 +175,72 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         result.error_string = message
         return result
 
+    def _call_trigger(self, client, label: str):
+        """Call a Trigger service. Returns (proceed, message).
+
+        ``proceed`` is None when the service is absent (no arm to gate — proceed
+        without a window), True on a verified success, False on a real failure.
+        """
+        if not client.wait_for_service(timeout_sec=self.handshake_timeout_s):
+            return None, f"{label} unavailable"
+        future = client.call_async(Trigger.Request())
+        deadline = time.monotonic() + self.handshake_timeout_s
+        while rclpy.ok() and not future.done():
+            if time.monotonic() > deadline:
+                return False, f"{label} timed out"
+            time.sleep(0.02)
+        resp = future.result()
+        if resp is None:
+            return False, f"{label} returned no response"
+        return bool(resp.success), resp.message or ""
+
+    def _open_hand_window(self) -> tuple[bool, str]:
+        """Quiesce the same-side arm before commanding the hand.
+
+        Tolerant of a hand-only bringup: if no prepare service is present there
+        is no arm contending for the bus, so proceed without a window.
+        """
+        if not self.handshake_enabled:
+            return True, "handshake disabled"
+        ok, msg = self._call_trigger(self.prepare_client, "prepare_hand_window")
+        if ok is None:
+            self.get_logger().warn(
+                f"no arm handshake ({msg}); commanding hand without quiescing an arm"
+            )
+            self._window_open = False
+            return True, msg
+        self._window_open = bool(ok)
+        if ok:
+            self.get_logger().info(f"hand window opened (arm quiesced): {msg}")
+        return bool(ok), msg
+
+    def _close_hand_window(self) -> None:
+        if not self._window_open:
+            return
+        ok, msg = self._call_trigger(self.resume_client, "resume_arm_control")
+        if not ok:
+            self.get_logger().error(f"resume_arm_control failed: {msg}")
+        self._window_open = False
+
     def _execute_callback(self, goal_handle):
         trajectory = goal_handle.request.trajectory
         self._validate_trajectory(trajectory)
+        # Own the shared side bus for the whole hand trajectory: quiesce the arm,
+        # run, then always reopen it — so MoveIt hand execution is safe under the
+        # always-on arm MIT without the caller needing to know the handshake.
+        opened, msg = self._open_hand_window()
+        if not opened:
+            goal_handle.abort()
+            return self._failed_result(
+                FollowJointTrajectory.Result.INVALID_GOAL,
+                f"could not open hand window: {msg}",
+            )
+        try:
+            return self._run_trajectory(goal_handle, trajectory)
+        finally:
+            self._close_hand_window()
 
+    def _run_trajectory(self, goal_handle, trajectory):
         self.trajectory_pub.publish(trajectory)
         start_time = time.monotonic()
         duration_s = _trajectory_duration_s(trajectory)
