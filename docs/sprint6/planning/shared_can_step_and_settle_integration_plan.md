@@ -9,6 +9,10 @@ into an implementation plan for explicit arm-hand ownership switching. It comple
 stable guidance in `docs/errors_and_fixes.md`, `docs/control/bringups/teach_and_run.md`, and
 `docs/sprint5/evidence/can_transport_decision.md`.
 
+> **Implementation status:** see the companion `step_and_settle_implementation_summary.md` for the
+> problem→fix→rationale log of everything built from this plan (handshake, verified e-stop, fault
+> lockout, TX observability, explicit pose storage, teach hand mode, MoveIt-hand handshake).
+
 Historical lineage:
 
 - the deleted Sprint 5 proposal `docs/development/sprint5/planning/arm_plus_hand_shared_can_proposal.md`
