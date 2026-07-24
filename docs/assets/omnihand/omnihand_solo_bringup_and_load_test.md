@@ -70,6 +70,12 @@ ros2 launch agx_arm_ctrl start_omnihand_bridge.launch.py \
 ros2 launch agx_arm_ctrl start_omnihand_bridge.launch.py backend_type:=mock
 ```
 
+`namespace` defaults to `auto`, i.e. the side namespace from
+`duo_motion_registry.yaml` (`right` → `right_arm`) — the same namespace the Duo
+bringup and `omnihand_exerciser` use, so a standalone bridge is addressable by
+the repo's own tooling without extra arguments. Pass `namespace:=''` for the
+old root-namespace behaviour.
+
 Do **not** prefix the launch with `PYTHONPATH=...`: the inline form *replaces*
 ROS's own `PYTHONPATH` and breaks `ros2` itself (`PackageNotFoundError: ros2cli`).
 The bridge finds the vendor SDK on its own (upward search for the repo's
@@ -113,24 +119,31 @@ To actually *drive* it, use the exerciser (`ros2 run agx_arm_ctrl omnihand_exerc
 It sends named active-joint poses over the same path MoveIt uses — the per-side
 `FollowJointTrajectory` action (falling back to the bridge's
 `control/omnihand/joint_trajectory` topic when the action server is not up) — and
-can call stop. By default it resolves the Duo side namespace (`left_arm`/`right_arm`)
-from the motion registry; against the **standalone root-namespace bridge shown above,
-pass `--namespace ''`**:
+can call stop. Both it and the standalone launch resolve the same Duo side namespace
+(`left_arm`/`right_arm`) from the motion registry, so no namespace argument is needed:
 
 ```bash
 ros2 run agx_arm_ctrl omnihand_exerciser --list
-ros2 run agx_arm_ctrl omnihand_exerciser --namespace '' --side right --gesture fist
-ros2 run agx_arm_ctrl omnihand_exerciser --namespace '' --side right --sequence open,fist,open --stop
-# against the Duo bringup (namespaced bridges) the default resolution applies:
+ros2 run agx_arm_ctrl omnihand_exerciser --model o12_pro --side right --gesture fist
 ros2 run agx_arm_ctrl omnihand_exerciser --model o12_pro --side left --gesture zero
+# only when the bridge was launched with namespace:='' (or an unnamespaced
+# start_single_agx_arm) — the topic fallback also finds that case on its own:
+ros2 run agx_arm_ctrl omnihand_exerciser --namespace '' --side right --gesture fist
 ```
+
+If the `FollowJointTrajectory` action server is not up (standalone bridge without the
+trajectory node), the exerciser falls back to the `control/omnihand/joint_trajectory`
+topic — on whichever of the namespaced or root topic a bridge is actually **subscribed**
+to, and it logs an ERROR when neither is. It used to publish into the registry namespace
+regardless, which was a silent no-op against a root-namespace bridge. That fallback path
+has no arm↔hand window and no delivery verification.
 
 Watch feedback in another terminal:
 
 ```bash
-ros2 topic echo /feedback/omnihand/joint_states     # standalone bridge
-ros2 topic echo /left_arm/feedback/omnihand/joint_states  # Duo bringup
-ros2 topic echo /feedback/omnihand/status
+ros2 topic echo /right_arm/feedback/omnihand/joint_states  # standalone + Duo bringup
+ros2 topic echo /right_arm/feedback/omnihand/status
+ros2 topic echo /feedback/omnihand/joint_states     # only with namespace:=''
 ```
 
 The poses are the vendor SDK active-joint presets (from the SDK

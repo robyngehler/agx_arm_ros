@@ -65,14 +65,63 @@ def test_failed_sends_retry_until_attempts_exhausted(bridge_node):
 
     for expected_attempts in range(2, bridge_node.command_retry_max_attempts + 1):
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
+        # An attempt is only spent once a readback could have judged the last
+        # send, so the poll has to run for the retry loop to advance.
+        bridge_node._publish_feedback()
         bridge_node._command_retry_tick()
         if bridge_node.pending_command is not None:
             assert bridge_node.pending_command["attempts"] == expected_attempts
 
     # exhausted: one more tick gives up instead of re-sending forever
     if bridge_node.pending_command is not None:
+        bridge_node.pending_command["last_send_monotonic"] -= 10.0
+        bridge_node._publish_feedback()
         bridge_node._command_retry_tick()
     assert bridge_node.pending_command is None
+    assert bridge_node._command_delivery_failed is True
+
+
+def test_attempt_is_not_spent_without_a_readback_opportunity(bridge_node):
+    """The attempt budget is spent on evidence, not on the clock.
+
+    Regression for the hardware failure of 2026-07-24: one 请求超时 put the
+    backend into fault backoff (one probe every fault_poll_interval_s) while
+    the retry timer kept firing every command_retry_period_s. All 8 attempts
+    burned in 2.4 s with at most one readback in between, so the target was
+    declared lost inside the very hand window opened to deliver it.
+    """
+    bridge_node._joint_states_command_callback(_command_msg(bridge_node))
+    assert bridge_node.pending_command["attempts"] == 1
+
+    # No _publish_feedback(): no readback has landed since the send.
+    for _ in range(20):
+        bridge_node.pending_command["last_send_monotonic"] -= 10.0
+        bridge_node._command_retry_tick()
+
+    assert bridge_node.pending_command is not None
+    assert bridge_node.pending_command["attempts"] == 1
+    assert bridge_node._command_delivery_failed is False
+
+
+def test_pending_command_keeps_the_probe_at_retry_cadence_under_fault_backoff(
+    bridge_node,
+):
+    """Fault backoff must not starve the readback that ends the retries.
+
+    Backing off is right for idle polling during an error storm, but a pending
+    command is already re-sending — the probe is the only thing that can
+    confirm it and STOP that traffic.
+    """
+    bridge_node.fault_poll_interval_s = 2.0
+    bridge_node._fault_backoff_active = True
+    bridge_node.joint_read_min_interval_s = 0.05
+    bridge_node.command_retry_period_s = 0.3
+
+    bridge_node.pending_command = None
+    assert bridge_node._effective_read_interval() == 2.0
+
+    bridge_node._joint_states_command_callback(_command_msg(bridge_node))
+    assert bridge_node._effective_read_interval() == 0.3
 
 
 def test_unverified_target_retries_then_gives_up(bridge_node):

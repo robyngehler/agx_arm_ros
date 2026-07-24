@@ -15,8 +15,10 @@ namespace (for example ``left_arm``) is resolved from the duo motion registry,
 so the exerciser reaches the bridge inside the Duo bringup namespaces where a
 bare root-namespace publish never arrives. If the action server is not up
 (standalone bridge without the trajectory node), the exerciser falls back to
-publishing the JointTrajectory directly on the bridge's namespaced
-``control/omnihand/joint_trajectory`` topic.
+publishing the JointTrajectory directly on ``control/omnihand/joint_trajectory``
+— on whichever of the namespaced or root topic a bridge is actually subscribed
+to, and it says so loudly when neither is. That fallback path has no arm<->hand
+window and no delivery verification: it is bring-up tooling, not the MoveIt path.
 
 Typical workflow against the Duo bringup:
 
@@ -29,9 +31,11 @@ Typical workflow against the Duo bringup:
     # list the poses defined for a model
     ros2 run agx_arm_ctrl omnihand_exerciser --model o12_pro --list
 
-Against a standalone (root-namespace) bridge from
-``start_omnihand_bridge.launch.py``, pass ``--namespace ''`` so the exerciser
-does not target the registry's Duo side namespace.
+``start_omnihand_bridge.launch.py`` defaults to the same registry side
+namespace, so no extra argument is needed against a standalone bridge. Only if
+that bridge was explicitly launched with ``namespace:=''`` (or via an
+unnamespaced ``start_single_agx_arm``) does the exerciser need
+``--namespace ''`` — the topic fallback also finds that case on its own.
 
 Legacy mode: pass ``--topic <topic>`` to publish JointState commands on the
 shared command topic instead (for example ``/left_arm/control/joint_states``);
@@ -268,12 +272,54 @@ class OmniHandExerciser(Node):
 
     def _publish_trajectory_fallback(self, name: str, positions: list[float]) -> None:
         if self.trajectory_publisher is None:
-            self.trajectory_publisher = self.create_publisher(
-                JointTrajectory, self.trajectory_topic, 10
+            self.trajectory_publisher = self._create_trajectory_publisher()
+        if self.trajectory_publisher is None:
+            self.get_logger().error(
+                f"pose '{name}' NOT sent: no OmniHand bridge is subscribed to "
+                f"'{self.trajectory_topic}' or to the root fallback. Check that a "
+                "bridge is running and that its namespace matches --namespace."
             )
-            # Give DDS discovery a moment so the first publish is not dropped.
-            self._sleep(0.5)
+            return
         self.trajectory_publisher.publish(self._build_trajectory(name, positions))
+        self.get_logger().info(
+            f"pose '{name}' published on '{self.trajectory_topic}' (no action "
+            "server: no arm<->hand window, and delivery is not verified here)"
+        )
+
+    def _create_trajectory_publisher(self):
+        """Publisher on the topic where a bridge is actually listening.
+
+        The side namespace is resolved from the motion registry, but a
+        standalone bridge (``start_omnihand_bridge.launch.py namespace:=''``, or
+        an unnamespaced ``start_single_agx_arm``) listens at the root instead.
+        Publishing into the registry namespace regardless was a silent no-op:
+        the fallback fired and the publish succeeded, it just reached nobody,
+        and nothing said so. So probe the candidates and keep the one that has
+        a subscriber; return None when neither does.
+        """
+        candidates = [self.trajectory_topic]
+        root_topic = _absolute_name("", "control/omnihand/joint_trajectory")
+        if root_topic not in candidates:
+            candidates.append(root_topic)
+
+        for topic in candidates:
+            publisher = self.create_publisher(JointTrajectory, topic, 10)
+            # DDS discovery is not instant; wait before calling a topic unserved.
+            deadline = self.get_clock().now().nanoseconds + int(2.0 * 1e9)
+            while rclpy.ok() and self.get_clock().now().nanoseconds < deadline:
+                if publisher.get_subscription_count() > 0:
+                    if topic != self.trajectory_topic:
+                        self.get_logger().warn(
+                            f"no bridge on '{self.trajectory_topic}'; found one on "
+                            f"'{topic}' — the bridge runs unnamespaced. Pass "
+                            "--namespace '' to address it directly."
+                        )
+                        self.trajectory_topic = topic
+                        self.stop_service = _absolute_name("", "control/omnihand/stop")
+                    return publisher
+                rclpy.spin_once(self, timeout_sec=0.05)
+            self.destroy_publisher(publisher)
+        return None
 
     def _publish_legacy_pose(self, name: str, positions: list[float]) -> None:
         if len(positions) != len(self.joint_names):

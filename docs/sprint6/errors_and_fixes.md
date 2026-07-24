@@ -409,6 +409,10 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   to the namespaced `control/omnihand/joint_trajectory` topic when the action server is not
   up, e.g. a standalone bridge; pass `--namespace ''` for the root-namespace solo bringup).
   The old shared-topic publish remains behind an explicit `--topic`.
+- Superseded 2026-07-24 (see "Hand window: the opening burst ..." below): the namespaced
+  fallback publish reached nobody against a root-namespace bridge and said nothing. The
+  standalone launch now defaults to the same registry side namespace, and the fallback picks
+  whichever topic actually has a subscriber — `--namespace ''` is no longer normally needed.
 
 ### MoveIt plans from the pre-freedrive state after dragging the arm
 
@@ -565,3 +569,44 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   down, nothing can reach the firmware and the last command keeps executing. Escalate the
   missing MIT command watchdog (command timeout -> damped stop in firmware) to the arm
   vendor; until then treat the physical e-stop as the only guaranteed stop.
+
+### Hand window: the opening burst caused the timeout, and one timeout killed the delivery
+
+- Symptom (2026-07-24, Jetson, duo_hand bringup): the OmniHand bridge alone came up clean, but
+  under `start_agx_arm_components.launch.py` every hand window opened with
+  `[ERROR]: CANFD ID: 0x00130101 请求超时` + `motor Input size does not match expected motor
+  count.` ~50 ms later. Short windows then ended with `command not verified within 8 attempts`;
+  longer (MoveIt) windows verified after 6. MoveIt reported `successfully finished` either way.
+- Correlation, from the log timeline: faults appear at arm **enable**, at **window open**, and at
+  **push restore** — but NOT during 80 s of steady holding with the push at ~2150 f/s. So steady
+  push is not what starves the hand; the low-ID, high-priority arm TX bursts are, and `one-shot=on`
+  drops the hand's high-ID CANFD request that loses arbitration to them. `prepare_hand_window`
+  emits such a burst itself (`_send_damped_stop_mit` → `set_normal_mode` →
+  `set_auto_set_motion_mode_enabled` → `move_j` → push-off frame): **the window created the fault
+  it was opened to prevent.**
+- Chain, not a single bug. Fixes (implemented, NOT yet hardware-validated):
+  1. `_silence_feedback_push` verified the silence for the first time — it previously set
+     `_hand_window_push_silenced = True` straight after the send, in a design that verifies every
+     other mode frame by readback precisely because the SDK drops mode frames under saturation.
+     Silence is measured as the absence of frames (timestamp must stop advancing for
+     `hand_window_silence_quiet_s`), one re-send on failure, explicit ENABLE + `NOT silenced` in
+     the message when it never takes. The wait is also the drain gap for the opening burst.
+  2. Bridge retry budget was spent by the clock: one 请求超时 → fault backoff (one probe / 2 s)
+     while the retry timer kept firing at 0.3 s, so 8 attempts burned in 2.4 s with at most one
+     readback. An attempt now requires a readback since the last send, and a pending command keeps
+     the probe at retry cadence (`_effective_read_interval`).
+  3. The FollowJointTrajectory bridge succeeded on elapsed time plus "some joint_states arrived" —
+     and the bridge republishes cached positions at `pub_rate` even during a total SDK fault, so
+     that check passed while the hand had received nothing. It now waits for
+     `feedback/omnihand/status` (new `command_pending` / `command_delivery_failed` /
+     `command_attempts` / `joint_readback_age_s`) and fails the goal instead of reporting success.
+  4. `start_omnihand_bridge.launch.py` defaulted to the root namespace while `omnihand_exerciser`
+     resolves the side namespace from the registry, so the exerciser's topic fallback published to
+     `/right_arm/control/omnihand/joint_trajectory` with nobody subscribed — the fallback fired and
+     reached no one, silently. Launch now defaults to `namespace:=auto` (registry side namespace);
+     the exerciser probes namespaced and root and errors when neither has a subscriber.
+- Open, found while testing and NOT addressed here: the right arm (firmware 1.06) refused the
+  window with `hold NOT verified (settled=True, holding=True, firmware_holds=False,
+  ctrl_mode=CAN_CTRL(0x1), move_mode=MOVE_MIT(0x4))` — i.e. `move_mode` still read MIT right after
+  `move_j` with auto mode-setting forced on. Only left-arm (1.11) windows were observed opening.
+  Either the MOVE-J mode frame does not take on 1.06 or the readback is sampled too early.

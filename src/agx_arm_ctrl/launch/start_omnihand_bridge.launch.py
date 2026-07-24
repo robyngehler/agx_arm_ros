@@ -1,8 +1,33 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+from agx_arm_ctrl.motion_registry import arm_sides
+
+
+def _resolve_namespace(context, *args, **kwargs):
+    """Namespace for a standalone bridge: the side's Duo namespace by default.
+
+    ``auto`` resolves to ``arm.sides.<side>.namespace`` from
+    duo_motion_registry.yaml — the same namespace the Duo bringup and the
+    exerciser use. Without this a standalone bridge listened on
+    ``/control/omnihand/*`` while every repo-side tool addressed
+    ``/<side>_arm/control/omnihand/*``, so commands went nowhere silently.
+    Pass ``namespace:=''`` to force the bridge into the root namespace.
+    """
+    del args, kwargs
+    requested = LaunchConfiguration("namespace").perform(context)
+    if requested != "auto":
+        return []
+    side = LaunchConfiguration("omnihand_type").perform(context)
+    try:
+        resolved = str(arm_sides().get(side, {}).get("namespace", "")).strip("/")
+    except Exception:
+        resolved = ""
+    context.launch_configurations["namespace"] = resolved
+    return []
 
 
 def generate_launch_description():
@@ -14,8 +39,12 @@ def generate_launch_description():
     )
     namespace_arg = DeclareLaunchArgument(
         "namespace",
-        default_value="",
-        description="ROS namespace for this OmniHand bridge instance.",
+        default_value="auto",
+        description=(
+            "ROS namespace for this OmniHand bridge instance. 'auto' takes the "
+            "side namespace from duo_motion_registry.yaml (e.g. left_arm), "
+            "matching the Duo bringup and omnihand_exerciser. Pass '' for root."
+        ),
     )
     omnihand_type_arg = DeclareLaunchArgument(
         "omnihand_type",
@@ -171,5 +200,8 @@ def generate_launch_description():
         command_verify_tolerance_rad_arg,
         joint_states_command_topic_arg,
         tactile_sample_count_arg,
+        # Must run after the arguments are declared and before the node is
+        # created, so the resolved namespace is what the node actually gets.
+        OpaqueFunction(function=_resolve_namespace),
         omnihand_bridge,
     ])

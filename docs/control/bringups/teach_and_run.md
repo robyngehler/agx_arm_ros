@@ -150,9 +150,16 @@ free-runs without the arm).
 >   re-admits arm commands after verifying feedback is live and no comm fault is latched. Clearing pending
 >   hand commands (`control/omnihand/stop`) is the caller's job. While the push is silent the bus-recovery
 >   watchdog is deliberately blind, so the silence is bounded by `hand_window_max_silence_s` (default 10 s;
->   set `hand_window_silence_feedback:=false` to keep the old, bus-flooding behaviour). If a window cannot
->   silence the push it still opens, but logs a warning and says so in the service message — hand commands
->   may then still time out. The coordinator calls `prepare_hand_window` before every hand action and
+>   set `hand_window_silence_feedback:=false` to keep the old, bus-flooding behaviour). **The silence is
+>   verified like every other step**, and the only way it can be: the feedback frame timestamp must stop
+>   advancing for `hand_window_silence_quiet_s` (default 80 ms) within `hand_window_silence_verify_s`
+>   (default 0.4 s). Silencing is a mode frame, and mode frames are dropped silently under exactly the bus
+>   saturation a window runs in, so a dropped one is re-sent once. That wait doubles as the drain gap for
+>   the window's own opening burst (`set_normal_mode` + `move_j` + the push frame are low-ID, high-priority
+>   arm frames — measured, they are what times out the hand's first CANFD request at window-open). If a
+>   window cannot silence the push it still opens, but sends an explicit ENABLE (so a late DISABLE cannot
+>   mute the arm behind an un-blinded watchdog), logs a warning and says `NOT silenced` in the service
+>   message — hand commands may then still time out. The coordinator calls `prepare_hand_window` before every hand action and
 >   `resume_arm_control` after it (on the side's `{left,right}_can_bus` token), so these services are the
 >   wired execution primitive — for the MVP flow *arm moves → quiesce → hand acts → resume → arm moves*
 >   (a held grasp is assumed to need no active connection, so concurrent grasp-and-carry is out of scope).
@@ -184,9 +191,27 @@ free-runs without the arm).
 >   default 8 attempts every 0.3 s, 0.10 rad tolerance — eventual delivery matters more than the
 >   ~2.4 s worst case): a dropped gesture command ("every 3rd
 >   `omnihand_exerciser` call gets through") is retried automatically until the joint readback confirms
->   it; `feedback/omnihand/status.status_text` shows `command_retry i/n pending` while in flight, and a
->   give-up (fingers in contact, or bus dead) is logged once. `control/omnihand/stop` clears any
->   pending retry.
+>   it; a give-up (fingers in contact, or bus dead) is logged once. `control/omnihand/stop` clears any
+>   pending retry. `feedback/omnihand/status` carries the state as structured fields —
+>   `command_pending`, `command_attempts`, `command_delivery_failed`, and `joint_readback_age_s`.
+> - **an attempt is spent on evidence, not on the clock:** a retry only counts once a readback has
+>   landed since the previous send, and while a command is pending the fault backoff no longer stretches
+>   the probe to `fault_poll_interval_s`. Before this, a single `请求超时` at window-open threw the
+>   bridge into 2 s polling while the retry timer kept firing at 0.3 s — all 8 attempts burned in 2.4 s
+>   with at most one readback in between, so the target was declared lost inside the very hand window
+>   opened to deliver it.
+> - **`joint_readback_age_s` is the only honest liveness signal for the hand:**
+>   `feedback/omnihand/joint_states` is republished from cache at `pub_rate` even while the backend is
+>   faulted, so a fresh header stamp says nothing about whether the hand is answering.
+> - **MoveIt hand execution waits for delivery, not for the clock:** the per-side
+>   `{left,right}_omnihand_controller/follow_joint_trajectory` bridge keeps the hand window (and the goal)
+>   open until `feedback/omnihand/status` reports the target decided, bounded by `delivery_timeout_s`
+>   (default 4 s), and fails the goal with `GOAL_TOLERANCE_VIOLATED` when the bridge gave up or no SDK
+>   readback newer than `readback_max_age_s` (default 1.5 s) backs it. Before this the goal succeeded at
+>   trajectory-duration + `goal_margin_s` and only checked that *some* joint-state message had arrived —
+>   the cached republish satisfied that even during a total SDK fault, so MoveIt reported
+>   `successfully finished` for poses the hand never received. Note the window can now outlive the
+>   trajectory by up to `delivery_timeout_s`; keep `hand_window_max_silence_s` above the sum.
 
 ### 2. Run the teach manager
 

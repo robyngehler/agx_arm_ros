@@ -537,8 +537,10 @@ confirms every commanded joint within `command_verify_tolerance_rad` (0.10), up 
 4 sends on hardware — eventual delivery beats latency) every `command_retry_period_s` (0.3 s). Verification only trusts a
 real readback taken after the last send (the backend caches targets optimistically) and never runs
 while `communication_fault` is set; a stop clears the pending target. Give-up after max attempts is
-logged once (covers fingers-in-contact, e.g. fist on a bottle). In-flight state is visible as
-`command_retry i/n pending` in `feedback/omnihand/status.status_text`. Additionally the SDK joint
+logged once (covers fingers-in-contact, e.g. fist on a bottle). In-flight state is visible on
+`feedback/omnihand/status` as `command_pending` / `command_attempts` / `command_delivery_failed`
+(this note previously claimed a `status_text` string of the form `command_retry i/n pending`; that
+was never implemented — `status_text` is backend-owned). Additionally the SDK joint
 readback is decoupled from `pub_rate` via `joint_read_rate` (default 20 Hz vs the previous 50):
 each poll is a real CANFD request, so this removes ~30 hand request frames/s from the shared bus.
 Validated with the mock backend end-to-end (command → verify → clear) and unit tests

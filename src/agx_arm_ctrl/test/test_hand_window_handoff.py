@@ -65,7 +65,16 @@ class _FakeLogger:
 
 class _FakeArm:
     def __init__(self, *, velocity=0.0, ctrl_mode=_CAN_CTRL, hz=1.0,
-                 frame_ts=1.0, comm_err=None, mode_feedback=_MOVE_J):
+                 frame_ts=1.0, comm_err=None, mode_feedback=_MOVE_J,
+                 push_live=False, disables_until_silent=1):
+        # push_live models the real firmware: while the push runs, every read
+        # sees a NEW frame timestamp, and it only stops once a DISABLE mode
+        # frame actually lands. disables_until_silent > 1 models the frame
+        # being dropped on a saturated bus, which is why silence is verified.
+        self.push_live = push_live
+        self.push_enabled = True
+        self.disables_until_silent = disables_until_silent
+        self._disable_count = 0
         self.velocity = velocity
         self.ctrl_mode = ctrl_mode
         self.mode_feedback = mode_feedback
@@ -84,9 +93,16 @@ class _FakeArm:
         self.mode_frames = []
 
     def _set_mode(self):
-        self.mode_frames.append(
-            (self._msg_mode.enable_can_push, self._msg_mode.move_mode)
-        )
+        push_bit = self._msg_mode.enable_can_push
+        self.mode_frames.append((push_bit, self._msg_mode.move_mode))
+        if not self.push_live:
+            return
+        if push_bit == _PUSH_DISABLE:
+            self._disable_count += 1
+            if self._disable_count >= self.disables_until_silent:
+                self.push_enabled = False
+        elif push_bit == _PUSH_ENABLE:
+            self.push_enabled = True
 
     @property
     def push_frames(self):
@@ -94,6 +110,8 @@ class _FakeArm:
         return [f for f in self.mode_frames if f[0] != _PUSH_INVALID]
 
     def get_joint_angles(self):
+        if self.push_live and self.push_enabled:
+            self.frame_ts += 0.005
         return SimpleNamespace(msg=[0.1] * 7, hz=self.hz, timestamp=self.frame_ts)
 
     def get_motor_states(self, _i):
@@ -150,6 +168,10 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
     node.feedback_timeout = 0.1
     node.hand_window_silence_feedback = True
     node.hand_window_max_silence_s = 10.0
+    # Short but real: the silence verification is a timed observation, so the
+    # tests pay it — just not 0.4 s per call.
+    node.hand_window_silence_verify_s = 0.15
+    node.hand_window_silence_quiet_s = 0.02
     node._hand_window_push_silenced = False
     node._hand_window_silence_started = 0.0
     return node
@@ -252,6 +274,53 @@ def test_open_window_silences_the_feedback_push_without_a_mode_switch():
     assert arm._msg_mode.enable_can_push == _PUSH_INVALID
     assert arm._msg_mode.ctrl_mode == _CAN_CTRL
     assert "feedback push silenced" in resp.message
+
+
+def test_silence_is_verified_by_feedback_actually_stopping():
+    # Silencing is a mode frame like any other and the SDK drops mode frames
+    # under bus saturation — which is exactly when a window runs. Claiming
+    # "silenced" from the send alone left the bus flooded while the log said
+    # otherwise, so the absence of frames is measured.
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, push_live=True)
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert node._hand_window_push_silenced is True
+    assert arm.push_enabled is False
+    assert "verified" in resp.message
+
+
+def test_dropped_silence_frame_is_re_sent_before_the_window_is_trusted():
+    arm = _FakeArm(
+        velocity=0.0, ctrl_mode=_CAN_CTRL, push_live=True, disables_until_silent=2
+    )
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert node._hand_window_push_silenced is True
+    assert arm.push_enabled is False
+    assert arm.push_frames == [
+        (_PUSH_DISABLE, _MOVE_MODE_NO_CHANGE),
+        (_PUSH_DISABLE, _MOVE_MODE_NO_CHANGE),
+    ]
+    assert "re-send" in resp.message
+
+
+def test_unsilenceable_push_opens_the_window_but_re_enables_and_says_so():
+    # Design choice kept from the original window: the arm IS held and MIT IS
+    # gated, so the window is valid — it just did not free the bus. The state
+    # must not claim a silence that never happened, or the bus-recovery
+    # watchdog stays blind for nothing.
+    arm = _FakeArm(
+        velocity=0.0, ctrl_mode=_CAN_CTRL, push_live=True, disables_until_silent=99
+    )
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True          # window open: arm held, MIT gated
+    assert node._hand_window_push_silenced is False
+    assert arm.push_enabled is True      # explicit ENABLE cancels a late DISABLE
+    assert arm.push_frames[-1] == (_PUSH_ENABLE, _MOVE_MODE_NO_CHANGE)
+    assert "NOT silenced" in resp.message
 
 
 def test_hold_is_executed_by_the_firmware_not_by_the_gated_mit_loop():

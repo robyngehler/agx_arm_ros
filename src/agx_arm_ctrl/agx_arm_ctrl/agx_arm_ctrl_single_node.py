@@ -130,6 +130,16 @@ class AgxArmRosNode(Node):
         # the silence must be bounded: after this the push is restored (and the
         # watchdog re-armed) even if resume_arm_control never arrives.
         self.declare_parameter("hand_window_max_silence_s", 10.0)
+        # Silencing the push is a mode frame like any other, and the SDK drops
+        # mode frames silently under bus saturation — which is exactly the
+        # condition a hand window runs in. So the silence is verified the only
+        # way it can be: the feedback frames must actually STOP advancing.
+        # Waiting for that also drains the window's own opening burst off the
+        # bus before the hand issues its first CANFD request.
+        self.declare_parameter("hand_window_silence_verify_s", 0.4)
+        # No new feedback frame for this long counts as silenced. Must stay well
+        # above the ~5 ms push period and below feedback_timeout.
+        self.declare_parameter("hand_window_silence_quiet_s", 0.08)
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
@@ -162,6 +172,12 @@ class AgxArmRosNode(Node):
         )
         self.hand_window_max_silence_s = max(
             0.5, float(self.get_parameter("hand_window_max_silence_s").value)
+        )
+        self.hand_window_silence_verify_s = max(
+            0.0, float(self.get_parameter("hand_window_silence_verify_s").value)
+        )
+        self.hand_window_silence_quiet_s = max(
+            0.01, float(self.get_parameter("hand_window_silence_quiet_s").value)
         )
         # After a recovery the node latches this and refuses new motion until
         # clear_fault_lockout is called; feedback keeps flowing throughout.
@@ -1970,11 +1986,73 @@ class AgxArmRosNode(Node):
             nero_can_push.set_can_push(self.agx_arm, False)
         except Exception as e:
             return False, f"could not silence the feedback push: {e}"
+        # Latch the flag BEFORE verifying: the DISABLE frame may land at any
+        # moment from here on, and the bus-recovery watchdog must never charge
+        # that requested silence to the arm as a stall.
         now = time.monotonic()
         self._hand_window_push_silenced = True
         self._hand_window_silence_started = now
         self._last_good_feedback_monotonic = now
-        return True, "feedback push silenced"
+
+        if self._wait_for_feedback_silenced(self.hand_window_silence_verify_s):
+            return True, "feedback push silenced (verified: feedback stopped)"
+
+        # One re-send: a dropped mode frame is the expected failure here, and
+        # the bus has had the verify window to drain in the meantime.
+        try:
+            nero_can_push.set_can_push(self.agx_arm, False)
+        except Exception as e:
+            self._restore_feedback_push("silence re-send failed")
+            return False, f"could not re-send the feedback-push silence: {e}"
+        if self._wait_for_feedback_silenced(self.hand_window_silence_verify_s):
+            return True, "feedback push silenced (verified after one re-send)"
+
+        # The push is provably still running. Do NOT leave the flag latched on a
+        # bus that is not silent — but send an explicit ENABLE first, so a
+        # late-landing DISABLE cannot mute the arm behind an un-blinded
+        # watchdog, and confirm that ENABLE in feedback before un-blinding it.
+        self._restore_feedback_push("silence could not be verified")
+        if not self._wait_for_feedback_resumed(self.hand_window_silence_verify_s):
+            self.get_logger().error(
+                "feedback push neither silenced nor confirmed running again; "
+                "the bus-recovery watchdog is armed against an arm that may "
+                "have gone quiet on a late DISABLE frame"
+            )
+        return False, (
+            "feedback push NOT silenced (still pushing after a re-send); "
+            "the shared bus stays flooded"
+        )
+
+    def _feedback_frame_ts(self):
+        """Kernel timestamp of the last parsed feedback frame, or None."""
+        try:
+            js = self.agx_arm.get_joint_angles()
+        except Exception:
+            return None
+        return None if js is None else js.timestamp
+
+    def _wait_for_feedback_silenced(self, timeout_s: float) -> bool:
+        """True once the firmware has stopped pushing feedback frames.
+
+        Silence cannot be read off a status field — it is the *absence* of
+        frames — so it is measured: the last frame timestamp must stay
+        unchanged for ``hand_window_silence_quiet_s``. Any new frame restarts
+        that quiet window.
+        """
+        quiet_s = self.hand_window_silence_quiet_s
+        deadline = time.monotonic() + timeout_s
+        last_ts = self._feedback_frame_ts()
+        quiet_since = time.monotonic()
+        while time.monotonic() < deadline:
+            time.sleep(0.01)
+            current_ts = self._feedback_frame_ts()
+            if current_ts != last_ts:
+                last_ts = current_ts
+                quiet_since = time.monotonic()
+                continue
+            if time.monotonic() - quiet_since >= quiet_s:
+                return True
+        return False
 
     def _restore_feedback_push(self, reason: str) -> bool:
         """Re-enable the firmware feedback push and re-arm the watchdog.
@@ -2004,17 +2082,10 @@ class AgxArmRosNode(Node):
 
     def _wait_for_feedback_resumed(self, timeout_s: float) -> bool:
         """Wait for the firmware to push a genuinely NEW feedback frame."""
-        def _frame_ts():
-            try:
-                js = self.agx_arm.get_joint_angles()
-            except Exception:
-                return None
-            return None if js is None else js.timestamp
-
-        baseline = _frame_ts()
+        baseline = self._feedback_frame_ts()
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            current = _frame_ts()
+            current = self._feedback_frame_ts()
             if current is not None and current != baseline:
                 return True
             time.sleep(0.01)

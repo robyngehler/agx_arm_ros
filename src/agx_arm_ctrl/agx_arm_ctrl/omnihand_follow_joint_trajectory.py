@@ -12,6 +12,8 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from agx_arm_msgs.msg import OmniHandStatus
+
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
 # Shared, model-aware joint naming — do NOT keep a second JOINT_SUFFIXES copy here
 # (proposal §6/§11.3): a stale O10 list would flag every Pro-only joint as unknown.
@@ -43,8 +45,21 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             "feedback_topic",
             "feedback/omnihand/joint_states",
         )
+        self.declare_parameter(
+            "status_topic",
+            "feedback/omnihand/status",
+        )
         self.declare_parameter("feedback_timeout_s", 0.5)
         self.declare_parameter("goal_margin_s", 0.25)
+        # Elapsed trajectory time does not mean the hand got the target: on the
+        # shared bus the bridge re-sends until a readback confirms it, and that
+        # loop outlives a short trajectory. Hold the window (and the goal) open
+        # until the bridge has actually decided, bounded by this.
+        self.declare_parameter("delivery_timeout_s", 4.0)
+        # feedback/omnihand/joint_states is republished from cache at pub_rate
+        # even while the backend is faulted, so a fresh header stamp proves
+        # nothing. A real SDK readback must be no older than this.
+        self.declare_parameter("readback_max_age_s", 1.5)
         # Step-and-settle handshake: quiesce the same-side arm into a verified
         # hold for the duration of a hand trajectory so MoveIt hand execution
         # owns the shared side bus instead of losing arbitration under arm MIT.
@@ -61,8 +76,15 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         action_name = str(self.get_parameter("action_name").value)
         trajectory_topic = str(self.get_parameter("trajectory_topic").value)
         feedback_topic = str(self.get_parameter("feedback_topic").value)
+        self.status_topic = str(self.get_parameter("status_topic").value)
         self.feedback_timeout_s = float(self.get_parameter("feedback_timeout_s").value)
         self.goal_margin_s = float(self.get_parameter("goal_margin_s").value)
+        self.delivery_timeout_s = max(
+            0.0, float(self.get_parameter("delivery_timeout_s").value)
+        )
+        self.readback_max_age_s = max(
+            0.0, float(self.get_parameter("readback_max_age_s").value)
+        )
         self.handshake_enabled = bool(self.get_parameter("handshake_enabled").value)
         self.handshake_timeout_s = float(self.get_parameter("handshake_timeout_s").value)
         arm_ns = str(self.get_parameter("arm_service_ns").value).strip("/")
@@ -72,8 +94,14 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         self.last_feedback_time = 0.0
         self._window_open = False
 
+        self.last_status: OmniHandStatus | None = None
+        self.last_status_monotonic = 0.0
+
         self.trajectory_pub = self.create_publisher(JointTrajectory, trajectory_topic, 10)
         self.create_subscription(JointState, feedback_topic, self._feedback_callback, 20)
+        self.create_subscription(
+            OmniHandStatus, self.status_topic, self._status_callback, 10
+        )
 
         # Reentrant group so the handshake service futures are serviced while the
         # action execute callback is spinning on them.
@@ -111,10 +139,60 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         )
         self.last_feedback_time = time.monotonic()
 
+    def _status_callback(self, msg: OmniHandStatus) -> None:
+        self.last_status = msg
+        self.last_status_monotonic = time.monotonic()
+
     def _has_fresh_feedback(self) -> bool:
         if self.last_feedback_time <= 0.0:
             return False
         return (time.monotonic() - self.last_feedback_time) <= self.feedback_timeout_s
+
+    def _readback_is_live(self, status: OmniHandStatus) -> bool:
+        """True when the hand itself answered recently, not just the cache."""
+        age_s = float(status.joint_readback_age_s)
+        if age_s < 0.0:
+            return False
+        return (age_s + (time.monotonic() - self.last_status_monotonic)) <= (
+            self.readback_max_age_s
+        )
+
+    def _await_delivery(self, published_at: float) -> tuple[bool, str]:
+        """Wait until the bridge has decided the fate of the published target.
+
+        Only status samples received AFTER the publish are trusted: an older
+        sample still describes the previous command. Falls back to plain
+        feedback freshness when no status surface is present (older bridge or a
+        rig without one), which is the pre-existing behavior.
+        """
+        if self.count_publishers(self.status_topic) == 0:
+            return self._has_fresh_feedback(), "OmniHand feedback is stale"
+
+        deadline = time.monotonic() + self.delivery_timeout_s
+        while rclpy.ok():
+            status = self.last_status
+            if status is not None and self.last_status_monotonic > published_at:
+                if not status.command_pending:
+                    if status.command_delivery_failed:
+                        return False, (
+                            "bridge gave up on the hand target unverified "
+                            f"after {status.command_attempts} attempts"
+                        )
+                    if not self._readback_is_live(status):
+                        return False, (
+                            "hand target reported delivered but no recent SDK "
+                            f"readback backs it (age {status.joint_readback_age_s:.2f} s)"
+                        )
+                    return True, ""
+
+            if time.monotonic() > deadline:
+                attempts = status.command_attempts if status is not None else 0
+                return False, (
+                    "hand target still unverified after "
+                    f"{self.delivery_timeout_s:.1f} s ({attempts} attempts)"
+                )
+            time.sleep(0.02)
+        return False, "ROS shutdown while waiting for hand command delivery"
 
     def _validate_trajectory(self, msg: JointTrajectory) -> None:
         if not msg.joint_names:
@@ -242,7 +320,8 @@ class OmniHandFollowJointTrajectoryBridge(Node):
 
     def _run_trajectory(self, goal_handle, trajectory):
         self.trajectory_pub.publish(trajectory)
-        start_time = time.monotonic()
+        published_at = time.monotonic()
+        start_time = published_at
         duration_s = _trajectory_duration_s(trajectory)
         desired = self._desired_point(trajectory)
         goal_joint_names = list(trajectory.joint_names)
@@ -263,11 +342,15 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             goal_handle.publish_feedback(feedback)
 
             if time.monotonic() - start_time >= duration_s + self.goal_margin_s:
-                if not self._has_fresh_feedback():
+                # The window stays open across this wait — that is the point:
+                # the bridge's re-send loop needs the quiet bus far more than
+                # the arm needs the extra fraction of a second back.
+                delivered, reason = self._await_delivery(published_at)
+                if not delivered:
                     goal_handle.abort()
                     return self._failed_result(
                         FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED,
-                        "OmniHand trajectory finished but hand feedback is stale",
+                        f"OmniHand trajectory not delivered: {reason}",
                     )
                 goal_handle.succeed()
                 return self._success_result()

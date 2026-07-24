@@ -929,6 +929,16 @@ class OmniHandBridgeNode(Node):
             getattr(self.backend, "positions", [0.0] * len(self.joint_names))
         )
         self.last_joint_read_monotonic = 0.0
+        # Distinct from the above: that one advances on every probe, including
+        # failed ones (it paces the poll). This one marks the last readback the
+        # hand actually answered, and is what feedback/omnihand/status reports —
+        # joint_states is republished from cache regardless, so its stamp cannot
+        # tell a caller whether the hand is still there.
+        self.last_good_joint_read_monotonic = 0.0
+        # Latched when a target was given up on unverified; cleared by the next
+        # command or by a stop. Lets the FollowJointTrajectory bridge fail the
+        # goal instead of reporting SUCCEEDED on an undelivered pose.
+        self._command_delivery_failed = False
         self.joint_read_min_interval_s = (
             1.0 / self.joint_read_rate if self.joint_read_rate > 0.0 else 0.0
         )
@@ -1023,6 +1033,7 @@ class OmniHandBridgeNode(Node):
         and get dropped silently (one-shot mode), so a single send is unreliable.
         Targets are absolute setpoints, so re-sending the latest one is safe.
         """
+        self._command_delivery_failed = False
         self.pending_command = {
             "targets": dict(target_map),
             "control_mode": control_mode,
@@ -1054,6 +1065,7 @@ class OmniHandBridgeNode(Node):
                 self.get_logger().warn(
                     f"Ignoring OmniHand {pending['control_mode']} command: {exc}"
                 )
+                self._command_delivery_failed = True
                 self.pending_command = None
 
     def _pending_command_verified(self, pending: dict[str, Any]) -> bool:
@@ -1084,6 +1096,17 @@ class OmniHandBridgeNode(Node):
             self.pending_command = None
             return
 
+        # An attempt may only be spent once the previous send actually had a
+        # chance to be judged, i.e. a real readback landed after it. Without
+        # this the budget is consumed by the clock instead of by evidence: a
+        # single 请求超时 puts the backend into fault backoff (one probe every
+        # fault_poll_interval_s), while this tick keeps firing every
+        # command_retry_period_s — 8 attempts burn in 2.4 s with at most one
+        # readback in between, and the command is declared lost inside a hand
+        # window that was opened precisely to deliver it.
+        if self.last_joint_read_monotonic <= pending["last_send_monotonic"]:
+            return
+
         if pending["attempts"] >= self.command_retry_max_attempts:
             self.get_logger().warn(
                 f"OmniHand {pending['control_mode']} command not verified within "
@@ -1091,6 +1114,7 @@ class OmniHandBridgeNode(Node):
                 f"{self.command_verify_tolerance_rad:.3f} rad); giving up — fingers may be "
                 "in contact or the bus is congested"
             )
+            self._command_delivery_failed = True
             self.pending_command = None
             return
 
@@ -1099,8 +1123,10 @@ class OmniHandBridgeNode(Node):
 
     def _stop_callback(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
         del request
-        # A stop supersedes any in-flight target; never re-send it afterwards.
+        # A stop supersedes any in-flight target; never re-send it afterwards,
+        # and do not report the superseded target as a delivery failure.
         self.pending_command = None
+        self._command_delivery_failed = False
         self.backend.stop()
         response.success = True
         response.message = f"OmniHand {self.backend.backend_name} stop requested"
@@ -1108,6 +1134,27 @@ class OmniHandBridgeNode(Node):
 
     def _backend_faulted(self) -> bool:
         return bool(getattr(self.backend, "communication_fault", False))
+
+    def _effective_read_interval(self) -> float:
+        """Seconds between SDK joint readbacks under the current conditions."""
+        read_interval = self.joint_read_min_interval_s
+        if not self._fault_backoff_active:
+            return read_interval
+        read_interval = max(read_interval, self.fault_poll_interval_s)
+        if self._probe_escalated:
+            read_interval *= 5.0
+        if self.pending_command is not None:
+            # The one case where a probe is not pointless traffic during an
+            # error storm: an undelivered command is already re-sending at
+            # command_retry_period_s, and this readback is the only thing that
+            # can confirm it and STOP those re-sends. Probing at the retry
+            # cadence adds no meaningful load and keeps the attempt budget
+            # bounded at the documented 8 x 0.3 s instead of 8 x 2 s.
+            read_interval = min(
+                read_interval,
+                max(self.joint_read_min_interval_s, self.command_retry_period_s),
+            )
+        return read_interval
 
     def _publish_feedback(self) -> None:
         stamp = self.get_clock().now().to_msg()
@@ -1129,14 +1176,12 @@ class OmniHandBridgeNode(Node):
                         f"{self._fault_recovery_streak_needed} consecutive readbacks succeed"
                     )
 
-        read_interval = self.joint_read_min_interval_s
-        if self._fault_backoff_active:
-            read_interval = max(read_interval, self.fault_poll_interval_s)
-            if self._probe_escalated:
-                read_interval *= 5.0
+        read_interval = self._effective_read_interval()
         if read_interval <= 0.0 or now - self.last_joint_read_monotonic >= read_interval:
             self.cached_positions = self.backend.read_joint_state()
             self.last_joint_read_monotonic = now
+            if not self._backend_faulted():
+                self.last_good_joint_read_monotonic = now
             if self._fault_backoff_active:
                 if self._backend_faulted():
                     self._failed_probe_streak += 1
@@ -1186,6 +1231,17 @@ class OmniHandBridgeNode(Node):
         status_msg.initialized = status_snapshot.initialized
         status_msg.is_mock = status_snapshot.is_mock
         status_msg.communication_fault = status_snapshot.communication_fault
+        pending = self.pending_command
+        status_msg.command_pending = pending is not None
+        status_msg.command_delivery_failed = self._command_delivery_failed
+        status_msg.command_attempts = min(
+            0xFFFF, int(pending["attempts"]) if pending is not None else 0
+        )
+        status_msg.joint_readback_age_s = (
+            float(now - self.last_good_joint_read_monotonic)
+            if self.last_good_joint_read_monotonic > 0.0
+            else -1.0
+        )
         status_msg.active_joint_temperatures_c = status_snapshot.active_joint_temperatures_c
         status_msg.active_joint_currents_a = status_snapshot.active_joint_currents_a
         status_msg.active_joint_stalled = status_snapshot.active_joint_stalled
