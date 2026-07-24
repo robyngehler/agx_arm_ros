@@ -77,11 +77,40 @@ Closes three plan items an integration review found still open. Ordered by theme
 | Fault-lockout coordination was implicit: neither the script nor a recovery path told the initiator that motion stays refused until `clear_fault_lockout`. | The recovery service and script now **report** `fault_lockout=latched` back to the caller and never clear it themselves — deliberate re-arming stays the initiator's decision. | Recovery is a fault; clearing the lockout is a separate, deliberate act by whoever owns re-arming. |
 | The `resume_arm_control` docstring over-promised that "the MIT controller re-captures its own hold reference when it resumes". | Docstring corrected: resume only reopens the gate; the MIT loop keeps its window-open hold reference (equal to the parked pose), so any sag yields a small, bounded, intended position correction — not a snap. | State what the code guarantees, not more. |
 
+## 8c. Root cause on hardware (2026-07-24): the window did not free the bus
+
+First full-handshake hardware run on the Jetson: the handshake itself behaved exactly as designed (arm
+settles, verified `CAN_CTRL` hold, window opens and closes), yet every hand command still returned
+`请求超时`. A/B `candump` on `can_nero_left` measured **~2150 frames/s while the arm merely holds**, and
+**inside an open window the rate was unchanged (~2180 f/s)** — all low arm IDs (`0x2Ax`/`0x25x`/`0x26x`).
+So the load is the **arm's own feedback push (Nero→host)**, not MIT commands (those *are* gated), and the
+hand's high-ID, low-priority CANFD frames keep losing every arbitration (dropped, not retried, under the
+one-shot baseline). `motor Input size does not match expected motor count` is a downstream cascade of the
+timed-out empty read, not a joint-count config bug.
+
+| Problem | Fix | Rationale |
+|---|---|---|
+| `prepare_hand_window` called `set_normal_mode()`, and the Nero driver's `set_normal_mode()` sets `enable_can_push = ENABLE`. The window **actively turned the flood back on** and could not free the bus by construction. | The window now silences the feedback push itself after the hold is verified, and restores it on resume (`hand_window_silence_feedback`, default on). | The push — not the command stream — is what starves the hand. |
+| The only stock APIs that silence the push are `set_leader_mode`/`set_follower_mode`, i.e. they bundle "quiet bus" with a **mode switch**. Leader mode is zero-force drag: the firmware has no gravity model for this mounting pose and none for the end-effector payload, so the arm would sag. | New repo-owned `agx_arm_ctrl/nero_can_push.py` sends only the mode frame's push bit (`move_mode = 255` = no change), keeping the arm in the CAN-control hold it is already in after `agx_arm_ctrl` enables it. | The window needs a *quiet* arm, not a *limp* one. The vendor SDK stays untouched (pinned submodule). |
+| Silencing the push blinds the bus-recovery watchdog (no feedback looks exactly like a dead bus). | `_should_recover_bus` treats a requested silence as healthy, but bounded by `hand_window_max_silence_s` (default 10 s): past that the push is restored and the watchdog re-armed, while arm commands stay gated until `resume_arm_control`. Recovery, `emergency_stop`, `set_normal_mode`, `set_leader_mode` and node shutdown all restore the push first — every one of them verifies in feedback. | A deliberate silence must never be read as a stall, and must never outlive its window. |
+| A missing/failed silencing would have been invisible. | `prepare_hand_window` still opens the window (arm held, MIT gated) but reports and logs it as a **warning** naming the reason. | An honest window that cannot free the bus beats a silent one. |
+| **Who** holds the arm was never verified — only *that* it was held (`ctrl_mode`). The hold is a MOVE-J executed by the arm's own position controller, but `move_j` emits its MOVE-J mode frame through `_maybe_set_motion_mode`, which the MIT streaming path disables around its batches: a concurrent batch would have made `move_j` skip the frame, leaving the firmware in MIT — waiting for host commands the window is about to cut off, with no feedback left to compute a correction. | Force auto mode-setting on before the `move_j`, and additionally verify `mode_feedback` is **not** a MIT move mode (`0x04`, or `0x06` from v111) before silencing. Unknown encodings pass but are reported. | With the push silenced only a firmware-closed loop can correct drift; the host has nothing to close a loop with. |
+
+Order matters and is enforced: capture pose → hold → **verify hold in feedback** → silence push; and on
+resume: **restore push → wait for a new frame** → health checks → reopen the gate.
+
 ## 9. Open / hardware-dependent
 
 - **V112 `set_normal_mode` no-op:** `prepare_hand_window` now fails honestly (reporting the real `ctrl_mode`)
   if the arm does not reach a `CAN_CTRL`/`TCP_CTRL` hold on V112; the actual V112 hold mechanism must be
-  confirmed on hardware.
+  confirmed on hardware. (On the tested robot the hold *was* verified as `CAN_CTRL` — see §8c.)
+- **Push silencing (§8c) is not yet hardware-validated:** the expected effect is that the ~2150 f/s side-bus
+  load collapses inside an open window and the hand stops timing out. To confirm: `candump` A/B across
+  `prepare_hand_window` / `resume_arm_control`, then check that feedback resumes cleanly on resume and that
+  the arm holds its pose (no sag) throughout the silence.
+- **P2, becomes relevant now that P1 is fixed:** the FJT bridge closes the window on trajectory duration +
+  margin, not on the hand's verified/gave-up state, so a short goal can resume arm MIT mid-retry. Worth
+  fixing once a silenced window is confirmed to let hand commands through.
 - **Startup hand connection error + backoff:** tolerant-by-design (retries); real recovery depends on the
   hand/CAN/SDK being reachable.
 - **Hardware validation (plan §6.2):** CPU-stress, disconnect-under-MIT, silent-TX-loss, and hand-across-

@@ -23,6 +23,7 @@ from agx_arm_msgs.msg import (
     MoveMITMsg
 )
 from agx_arm_ctrl.effector import AgxGripperWrapper, Revo2Wrapper
+from agx_arm_ctrl import nero_can_push
 
 GRIPPER_JOINT_NAME = "gripper"
 
@@ -119,6 +120,16 @@ class AgxArmRosNode(Node):
         # explicitly clears the fault, instead of silently re-arming control on
         # the next healthy tick (plan Phase 1 item 6 / Phase 2 item 3).
         self.declare_parameter("require_fault_ack", True)
+        # Hand window: silence the firmware's CAN feedback push while the
+        # OmniHand owns the shared side bus (the arm keeps holding its pose).
+        # Without this the window frees nothing — measured on hardware, the
+        # ~2150 frames/s idle load is the arm's feedback push, not MIT commands.
+        self.declare_parameter("hand_window_silence_feedback", True)
+        # Hard upper bound on how long feedback may stay silenced. The
+        # bus-recovery watchdog is deliberately blind while the push is off, so
+        # the silence must be bounded: after this the push is restored (and the
+        # watchdog re-armed) even if resume_arm_control never arrives.
+        self.declare_parameter("hand_window_max_silence_s", 10.0)
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
@@ -146,6 +157,12 @@ class AgxArmRosNode(Node):
             0.0, float(self.get_parameter("bus_recovery_cooldown_s").value)
         )
         self.require_fault_ack = bool(self.get_parameter("require_fault_ack").value)
+        self.hand_window_silence_feedback = bool(
+            self.get_parameter("hand_window_silence_feedback").value
+        )
+        self.hand_window_max_silence_s = max(
+            0.5, float(self.get_parameter("hand_window_max_silence_s").value)
+        )
         # After a recovery the node latches this and refuses new motion until
         # clear_fault_lockout is called; feedback keeps flowing throughout.
         self._fault_lockout = False
@@ -182,6 +199,11 @@ class AgxArmRosNode(Node):
         # driver-level normal-mode hold and incoming MIT commands are dropped at
         # this gateway, so the OmniHand owns the shared side CAN bus (plan §3).
         self._hand_window_active = False
+        # True while the firmware's feedback push is silenced for a hand window.
+        # The arm stays in its CAN-control hold — only the Nero->host feedback
+        # stream is off, so the watchdog must not read that silence as a stall.
+        self._hand_window_push_silenced = False
+        self._hand_window_silence_started = 0.0
         self.enable_flag = False
         self.control_ready = False
         self._control_ready_logged = False
@@ -248,6 +270,46 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"bus_recovery_link_reset: {self.bus_recovery_link_reset}")
         self.get_logger().info(f"bus_recovery_max_attempts: {self.bus_recovery_max_attempts}")
 
+    def _wait_for_firmware(self) -> None:
+        """Poll the firmware query until it answers or the enable timeout runs out."""
+        self.firmware = None
+        start_time = time.time()
+        while time.time() - start_time < self.enable_timeout:
+            self.firmware = self.agx_arm.get_firmware()
+            if self.firmware:
+                return
+            time.sleep(0.005)
+
+    def _recover_silent_arm(self) -> None:
+        """Re-enable the firmware feedback push on an arm that answers nothing.
+
+        The arm persists its linkage configuration across power cycles, and both
+        ``set_leader_mode`` and ``set_follower_mode`` leave ``enable_can_push``
+        DISABLED. An arm last used in one of those modes therefore boots mute:
+        it acknowledges frames on the bus but pushes no feedback, so the startup
+        firmware query times out and the node used to exit(1) — taking its own
+        ``set_normal_mode`` service down with it, so nothing could bring the arm
+        back through ROS (observed on hardware 2026-07-24, left arm).
+
+        ``set_normal_mode`` re-asserts the normal linkage AND the push, which is
+        exactly what such an arm needs. It commands no motion.
+        """
+        if not self.is_nero:
+            return
+        self.get_logger().warn(
+            "No firmware answer — the arm may be booted with its CAN feedback "
+            "push disabled (persisted leader/follower config). Sending "
+            "set_normal_mode once and retrying."
+        )
+        try:
+            self.agx_arm.set_normal_mode()
+        except Exception as e:
+            self.get_logger().error(f"set_normal_mode during startup recovery failed: {e}")
+            return
+        self._leader_mode_active = False
+        self._hand_window_push_silenced = False
+        self._hand_window_silence_started = 0.0
+
     def _init_agx_arm(self):
         config: PiperCanDefaultConfig = create_agx_arm_config(
             robot=self.arm_type, comm="can", channel=self.can_port
@@ -262,13 +324,15 @@ class AgxArmRosNode(Node):
             if not self._enable_arm(True, self.enable_timeout):
                 self.get_logger().error("Failed to auto-enable the arm")
 
-            start_time = time.time()
-            while time.time() - start_time < self.enable_timeout:
-                self.firmware = self.agx_arm.get_firmware()
-                if self.firmware:
-                    break
-                time.sleep(0.005)
-            
+            self._wait_for_firmware()
+            if not self.firmware:
+                # An arm whose feedback push is disabled answers nothing, so
+                # startup would die here — and with the node dead its
+                # set_normal_mode service never comes up, leaving no way to
+                # re-enable the push through ROS. Break that deadlock once.
+                self._recover_silent_arm()
+                self._wait_for_firmware()
+
             if self.firmware:
                 current_version = self.firmware['software_version']
                 self.get_logger().info(f"firmware version: {current_version}")
@@ -293,7 +357,12 @@ class AgxArmRosNode(Node):
                     self.agx_arm = AgxArmFactory.create_arm(config)
                     self.agx_arm.connect()
             else:
-                self.get_logger().error("Failed to get firmware version")
+                self.get_logger().error(
+                    "Failed to get firmware version, also after re-asserting the "
+                    "feedback push. The arm is not answering on CAN: check power, "
+                    "E-stop and wiring for this side, and that the bus carries "
+                    "feedback frames (candump)."
+                )
                 exit(1)
 
             self.agx_arm.set_speed_percent(self.speed_percent)
@@ -795,6 +864,24 @@ class AgxArmRosNode(Node):
             return self._trigger_recovery(
                 "forced_estop", "forced recovery after unverified emergency stop"
             )
+        # A hand window may have silenced the firmware feedback push on purpose:
+        # the arm is holding in CAN control, the side bus is quiet so the hand
+        # can win arbitration. That silence is requested, not a stall — but the
+        # watchdog is blind while it lasts, so bound it hard and restore the push
+        # (re-arming the watchdog) if a resume never comes.
+        if self._hand_window_push_silenced:
+            silent_for = time.monotonic() - self._hand_window_silence_started
+            if silent_for > self.hand_window_max_silence_s:
+                self.get_logger().error(
+                    f"hand window silenced feedback for {silent_for:.1f} s "
+                    f"(limit {self.hand_window_max_silence_s:.1f} s); restoring the "
+                    "push and re-arming the bus watchdog. Arm commands stay gated "
+                    "until resume_arm_control."
+                )
+                self._restore_feedback_push("max silence exceeded")
+            else:
+                self._last_good_feedback_monotonic = time.monotonic()
+            return False
         # Only arm the watchdog once the bus has been healthy at least once,
         # so the normal startup warm-up is never mistaken for a stall.
         if not self._had_control_ready:
@@ -875,6 +962,11 @@ class AgxArmRosNode(Node):
 
     def _recover_bus(self):
         self._recovery_in_progress = True
+        # A recovery must never run against a deliberately silenced bus: every
+        # verification step below reads feedback. Restore the push and drop the
+        # hand window — the shared bus is the problem now, not the hand.
+        self._restore_feedback_push("bus recovery")
+        self._hand_window_active = False
         # Gate every control callback off immediately; the existing
         # _check_can_control() guard turns this into a hard streaming stop so no
         # command reaches a half-torn-down bus during recovery.
@@ -1635,6 +1727,9 @@ class AgxArmRosNode(Node):
         """
         stopped = False
         recovery_requested = False
+        # Every stage below is verified in feedback, so an open hand window must
+        # not keep that feedback silenced through an emergency stop.
+        self._restore_feedback_push("emergency stop")
         try:
             if self.is_mit_mode or self._current_motion_mode == 'mit':
                 try:
@@ -1762,6 +1857,10 @@ class AgxArmRosNode(Node):
             self.is_mit_mode = False
             self._leader_mode_active = False
             self._current_motion_mode = None
+            # This call re-enables the push itself, so any hand-window silence is
+            # over — drop the flag without sending a second mode frame.
+            self._hand_window_push_silenced = False
+            self._hand_window_silence_started = 0.0
             # Normal joint push resumes now; give it a fresh watchdog window so
             # the transition itself is never read as a stall.
             self._last_good_feedback_monotonic = time.monotonic()
@@ -1795,15 +1894,46 @@ class AgxArmRosNode(Node):
         except (TypeError, ValueError):
             return False
 
+    def _move_mode_is_firmware_hold(self, mode_feedback) -> bool:
+        """False only when the readback positively reports a MIT move mode.
+
+        In MIT the arm only does what the host streams — with the feedback push
+        silenced the host streams nothing and no correction can be computed. A
+        hand window therefore requires a NON-MIT move mode, where the vendor's
+        own position controller closes the loop on the firmware side.
+
+        The MIT code is firmware-dependent (0x04 below v111, 0x06 from v111), so
+        it is taken from the active driver rather than hardcoded. An unreadable
+        or UNKNOWN mode is not treated as a failure; the observed value is
+        reported so a surprising one is visible instead of silently trusted.
+        """
+        if mode_feedback is None:
+            return True
+        try:
+            return int(mode_feedback) not in nero_can_push.mit_move_mode_codes(
+                self.agx_arm
+            )
+        except (TypeError, ValueError):
+            return True
+
     def _arm_ctrl_mode(self):
         """Current firmware ctrl_mode from feedback, or None if unreadable."""
+        status = self._arm_status_msg()
+        return None if status is None else status.ctrl_mode
+
+    def _arm_move_mode(self):
+        """Current firmware mode_feedback (MOVE P/J/L/C/MIT/CPV), or None."""
+        status = self._arm_status_msg()
+        return None if status is None else getattr(status, "mode_feedback", None)
+
+    def _arm_status_msg(self):
         try:
             status = self.agx_arm.get_arm_status()
         except Exception:
             return None
         if status is None:
             return None
-        return status.msg.ctrl_mode
+        return status.msg
 
     def _capture_hold_pose(self):
         """Current joint pose from trustworthy live feedback, or None."""
@@ -1818,14 +1948,95 @@ class AgxArmRosNode(Node):
             return None
         return list(js.msg)
 
+    def _silence_feedback_push(self) -> tuple:
+        """Stop the firmware feedback push for a hand window.
+
+        This is the only part of the window that actually frees the shared side
+        bus. Measured on hardware: the ~2150 frames/s the side bus carries while
+        the arm merely holds are the arm's own feedback push (Nero->host, low
+        CAN IDs), not MIT commands — gating the commands leaves the rate
+        unchanged and the hand's high-ID CANFD frames keep losing arbitration.
+
+        Deliberately NOT done by switching mode. The stock SDK only silences the
+        push as a side effect of ``set_leader_mode``/``set_follower_mode``, and
+        leader mode is zero-force drag: the firmware has no gravity model for
+        this mounting pose and none for the end-effector payload, so the arm
+        would sag instead of holding. ``nero_can_push.set_can_push`` sends only
+        the push bit and leaves the CAN-control hold in place.
+        """
+        if not self.hand_window_silence_feedback:
+            return False, "feedback push left ON (hand_window_silence_feedback=false)"
+        try:
+            nero_can_push.set_can_push(self.agx_arm, False)
+        except Exception as e:
+            return False, f"could not silence the feedback push: {e}"
+        now = time.monotonic()
+        self._hand_window_push_silenced = True
+        self._hand_window_silence_started = now
+        self._last_good_feedback_monotonic = now
+        return True, "feedback push silenced"
+
+    def _restore_feedback_push(self, reason: str) -> bool:
+        """Re-enable the firmware feedback push and re-arm the watchdog.
+
+        Safe to call unconditionally; a no-op when nothing was silenced.
+        """
+        if not self._hand_window_push_silenced:
+            return True
+        ok = True
+        try:
+            nero_can_push.set_can_push(self.agx_arm, True)
+        except Exception as e:
+            ok = False
+            self.get_logger().error(
+                f"failed to restore the feedback push ({reason}): {e}"
+            )
+        self._hand_window_push_silenced = False
+        self._hand_window_silence_started = 0.0
+        # Feedback restarts now: reset both the node-observed clock and the
+        # frame-advance window so the silence we asked for is never charged to
+        # the bus-recovery watchdog as a stall.
+        now = time.monotonic()
+        self._last_good_feedback_monotonic = now
+        self._last_feedback_advance_monotonic = now
+        self.get_logger().info(f"feedback push restored ({reason})")
+        return ok
+
+    def _wait_for_feedback_resumed(self, timeout_s: float) -> bool:
+        """Wait for the firmware to push a genuinely NEW feedback frame."""
+        def _frame_ts():
+            try:
+                js = self.agx_arm.get_joint_angles()
+            except Exception:
+                return None
+            return None if js is None else js.timestamp
+
+        baseline = _frame_ts()
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            current = _frame_ts()
+            if current is not None and current != baseline:
+                return True
+            time.sleep(0.01)
+        return False
+
     def _prepare_hand_window_callback(self, request, response):
         """Quiesce the arm into a VERIFIED normal-mode hold so the OmniHand can
         own the shared side bus (plan section 3).
 
-        Every mode change is confirmed by feedback readback (ctrl_mode + joint
-        velocities), never fire-and-forget: the SDK silently drops mode frames
-        under bus saturation (section 1.3.2), which is exactly when a handoff
-        runs. Returns success only when the arm is confirmed held and quiet.
+        The hold is a plain MOVE-J to the current pose, i.e. it is executed and
+        closed by the ARM's own position controller — the same controller that
+        holds the arm after boot. The node's MIT loop is not the one holding:
+        it is gated out at ``_check_can_control`` for the whole window. That
+        split is what makes the window safe, because the window then silences
+        the feedback push, and a host-side loop with no feedback could not
+        compute a correction for any drift.
+
+        Every mode change is confirmed by feedback readback (ctrl_mode, MOVE
+        mode, joint velocities), never fire-and-forget: the SDK silently drops
+        mode frames under bus saturation (section 1.3.2), which is exactly when
+        a handoff runs. Returns success only when the arm is confirmed held by
+        the firmware and quiet.
         """
         del request
         if not self.is_nero:
@@ -1855,6 +2066,13 @@ class AgxArmRosNode(Node):
             self.is_mit_mode = False
             self._leader_mode_active = False
             self._current_motion_mode = None
+            # The hold must be executed by the arm's OWN position controller, so
+            # the MOVE-J mode frame has to go out. The MIT streaming path turns
+            # auto mode-setting off around its batches; if a batch is in flight
+            # on another thread, move_j would silently skip the mode frame and
+            # the firmware would stay in MIT — i.e. still waiting for host
+            # commands that the window is about to stop. Force it on.
+            self.agx_arm.set_auto_set_motion_mode_enabled(True)
             self.agx_arm.move_j(hold_pose)
             self._current_motion_mode = 'j'
             self._last_good_feedback_monotonic = time.monotonic()
@@ -1865,25 +2083,44 @@ class AgxArmRosNode(Node):
             self.get_logger().error(response.message)
             return response
         # Verify by readback, not by assuming set_normal_mode took (it is a
-        # no-op on V112): the arm must be settled in feedback AND report an
-        # active holding ctrl_mode (CAN_CTRL/TCP_CTRL), else we do not claim a
-        # safe hold and the hand window is not opened.
+        # no-op on V112): the arm must be settled in feedback, report an active
+        # holding ctrl_mode (CAN_CTRL/TCP_CTRL), and be in a firmware-executed
+        # (non-MIT) move mode, else we do not claim a safe hold and the hand
+        # window is not opened.
         settled = self._arm_velocities_settled()
         ctrl_mode = self._arm_ctrl_mode()
         held = self._ctrl_mode_is_hold(ctrl_mode)
-        if settled and held:
+        # Who holds the arm matters as much as whether it is held: with the
+        # feedback push about to go silent, the host cannot compute any
+        # correction, so the firmware's own position controller must own the
+        # hold. A MIT move mode here would mean the arm is waiting for commands
+        # that will not come.
+        move_mode = self._arm_move_mode()
+        firmware_holds = self._move_mode_is_firmware_hold(move_mode)
+        if settled and held and firmware_holds:
+            # Only now — with the hold VERIFIED in feedback — silence the
+            # feedback push, because verifying it needs that same feedback.
+            silenced, silence_note = self._silence_feedback_push()
             response.success = True
             response.message = (
-                f"hand window open: arm settled and holding (ctrl_mode={ctrl_mode}), "
-                "MIT quiesced"
+                f"hand window open: arm settled and held by the firmware "
+                f"(ctrl_mode={ctrl_mode}, move_mode={move_mode}), MIT quiesced, "
+                f"{silence_note}"
             )
-            self.get_logger().info(response.message)
+            if silenced:
+                self.get_logger().info(response.message)
+            else:
+                # Still a valid window (the arm is held and MIT is gated), but
+                # the shared bus stays flooded, so hand commands may still time
+                # out. Say so instead of implying the bus is free.
+                self.get_logger().warn(response.message)
         else:
             self._hand_window_active = False
             response.success = False
             response.message = (
                 f"hold NOT verified (settled={settled}, holding={held}, "
-                f"ctrl_mode={ctrl_mode}); hand window not opened"
+                f"firmware_holds={firmware_holds}, ctrl_mode={ctrl_mode}, "
+                f"move_mode={move_mode}); hand window not opened"
             )
             self.get_logger().error(response.message)
         return response
@@ -1895,6 +2132,9 @@ class AgxArmRosNode(Node):
         re-admitting MIT commands. Clearing pending hand commands
         (control/omnihand/stop) is the caller's job — the driver owns the arm
         side only.
+
+        The feedback push silenced at window-open is restored FIRST, before any
+        health check, because every one of those checks reads that feedback.
 
         Resume behaviour, stated honestly: this service only reopens the gate. It
         does NOT force the (separate) MIT controller to recapture a hold — during
@@ -1914,9 +2154,23 @@ class AgxArmRosNode(Node):
             response.success = False
             response.message = "cannot resume arm control while recovering the bus"
             return response
+        # Restore the push before anything reads feedback, and wait for a real
+        # new frame: the checks below (and the MIT controller that is about to
+        # be re-admitted) must run on live data, not on the frozen last frame
+        # from before the silence.
+        push_restored = self._restore_feedback_push("resume_arm_control")
+        feedback_back = self._wait_for_feedback_resumed(self.feedback_timeout)
+        if not feedback_back:
+            self.get_logger().warn(
+                "no new feedback frame after restoring the push; "
+                "falling through to the stale-feedback check"
+            )
         if self._feedback_actually_stale():
             response.success = False
-            response.message = "arm feedback is stale; not resuming"
+            response.message = (
+                "arm feedback is stale; not resuming "
+                f"(push_restored={push_restored})"
+            )
             self.get_logger().error(response.message)
             return response
         try:
@@ -1955,6 +2209,11 @@ class AgxArmRosNode(Node):
             self.is_mit_mode = False
             self._leader_mode_active = True
             self._current_motion_mode = None
+            # Leader mode silences the joint push on its own; from here the
+            # leader-angle stream is the watchdog's health signal, so hand-window
+            # silence bookkeeping no longer applies.
+            self._hand_window_push_silenced = False
+            self._hand_window_silence_started = 0.0
             # Normal joint push is now silenced; reset the watchdog window so the
             # gap until the first leader-angle sample is not read as a stall.
             self._last_good_feedback_monotonic = time.monotonic()
@@ -1971,6 +2230,7 @@ class AgxArmRosNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
+    node = None
     try:
         node = AgxArmRosNode()
         rclpy.spin(node)
@@ -1979,6 +2239,13 @@ def main(args=None):
     except Exception as e:
         print(f"Error occurred: {e}")
     finally:
+        # Never leave the firmware with its feedback push silenced: the arm
+        # would stay mute on CAN for the next session too.
+        if node is not None:
+            try:
+                node._restore_feedback_push("node shutdown")
+            except Exception:
+                pass
         if rclpy.ok():
             rclpy.shutdown()
 

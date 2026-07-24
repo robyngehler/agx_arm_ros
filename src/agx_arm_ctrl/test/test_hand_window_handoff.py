@@ -18,6 +18,39 @@ _CAN_CTRL = 0x01   # active holding mode (verified hold)
 _STANDBY = 0x00    # idle — NOT a hold (e.g. V112 set_normal_mode no-op leaves it here)
 _TEACHING = 0x02   # backdrivable
 
+_MOVE_J = 0x01     # firmware runs its own position controller
+_MOVE_MIT = 0x06   # firmware waits for host MIT commands (v111+; 0x04 before)
+
+_PUSH_INVALID = 0x00   # mode frame byte 6: "do not touch the push"
+_PUSH_ENABLE = 0x01
+_PUSH_DISABLE = 0x02
+_MOVE_MODE_NO_CHANGE = 255
+
+
+class _Reporting:
+    INVALID = _PUSH_INVALID
+    ENABLE = _PUSH_ENABLE
+    DISABLE = _PUSH_DISABLE
+
+
+class _MotionMode:
+    # Firmware-dependent: 0x06 from v111 on, 0x04 below. The fake mirrors a
+    # v111+ driver so the code under test must ask the driver, not guess.
+    MIT = _MOVE_MIT
+
+
+class _FakeModeMsg:
+    """The driver's cached mode frame (0x151) the push bit rides on."""
+
+    class Enums:
+        CanActiveMsgReporting = _Reporting
+        MotionMode = _MotionMode
+
+    def __init__(self):
+        self.ctrl_mode = _CAN_CTRL
+        self.move_mode = 0x01
+        self.enable_can_push = _PUSH_INVALID
+
 
 class _FakeLogger:
     def warn(self, *_a, **_k):
@@ -32,9 +65,11 @@ class _FakeLogger:
 
 class _FakeArm:
     def __init__(self, *, velocity=0.0, ctrl_mode=_CAN_CTRL, hz=1.0,
-                 frame_ts=1.0, comm_err=None):
+                 frame_ts=1.0, comm_err=None, mode_feedback=_MOVE_J):
         self.velocity = velocity
         self.ctrl_mode = ctrl_mode
+        self.mode_feedback = mode_feedback
+        self.auto_motion_mode = False
         self.hz = hz
         self.frame_ts = frame_ts
         self.comm_err = comm_err
@@ -44,6 +79,19 @@ class _FakeArm:
         self.normal_mode_called = False
         self.move_j_arg = None
         self.move_mit_calls = 0
+        self._msg_mode = _FakeModeMsg()
+        # (enable_can_push, move_mode) of every mode frame actually sent.
+        self.mode_frames = []
+
+    def _set_mode(self):
+        self.mode_frames.append(
+            (self._msg_mode.enable_can_push, self._msg_mode.move_mode)
+        )
+
+    @property
+    def push_frames(self):
+        """Mode frames that actually changed the push bit."""
+        return [f for f in self.mode_frames if f[0] != _PUSH_INVALID]
 
     def get_joint_angles(self):
         return SimpleNamespace(msg=[0.1] * 7, hz=self.hz, timestamp=self.frame_ts)
@@ -52,7 +100,11 @@ class _FakeArm:
         return SimpleNamespace(msg=SimpleNamespace(velocity=self.velocity))
 
     def get_arm_status(self):
-        return SimpleNamespace(msg=SimpleNamespace(ctrl_mode=self.ctrl_mode))
+        return SimpleNamespace(
+            msg=SimpleNamespace(
+                ctrl_mode=self.ctrl_mode, mode_feedback=self.mode_feedback
+            )
+        )
 
     def set_normal_mode(self):
         self.normal_mode_called = True
@@ -63,8 +115,8 @@ class _FakeArm:
     def set_motion_mode(self, *_a):
         pass
 
-    def set_auto_set_motion_mode_enabled(self, *_a):
-        pass
+    def set_auto_set_motion_mode_enabled(self, enabled):
+        self.auto_motion_mode = enabled
 
     def move_mit(self, **_k):
         self.move_mit_calls += 1
@@ -95,6 +147,11 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
     node._last_feedback_frame_ts = None
     node._last_feedback_advance_monotonic = time.monotonic()
     node._check_arm_connected = lambda: True
+    node.feedback_timeout = 0.1
+    node.hand_window_silence_feedback = True
+    node.hand_window_max_silence_s = 10.0
+    node._hand_window_push_silenced = False
+    node._hand_window_silence_started = 0.0
     return node
 
 
@@ -178,6 +235,160 @@ def test_resume_arm_control_reopens_side():
     resp = node._resume_arm_control_callback(None, Trigger.Response())
     assert resp.success is True
     assert node._hand_window_active is False
+
+
+def test_open_window_silences_the_feedback_push_without_a_mode_switch():
+    # The whole point of the window: the arm's own feedback push is what floods
+    # the shared side bus, so it must go quiet — while the arm stays in its
+    # CAN_CTRL hold (no leader/drag switch, which would drop the arm).
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL)
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert node._hand_window_push_silenced is True
+    assert arm.push_frames == [(_PUSH_DISABLE, _MOVE_MODE_NO_CHANGE)]
+    # Cached mode message left neutral again so later motion-mode frames do not
+    # re-toggle the push as a side effect.
+    assert arm._msg_mode.enable_can_push == _PUSH_INVALID
+    assert arm._msg_mode.ctrl_mode == _CAN_CTRL
+    assert "feedback push silenced" in resp.message
+
+
+def test_hold_is_executed_by_the_firmware_not_by_the_gated_mit_loop():
+    # The window silences feedback, so a host-side loop could not correct any
+    # drift: the arm's own position controller must own the hold. Auto
+    # mode-setting is forced on so the MOVE-J mode frame really goes out, and
+    # the move mode is read back to prove the firmware left MIT.
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=_MOVE_J)
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert arm.auto_motion_mode is True
+    assert arm.move_j_arg == [0.1] * 7
+    assert "move_mode=1" in resp.message
+
+
+def test_window_refused_when_the_firmware_is_still_in_mit_move_mode():
+    # ctrl_mode reads CAN_CTRL, but the arm is still waiting for host MIT
+    # commands that the window is about to cut off — not a hold.
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=_MOVE_MIT)
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is False
+    assert node._hand_window_active is False
+    assert node._hand_window_push_silenced is False
+    assert arm.push_frames == []
+    assert "firmware_holds=False" in resp.message
+
+
+def test_mit_move_mode_code_comes_from_the_driver_not_from_a_hardcoded_set():
+    # 0x04 is MIT below firmware v111 but UNASSIGNED from v111 on. Hardcoding
+    # both codes would make a healthy v111+ hold look like MIT and refuse every
+    # window (observed on hardware: a 1.06 arm legitimately reports 0x04).
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=0x04)
+    node = _node(arm)  # fake driver reports MIT == 0x06 (v111+)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert node._hand_window_push_silenced is True
+
+    # Same value, driver that encodes MIT as 0x04 -> now it IS MIT.
+    legacy = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=0x04)
+    legacy._msg_mode.Enums.MotionMode = type("M", (), {"MIT": 0x04})
+    node = _node(legacy)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is False
+    assert legacy.push_frames == []
+
+
+def test_push_is_not_silenced_before_the_hold_is_verified():
+    # Verifying the hold reads feedback, so silencing may only happen after.
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_STANDBY)  # hold never verified
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is False
+    assert node._hand_window_push_silenced is False
+    assert arm.push_frames == []
+
+
+def test_window_still_opens_but_warns_when_the_push_cannot_be_silenced():
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL)
+    del arm._msg_mode  # SDK without the cached mode message
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True          # arm IS held and MIT IS gated
+    assert node._hand_window_active is True
+    assert node._hand_window_push_silenced is False
+    assert "could not silence the feedback push" in resp.message
+
+
+def test_silencing_can_be_disabled_by_parameter():
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL)
+    node = _node(arm)
+    node.hand_window_silence_feedback = False
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert arm.push_frames == []
+    assert node._hand_window_push_silenced is False
+
+
+def test_resume_restores_the_feedback_push():
+    arm = _FakeArm(frame_ts=5.0)
+    node = _node(arm)
+    node._hand_window_active = True
+    node._hand_window_push_silenced = True
+    node._hand_window_silence_started = time.monotonic()
+    resp = node._resume_arm_control_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert node._hand_window_push_silenced is False
+    assert arm.push_frames == [(_PUSH_ENABLE, _MOVE_MODE_NO_CHANGE)]
+
+
+def test_resume_restores_the_push_even_when_feedback_stays_stale():
+    # The push must come back before the health checks; a failed resume must
+    # never leave the arm silent on CAN.
+    arm = _FakeArm(frame_ts=5.0, hz=0.0)
+    node = _node(arm)
+    node._hand_window_active = True
+    node._hand_window_push_silenced = True
+    node._hand_window_silence_started = time.monotonic()
+    node._last_feedback_frame_ts = 5.0
+    node._last_feedback_advance_monotonic = time.monotonic() - 10.0
+    node.feedback_timeout = 0.1
+    resp = node._resume_arm_control_callback(None, Trigger.Response())
+    assert resp.success is False
+    assert node._hand_window_active is True   # side stays closed
+    assert arm.push_frames == [(_PUSH_ENABLE, _MOVE_MODE_NO_CHANGE)]
+    assert node._hand_window_push_silenced is False
+
+
+def test_watchdog_does_not_recover_on_requested_silence():
+    arm = _FakeArm(frame_ts=5.0, hz=0.0)
+    node = _node(arm)
+    node.bus_recovery_enabled = True
+    node._had_control_ready = True
+    node._recovery_in_progress = False
+    node._last_good_feedback_monotonic = time.monotonic() - 30.0
+    node._hand_window_push_silenced = True
+    node._hand_window_silence_started = time.monotonic()
+    assert node._should_recover_bus() is False
+    assert node._hand_window_push_silenced is True   # silence still in effect
+    assert arm.push_frames == []
+
+
+def test_watchdog_restores_the_push_when_the_silence_outlives_its_bound():
+    # The watchdog is blind while the push is off, so the silence is bounded:
+    # a window that never resumes gets the push (and the watchdog) back.
+    arm = _FakeArm(frame_ts=5.0, hz=0.0)
+    node = _node(arm)
+    node.bus_recovery_enabled = True
+    node._had_control_ready = True
+    node._recovery_in_progress = False
+    node.hand_window_max_silence_s = 0.5
+    node._hand_window_push_silenced = True
+    node._hand_window_silence_started = time.monotonic() - 5.0
+    assert node._should_recover_bus() is False
+    assert node._hand_window_push_silenced is False
+    assert arm.push_frames == [(_PUSH_ENABLE, _MOVE_MODE_NO_CHANGE)]
 
 
 def test_resume_arm_control_rejected_on_stale_feedback():

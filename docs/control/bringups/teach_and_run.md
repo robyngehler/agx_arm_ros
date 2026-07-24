@@ -141,9 +141,18 @@ free-runs without the arm).
 >   ingress at the driver (`_check_can_control`: the MIT gateway, `move_j`/`js`, pose/line/circle, and the
 >   follow path). It returns success **only** once feedback confirms the arm settled (velocities → 0) **and**
 >   `ctrl_mode` reads an active holding mode (`CAN_CTRL`/`TCP_CTRL`) — not by assuming `set_normal_mode`
->   took, which is a firmware no-op on V112. `resume_arm_control` re-admits arm commands after verifying
->   feedback is live and no comm fault is latched. Clearing pending hand commands (`control/omnihand/stop`)
->   is the caller's job. The coordinator calls `prepare_hand_window` before every hand action and
+>   took, which is a firmware no-op on V112. **Once the hold is verified it silences the arm's CAN feedback
+>   push** — measured on hardware, that push (not the MIT command stream) is the ~2150 frames/s that starves
+>   the hand, and gating commands alone left the rate unchanged. The push is turned off *without* a mode
+>   switch (`nero_can_push.set_can_push`), so the arm stays in its CAN-control hold: leader/drag mode would
+>   also silence the bus but has no gravity model for this mounting pose or the end-effector payload, so the
+>   arm would sag. `resume_arm_control` restores the push **first**, waits for a new feedback frame, then
+>   re-admits arm commands after verifying feedback is live and no comm fault is latched. Clearing pending
+>   hand commands (`control/omnihand/stop`) is the caller's job. While the push is silent the bus-recovery
+>   watchdog is deliberately blind, so the silence is bounded by `hand_window_max_silence_s` (default 10 s;
+>   set `hand_window_silence_feedback:=false` to keep the old, bus-flooding behaviour). If a window cannot
+>   silence the push it still opens, but logs a warning and says so in the service message — hand commands
+>   may then still time out. The coordinator calls `prepare_hand_window` before every hand action and
 >   `resume_arm_control` after it (on the side's `{left,right}_can_bus` token), so these services are the
 >   wired execution primitive — for the MVP flow *arm moves → quiesce → hand acts → resume → arm moves*
 >   (a held grasp is assumed to need no active connection, so concurrent grasp-and-carry is out of scope).

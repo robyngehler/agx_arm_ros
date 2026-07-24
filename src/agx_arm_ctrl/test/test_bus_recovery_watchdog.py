@@ -70,6 +70,10 @@ def _make_node(*, is_ok: bool, frame_ts: float, node_feedback_age_s: float,
     node._loop_overrun_suppressions = 0
     node._last_loop_gap_s = 0.5
     node._last_overrun_log_monotonic = now  # rate-limit: suppress the log call
+    # No hand window is silencing the feedback push in these scenarios.
+    node._hand_window_push_silenced = False
+    node._hand_window_silence_started = 0.0
+    node.hand_window_max_silence_s = 10.0
 
     # Frame-advance tracking: seed so that a matching frame_ts read now counts as
     # "advanced recently" or "stale" depending on frames_have_advanced.

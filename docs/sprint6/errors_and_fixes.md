@@ -4,6 +4,34 @@ Record concrete errors and their fixes here as the hand skill controller, perfor
 coordinator come up — e.g. tactile stream gaps, grasp-threshold miscalibration, `both_arms`
 joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch problems.
 
+## 2026-07-24 (arm boots limp; its driver node dies at startup)
+
+### One arm hangs limp after power-on and `agx_arm_ctrl_single` exits with "Failed to get firmware version"
+
+- Symptom: after a cold boot with no ROS running, the right arm holds its pose while the left hangs
+  limp. Launching the stack kills the limp side's driver node: `Failed to get firmware version`,
+  `exit code 1`. Re-seating cables and restarting changed nothing.
+- Measured (passive `candump` + interface counters, both sides): the healthy bus carried ~2200
+  frames/s, the limp side **0** — but our frames were still acknowledged there (TX counter rising,
+  `berr-counter tx` at 0), so the arm was electrically present. At power-on it pushed a short burst
+  (~2182 frames), then went silent for good.
+- Cause: the arm persists its linkage configuration across power cycles, and **both**
+  `set_leader_mode()` and `set_follower_mode()` set `enable_can_push = DISABLE`. An arm last used in
+  either mode boots mute. `_init_agx_arm` then queries the firmware — which needs pushed feedback —
+  times out and calls `exit(1)`. With the node dead its `set_normal_mode` service never comes up, so
+  **nothing could re-enable the push through ROS**: a startup deadlock. The arm was consequently never
+  enabled and reported `arm_status = 0x06 JOINT_BRAKE_NOT_RELEASED`.
+- Verified fix on hardware: a single `set_normal_mode()` (linkage `0x00` + push `ENABLE`) sent
+  directly over the SDK woke the arm instantly (0 → 19 724 frames), reporting
+  `ctrl_mode = 0x01 CAN_CTRL`.
+- Fix in code: `_init_agx_arm` now self-heals — on a failed firmware query it sends `set_normal_mode`
+  once (Nero only, commands no motion) and retries before giving up, and the final error names the
+  real remaining causes (power, E-stop, wiring).
+- Also found: the two arms run **different firmware** (right `1.06`, left `1.11`). Only
+  `>= "1.11" → NeroFW.V111` is mapped, so they use different driver code paths — and the MIT
+  move-mode code differs with it (`0x04` below v111, `0x06` from v111). Never hardcode that code;
+  read it from the active driver.
+
 ## 2026-06-29 (O12 MoveIt execution + build env)
 
 ### `colcon build` wrapper still failed `agx_arm_msgs` with "No module named 'cmake'"
