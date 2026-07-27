@@ -32,6 +32,9 @@ omnihand_active_joint_order:
   - pinky_mcp_joint
 
 omnihand_gestures:
+  can_grip_V01: [0.00000, 0.00000, -0.78203, -0.43739, -0.16881, 0.78039, 1.28157, -0.00255, 0.80489, 1.32465, 1.37881, 0.03750]
+  # Index and Middle slightly bend, Pinky and Thumb straight, Ring completely bent
+  can_pre_grip: [0.00000, 0.00000, -0.00108, 0.00000, -0.16880, 0.78103, 0.68993, -0.00357, 0.81624, 0.78188, 1.37881, 0.01718]
   # Motor zero / reset (vendor demo reset). Bootstrap only.
   zero: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   # Vendor demo fist (python/example/demo_set_angle.py). UNCALIBRATED bootstrap.
