@@ -1213,11 +1213,16 @@ class OmniHandBridgeNode(Node):
                             "readbacks); normal SDK polling resumed"
                         )
 
-        joint_state = JointState()
-        joint_state.header.stamp = stamp
-        joint_state.name = list(self.joint_names)
-        joint_state.position = list(self.cached_positions)
-        self.hand_joint_states_pub.publish(joint_state)
+        # Do not publish a fabricated zero/default hand pose before the first
+        # successful SDK readback. MoveIt otherwise latches that fake pose as
+        # the current hand state and plans from it, which later fails execute
+        # validation once the real readback arrives.
+        if self.last_good_joint_read_monotonic > 0.0:
+            joint_state = JointState()
+            joint_state.header.stamp = stamp
+            joint_state.name = list(self.joint_names)
+            joint_state.position = list(self.cached_positions)
+            self.hand_joint_states_pub.publish(joint_state)
 
         if not self._fault_backoff_active or self._last_status_snapshot is None:
             self._last_status_snapshot = self.backend.read_status()

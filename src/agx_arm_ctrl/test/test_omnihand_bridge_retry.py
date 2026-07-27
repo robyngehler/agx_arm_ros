@@ -164,3 +164,31 @@ def test_joint_read_rate_throttles_backend_polling(bridge_node):
     bridge_node._publish_feedback()
 
     assert len(read_calls) == 1
+
+
+def test_no_joint_state_published_before_first_successful_readback(bridge_node):
+    published = []
+
+    class FaultedBackend:
+        communication_fault = True
+
+        def read_joint_state(self):
+            return [0.0] * len(bridge_node.joint_names)
+
+        def read_status(self):
+            return bridge_node.backend.read_status()
+
+        def read_tactile(self):
+            return bridge_node.backend.read_tactile()
+
+    original_backend = bridge_node.backend
+    faulted = FaultedBackend()
+    faulted.read_status = original_backend.read_status
+    faulted.read_tactile = original_backend.read_tactile
+    bridge_node.backend = faulted
+    bridge_node.last_good_joint_read_monotonic = 0.0
+    bridge_node.hand_joint_states_pub.publish = published.append
+
+    bridge_node._publish_feedback()
+
+    assert published == []
