@@ -1,11 +1,72 @@
 from agx_arm_coordination.arm_executor import ArmConfig
 
+from types import SimpleNamespace
+
 from agx_arm_mit_demos.teach_manager import (
+    _allow_bare_joint_match,
     _build_transition_targets,
+    _hand_delivery_verdict,
+    _hand_side_for_arm_name,
     _load_hand_gestures,
+    _recording_namespace,
+    _resolve_topic_for_namespace,
     _transition_robot_ids,
     _update_gesture_in_config,
 )
+
+
+def _status(*, pending: bool, failed: bool = False, attempts: int = 1) -> SimpleNamespace:
+    return SimpleNamespace(
+        command_pending=pending,
+        command_delivery_failed=failed,
+        command_attempts=attempts,
+    )
+
+
+def test_delivery_verdict_waits_on_stale_or_pending_status():
+    # No sample yet, or one from before the command, or still retrying -> wait.
+    assert _hand_delivery_verdict(None, fresh=False, saw_pending=False, elapsed_s=1.0) == "wait"
+    assert (
+        _hand_delivery_verdict(
+            _status(pending=False), fresh=False, saw_pending=False, elapsed_s=1.0
+        )
+        == "wait"
+    )
+    assert (
+        _hand_delivery_verdict(
+            _status(pending=True), fresh=True, saw_pending=True, elapsed_s=1.0
+        )
+        == "wait"
+    )
+
+
+def test_delivery_verdict_confirms_only_after_pending_or_grace():
+    cleared = _status(pending=False)
+    # Fresh cleared sample right after publish, never seen pending -> guard against
+    # mistaking the pre-command status for instant success.
+    assert (
+        _hand_delivery_verdict(cleared, fresh=True, saw_pending=False, elapsed_s=0.1)
+        == "wait"
+    )
+    # Seen pending, now cleared -> delivered.
+    assert (
+        _hand_delivery_verdict(cleared, fresh=True, saw_pending=True, elapsed_s=0.1)
+        == "delivered"
+    )
+    # Never saw pending but grace elapsed (one-shot delivery) -> delivered.
+    assert (
+        _hand_delivery_verdict(cleared, fresh=True, saw_pending=False, elapsed_s=0.5)
+        == "delivered"
+    )
+
+
+def test_delivery_verdict_reports_bridge_giveup():
+    assert (
+        _hand_delivery_verdict(
+            _status(pending=False, failed=True), fresh=True, saw_pending=True, elapsed_s=1.0
+        )
+        == "failed"
+    )
 
 
 _GESTURE_YAML = (
@@ -204,3 +265,49 @@ def test_discover_mit_namespaces_reports_unnamespaced_stack_as_empty_string():
             ]
 
     assert _discover_mit_namespaces(FakeNode()) == [""]
+
+
+def test_resolve_topic_for_namespace_prefixes_relative_topics():
+    assert (
+        _resolve_topic_for_namespace("left_arm", "feedback/omnihand/joint_states")
+        == "/left_arm/feedback/omnihand/joint_states"
+    )
+    assert (
+        _resolve_topic_for_namespace("", "feedback/omnihand/joint_states")
+        == "feedback/omnihand/joint_states"
+    )
+
+
+def test_resolve_topic_for_namespace_preserves_absolute_topics():
+    assert (
+        _resolve_topic_for_namespace("right_arm", "/shared/omnihand/joint_states")
+        == "/shared/omnihand/joint_states"
+    )
+
+
+def test_hand_side_for_arm_name_prefers_left_and_defaults_to_right():
+    assert _hand_side_for_arm_name("left_arm") == "left"
+    assert _hand_side_for_arm_name("/left_arm") == "left"
+    assert _hand_side_for_arm_name("right_arm") == "right"
+    assert _hand_side_for_arm_name("") == "right"
+
+
+def test_recording_namespace_reads_stored_owner():
+    assert _recording_namespace({"namespace": "left_arm"}) == "left_arm"
+    assert _recording_namespace({}) == ""
+    assert _recording_namespace(None) == ""
+
+
+def test_allow_bare_joint_match_uses_recorded_owner_in_duo():
+    assert _allow_bare_joint_match(
+        recording_namespace="left_arm", arm_namespace="left_arm", arm_count=2
+    ) is True
+    assert _allow_bare_joint_match(
+        recording_namespace="left_arm", arm_namespace="right_arm", arm_count=2
+    ) is False
+    assert _allow_bare_joint_match(
+        recording_namespace="", arm_namespace="left_arm", arm_count=2
+    ) is False
+    assert _allow_bare_joint_match(
+        recording_namespace="", arm_namespace="", arm_count=1
+    ) is True

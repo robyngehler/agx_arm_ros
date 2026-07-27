@@ -56,6 +56,8 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Empty, SetBool, Trigger
+
+from agx_arm_msgs.msg import OmniHandStatus
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
@@ -303,6 +305,82 @@ def _resolve_config_path(raw: str) -> Path:
     return path.resolve()
 
 
+def _resolve_topic_for_namespace(namespace: str, topic: str) -> str:
+    """Apply an arm namespace to a relative topic, preserving absolute names."""
+    cleaned = topic.strip()
+    if not cleaned:
+        return cleaned
+    if cleaned.startswith("/"):
+        return cleaned
+    ns = namespace.strip("/")
+    return f"/{ns}/{cleaned}" if ns else cleaned
+
+
+def _hand_side_for_arm_name(name: str) -> str:
+    """Infer the hand side for an arm namespace/label.
+
+    The teach-loop default is the un-namespaced right arm, so ambiguous names
+    fall back to ``right``.
+    """
+    cleaned = name.strip("/").lower()
+    if cleaned.startswith("left"):
+        return "left"
+    return "right"
+
+
+def _recording_namespace(metadata: dict[str, object] | None) -> str:
+    """Recorded single-arm namespace, or empty when not stored."""
+    if not metadata:
+        return ""
+    return str(metadata.get("namespace", "")).strip()
+
+
+def _allow_bare_joint_match(
+    *,
+    recording_namespace: str,
+    arm_namespace: str,
+    arm_count: int,
+) -> bool:
+    """Whether an unprefixed recording may bind to this arm.
+
+    In a duo session, a 7-DoF recording with bare ``joint1..7`` names is
+    ambiguous unless it carries the recorded arm namespace in metadata. Only
+    that stored owner may receive the playback.
+    """
+    if arm_count <= 1:
+        return True
+    if not recording_namespace:
+        return False
+    return arm_namespace == recording_namespace
+
+
+def _hand_delivery_verdict(
+    status,
+    *,
+    fresh: bool,
+    saw_pending: bool,
+    elapsed_s: float,
+    grace_s: float = 0.3,
+) -> str:
+    """Decide hand-command delivery from one status sample.
+
+    Returns ``"wait"`` (no decision yet), ``"delivered"`` (bridge confirmed the
+    target landed), or ``"failed"`` (bridge gave up). Only fresh, post-publish
+    samples decide; a cleared ``command_pending`` counts as delivered only once
+    the command was actually seen pending, or after a short grace, so the stale
+    pre-command status is never mistaken for instant success.
+    """
+    if status is None or not fresh:
+        return "wait"
+    if status.command_pending:
+        return "wait"
+    if status.command_delivery_failed:
+        return "failed"
+    if saw_pending or elapsed_s > grace_s:
+        return "delivered"
+    return "wait"
+
+
 class _ArmEndpoint:
     """All per-arm ROS handles for one (optionally namespaced) MIT stack.
 
@@ -471,19 +549,129 @@ class TeachManagerNode(Node):
         self.hand_names: list[str] = []
         self.hand_selected_index = 0
         self._reload_hand_gestures()
-        self.hand_latest: Optional[JointState] = None
-        self.create_subscription(JointState, args.hand_feedback_topic, self._on_hand_feedback, 20)
-        self.hand_command_pub = self.create_publisher(JointState, args.hand_command_topic, 10)
-        self._hand_arm = next(
-            (a for a in self.arms if a.namespace == args.hand_arm.strip("/")), self.arms[0]
-        )
+        self.hand_feedback_by_arm: dict[str, Optional[JointState]] = {}
+        self.hand_feedback_topics: dict[str, str] = {}
+        self.hand_command_topics: dict[str, str] = {}
+        self.hand_command_pubs = {}
+        # Per-arm OmniHand delivery status, so a hand op can hold its window open
+        # until the bridge confirms the command landed instead of guessing with a
+        # fixed dwell (which closes the window mid-retry on a busy shared bus).
+        self.hand_status_by_arm: dict[str, Optional[OmniHandStatus]] = {}
+        self.hand_status_monotonic: dict[str, float] = {}
+        self.hand_status_topics: dict[str, str] = {}
+        self._hand_arm_label = ""
+        self._setup_hand_io()
 
         self.refresh_library()
 
     # --- hand mode -----------------------------------------------------------
 
-    def _on_hand_feedback(self, msg: JointState) -> None:
-        self.hand_latest = msg
+    def _setup_hand_io(self) -> None:
+        preferred = self.args.hand_arm.strip("/")
+        self.hand_feedback_by_arm = {}
+        self.hand_feedback_topics = {}
+        self.hand_command_topics = {}
+        self.hand_command_pubs = {}
+        self.hand_status_by_arm = {}
+        self.hand_status_monotonic = {}
+        self.hand_status_topics = {}
+        for arm in self.arms:
+            label = arm.label
+            feedback_topic = _resolve_topic_for_namespace(
+                arm.namespace, self.args.hand_feedback_topic
+            )
+            command_topic = _resolve_topic_for_namespace(
+                arm.namespace, self.args.hand_command_topic
+            )
+            status_topic = _resolve_topic_for_namespace(
+                arm.namespace, self.args.hand_status_topic
+            )
+            self.hand_feedback_by_arm[label] = None
+            self.hand_feedback_topics[label] = feedback_topic
+            self.hand_command_topics[label] = command_topic
+            self.hand_status_topics[label] = status_topic
+            self.hand_status_by_arm[label] = None
+            self.hand_status_monotonic[label] = 0.0
+            self.hand_command_pubs[label] = self.create_publisher(JointState, command_topic, 10)
+            self.create_subscription(
+                JointState,
+                feedback_topic,
+                lambda msg, arm_label=label: self._on_hand_feedback(arm_label, msg),
+                20,
+            )
+            self.create_subscription(
+                OmniHandStatus,
+                status_topic,
+                lambda msg, arm_label=label: self._on_hand_status(arm_label, msg),
+                10,
+            )
+
+        selected = next((arm.label for arm in self.arms if arm.namespace == preferred), "")
+        if not selected and self.arms:
+            selected = self.arms[0].label
+        self._hand_arm_label = selected
+
+    def _on_hand_feedback(self, arm_label: str, msg: JointState) -> None:
+        self.hand_feedback_by_arm[arm_label] = msg
+
+    def _on_hand_status(self, arm_label: str, msg: OmniHandStatus) -> None:
+        self.hand_status_by_arm[arm_label] = msg
+        self.hand_status_monotonic[arm_label] = time.monotonic()
+
+    def _await_hand_delivery(self, arm_label: str, published_at: float) -> None:
+        """Hold the caller (and thus the open window) until the OmniHand bridge
+        confirms the command landed, or a timeout.
+
+        Only status samples received AFTER the command was published are trusted;
+        an older one still describes the previous command. Falls back to a fixed
+        dwell when no bridge status is present (older bridge / mock), which keeps
+        the previous behaviour. Returning promptly on delivery is the point: the
+        window closes right after the hand has the target instead of after a
+        blind fixed settle that can close mid-retry on a busy shared bus.
+        """
+        status_topic = self.hand_status_topics.get(arm_label, "")
+        if not status_topic or self.count_publishers(status_topic) == 0:
+            # No delivery surface (mock / older bridge): keep the previous
+            # fixed-dwell behaviour so the hand still gets time to act.
+            self._spin_for(self.args.hand_settle_sec)
+            return
+
+        timeout_s = max(0.0, float(self.args.hand_delivery_timeout_sec))
+        deadline = time.monotonic() + timeout_s
+        saw_pending = False
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+            status = self.hand_status_by_arm.get(arm_label)
+            fresh = self.hand_status_monotonic.get(arm_label, 0.0) > published_at
+            if status is not None and fresh and status.command_pending:
+                saw_pending = True
+            verdict = _hand_delivery_verdict(
+                status,
+                fresh=fresh,
+                saw_pending=saw_pending,
+                elapsed_s=time.monotonic() - published_at,
+            )
+            if verdict == "failed":
+                self.get_logger().error(
+                    f"hand command on {arm_label} not delivered "
+                    f"(bridge gave up after {status.command_attempts} attempts)"
+                )
+                return
+            if verdict == "delivered":
+                self.get_logger().info(
+                    f"hand command on {arm_label} delivered "
+                    f"({status.command_attempts} attempts)"
+                )
+                return
+        self.get_logger().warn(
+            f"hand command on {arm_label} not confirmed within "
+            f"{timeout_s:.1f} s; closing the window anyway"
+        )
+
+    def _spin_for(self, seconds: float) -> None:
+        end = time.monotonic() + max(0.0, seconds)
+        while rclpy.ok() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.05)
 
     def _reload_hand_gestures(self) -> None:
         order, gestures = _load_hand_gestures(self.hand_gesture_path)
@@ -495,6 +683,38 @@ class TeachManagerNode(Node):
     @property
     def hand_enabled(self) -> bool:
         return bool(self.hand_joint_order) and self.hand_gesture_path.exists()
+
+    def _current_hand_arm(self) -> _ArmEndpoint:
+        return next((arm for arm in self.arms if arm.label == self._hand_arm_label), self.arms[0])
+
+    def _hand_joint_names_for_arm(self, arm: _ArmEndpoint) -> list[str]:
+        side = _hand_side_for_arm_name(arm.namespace or arm.label)
+        return [f"{side}_{joint_name}" for joint_name in self.hand_joint_order]
+
+    def _prompt_hand_arm(self, key_reader: TerminalKeyReader, purpose: str) -> _ArmEndpoint:
+        if len(self.arms) == 1:
+            self._hand_arm_label = self.arms[0].label
+            return self.arms[0]
+
+        current = self._current_hand_arm().label
+        listing = ", ".join(f"{i}={arm.label}" for i, arm in enumerate(self.arms))
+        default_idx = next(
+            (i for i, arm in enumerate(self.arms) if arm.label == current),
+            0,
+        )
+        raw = self.prompt_line(
+            key_reader,
+            f"Hand resource for {purpose} [{listing}] (default {default_idx}): ",
+        ).strip()
+        if not raw:
+            return self.arms[default_idx]
+        try:
+            selected = self.arms[int(raw)]
+        except (ValueError, IndexError):
+            self.get_logger().warn(f"invalid hand resource selection '{raw}'; using {current}")
+            return self.arms[default_idx]
+        self._hand_arm_label = selected.label
+        return selected
 
     def selected_hand_skill(self) -> Optional[str]:
         if not self.hand_names:
@@ -515,13 +735,15 @@ class TeachManagerNode(Node):
             )
             return
         self.state = ManagerState.HAND
+        current = self._current_hand_arm()
         self.get_logger().info(
-            f"HAND mode ({self._hand_arm.label} gates the window): "
+            f"HAND mode (default source/gate={current.label}, "
+            f"feedback={self.hand_feedback_topics.get(current.label, self.args.hand_feedback_topic)}): "
             f"'c' capture, 'f' replay, '[' ']' select. skills: {self.hand_names}"
         )
         self.print_status()
 
-    def _with_hand_window(self, label: str, fn) -> None:
+    def _with_hand_window(self, arm: _ArmEndpoint, label: str, fn) -> None:
         """Run a hand op inside a prepare/resume handshake on the hand's arm.
 
         With ``--no-hand-window`` (dedicated hand bus / parallel operation) the
@@ -531,14 +753,14 @@ class TeachManagerNode(Node):
         if not self.args.hand_window:
             fn()
             return
-        ok, msg = self._hand_arm.call_prepare_hand_window(self.args.service_timeout)
+        ok, msg = arm.call_prepare_hand_window(self.args.service_timeout)
         if not ok:
             self.get_logger().error(f"{label} aborted: prepare_hand_window failed ({msg})")
             return
         try:
             fn()
         finally:
-            rok, rmsg = self._hand_arm.call_resume_arm_control(self.args.service_timeout)
+            rok, rmsg = arm.call_resume_arm_control(self.args.service_timeout)
             if not rok:
                 self.get_logger().error(f"resume_arm_control failed after {label}: {rmsg}")
 
@@ -546,21 +768,28 @@ class TeachManagerNode(Node):
         if not self.hand_enabled:
             self.get_logger().warn("hand mode not available; cannot capture")
             return
+        hand_arm = self._prompt_hand_arm(key_reader, "this hand pose")
         name = self.prompt_line(key_reader, "Hand skill name (e.g. open_flat): ").strip()
         if not name:
             self.get_logger().warn("no skill name given; capture aborted")
             return
 
         def _do() -> None:
+            topic_joint_names = self._hand_joint_names_for_arm(hand_arm)
             try:
                 averaged = average_joint_positions(
-                    self, lambda: self.hand_latest, self.hand_joint_order,
+                    self,
+                    lambda: self.hand_feedback_by_arm.get(hand_arm.label),
+                    topic_joint_names,
                     self.args.settle_sec, self.args.feedback_timeout,
                 )
             except RuntimeError as exc:
-                self.get_logger().error(f"hand capture failed: {exc}")
+                topic = self.hand_feedback_topics.get(hand_arm.label, self.args.hand_feedback_topic)
+                self.get_logger().error(
+                    f"hand capture failed on {hand_arm.label} ({topic}): {exc}"
+                )
                 return
-            vector = [averaged[j] for j in self.hand_joint_order]
+            vector = [averaged[joint_name] for joint_name in topic_joint_names]
             try:
                 note = _update_gesture_in_config(
                     self.hand_gesture_path, name, vector, self.args.precision
@@ -575,9 +804,9 @@ class TeachManagerNode(Node):
             self.get_logger().info(f"{note} ({len(vector)}-dim); rebuild agx_arm_ctrl to install")
             self._reload_hand_gestures()
 
-        self._with_hand_window(f"capture '{name}'", _do)
+        self._with_hand_window(hand_arm, f"capture '{name}' on {hand_arm.label}", _do)
 
-    def play_hand_skill(self) -> None:
+    def play_hand_skill(self, key_reader: TerminalKeyReader) -> None:
         skill = self.selected_hand_skill()
         if skill is None:
             self.get_logger().warn("no hand skill selected")
@@ -586,21 +815,26 @@ class TeachManagerNode(Node):
         if not vector or len(vector) != len(self.hand_joint_order):
             self.get_logger().error(f"skill '{skill}' has no vector matching the joint order")
             return
+        hand_arm = self._prompt_hand_arm(key_reader, f"replay '{skill}'")
 
         def _do() -> None:
             msg = JointState()
             msg.header.stamp = self.get_clock().now().to_msg()
-            msg.name = list(self.hand_joint_order)
+            msg.name = self._hand_joint_names_for_arm(hand_arm)
             msg.position = [float(v) for v in vector]
-            self.hand_command_pub.publish(msg)
+            published_at = time.monotonic()
+            self.hand_command_pubs[hand_arm.label].publish(msg)
             self.get_logger().info(
-                f"published hand skill '{skill}'; settling {self.args.hand_settle_sec}s"
+                f"published hand skill '{skill}' on {hand_arm.label} "
+                f"({self.hand_command_topics.get(hand_arm.label, self.args.hand_command_topic)}); "
+                "holding the window until the bridge confirms delivery"
             )
-            end = time.monotonic() + self.args.hand_settle_sec
-            while rclpy.ok() and time.monotonic() < end:
-                rclpy.spin_once(self, timeout_sec=0.05)
+            # Keep the window open until the hand actually has the target, not for
+            # a blind fixed dwell — on a shared bus a fixed dwell closes the
+            # window mid-retry and the remaining attempts hit the arm flood.
+            self._await_hand_delivery(hand_arm.label, published_at)
 
-        self._with_hand_window(f"replay '{skill}'", _do)
+        self._with_hand_window(hand_arm, f"replay '{skill}' on {hand_arm.label}", _do)
 
     @property
     def is_dual(self) -> bool:
@@ -958,14 +1192,20 @@ class TeachManagerNode(Node):
             rclpy.spin_once(self, timeout_sec=0.05)
             time.sleep(max(0.0, self.args.publish_interval))
 
-    def _arm_columns(self, arm: _ArmEndpoint, joint_names: list[str]) -> Optional[list[int]]:
+    def _arm_columns(
+        self,
+        arm: _ArmEndpoint,
+        joint_names: list[str],
+        *,
+        allow_bare_names: bool,
+    ) -> Optional[list[int]]:
         """Column indices in ``joint_names`` this arm owns (side-prefixed match)."""
         wanted = [f"{arm.side_prefix}{joint}" for joint in arm.source_joints]
         index = {name: i for i, name in enumerate(joint_names)}
         if all(name in index for name in wanted):
             return [index[name] for name in wanted]
         # Fall back to the bare (unprefixed) names for a single-arm recording.
-        if all(joint in index for joint in arm.source_joints):
+        if allow_bare_names and all(joint in index for joint in arm.source_joints):
             return [index[joint] for joint in arm.source_joints]
         return None
 
@@ -999,12 +1239,29 @@ class TeachManagerNode(Node):
         if not trajectory.points:
             raise RuntimeError(f"recording '{trajectory.name}' has no points")
 
+        recording_namespace = _recording_namespace(trajectory.metadata)
+
         dispatched = []
         for arm in self.arms:
-            columns = self._arm_columns(arm, list(trajectory.joint_names))
+            columns = self._arm_columns(
+                arm,
+                list(trajectory.joint_names),
+                allow_bare_names=_allow_bare_joint_match(
+                    recording_namespace=recording_namespace,
+                    arm_namespace=arm.namespace,
+                    arm_count=len(self.arms),
+                ),
+            )
             if columns is not None:
                 dispatched.append((arm, columns))
         if not dispatched:
+            if len(self.arms) > 1 and all(
+                joint_name in set(trajectory.joint_names) for joint_name in self.source_joints
+            ):
+                raise RuntimeError(
+                    f"recording '{trajectory.name}' has bare joint names but no usable arm owner in "
+                    f"metadata (namespace={recording_namespace or '<missing>'}); refusing ambiguous duo playback"
+                )
             raise RuntimeError(
                 f"recording joints {list(trajectory.joint_names)} match none of the arms "
                 f"{[a.label for a in self.arms]}; record it with a matching resource"
@@ -1210,7 +1467,7 @@ class TeachManagerNode(Node):
             self.capture_hand_skill(key_reader)
             return
         if self.state == ManagerState.HAND and key == "f":
-            self.play_hand_skill()
+            self.play_hand_skill(key_reader)
             return
         if self.state == ManagerState.PLAYBACK and key == "f":
             self.playback_selected()
@@ -1255,6 +1512,7 @@ class TeachManagerNode(Node):
             "Status: "
             f"state={self.state.value}, "
             f"arms=[{arms}], "
+            f"hand_source={self._current_hand_arm().label}, "
             f"recordings={len(self.trajectory_paths)}, "
             f"selected={selected.name if selected else '<none>'}, "
             f"transition={transition.label if transition else '<none>'}, "
@@ -1274,6 +1532,7 @@ class TeachManagerNode(Node):
             _ArmEndpoint(self, ns, self.source_joints, self.args.source_topic) for ns in namespaces
         ]
         self.arms.sort(key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
+        self._setup_hand_io()
         # Transition targets are namespace-derived — rebuild them for the new arms.
         self._reload_arm_config()
 
@@ -1444,7 +1703,7 @@ def parse_args() -> argparse.Namespace:
         help="OmniHand JointState feedback topic read for skill capture",
     )
     parser.add_argument(
-        "--hand-command-topic", default="control/omnihand/joint_states",
+        "--hand-command-topic", default="control/joint_states",
         help="OmniHand JointState command topic a replayed skill is published to",
     )
     parser.add_argument(
@@ -1453,7 +1712,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--hand-settle-sec", type=float, default=2.0,
-        help="Dwell after publishing a hand skill before resuming arm control",
+        help="Fallback dwell after publishing a hand skill when the bridge has "
+             "no delivery status (mock/older bridge)",
+    )
+    parser.add_argument(
+        "--hand-status-topic", default="feedback/omnihand/status",
+        help="OmniHand bridge status topic (namespaced per arm) used to hold the "
+             "window open until a hand command is confirmed delivered",
+    )
+    parser.add_argument(
+        "--hand-delivery-timeout-sec", type=float, default=4.0,
+        help="Max time to hold the hand window waiting for delivery confirmation "
+             "before closing it anyway",
     )
     parser.add_argument(
         "--no-hand-window", dest="hand_window", action="store_false",
@@ -1493,6 +1763,7 @@ def main() -> None:
     finally:
         try:
             if node.runtime_active and rclpy.ok():
+                node.cancel_active()
                 node.enter_idle_mode()
         except Exception:
             pass
