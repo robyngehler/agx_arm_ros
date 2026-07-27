@@ -94,20 +94,46 @@ timed-out empty read, not a joint-count config bug.
 | The only stock APIs that silence the push are `set_leader_mode`/`set_follower_mode`, i.e. they bundle "quiet bus" with a **mode switch**. Leader mode is zero-force drag: the firmware has no gravity model for this mounting pose and none for the end-effector payload, so the arm would sag. | New repo-owned `agx_arm_ctrl/nero_can_push.py` sends only the mode frame's push bit (`move_mode = 255` = no change), keeping the arm in the CAN-control hold it is already in after `agx_arm_ctrl` enables it. | The window needs a *quiet* arm, not a *limp* one. The vendor SDK stays untouched (pinned submodule). |
 | Silencing the push blinds the bus-recovery watchdog (no feedback looks exactly like a dead bus). | `_should_recover_bus` treats a requested silence as healthy, but bounded by `hand_window_max_silence_s` (default 10 s): past that the push is restored and the watchdog re-armed, while arm commands stay gated until `resume_arm_control`. Recovery, `emergency_stop`, `set_normal_mode`, `set_leader_mode` and node shutdown all restore the push first — every one of them verifies in feedback. | A deliberate silence must never be read as a stall, and must never outlive its window. |
 | A missing/failed silencing would have been invisible. | `prepare_hand_window` still opens the window (arm held, MIT gated) but reports and logs it as a **warning** naming the reason. | An honest window that cannot free the bus beats a silent one. |
-| **Who** holds the arm was never verified — only *that* it was held (`ctrl_mode`). The hold is a MOVE-J executed by the arm's own position controller, but `move_j` emits its MOVE-J mode frame through `_maybe_set_motion_mode`, which the MIT streaming path disables around its batches: a concurrent batch would have made `move_j` skip the frame, leaving the firmware in MIT — waiting for host commands the window is about to cut off, with no feedback left to compute a correction. | Force auto mode-setting on before the `move_j`, and additionally verify `mode_feedback` is **not** a MIT move mode (`0x04`, or `0x06` from v111) before silencing. Unknown encodings pass but are reported. | With the push silenced only a firmware-closed loop can correct drift; the host has nothing to close a loop with. |
+| **Who** holds the arm was never verified — only *that* it was held (`ctrl_mode`). The hold is a MOVE-J executed by the arm's own position controller, but `move_j` emits its MOVE-J mode frame through `_maybe_set_motion_mode`, which the MIT streaming path disables around its batches: a concurrent batch would have made `move_j` skip the frame, leaving the firmware in MIT — waiting for host commands the window is about to cut off, with no feedback left to compute a correction. | Force auto mode-setting on before the `move_j`, and additionally verify `mode_feedback` is **not** a MIT move mode before silencing. The MIT code is read from the active driver (`0x04` below firmware v111, `0x06` from v111 — the two arms run 1.06 and 1.11, so a hardcoded set would misjudge one). Unknown encodings pass but are reported. | With the push silenced only a firmware-closed loop can correct drift; the host has nothing to close a loop with. |
 
-Order matters and is enforced: capture pose → hold → **verify hold in feedback** → silence push; and on
-resume: **restore push → wait for a new frame** → health checks → reopen the gate.
+## 8d. Second hardware run (2026-07-27): the MOVE-J hold frame was being dropped
+
+`components.launch` in `moveit_mit`/`duo_hand`, both arms up (right 1.06, left 1.11), a MoveIt `left_hand`
+goal. The §8c `firmware_holds` check fired exactly as intended and **refused the window honestly**:
+
+```
+hold NOT verified (settled=True, holding=True, firmware_holds=False,
+                   ctrl_mode=CAN_CTRL(0x1), move_mode=MOVE_MIT(0x6)); hand window not opened
+```
+
+Read-only `candump` of `0x2A1` confirmed both arms sit in their MIT move mode under the always-on MIT
+hold (left `01 00 06`, right `01 00 04`). So after `prepare_hand_window` sent its single `move_j`, the
+left arm was still in `MOVE_MIT`: the one MOVE-J mode frame lost arbitration on the still-flooded
+one-shot bus and was dropped — precisely the "SDK drops mode frames under saturation" failure the whole
+effort is about. The preceding damped stop is `kp=0` (velocity damping, **no** position hold), so a
+dropped MOVE-J would also leave the arm sagging; the refusal reopens the gate and the external MIT
+controller recaptures the hold, so there is no safety gap — but the window can never open.
+
+| Problem | Fix | Rationale |
+|---|---|---|
+| The MOVE-J hold frame is sent once. On the flooded one-shot bus (the push is still on — it is only silenced *after* the hold is verified) that single frame is easily dropped, so the firmware stays in MIT and the window is refused every time. | `_assert_firmware_hold` re-sends the same-pose, motionless MOVE-J until the readback stops reporting a MIT move mode, bounded by `hand_window_hold_assert_s` (1 s) / `hand_window_hold_poll_s` (50 ms). The attempt count is surfaced in the service message (`move_j xN`) as live evidence of how lossy the bus was. | A mode frame that must land on a saturated bus needs the same verified-retry treatment every other handoff step already gets; sending it once and trusting the readback is exactly what fails. |
+
+Order matters and is enforced: capture pose → **re-assert MOVE-J until the firmware confirms it left
+MIT** → verify hold in feedback → silence push; and on resume: **restore push → wait for a new frame**
+→ health checks → reopen the gate.
 
 ## 9. Open / hardware-dependent
 
 - **V112 `set_normal_mode` no-op:** `prepare_hand_window` now fails honestly (reporting the real `ctrl_mode`)
   if the arm does not reach a `CAN_CTRL`/`TCP_CTRL` hold on V112; the actual V112 hold mechanism must be
   confirmed on hardware. (On the tested robot the hold *was* verified as `CAN_CTRL` — see §8c.)
-- **Push silencing (§8c) is not yet hardware-validated:** the expected effect is that the ~2150 f/s side-bus
-  load collapses inside an open window and the hand stops timing out. To confirm: `candump` A/B across
-  `prepare_hand_window` / `resume_arm_control`, then check that feedback resumes cleanly on resume and that
-  the arm holds its pose (no sag) throughout the silence.
+- **Push silencing (§8c) + MOVE-J retry (§8d) are not yet hardware-validated together:** as of the
+  2026-07-27 run the window was still refused (dropped MOVE-J), so the silencing has never actually run on
+  hardware. With the §8d retry in place, re-run and confirm: (1) `prepare_hand_window` now succeeds and the
+  service message reports `move_j xN` with N small; (2) `candump` A/B shows the ~2150 f/s side-bus load
+  collapse inside the open window and the hand stops timing out; (3) feedback resumes cleanly on resume and
+  the arm holds its pose (no sag) throughout. Needs a rebuild+relaunch — the retry is not in the running
+  binary from that run.
 - **P2, becomes relevant now that P1 is fixed:** the FJT bridge closes the window on trajectory duration +
   margin, not on the hand's verified/gave-up state, so a short goal can resume arm MIT mid-retry. Worth
   fixing once a silenced window is confirmed to let hand commands through.

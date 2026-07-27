@@ -66,7 +66,8 @@ class _FakeLogger:
 class _FakeArm:
     def __init__(self, *, velocity=0.0, ctrl_mode=_CAN_CTRL, hz=1.0,
                  frame_ts=1.0, comm_err=None, mode_feedback=_MOVE_J,
-                 push_live=False, disables_until_silent=1):
+                 push_live=False, disables_until_silent=1,
+                 move_j_lands_after=0):
         # push_live models the real firmware: while the push runs, every read
         # sees a NEW frame timestamp, and it only stops once a DISABLE mode
         # frame actually lands. disables_until_silent > 1 models the frame
@@ -87,6 +88,10 @@ class _FakeArm:
         )
         self.normal_mode_called = False
         self.move_j_arg = None
+        self.move_j_calls = 0
+        # Lossy bus: the first `move_j_lands_after` MOVE-J frames are dropped
+        # (mode_feedback stays as-is); the next one lands and flips it to J.
+        self.move_j_lands_after = move_j_lands_after
         self.move_mit_calls = 0
         self._msg_mode = _FakeModeMsg()
         # (enable_can_push, move_mode) of every mode frame actually sent.
@@ -129,6 +134,9 @@ class _FakeArm:
 
     def move_j(self, q):
         self.move_j_arg = list(q)
+        self.move_j_calls += 1
+        if self.move_j_calls > self.move_j_lands_after:
+            self.mode_feedback = _MOVE_J
 
     def set_motion_mode(self, *_a):
         pass
@@ -172,6 +180,10 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
     # tests pay it — just not 0.4 s per call.
     node.hand_window_silence_verify_s = 0.15
     node.hand_window_silence_quiet_s = 0.02
+    # MOVE-J hold re-assertion: short budget/poll so the retry runs for real
+    # without slowing the suite.
+    node.hand_window_hold_assert_s = 0.05
+    node.hand_window_hold_poll_s = 0.005
     node._hand_window_push_silenced = False
     node._hand_window_silence_started = 0.0
     return node
@@ -337,36 +349,47 @@ def test_hold_is_executed_by_the_firmware_not_by_the_gated_mit_loop():
     assert "move_mode=1" in resp.message
 
 
-def test_window_refused_when_the_firmware_is_still_in_mit_move_mode():
-    # ctrl_mode reads CAN_CTRL, but the arm is still waiting for host MIT
-    # commands that the window is about to cut off — not a hold.
-    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=_MOVE_MIT)
+def test_window_refused_when_move_j_never_lands_and_firmware_stays_in_mit():
+    # Every MOVE-J mode frame is dropped on the flooded bus (measured failure:
+    # the arm stayed in MOVE_MIT after prepare). The window must be refused
+    # rather than silence the push against an arm the host still has to hold.
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=_MOVE_MIT,
+                   move_j_lands_after=10 ** 6)
     node = _node(arm)
     resp = node._prepare_hand_window_callback(None, Trigger.Response())
     assert resp.success is False
     assert node._hand_window_active is False
     assert node._hand_window_push_silenced is False
     assert arm.push_frames == []
+    assert arm.move_j_calls > 1        # re-asserted, not tried once and trusted
     assert "firmware_holds=False" in resp.message
 
 
-def test_mit_move_mode_code_comes_from_the_driver_not_from_a_hardcoded_set():
-    # 0x04 is MIT below firmware v111 but UNASSIGNED from v111 on. Hardcoding
-    # both codes would make a healthy v111+ hold look like MIT and refuse every
-    # window (observed on hardware: a 1.06 arm legitimately reports 0x04).
-    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=0x04)
-    node = _node(arm)  # fake driver reports MIT == 0x06 (v111+)
+def test_dropped_move_j_is_re_asserted_until_the_firmware_confirms_the_hold():
+    # First two MOVE-J frames are dropped (firmware stays MIT); the third lands.
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=_MOVE_MIT,
+                   move_j_lands_after=2)
+    node = _node(arm)
     resp = node._prepare_hand_window_callback(None, Trigger.Response())
     assert resp.success is True
+    assert arm.move_j_calls == 3
     assert node._hand_window_push_silenced is True
+    assert "move_j x3" in resp.message
 
-    # Same value, driver that encodes MIT as 0x04 -> now it IS MIT.
-    legacy = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, mode_feedback=0x04)
-    legacy._msg_mode.Enums.MotionMode = type("M", (), {"MIT": 0x04})
-    node = _node(legacy)
-    resp = node._prepare_hand_window_callback(None, Trigger.Response())
-    assert resp.success is False
-    assert legacy.push_frames == []
+
+def test_mit_move_mode_code_is_read_from_the_driver_not_hardcoded():
+    # 0x04 is MIT below firmware v111 but UNASSIGNED from v111 on. The MIT code
+    # must come from the active driver: a 1.06 arm legitimately reports 0x04 as
+    # MIT, while on a v111+ arm 0x04 is not MIT and 0x06 is.
+    v111 = _node(_FakeArm())  # fake driver reports MIT == 0x06
+    assert v111._move_mode_is_mit(_MOVE_MIT) is True
+    assert v111._move_mode_is_mit(0x04) is False
+
+    legacy_arm = _FakeArm()
+    legacy_arm._msg_mode.Enums.MotionMode = type("M", (), {"MIT": 0x04})
+    legacy = _node(legacy_arm)
+    assert legacy._move_mode_is_mit(0x04) is True
+    assert legacy._move_mode_is_mit(_MOVE_MIT) is False
 
 
 def test_push_is_not_silenced_before_the_hold_is_verified():

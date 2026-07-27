@@ -140,6 +140,14 @@ class AgxArmRosNode(Node):
         # No new feedback frame for this long counts as silenced. Must stay well
         # above the ~5 ms push period and below feedback_timeout.
         self.declare_parameter("hand_window_silence_quiet_s", 0.08)
+        # The MOVE-J hold frame that parks the arm for a hand window is also a
+        # single mode frame, and the bus is still flooded when it goes out (the
+        # push is only silenced AFTER the hold is verified). On the one-shot
+        # shared bus that single frame can lose arbitration and be dropped,
+        # leaving the firmware in MIT. So re-assert the same-pose, motionless
+        # MOVE-J until the readback confirms the firmware left MIT, bounded here.
+        self.declare_parameter("hand_window_hold_assert_s", 1.0)
+        self.declare_parameter("hand_window_hold_poll_s", 0.05)
 
     def _load_parameters(self):
         self.can_port = self.get_parameter("can_port").value
@@ -178,6 +186,12 @@ class AgxArmRosNode(Node):
         )
         self.hand_window_silence_quiet_s = max(
             0.01, float(self.get_parameter("hand_window_silence_quiet_s").value)
+        )
+        self.hand_window_hold_assert_s = max(
+            0.0, float(self.get_parameter("hand_window_hold_assert_s").value)
+        )
+        self.hand_window_hold_poll_s = max(
+            0.001, float(self.get_parameter("hand_window_hold_poll_s").value)
         )
         # After a recovery the node latches this and refuses new motion until
         # clear_fault_lockout is called; feedback keeps flowing throughout.
@@ -1910,27 +1924,61 @@ class AgxArmRosNode(Node):
         except (TypeError, ValueError):
             return False
 
+    def _move_mode_is_mit(self, mode_feedback) -> bool:
+        """True only when the readback POSITIVELY reports a MIT move mode.
+
+        The MIT code is firmware-dependent (0x04 below v111, 0x06 from v111), so
+        it is taken from the active driver rather than hardcoded. An unreadable
+        or UNKNOWN mode returns False here — it is not a positive MIT reading.
+        """
+        if mode_feedback is None:
+            return False
+        try:
+            return int(mode_feedback) in nero_can_push.mit_move_mode_codes(
+                self.agx_arm
+            )
+        except (TypeError, ValueError):
+            return False
+
     def _move_mode_is_firmware_hold(self, mode_feedback) -> bool:
         """False only when the readback positively reports a MIT move mode.
 
         In MIT the arm only does what the host streams — with the feedback push
         silenced the host streams nothing and no correction can be computed. A
         hand window therefore requires a NON-MIT move mode, where the vendor's
-        own position controller closes the loop on the firmware side.
-
-        The MIT code is firmware-dependent (0x04 below v111, 0x06 from v111), so
-        it is taken from the active driver rather than hardcoded. An unreadable
-        or UNKNOWN mode is not treated as a failure; the observed value is
-        reported so a surprising one is visible instead of silently trusted.
+        own position controller closes the loop on the firmware side. An
+        unreadable or UNKNOWN mode is not treated as a failure; the observed
+        value is reported so a surprising one is visible instead of trusted.
         """
-        if mode_feedback is None:
-            return True
-        try:
-            return int(mode_feedback) not in nero_can_push.mit_move_mode_codes(
-                self.agx_arm
-            )
-        except (TypeError, ValueError):
-            return True
+        return not self._move_mode_is_mit(mode_feedback)
+
+    def _assert_firmware_hold(self, hold_pose) -> tuple:
+        """Re-assert a MOVE-J hold until the firmware confirms it left MIT.
+
+        A single MOVE-J mode frame can be dropped on the flooded one-shot shared
+        bus (the push is still on here — it is only silenced once the hold is
+        verified), leaving the firmware in MIT while it executes the preceding
+        kp=0 damped stop, which sags. Re-send the same-pose, motionless MOVE-J
+        until the readback stops reporting a MIT move mode, bounded by
+        ``hand_window_hold_assert_s``.
+
+        Returns ``(left_mit, move_mode, attempts)``: whether the firmware is
+        confirmed out of MIT, the last move-mode read, and how many sends it
+        took (useful evidence of how lossy the bus was during the handoff).
+        """
+        self.agx_arm.set_auto_set_motion_mode_enabled(True)
+        deadline = time.monotonic() + self.hand_window_hold_assert_s
+        attempts = 0
+        while True:
+            self.agx_arm.move_j(hold_pose)
+            self._current_motion_mode = 'j'
+            attempts += 1
+            time.sleep(self.hand_window_hold_poll_s)
+            move_mode = self._arm_move_mode()
+            if not self._move_mode_is_mit(move_mode):
+                return True, move_mode, attempts
+            if time.monotonic() >= deadline:
+                return False, move_mode, attempts
 
     def _arm_ctrl_mode(self):
         """Current firmware ctrl_mode from feedback, or None if unreadable."""
@@ -2138,14 +2186,11 @@ class AgxArmRosNode(Node):
             self._leader_mode_active = False
             self._current_motion_mode = None
             # The hold must be executed by the arm's OWN position controller, so
-            # the MOVE-J mode frame has to go out. The MIT streaming path turns
-            # auto mode-setting off around its batches; if a batch is in flight
-            # on another thread, move_j would silently skip the mode frame and
-            # the firmware would stay in MIT — i.e. still waiting for host
-            # commands that the window is about to stop. Force it on.
-            self.agx_arm.set_auto_set_motion_mode_enabled(True)
-            self.agx_arm.move_j(hold_pose)
-            self._current_motion_mode = 'j'
+            # the MOVE-J mode frame has to actually land. On the flooded one-shot
+            # bus a single one is easily dropped (measured on hardware: the arm
+            # stayed in MOVE_MIT after one move_j), so re-assert it until the
+            # firmware confirms it left MIT.
+            left_mit, move_mode, attempts = self._assert_firmware_hold(hold_pose)
             self._last_good_feedback_monotonic = time.monotonic()
         except Exception as e:
             self._hand_window_active = False
@@ -2165,7 +2210,8 @@ class AgxArmRosNode(Node):
         # feedback push about to go silent, the host cannot compute any
         # correction, so the firmware's own position controller must own the
         # hold. A MIT move mode here would mean the arm is waiting for commands
-        # that will not come.
+        # that will not come. Re-read after the settle poll for the freshest
+        # value; the gate has kept MIT frames off the bus throughout.
         move_mode = self._arm_move_mode()
         firmware_holds = self._move_mode_is_firmware_hold(move_mode)
         if settled and held and firmware_holds:
@@ -2175,8 +2221,8 @@ class AgxArmRosNode(Node):
             response.success = True
             response.message = (
                 f"hand window open: arm settled and held by the firmware "
-                f"(ctrl_mode={ctrl_mode}, move_mode={move_mode}), MIT quiesced, "
-                f"{silence_note}"
+                f"(ctrl_mode={ctrl_mode}, move_mode={move_mode}, "
+                f"move_j x{attempts}), MIT quiesced, {silence_note}"
             )
             if silenced:
                 self.get_logger().info(response.message)
@@ -2191,7 +2237,8 @@ class AgxArmRosNode(Node):
             response.message = (
                 f"hold NOT verified (settled={settled}, holding={held}, "
                 f"firmware_holds={firmware_holds}, ctrl_mode={ctrl_mode}, "
-                f"move_mode={move_mode}); hand window not opened"
+                f"move_mode={move_mode}, move_j x{attempts}); "
+                "hand window not opened"
             )
             self.get_logger().error(response.message)
         return response
