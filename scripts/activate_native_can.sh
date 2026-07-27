@@ -54,6 +54,7 @@
 #   FD=0 sudo bash activate_native_can.sh            # classic-only (arm, no hand)
 #   ONE_SHOT=off TX_QUEUE_LEN=1000 sudo bash activate_native_can.sh  # historical shared arm+hand experiment only
 #   TDCR_VALUE=0x900 sudo bash activate_native_can.sh  # override TDCR for a different transceiver
+#   RMEM_MAX=8388608 sudo bash activate_native_can.sh  # deeper RX socket buffer (default 4 MB; 0 = leave sysctl untouched)
 #
 # Idempotent: an interface already renamed to its target is reconfigured in place.
 
@@ -68,6 +69,15 @@ ONE_SHOT="${ONE_SHOT:-on}"      # stable shared-bus baseline; set off only for c
 TX_QUEUE_LEN="${TX_QUEUE_LEN:-1000}"  # socket TX ring depth; kernel default (10) is too small for arm command bursts
 FD="${FD:-1}"                   # 1 = CAN FD (arm+hand), 0 = classic only (arm)
 TDCR_VALUE="${TDCR_VALUE:-0x800}" # TJA1051T/3 (Adafruit CAN Pal) validated value
+# RX socket buffer ceiling. The kernel default (~208 KB) holds only ~270 CAN
+# frames ≈ 125 ms of feedback at the ~2150 f/s the arm pushes, so a single CPU
+# stall longer than that (measured: 200 ms+ publish-loop overruns under the full
+# teach stack) overflows the socket and the kernel DROPS received frames —
+# including the OmniHand's CANFD response frames, which then surface as
+# "请求超时" hand timeouts even though the bus itself is fine. A 4 MB ceiling buys
+# ~2 s of buffering so a scheduling hiccup no longer costs hand responses. Set
+# RMEM_MAX=0 to skip this (leave the system sysctl untouched).
+RMEM_MAX="${RMEM_MAX:-4194304}"
 SIDE="${1:-both}"
 
 # side -> "source_iface:target_name"
@@ -157,6 +167,27 @@ if [ "$EUID" -ne 0 ]; then
     echo "Run with sudo (this modifies network interfaces)." >&2
     exit 1
 fi
+
+raise_rx_buffer() {
+    # Raise the ceiling AND the default so python-can's socket (which does not
+    # request a larger SO_RCVBUF itself) actually gets the deeper buffer.
+    [ "$RMEM_MAX" = "0" ] && return 0
+    local current
+    current="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
+    if [ "$current" -ge "$RMEM_MAX" ] 2>/dev/null; then
+        echo "  rx buffer: net.core.rmem_max already ${current} (>= ${RMEM_MAX})"
+        return 0
+    fi
+    if sysctl -w "net.core.rmem_max=$RMEM_MAX" >/dev/null 2>&1 \
+        && sysctl -w "net.core.rmem_default=$RMEM_MAX" >/dev/null 2>&1; then
+        echo "  rx buffer: net.core.rmem_max/default = ${RMEM_MAX} (was ${current})"
+    else
+        echo "  warning: could not raise net.core.rmem_max; hand responses may be" \
+             "dropped under CPU load. Set RMEM_MAX=0 to silence." >&2
+    fi
+}
+
+raise_rx_buffer
 
 rc=0
 case "$SIDE" in
