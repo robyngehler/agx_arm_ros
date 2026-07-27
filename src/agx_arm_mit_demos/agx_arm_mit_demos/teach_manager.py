@@ -522,7 +522,15 @@ class TeachManagerNode(Node):
         self.print_status()
 
     def _with_hand_window(self, label: str, fn) -> None:
-        """Run a hand op inside a prepare/resume handshake on the hand's arm."""
+        """Run a hand op inside a prepare/resume handshake on the hand's arm.
+
+        With ``--no-hand-window`` (dedicated hand bus / parallel operation) the
+        handshake is skipped entirely and the hand op runs directly, with the
+        arm still under its normal MIT control.
+        """
+        if not self.args.hand_window:
+            fn()
+            return
         ok, msg = self._hand_arm.call_prepare_hand_window(self.args.service_timeout)
         if not ok:
             self.get_logger().error(f"{label} aborted: prepare_hand_window failed ({msg})")
@@ -1447,6 +1455,13 @@ def parse_args() -> argparse.Namespace:
         "--hand-settle-sec", type=float, default=2.0,
         help="Dwell after publishing a hand skill before resuming arm control",
     )
+    parser.add_argument(
+        "--no-hand-window", dest="hand_window", action="store_false",
+        help="Skip the arm<->hand prepare/resume handshake and command the hand "
+             "directly. Only safe when the hand has its own CAN bus (parallel "
+             "operation); on a shared bus the hand needs the window.",
+    )
+    parser.set_defaults(hand_window=True)
     return parser.parse_args()
 
 

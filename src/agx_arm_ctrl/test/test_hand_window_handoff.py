@@ -186,6 +186,11 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
     node.hand_window_hold_poll_s = 0.005
     node._hand_window_push_silenced = False
     node._hand_window_silence_started = 0.0
+    # Record the latched hand_window_active signal the MIT controller listens to.
+    node.hand_window_active_signals = []
+    node.hand_window_active_pub = SimpleNamespace(
+        publish=lambda msg: node.hand_window_active_signals.append(bool(msg.data))
+    )
     return node
 
 
@@ -421,6 +426,26 @@ def test_silencing_can_be_disabled_by_parameter():
     assert resp.success is True
     assert arm.push_frames == []
     assert node._hand_window_push_silenced is False
+
+
+def test_open_window_announces_hand_window_active_to_the_mit_controller():
+    arm = _FakeArm(velocity=0.0, ctrl_mode=_CAN_CTRL, push_live=True)
+    node = _node(arm)
+    resp = node._prepare_hand_window_callback(None, Trigger.Response())
+    assert resp.success is True
+    assert node._hand_window_push_silenced is True
+    # The MIT controller must have been told to stand down.
+    assert node.hand_window_active_signals[-1] is True
+
+
+def test_resume_announces_the_window_closed():
+    arm = _FakeArm(frame_ts=5.0)
+    node = _node(arm)
+    node._hand_window_active = True
+    node._hand_window_push_silenced = True
+    node._hand_window_silence_started = time.monotonic()
+    node._resume_arm_control_callback(None, Trigger.Response())
+    assert node.hand_window_active_signals[-1] is False
 
 
 def test_resume_restores_the_feedback_push():

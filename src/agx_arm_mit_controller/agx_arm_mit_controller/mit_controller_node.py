@@ -13,8 +13,9 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -52,6 +53,7 @@ class ExecutionState(str, Enum):
     FREEDRIVE = "FREEDRIVE"
     STALE_FEEDBACK = "STALE_FEEDBACK"
     FAULTED = "FAULTED"
+    HAND_WINDOW = "HAND_WINDOW"
 
 
 class NeroMitControllerNode(Node):
@@ -162,6 +164,13 @@ class NeroMitControllerNode(Node):
         self.freedrive_active = False
         self.arm_fault_active = False
         self.arm_fault_message = ""
+        # True while the driver has an open hand window on the shared side bus:
+        # the arm feedback push is silenced on purpose and the arm is held by
+        # the firmware, so this controller must stand down (not stream, not
+        # dead-man on the expected silence). Announced out-of-band by the driver
+        # on feedback/hand_window_active, because the CAN feedback this
+        # controller reads is exactly what goes quiet.
+        self.hand_window_active = False
         self.execution_state = ExecutionState.DISABLED
         self.holding_final_point = False
         self.active_goal_handle = None
@@ -197,6 +206,15 @@ class NeroMitControllerNode(Node):
             "feedback/arm_status",
             self._arm_status_callback,
             20,
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
+            Bool,
+            "feedback/hand_window_active",
+            self._hand_window_callback,
+            # Latched by the driver (transient_local): a late-joining controller
+            # still learns an already-open window.
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
             callback_group=self.callback_group,
         )
         if self.enable_debug_joint_trajectory_topic:
@@ -440,6 +458,29 @@ class NeroMitControllerNode(Node):
             if was_fault_active and not self.arm_fault_active and self.enabled and self._has_fresh_feedback():
                 self.hold_reference = self._capture_current_reference()
                 self.holding_final_point = False
+
+    def _hand_window_callback(self, msg: Bool) -> None:
+        with self.state_lock:
+            was_active = self.hand_window_active
+            self.hand_window_active = bool(msg.data)
+            if self.hand_window_active and not was_active:
+                # The driver is about to silence the feedback push and hold the
+                # arm in a firmware MOVE-J. Drop any active trajectory now: its
+                # start clock keeps running through the window, so a feedback
+                # comeback would sample a far-ahead point and snap the arm.
+                self.active_trajectory = None
+                self.hold_reference = None
+                self.holding_final_point = False
+                self.get_logger().info(
+                    "Hand window opened; standing down (arm held by the firmware)"
+                )
+            elif was_active and not self.hand_window_active:
+                # Window closed: feedback is coming back. Recapture the current
+                # pose as the hold reference so resume is a bounded correction to
+                # where the arm actually is, never a snap to a stale target.
+                self.hold_reference = None
+                self.holding_final_point = False
+                self.get_logger().info("Hand window closed; resuming arm control")
 
     def set_execution_state_safe(self, state: ExecutionState) -> None:
         self._set_execution_state(state)
@@ -973,6 +1014,15 @@ class NeroMitControllerNode(Node):
         with self.state_lock:
             if not self.enabled:
                 self._set_execution_state(ExecutionState.DISABLED)
+                return
+
+            if self.hand_window_active:
+                # The driver holds the arm in a firmware MOVE-J and has silenced
+                # the feedback push for the hand on the shared bus. Stand down:
+                # our commands are gated at the driver anyway, and streaming a
+                # dead-man on this expected silence only floods the gate and
+                # starves the hand's CANFD bus access. Publish nothing.
+                self._set_execution_state(ExecutionState.HAND_WINDOW)
                 return
 
             if self.leader_mode_active or self._should_use_leader_feedback():

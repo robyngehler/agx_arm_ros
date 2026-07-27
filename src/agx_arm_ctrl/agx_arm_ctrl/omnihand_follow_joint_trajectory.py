@@ -321,47 +321,42 @@ class OmniHandFollowJointTrajectoryBridge(Node):
     def _run_trajectory(self, goal_handle, trajectory):
         self.trajectory_pub.publish(trajectory)
         published_at = time.monotonic()
-        start_time = published_at
-        duration_s = _trajectory_duration_s(trajectory)
         desired = self._desired_point(trajectory)
         goal_joint_names = list(trajectory.joint_names)
 
-        while rclpy.ok():
-            if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                return self._failed_result(
-                    FollowJointTrajectory.Result.INVALID_GOAL,
-                    "Goal canceled",
-                )
+        # Close the window as soon as the hand command is verified DELIVERED,
+        # not after the full (possibly multi-second) trajectory duration: the
+        # OmniHand moves to the target autonomously once it has accepted the
+        # command, so the arm's bus should come back the moment delivery is
+        # confirmed. Waiting the whole duration kept the arm feedback silenced
+        # far longer than needed, and under an always-on MIT hold that extra
+        # silence is exactly what starved the co-located hand and tipped MoveIt
+        # over its execution timeout. The window stays open across delivery
+        # polling — the bridge's re-send loop needs the quiet bus — but not a
+        # moment longer. `_await_delivery` polls up to `delivery_timeout_s`.
+        feedback = FollowJointTrajectory.Feedback()
+        feedback.joint_names = goal_joint_names
+        feedback.desired = desired
+        feedback.actual = self._actual_point(goal_joint_names)
+        feedback.error = self._error_point(desired, goal_joint_names)
+        goal_handle.publish_feedback(feedback)
 
-            feedback = FollowJointTrajectory.Feedback()
-            feedback.joint_names = goal_joint_names
-            feedback.desired = desired
-            feedback.actual = self._actual_point(goal_joint_names)
-            feedback.error = self._error_point(desired, goal_joint_names)
-            goal_handle.publish_feedback(feedback)
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+            return self._failed_result(
+                FollowJointTrajectory.Result.INVALID_GOAL,
+                "Goal canceled",
+            )
 
-            if time.monotonic() - start_time >= duration_s + self.goal_margin_s:
-                # The window stays open across this wait — that is the point:
-                # the bridge's re-send loop needs the quiet bus far more than
-                # the arm needs the extra fraction of a second back.
-                delivered, reason = self._await_delivery(published_at)
-                if not delivered:
-                    goal_handle.abort()
-                    return self._failed_result(
-                        FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED,
-                        f"OmniHand trajectory not delivered: {reason}",
-                    )
-                goal_handle.succeed()
-                return self._success_result()
-
-            time.sleep(0.05)
-
-        goal_handle.abort()
-        return self._failed_result(
-            FollowJointTrajectory.Result.INVALID_GOAL,
-            "ROS shutdown while executing OmniHand trajectory",
-        )
+        delivered, reason = self._await_delivery(published_at)
+        if not delivered:
+            goal_handle.abort()
+            return self._failed_result(
+                FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED,
+                f"OmniHand trajectory not delivered: {reason}",
+            )
+        goal_handle.succeed()
+        return self._success_result()
 
 
 def main() -> None:

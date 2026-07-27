@@ -459,6 +459,16 @@ class AgxArmRosNode(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._publish_fault_lockout()
+        # Latched signal that the arm's feedback push is intentionally silenced
+        # for a hand window. A separate always-on-ROS topic is needed because
+        # the CAN feedback the MIT controller reads is exactly what goes quiet:
+        # it must be told out-of-band, or it reads the expected silence as a
+        # dead bus and floods gated dead-man commands (measured under teach).
+        self.hand_window_active_pub = self.create_publisher(
+            Bool, "feedback/hand_window_active",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self._publish_hand_window_active()
         self.leader_joint_angles_pub = self.create_publisher(
             JointState, "feedback/leader_joint_angles", 1
         )
@@ -622,6 +632,30 @@ class AgxArmRosNode(Node):
             self.fault_lockout_pub.publish(Bool(data=self._fault_lockout))
         except Exception:
             pass
+
+    def _publish_hand_window_active(self) -> None:
+        # The MIT controller stands down while this is True, so the flag tracks
+        # exactly the intentional feedback silence, not the (wider) gate window:
+        # with the push still on the controller has live feedback and behaves.
+        try:
+            self.hand_window_active_pub.publish(
+                Bool(data=self._hand_window_push_silenced)
+            )
+        except AttributeError:
+            # Called before the publisher exists (startup ordering); the initial
+            # state is published right after the publisher is created.
+            pass
+        except Exception:
+            pass
+
+    def _set_push_silenced(self, silenced: bool) -> None:
+        """Set the push-silenced flag and announce it to the MIT controller."""
+        changed = self._hand_window_push_silenced != silenced
+        self._hand_window_push_silenced = silenced
+        if not silenced:
+            self._hand_window_silence_started = 0.0
+        if changed:
+            self._publish_hand_window_active()
 
     def _enter_fault_lockout(self, reason: str) -> None:
         """Latch a fault lockout so no new motion is accepted until cleared."""
@@ -1888,9 +1922,9 @@ class AgxArmRosNode(Node):
             self._leader_mode_active = False
             self._current_motion_mode = None
             # This call re-enables the push itself, so any hand-window silence is
-            # over — drop the flag without sending a second mode frame.
-            self._hand_window_push_silenced = False
-            self._hand_window_silence_started = 0.0
+            # over — drop the flag (and un-stand-down the MIT controller) without
+            # sending a second mode frame.
+            self._set_push_silenced(False)
             # Normal joint push resumes now; give it a fresh watchdog window so
             # the transition itself is never read as a stall.
             self._last_good_feedback_monotonic = time.monotonic()
@@ -2038,9 +2072,11 @@ class AgxArmRosNode(Node):
         # moment from here on, and the bus-recovery watchdog must never charge
         # that requested silence to the arm as a stall.
         now = time.monotonic()
-        self._hand_window_push_silenced = True
         self._hand_window_silence_started = now
         self._last_good_feedback_monotonic = now
+        # Also tells the MIT controller to stand down (the feedback it holds on
+        # is now gone on purpose), so it does not dead-man-flood the gate.
+        self._set_push_silenced(True)
 
         if self._wait_for_feedback_silenced(self.hand_window_silence_verify_s):
             return True, "feedback push silenced (verified: feedback stopped)"
@@ -2117,8 +2153,8 @@ class AgxArmRosNode(Node):
             self.get_logger().error(
                 f"failed to restore the feedback push ({reason}): {e}"
             )
-        self._hand_window_push_silenced = False
-        self._hand_window_silence_started = 0.0
+        # Un-stand-down the MIT controller: feedback is coming back.
+        self._set_push_silenced(False)
         # Feedback restarts now: reset both the node-observed clock and the
         # frame-advance window so the silence we asked for is never charged to
         # the bus-recovery watchdog as a stall.
@@ -2329,9 +2365,9 @@ class AgxArmRosNode(Node):
             self._current_motion_mode = None
             # Leader mode silences the joint push on its own; from here the
             # leader-angle stream is the watchdog's health signal, so hand-window
-            # silence bookkeeping no longer applies.
-            self._hand_window_push_silenced = False
-            self._hand_window_silence_started = 0.0
+            # silence bookkeeping no longer applies. The MIT controller has its
+            # own leader-mode stand-down, so clear the hand-window one.
+            self._set_push_silenced(False)
             # Normal joint push is now silenced; reset the watchdog window so the
             # gap until the first leader-angle sample is not read as a stall.
             self._last_good_feedback_monotonic = time.monotonic()

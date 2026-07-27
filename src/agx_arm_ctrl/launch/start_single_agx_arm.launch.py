@@ -5,6 +5,7 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PythonExpression
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 import os
 
@@ -57,6 +58,20 @@ def generate_launch_description():
         default_value='false',
         choices=['true', 'false'],
         description='Launch the repo-owned OmniHand bridge when effector_type is omnihand.'
+    )
+
+    hand_bus_arg = DeclareLaunchArgument(
+        'hand_bus',
+        default_value='shared',
+        choices=['shared', 'dedicated'],
+        description=(
+            'Whether the OmniHand shares the arm side CAN bus (shared) or has '
+            'its own line (dedicated). "shared" keeps the arm<->hand window '
+            'handshake in the FollowJointTrajectory bridge; "dedicated" turns it '
+            'off so arm MIT and the hand run in parallel. On a shared bus the '
+            'hand needs the window, so only select "dedicated" with a real '
+            'second bus (and point can_interface at it).'
+        ),
     )
 
     omnihand_backend_type_arg = DeclareLaunchArgument(
@@ -231,6 +246,13 @@ def generate_launch_description():
             'action_name': PythonExpression([
                 "'", LaunchConfiguration('omnihand_type'), "_omnihand_controller/follow_joint_trajectory'",
             ]),
+            # Window on for a shared bus, off for a dedicated hand bus (parallel).
+            'handshake_enabled': ParameterValue(
+                PythonExpression([
+                    "'", LaunchConfiguration('hand_bus'), "' == 'shared'",
+                ]),
+                value_type=bool,
+            ),
         }],
         condition=IfCondition(
             PythonExpression([
@@ -249,6 +271,7 @@ def generate_launch_description():
         effector_type_arg,
         omnihand_type_arg,
         launch_omnihand_bridge_arg,
+        hand_bus_arg,
         omnihand_backend_type_arg,
         omnihand_device_id_arg,
         omnihand_canfd_id_arg,

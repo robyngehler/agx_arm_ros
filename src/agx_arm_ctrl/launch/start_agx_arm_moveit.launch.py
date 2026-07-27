@@ -134,6 +134,7 @@ def _instance_runtime_launches(context):
             "omnihand_type": _value_or_default(instance["omnihand_type"], omnihand_type),
             "revo2_type": _value_or_default(instance["revo2_type"], revo2_type),
             "launch_omnihand_bridge": launch_omnihand_bridge,
+            "hand_bus": LaunchConfiguration("hand_bus").perform(context),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type").perform(context),
             "omnihand_device_id": LaunchConfiguration("omnihand_device_id").perform(context),
             "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id").perform(context),
@@ -325,6 +326,11 @@ def generate_launch_description():
             DeclareLaunchArgument("revo2_type", default_value="left", choices=["left", "right"]),
             DeclareLaunchArgument("omnihand_type", default_value="left", choices=["left", "right"]),
             DeclareLaunchArgument("launch_omnihand_bridge", default_value="false", choices=["true", "false"]),
+            DeclareLaunchArgument(
+                "hand_bus", default_value="shared", choices=["shared", "dedicated"],
+                description="shared: arm<->hand window handshake on the shared side bus; "
+                "dedicated: handshake off for parallel arm+hand on a second bus.",
+            ),
             DeclareLaunchArgument("omnihand_backend_type", default_value="mock"),
             DeclareLaunchArgument("omnihand_device_id", default_value="1"),
             DeclareLaunchArgument("omnihand_canfd_id", default_value="0"),

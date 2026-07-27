@@ -145,6 +145,13 @@ def generate_launch_description():
         default_value="false",
         description="Launch the repo-owned OmniHand bridge when effector_type is omnihand.",
     )
+    hand_bus_arg = DeclareLaunchArgument(
+        "hand_bus",
+        default_value="shared",
+        choices=["shared", "dedicated"],
+        description="shared: keep the arm<->hand window handshake; dedicated: "
+        "turn it off for parallel arm+hand operation on a second bus.",
+    )
     omnihand_backend_type_arg = DeclareLaunchArgument(
         "omnihand_backend_type",
         default_value="mock",
@@ -286,6 +293,7 @@ def generate_launch_description():
             "effector_type": LaunchConfiguration("effector_type"),
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
+            "hand_bus": LaunchConfiguration("hand_bus"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
             "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
             "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
@@ -312,6 +320,7 @@ def generate_launch_description():
             effector_type_arg,
             omnihand_type_arg,
             launch_omnihand_bridge_arg,
+            hand_bus_arg,
             omnihand_backend_type_arg,
             omnihand_device_id_arg,
             omnihand_canfd_id_arg,

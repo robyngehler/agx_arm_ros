@@ -139,6 +139,20 @@ def generate_launch_description():
         choices=["true", "false"],
         description="Launch the repo-owned OmniHand bridge when effector_type is omnihand.",
     )
+
+    hand_bus_arg = DeclareLaunchArgument(
+        "hand_bus",
+        default_value="shared",
+        choices=["shared", "dedicated"],
+        description=(
+            "OmniHand CAN topology. 'shared': the hand shares the arm side bus, "
+            "so hand execution goes through the arm<->hand window handshake "
+            "(quiesce arm, silence its feedback push, command hand, resume). "
+            "'dedicated': the hand has its own bus (e.g. a second USB-CAN "
+            "adapter) — the handshake is turned off and arm MIT runs in parallel "
+            "with the hand. Only select 'dedicated' with a real second bus."
+        ),
+    )
     omnihand_backend_type_arg = DeclareLaunchArgument(
         "omnihand_backend_type",
         default_value="mock",
@@ -403,6 +417,7 @@ def generate_launch_description():
             "revo2_type": LaunchConfiguration("revo2_type"),
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
+            "hand_bus": LaunchConfiguration("hand_bus"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
             "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
             "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
@@ -450,6 +465,7 @@ def generate_launch_description():
             "revo2_type": LaunchConfiguration("revo2_type"),
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
+            "hand_bus": LaunchConfiguration("hand_bus"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
             "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
             "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
@@ -495,6 +511,7 @@ def generate_launch_description():
         revo2_type_arg,
         omnihand_type_arg,
         launch_omnihand_bridge_arg,
+        hand_bus_arg,
         omnihand_backend_type_arg,
         omnihand_device_id_arg,
         omnihand_canfd_id_arg,
