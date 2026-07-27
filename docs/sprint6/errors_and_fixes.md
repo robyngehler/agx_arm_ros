@@ -4,6 +4,28 @@ Record concrete errors and their fixes here as the hand skill controller, perfor
 coordinator come up — e.g. tactile stream gaps, grasp-threshold miscalibration, `both_arms`
 joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch problems.
 
+## 2026-07-27 (hand window validated; a second, CPU-bound bottleneck found)
+
+### Hand still times out under the full teach stack even with the window open
+
+- Context: the arm↔hand window (silence the arm feedback push so the low-priority hand CANFD wins the
+  shared bus) is **correct and validated** — without the teach stack a hand skill lands in a few attempts.
+  The MOVE-J hold is now re-asserted until the firmware leaves MIT (`_assert_firmware_hold`, `move_j xN`),
+  the MIT controller stands down on `feedback/hand_window_active` instead of dead-manning, and both the
+  MoveIt FJT bridge and the teach manager close the window on verified delivery (`OmniHandStatus`), not on
+  a fixed clock.
+- Symptom: with the teach manager running, a hand skill replay (or a MoveIt hand goal) still `请求超时`s and
+  the bridge gives up after 8 attempts, while the ctrl node logs `publish-loop overrun: 202 ms` and
+  `local starvation, suppressions=25`.
+- Root cause (from `ip -s -d link show`): this is a **separate, additional** problem from arbitration —
+  `arbit-lost` is only 9–10 of ~2.5M TX, but **~108k RX frames are `dropped` per bus** and the left bus
+  reached `ERROR-WARNING` (TEC 107). The kernel CAN RX socket buffer (`net.core.rmem_max` default ~208 KB ≈
+  ~125 ms at 2150 f/s) overflows during the 200 ms+ CPU stalls the full teach stack causes, dropping frames
+  including the hand's CANFD responses.
+- Mitigation: `activate_native_can.sh` raises `net.core.rmem_max`/`rmem_default` to 4 MB (`RMEM_MAX` env).
+  The dedicated hand bus (`hand_bus:=dedicated`) removes the arm flood entirely; the underlying CPU-load
+  reduction is a `sprint_refactor` target (see its critical-CPU-paths note).
+
 ## 2026-07-24 (arm boots limp; its driver node dies at startup)
 
 ### One arm hangs limp after power-on and `agx_arm_ctrl_single` exits with "Failed to get firmware version"

@@ -122,25 +122,50 @@ Order matters and is enforced: capture pose → **re-assert MOVE-J until the fir
 MIT** → verify hold in feedback → silence push; and on resume: **restore push → wait for a new frame**
 → health checks → reopen the gate.
 
+## 8e. Third hardware run (2026-07-27, later): window validated, and a second, independent bottleneck
+
+With the §8d retry in place the window now **opens reliably on hardware**: the log shows
+`hand window open: … move_j x2 …, MIT quiesced, feedback push silenced (verified: feedback stopped)`.
+The core diagnosis stands and the fix works: the arm feedback push saturates the shared bus with
+high-priority (low-ID) frames, the hand's low-priority CANFD frames lose against them under one-shot,
+and **silencing the push (the window) is what lets the hand own the bus** — WITHOUT the teach stack a
+hand skill lands in a handful of attempts. Two follow-on fixes made the window well-behaved under the
+real stack:
+
+| Problem | Fix | Rationale |
+|---|---|---|
+| The external MIT controller lost its (intentionally silenced) feedback during a window and dead-manned: it streamed 50 Hz damped-stop commands into the gate, wasting CPU and logging "Feedback is stale" every second. | The driver publishes a latched `feedback/hand_window_active` Bool; the MIT controller stands down (new `HAND_WINDOW` state, publishes nothing) while it is true and recaptures the hold when it clears. | The arm is held by the firmware during the window, so the controller must be *told* the silence is expected instead of reading it as a dead bus. |
+| The MoveIt FJT bridge held the window open for the whole trajectory duration + margin, and the teach manager for a fixed `hand_settle_sec` — both keep the arm silenced (and, under teach, the dead-man going) far longer than the hand needs, and the fixed teach dwell could close the window mid-retry. | FJT closes on verified delivery (`OmniHandStatus.command_pending` cleared), not duration (was P2). Teach's `_await_hand_delivery` holds its window on the same signal instead of a blind dwell. | The OmniHand moves autonomously once it has the target; free the bus the moment delivery is confirmed, and never close it mid-retry. |
+
+**Additional, independent problem surfaced by the interface stats — NOT a correction of the above.**
+`ip -s -d link show` over a full teach session: `arbit-lost` = 9–10 of ~2.5M TX, but **~108k RX frames
+`dropped` per bus** and the left bus in `ERROR-WARNING` (TEC 107). So beyond arbitration there is a
+second bottleneck the window alone cannot fix: the kernel CAN **RX socket buffer** (`net.core.rmem_max`
+default ~208 KB ≈ 270 frames ≈ ~125 ms at 2150 f/s) overflows during the 200 ms+ publish-loop overruns
+the full teach stack causes (CPU starvation), dropping frames — including the OmniHand's CANFD
+*response* frames — so the hand still `请求超时`s **even with an open window** under heavy load.
+
+| Problem | Fix | Rationale |
+|---|---|---|
+| Under the full teach stack, CPU stalls (200 ms+ publish-loop overruns) overflow the ~125 ms RX socket buffer and drop hand response frames → `请求超时` even inside an open window. | `activate_native_can.sh` raises `net.core.rmem_max`/`rmem_default` to 4 MB (≈ 2 s of buffer; `RMEM_MAX` env, `0` to skip). | A scheduling hiccup must not cost hand responses; deeper buffering absorbs the stall. The CPU load itself is a `sprint_refactor` target. |
+| On a shared bus the whole handshake is mandatory; with a dedicated hand bus it is pure overhead. | `hand_bus:=shared|dedicated` launch arg turns the handshake off end to end (FJT `handshake_enabled`); teach has `--no-hand-window`. Wired through components → moveit/multi-arm → per-arm driver. | Make the shared-bus workaround switchable so a second CAN line restores parallel arm+hand operation. |
+
 ## 9. Open / hardware-dependent
 
 - **V112 `set_normal_mode` no-op:** `prepare_hand_window` now fails honestly (reporting the real `ctrl_mode`)
   if the arm does not reach a `CAN_CTRL`/`TCP_CTRL` hold on V112; the actual V112 hold mechanism must be
   confirmed on hardware. (On the tested robot the hold *was* verified as `CAN_CTRL` — see §8c.)
-- **Push silencing (§8c) + MOVE-J retry (§8d) are not yet hardware-validated together:** as of the
-  2026-07-27 run the window was still refused (dropped MOVE-J), so the silencing has never actually run on
-  hardware. With the §8d retry in place, re-run and confirm: (1) `prepare_hand_window` now succeeds and the
-  service message reports `move_j xN` with N small; (2) `candump` A/B shows the ~2150 f/s side-bus load
-  collapse inside the open window and the hand stops timing out; (3) feedback resumes cleanly on resume and
-  the arm holds its pose (no sag) throughout. Needs a rebuild+relaunch — the retry is not in the running
-  binary from that run.
-- **P2, becomes relevant now that P1 is fixed:** the FJT bridge closes the window on trajectory duration +
-  margin, not on the hand's verified/gave-up state, so a short goal can resume arm MIT mid-retry. Worth
-  fixing once a silenced window is confirmed to let hand commands through.
+- **Push silencing (§8c) + MOVE-J retry (§8d): hardware-validated (2026-07-27).** The window opens
+  (`move_j x2`), the push is verified silent, and without the teach stack a hand skill lands. The MIT
+  stand-down and FJT/teach close-on-delivery (§8e) are also on hardware.
+- **P2 (FJT closes on duration): DONE (§8e).** FJT and teach now close on verified delivery.
+- **Remaining teach unreliability is CPU-bound, not window logic (§8e).** Under the full teach stack the
+  RX socket buffer overflows during CPU stalls and drops hand response frames. The rmem raise is a
+  mitigation; the root CPU-load reduction is a `sprint_refactor` target (see the critical CPU paths there).
 - **Startup hand connection error + backoff:** tolerant-by-design (retries); real recovery depends on the
   hand/CAN/SDK being reachable.
-- **Hardware validation (plan §6.2):** CPU-stress, disconnect-under-MIT, silent-TX-loss, and hand-across-
-  link-reset tests were not run in the development environment — verify on the Jetson target.
+- **Dedicated hand bus:** the `hand_bus:=dedicated` path (parallel operation) is wired but unexercised —
+  validate once the second CAN adapter is in place (point the hand's `can_interface` at it).
 
 ## Validation
 

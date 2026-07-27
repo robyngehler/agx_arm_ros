@@ -169,6 +169,13 @@ free-runs without the arm).
 > - **for headroom under that policy, deepen the TX ring** —
 >   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
 >   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.
+> - **deepen the RX socket buffer too** (separate from arbitration, an *additional* failure mode):
+>   `activate_native_can.sh` now raises `net.core.rmem_max`/`rmem_default` to 4 MB (`RMEM_MAX` env, `0` to
+>   skip). The kernel default (~208 KB ≈ 270 CAN frames ≈ 125 ms of buffer at the ~2150 f/s the arm pushes)
+>   overflows during the 200 ms+ publish-loop stalls the full teach stack causes, and the kernel then drops
+>   received frames — **including the hand's CANFD response frames**, which surface as `请求超时` even with an
+>   open window. Measured: ~108k RX `dropped` per bus over a teach session. The deeper buffer buys ~2 s so a
+>   scheduling hiccup no longer costs hand responses; the CPU load itself is a `sprint_refactor` target.
 > - keep `control_rate_hz` at its 50 Hz default (do **not** drop it — a lower rate risks hold instability);
 >   handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`) instead. The MIT
 >   launch args (`start_agx_arm_moveit.launch.py`, `start_multi_agx_arm_rviz.launch.py`) default
@@ -212,6 +219,19 @@ free-runs without the arm).
 >   the cached republish satisfied that even during a total SDK fault, so MoveIt reported
 >   `successfully finished` for poses the hand never received. Note the window can now outlive the
 >   trajectory by up to `delivery_timeout_s`; keep `hand_window_max_silence_s` above the sum.
+> - **the MIT controller stands down during a window instead of dead-manning:** the driver publishes a
+>   latched `feedback/hand_window_active`; while it is `true` the MIT controller (which would otherwise read
+>   the intentional feedback silence as a dead bus and stream a 50 Hz damped-stop flood into the gate)
+>   enters a `HAND_WINDOW` state and publishes nothing, recapturing the hold when the window closes.
+> - **the teach manager also holds its window until delivery**, on the same `feedback/omnihand/status`
+>   signal the MoveIt bridge uses, instead of a fixed `--hand-settle-sec` dwell (which could close the
+>   window mid-retry). `--hand-delivery-timeout-sec` (default 4 s) bounds the wait; the fixed dwell remains
+>   the fallback when no bridge status is present (mock/older bridge).
+> - **the whole handshake is switchable for a dedicated hand bus.** On the shared bus it is mandatory;
+>   with a second CAN line for the hand it is pure overhead. `hand_bus:=dedicated` (components → moveit /
+>   multi-arm launches) turns the FJT handshake off so arm MIT and the hand run in parallel; the teach
+>   manager takes `--no-hand-window`. Default `hand_bus:=shared` keeps the handshake. Point the hand's
+>   `can_interface` at the dedicated bus when selecting `dedicated`.
 
 ### 2. Run the teach manager
 
