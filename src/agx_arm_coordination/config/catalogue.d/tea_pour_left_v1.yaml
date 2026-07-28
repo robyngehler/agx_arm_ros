@@ -1,0 +1,505 @@
+# Tea-pour demo catalogue fragment (activity: tea_pour_left_v1).
+#
+# Merged into the shared catalogue by graph_loader (config/catalogue.d/*.yaml).
+# It lives in its own file because its three recorded actions carry ~140 taught
+# waypoints, which would drown catalogue.yaml.
+#
+# LEFT SIDE ONLY. The right arm and right hand stay parked where they are; they
+# are still brought up (both sides stay active) but this activity never addresses
+# them, so the scheduler's right_can_bus unit is never claimed.
+#
+# NAMING: the anchor poses (arm_config.yaml) and hand gestures
+# (agx_arm_ctrl/config/omnihand_pro_gestures.yaml) were captured under "Can_*"
+# names before the object was settled -- the object is a TEAPOT and "Can_*" is a
+# capture-time misnomer. The public action_ids here say teapot; the Can_* names
+# are kept verbatim wherever they name stored data, so nothing has to be
+# re-measured. Do not rename the stored poses/gestures without re-capturing.
+#
+# Hand actions carry only skill_name (the skill -> motion/preset mapping lives in
+# agx_arm_ctrl/config/omnihand_skills.yaml). Arm actions are either MoveIt-planned
+# anchor moves (to_pose) or taught replays (source: recorded + waypoints).
+
+actions:
+
+  # --- Hand skills (Gripper, left hand) -------------------------------------
+  # motion `pose` (not close_until_contact): these presets were taught on the
+  # real teapot, so the shape IS the grasp. Deterministic and repeatable, but
+  # blind -- it will close on empty air just as happily if the handle is not
+  # where the anchor says it is. Tactile-gated grasping stays available via the
+  # grasp_*_until_contact skills once a contact threshold is calibrated (the 0.35
+  # placeholder in catalogue.yaml is far below the raw normal-force magnitudes
+  # the Pro actually reports).
+  left_hand_rest_fist:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: hand_rest_fist
+      timeout_sec: 5.0
+      description: "Tucked travel/rest shape; also the hand's init state."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+  left_hand_pre_grip_handle:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: pre_grip_handle
+      timeout_sec: 5.0
+      description: "Open enough for the arm to thread the hand around the handle."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+  left_hand_grip_handle:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: grip_handle
+      timeout_sec: 5.0
+      description: "Taught closure on the teapot handle."
+      fallback_policy: { on_cancel: stop_and_hold, on_timeout: report_failure }
+  left_hand_release_handle:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: release_handle
+      timeout_sec: 5.0
+      description: "Open back to the pre-grip shape so the arm can withdraw."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  # --- Arm anchor moves (Trajectory, MoveIt-planned, collision-aware) --------
+
+  left_arm_to_teapot_grip_idle:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Can_Grip_Idle_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Approach standoff in front of the teapot."
+
+  left_arm_to_teapot_pre_grip:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Can_Pre_Grip_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Pre-grip pose; staging pose for the taught handle-entry replay."
+
+  left_arm_to_teapot_grip:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Can_Grip_L
+      velocity_scaling: 0.05
+      acceleration_scaling: 0.05
+      description: "Final seat in the handle. Sits ~0.22 rad (j5) / 0.20 rad (j7) past the end of the handle-entry replay -- that offset IS the twist that seats the hand in the handle, so it runs at 0.05 scaling, with the hand still in pre-grip shape around the handle."
+
+  left_arm_to_teapot_post_grip:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Can_Post_Grip_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Lift the teapot clear of the table."
+
+  left_arm_to_pour_init:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Can_Fill_Init_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Neutral carry pose between table and pour station (used twice in the graph)."
+
+  left_arm_to_pour_idle:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Can_Fill_Idle
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Pour station standoff; staging pose for the pour replay."
+
+  left_arm_to_teapot_pre_place:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Pre_Place_Can_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Standoff above the teapot's table position."
+
+  left_arm_to_teapot_place:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: moveit_planned
+      to_pose: Place_Can_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Teapot set down; staging pose for the handle-release replay."
+
+
+  # --- Arm taught replays (Trajectory, source: recorded) --------------------
+  # Each of these is dispatched as TWO MoveIt goals by the coordinator: a planned,
+  # collision-aware MoveGroup approach to waypoint 0, then the ExecuteTrajectory
+  # replay. The preceding anchor node is therefore a staging pose, not a required
+  # start state -- the residual offset to the taught start is closed by that
+  # planned approach, so nothing here has to be re-taught when an anchor moves.
+  #
+  # ExecuteTrajectory executes, it does not plan: the replay ITSELF is not
+  # collision checked. It is only as safe as the taught motion was.
+  #
+  # For a recorded action velocity_scaling is a pure TIME STRETCH
+  # (arm_executor._recorded_time_scale = 1/min(vel, acc)), not a planner limit.
+  # 0.75 replays the taught motion 1.33x slower than taught. It is deliberately
+  # NOT the 0.10 used above, which would stretch the 14.5 s pour to 145 s.
+
+  left_arm_teapot_handle_entry:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: recorded
+      velocity_scaling: 0.75
+      acceleration_scaling: 0.75
+      entry_pose: Can_Pre_Grip_L
+      description: "Threads the hand into the teapot handle."
+      # taught 3.42 s -> replayed 4.56 s at 0.75 time-stretch.
+      # waypoint 0 sits 0.0139 rad from anchor Can_Pre_Grip_L; the coordinator's
+      # planned approach phase covers that gap.
+      # waypoints generated from recording 'Grip_Can_L' (161 pts -> 18)
+      # recorded joint order: ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'joint7']
+      # -> must match the catalogue group's joint_names for 'left_arm_teapot_handle_entry'
+      waypoints:
+        - positions: [-1.25967, 1.08151, -0.09262, 1.93936, -0.94819, -0.10362, 0.17977]
+          time_from_start_sec: 0.0
+        - positions: [-1.25973, 1.08151, -0.09262, 1.93936, -0.94819, -0.10362, 0.17977]
+          time_from_start_sec: 0.371
+        - positions: [-1.25985, 1.08151, -0.09371, 1.93936, -0.94819, -0.10362, 0.17977]
+          time_from_start_sec: 0.572
+        - positions: [-1.25985, 1.08142, -0.09697, 1.93936, -0.94831, -0.10362, 0.17991]
+          time_from_start_sec: 0.753
+        - positions: [-1.25985, 1.08139, -0.10585, 1.93936, -0.94831, -0.10362, 0.18055]
+          time_from_start_sec: 0.955
+        - positions: [-1.25985, 1.08139, -0.11271, 1.93936, -0.94831, -0.10362, 0.1863]
+          time_from_start_sec: 1.136
+        - positions: [-1.25985, 1.08125, -0.11271, 1.93936, -0.94819, -0.10362, 0.22626]
+          time_from_start_sec: 1.318
+        - positions: [-1.25985, 1.07908, -0.11277, 1.93936, -0.94819, -0.10362, 0.2456]
+          time_from_start_sec: 1.52
+        - positions: [-1.25985, 1.07427, -0.11357, 1.93936, -0.94806, -0.10362, 0.25513]
+          time_from_start_sec: 1.702
+        - positions: [-1.25978, 1.07313, -0.12442, 1.93936, -0.94806, -0.10362, 0.26325]
+          time_from_start_sec: 1.904
+        - positions: [-1.25983, 1.07313, -0.12846, 1.93936, -0.94791, -0.10362, 0.27903]
+          time_from_start_sec: 2.086
+        - positions: [-1.25969, 1.07292, -0.13244, 1.93936, -0.94705, -0.10362, 0.29732]
+          time_from_start_sec: 2.288
+        - positions: [-1.25948, 1.06664, -0.13244, 1.93936, -0.94044, -0.10383, 0.31203]
+          time_from_start_sec: 2.469
+        - positions: [-1.25845, 1.0598, -0.13244, 1.93943, -0.93777, -0.104, 0.33126]
+          time_from_start_sec: 2.65
+        - positions: [-1.25845, 1.05355, -0.1331, 1.9395, -0.93037, -0.104, 0.36018]
+          time_from_start_sec: 2.853
+        - positions: [-1.25845, 1.04934, -0.13336, 1.93957, -0.92363, -0.104, 0.37909]
+          time_from_start_sec: 3.034
+        - positions: [-1.25845, 1.04812, -0.13463, 1.93957, -0.9134, -0.104, 0.39057]
+          time_from_start_sec: 3.236
+        - positions: [-1.25857, 1.04819, -0.14094, 1.93946, -0.88085, -0.10313, 0.39348]
+          time_from_start_sec: 3.417
+
+  left_arm_pour_tea:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: recorded
+      velocity_scaling: 0.75
+      acceleration_scaling: 0.75
+      entry_pose: Can_Fill_Idle
+      description: "The pour itself. CanFill01 is the discarded first attempt at the same motion and is deliberately NOT in the chain; the 0.131 rad it leaves between Can_Fill_Idle and this replay's start is closed by the planned approach phase."
+      # taught 14.52 s -> replayed 19.36 s at 0.75 time-stretch.
+      # waypoint 0 sits 0.1311 rad from anchor Can_Fill_Idle; the coordinator's
+      # planned approach phase covers that gap.
+      # waypoints generated from recording 'CanFill02' (721 pts -> 73)
+      # recorded joint order: ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'joint7']
+      # -> must match the catalogue group's joint_names for 'left_arm_pour_tea'
+      waypoints:
+        - positions: [1.14342, -0.67563, -1.15947, 1.68204, -0.37685, -0.16755, 0.42473]
+          time_from_start_sec: 0.0
+        - positions: [1.14342, -0.67563, -1.15947, 1.68204, -0.37661, -0.1708, 0.42473]
+          time_from_start_sec: 0.201
+        - positions: [1.14335, -0.67563, -1.15947, 1.68204, -0.37559, -0.1708, 0.42462]
+          time_from_start_sec: 0.403
+        - positions: [1.14335, -0.67563, -1.15947, 1.68204, -0.36305, -0.17099, 0.42448]
+          time_from_start_sec: 0.604
+        - positions: [1.14335, -0.6757, -1.15947, 1.68204, -0.33201, -0.17249, 0.42459]
+          time_from_start_sec: 0.806
+        - positions: [1.14356, -0.6757, -1.15947, 1.68222, -0.29234, -0.18548, 0.42481]
+          time_from_start_sec: 1.008
+        - positions: [1.15253, -0.6757, -1.15947, 1.68231, -0.24456, -0.19832, 0.42513]
+          time_from_start_sec: 1.209
+        - positions: [1.16263, -0.6757, -1.15947, 1.68231, -0.21968, -0.2038, 0.4249]
+          time_from_start_sec: 1.411
+        - positions: [1.1708, -0.6757, -1.15932, 1.68231, -0.19441, -0.23448, 0.4246]
+          time_from_start_sec: 1.612
+        - positions: [1.17073, -0.6757, -1.15932, 1.68222, -0.18925, -0.25038, 0.4246]
+          time_from_start_sec: 1.813
+        - positions: [1.17056, -0.6757, -1.15932, 1.68211, -0.18888, -0.26053, 0.4246]
+          time_from_start_sec: 2.015
+        - positions: [1.17068, -0.67562, -1.15925, 1.68211, -0.18874, -0.28712, 0.4246]
+          time_from_start_sec: 2.217
+        - positions: [1.16804, -0.63403, -1.14867, 1.68211, -0.17094, -0.32339, 0.42501]
+          time_from_start_sec: 2.418
+        - positions: [1.16064, -0.59476, -1.13734, 1.68211, -0.13029, -0.33756, 0.42396]
+          time_from_start_sec: 2.62
+        - positions: [1.12984, -0.55086, -1.10965, 1.68211, -0.04657, -0.36772, 0.42401]
+          time_from_start_sec: 2.821
+        - positions: [1.1056, -0.52358, -1.09219, 1.68211, 0.00826, -0.3906, 0.42436]
+          time_from_start_sec: 3.023
+        - positions: [1.07139, -0.49124, -1.07289, 1.68211, 0.06199, -0.41736, 0.43366]
+          time_from_start_sec: 3.225
+        - positions: [1.0491, -0.46529, -1.05409, 1.68243, 0.10428, -0.42417, 0.44426]
+          time_from_start_sec: 3.426
+        - positions: [1.01622, -0.4382, -1.01899, 1.68784, 0.19267, -0.42445, 0.48276]
+          time_from_start_sec: 3.628
+        - positions: [1.00768, -0.4283, -1.0059, 1.6937, 0.24012, -0.42514, 0.49658]
+          time_from_start_sec: 3.83
+        - positions: [1.00664, -0.40647, -0.9804, 1.70365, 0.31636, -0.42527, 0.4996]
+          time_from_start_sec: 4.031
+        - positions: [1.00676, -0.40349, -0.96466, 1.71665, 0.35425, -0.42595, 0.49967]
+          time_from_start_sec: 4.233
+        - positions: [1.00953, -0.40349, -0.95878, 1.73067, 0.39951, -0.43113, 0.49929]
+          time_from_start_sec: 4.435
+        - positions: [1.02254, -0.40375, -0.95871, 1.73583, 0.41651, -0.43242, 0.49913]
+          time_from_start_sec: 4.637
+        - positions: [1.05589, -0.40378, -0.95942, 1.74292, 0.44265, -0.43242, 0.49604]
+          time_from_start_sec: 4.838
+        - positions: [1.07626, -0.40422, -0.96389, 1.74435, 0.44913, -0.43242, 0.47478]
+          time_from_start_sec: 5.041
+        - positions: [1.1082, -0.40888, -0.99417, 1.74591, 0.45176, -0.43242, 0.46297]
+          time_from_start_sec: 5.243
+        - positions: [1.13197, -0.42825, -1.01618, 1.74604, 0.45576, -0.43298, 0.46332]
+          time_from_start_sec: 5.444
+        - positions: [1.18522, -0.46396, -1.06044, 1.74611, 0.45551, -0.43837, 0.46504]
+          time_from_start_sec: 5.646
+        - positions: [1.2254, -0.48693, -1.09233, 1.74617, 0.45485, -0.43837, 0.46504]
+          time_from_start_sec: 5.847
+        - positions: [1.29301, -0.52156, -1.14073, 1.74617, 0.44541, -0.43837, 0.46579]
+          time_from_start_sec: 6.049
+        - positions: [1.34047, -0.54316, -1.17421, 1.74617, 0.43815, -0.43825, 0.46543]
+          time_from_start_sec: 6.251
+        - positions: [1.4096, -0.58083, -1.22438, 1.74578, 0.42752, -0.43818, 0.46286]
+          time_from_start_sec: 6.453
+        - positions: [1.44719, -0.60371, -1.24805, 1.74491, 0.42134, -0.43818, 0.45509]
+          time_from_start_sec: 6.654
+        - positions: [1.51355, -0.64286, -1.28926, 1.73749, 0.40382, -0.43818, 0.43785]
+          time_from_start_sec: 6.856
+        - positions: [1.54617, -0.66612, -1.30922, 1.73337, 0.39329, -0.43818, 0.43633]
+          time_from_start_sec: 7.059
+        - positions: [1.59317, -0.69879, -1.33512, 1.72477, 0.3795, -0.43804, 0.43059]
+          time_from_start_sec: 7.26
+        - positions: [1.61904, -0.71429, -1.34956, 1.71611, 0.37085, -0.43804, 0.42783]
+          time_from_start_sec: 7.462
+        - positions: [1.64605, -0.7421, -1.36881, 1.70248, 0.34729, -0.43804, 0.42364]
+          time_from_start_sec: 7.664
+        - positions: [1.6471, -0.76041, -1.36951, 1.69915, 0.33262, -0.43804, 0.42418]
+          time_from_start_sec: 7.865
+        - positions: [1.6471, -0.78432, -1.36939, 1.69915, 0.31608, -0.43829, 0.42469]
+          time_from_start_sec: 8.067
+        - positions: [1.6471, -0.79922, -1.36939, 1.69915, 0.30507, -0.43836, 0.42527]
+          time_from_start_sec: 8.269
+        - positions: [1.6471, -0.82116, -1.36911, 1.69915, 0.28929, -0.43923, 0.42624]
+          time_from_start_sec: 8.471
+        - positions: [1.6471, -0.83072, -1.369, 1.69915, 0.2807, -0.44248, 0.43628]
+          time_from_start_sec: 8.674
+        - positions: [1.64825, -0.83231, -1.369, 1.69915, 0.27255, -0.45302, 0.44216]
+          time_from_start_sec: 8.876
+        - positions: [1.65942, -0.82128, -1.36874, 1.69915, 0.2725, -0.45379, 0.44216]
+          time_from_start_sec: 9.077
+        - positions: [1.66916, -0.78007, -1.3685, 1.69915, 0.27513, -0.45379, 0.44014]
+          time_from_start_sec: 9.279
+        - positions: [1.66318, -0.74967, -1.36841, 1.69857, 0.27869, -0.45379, 0.43865]
+          time_from_start_sec: 9.481
+        - positions: [1.62337, -0.70073, -1.36823, 1.69248, 0.28475, -0.45379, 0.439]
+          time_from_start_sec: 9.683
+        - positions: [1.59746, -0.67106, -1.36701, 1.68763, 0.28597, -0.45436, 0.43954]
+          time_from_start_sec: 9.884
+        - positions: [1.56387, -0.62413, -1.36103, 1.68763, 0.30151, -0.4655, 0.44031]
+          time_from_start_sec: 10.086
+        - positions: [1.53678, -0.58884, -1.35258, 1.68772, 0.31767, -0.47269, 0.44077]
+          time_from_start_sec: 10.287
+        - positions: [1.4992, -0.53674, -1.34083, 1.68784, 0.33549, -0.48536, 0.44159]
+          time_from_start_sec: 10.491
+        - positions: [1.47028, -0.49827, -1.34057, 1.68784, 0.34973, -0.49152, 0.44207]
+          time_from_start_sec: 10.693
+        - positions: [1.42443, -0.44541, -1.34052, 1.68784, 0.37608, -0.51817, 0.44284]
+          time_from_start_sec: 10.894
+        - positions: [1.39487, -0.41701, -1.34043, 1.68784, 0.39081, -0.53514, 0.45328]
+          time_from_start_sec: 11.096
+        - positions: [1.34626, -0.39499, -1.34043, 1.68759, 0.39795, -0.54554, 0.46796]
+          time_from_start_sec: 11.297
+        - positions: [1.29814, -0.3883, -1.34043, 1.68182, 0.39795, -0.55247, 0.48452]
+          time_from_start_sec: 11.499
+        - positions: [1.23238, -0.38823, -1.34043, 1.68115, 0.39703, -0.5532, 0.51637]
+          time_from_start_sec: 11.701
+        - positions: [1.18878, -0.38858, -1.34043, 1.67475, 0.39296, -0.55346, 0.52993]
+          time_from_start_sec: 11.903
+        - positions: [1.1223, -0.38928, -1.34043, 1.66274, 0.34776, -0.54939, 0.53171]
+          time_from_start_sec: 12.104
+        - positions: [1.0817, -0.38916, -1.34043, 1.65167, 0.29822, -0.5418, 0.53107]
+          time_from_start_sec: 12.306
+        - positions: [1.03041, -0.38912, -1.34054, 1.63291, 0.21391, -0.52686, 0.53037]
+          time_from_start_sec: 12.507
+        - positions: [1.00409, -0.39076, -1.34073, 1.62012, 0.14919, -0.51417, 0.52756]
+          time_from_start_sec: 12.709
+        - positions: [1.00082, -0.43398, -1.34073, 1.61288, 0.06393, -0.5084, 0.497]
+          time_from_start_sec: 12.911
+        - positions: [1.00767, -0.46653, -1.34073, 1.60942, 0.01119, -0.5084, 0.47654]
+          time_from_start_sec: 13.112
+        - positions: [1.04811, -0.50168, -1.33409, 1.60942, -0.06217, -0.49801, 0.44642]
+          time_from_start_sec: 13.313
+        - positions: [1.07853, -0.50288, -1.31725, 1.60942, -0.10289, -0.46272, 0.42195]
+          time_from_start_sec: 13.515
+        - positions: [1.11333, -0.48278, -1.28182, 1.60942, -0.14312, -0.40219, 0.39305]
+          time_from_start_sec: 13.717
+        - positions: [1.12638, -0.45469, -1.25735, 1.60942, -0.15022, -0.35221, 0.37847]
+          time_from_start_sec: 13.918
+        - positions: [1.1293, -0.40099, -1.23618, 1.60942, -0.1498, -0.26889, 0.37261]
+          time_from_start_sec: 14.12
+        - positions: [1.13092, -0.372, -1.22337, 1.60942, -0.14889, -0.23185, 0.37202]
+          time_from_start_sec: 14.322
+        - positions: [1.13532, -0.35069, -1.20958, 1.60942, -0.14713, -0.18296, 0.37172]
+          time_from_start_sec: 14.523
+
+  left_arm_teapot_handle_release:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: recorded
+      velocity_scaling: 0.75
+      acceleration_scaling: 0.75
+      entry_pose: Place_Can_L
+      description: "Withdraws the hand out of the handle after set-down."
+      # taught 9.88 s -> replayed 13.17 s at 0.75 time-stretch.
+      # waypoint 0 sits 0.0096 rad from anchor Place_Can_L; the coordinator's
+      # planned approach phase covers that gap.
+      # waypoints generated from recording 'Can_Release_L_V02' (973 pts -> 50)
+      # recorded joint order: ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'joint7']
+      # -> must match the catalogue group's joint_names for 'left_arm_teapot_handle_release'
+      waypoints:
+        - positions: [-1.12307, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 0.0
+        - positions: [-1.12307, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 0.204
+        - positions: [-1.12307, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 0.409
+        - positions: [-1.12307, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 0.612
+        - positions: [-1.12307, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 0.805
+        - positions: [-1.12307, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 1.007
+        - positions: [-1.12307, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 1.21
+        - positions: [-1.123, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 1.415
+        - positions: [-1.12284, 1.13949, -0.29936, 1.84317, -0.94757, -0.34845, 0.54473]
+          time_from_start_sec: 1.618
+        - positions: [-1.11975, 1.13942, -0.29936, 1.84317, -0.94757, -0.34845, 0.54487]
+          time_from_start_sec: 1.821
+        - positions: [-1.11685, 1.13946, -0.29931, 1.84317, -0.9477, -0.34845, 0.54482]
+          time_from_start_sec: 2.015
+        - positions: [-1.1161, 1.1394, -0.29931, 1.84317, -0.94857, -0.34845, 0.54336]
+          time_from_start_sec: 2.218
+        - positions: [-1.11104, 1.13933, -0.29931, 1.84317, -0.94887, -0.34845, 0.53706]
+          time_from_start_sec: 2.421
+        - positions: [-1.10872, 1.13939, -0.29931, 1.84317, -0.94977, -0.34845, 0.5284]
+          time_from_start_sec: 2.624
+        - positions: [-1.10872, 1.13939, -0.29931, 1.84317, -0.95154, -0.34845, 0.52819]
+          time_from_start_sec: 2.827
+        - positions: [-1.10872, 1.13933, -0.29931, 1.84338, -0.95871, -0.34845, 0.51847]
+          time_from_start_sec: 3.03
+        - positions: [-1.10855, 1.13459, -0.29931, 1.8442, -0.96527, -0.34845, 0.51201]
+          time_from_start_sec: 3.223
+        - positions: [-1.10633, 1.13144, -0.29924, 1.85211, -0.96581, -0.34845, 0.49613]
+          time_from_start_sec: 3.425
+        - positions: [-1.10237, 1.13132, -0.29924, 1.86014, -0.96625, -0.34845, 0.48766]
+          time_from_start_sec: 3.628
+        - positions: [-1.09535, 1.13136, -0.2991, 1.86214, -0.96749, -0.34845, 0.47379]
+          time_from_start_sec: 3.833
+        - positions: [-1.08949, 1.13143, -0.29784, 1.86288, -0.97478, -0.34845, 0.45475]
+          time_from_start_sec: 4.036
+        - positions: [-1.08945, 1.13277, -0.29541, 1.86427, -0.97524, -0.34845, 0.44687]
+          time_from_start_sec: 4.239
+        - positions: [-1.08945, 1.13371, -0.29322, 1.86996, -0.97998, -0.34845, 0.43234]
+          time_from_start_sec: 4.433
+        - positions: [-1.08945, 1.1338, -0.2929, 1.87031, -0.98274, -0.34845, 0.4145]
+          time_from_start_sec: 4.636
+        - positions: [-1.08964, 1.13919, -0.2929, 1.87031, -0.98281, -0.34845, 0.38771]
+          time_from_start_sec: 4.84
+        - positions: [-1.0895, 1.14857, -0.29276, 1.87031, -0.98817, -0.34835, 0.36872]
+          time_from_start_sec: 5.043
+        - positions: [-1.08596, 1.15651, -0.2859, 1.87017, -0.99616, -0.34777, 0.34067]
+          time_from_start_sec: 5.246
+        - positions: [-1.08052, 1.15745, -0.27707, 1.86958, -0.99803, -0.34746, 0.32402]
+          time_from_start_sec: 5.448
+        - positions: [-1.07223, 1.16422, -0.26526, 1.86909, -0.99821, -0.3472, 0.30194]
+          time_from_start_sec: 5.641
+        - positions: [-1.06535, 1.18017, -0.2533, 1.85326, -0.99768, -0.34666, 0.28163]
+          time_from_start_sec: 5.844
+        - positions: [-1.05784, 1.20574, -0.23487, 1.80926, -0.99486, -0.33367, 0.26693]
+          time_from_start_sec: 6.047
+        - positions: [-1.05294, 1.22819, -0.2108, 1.77444, -0.98679, -0.33294, 0.26016]
+          time_from_start_sec: 6.25
+        - positions: [-1.0403, 1.24206, -0.1946, 1.74303, -0.97187, -0.32505, 0.25998]
+          time_from_start_sec: 6.455
+        - positions: [-1.01589, 1.24751, -0.17654, 1.68346, -0.95813, -0.31372, 0.26138]
+          time_from_start_sec: 6.658
+        - positions: [-1.0054, 1.24496, -0.17588, 1.62815, -0.95628, -0.31372, 0.27845]
+          time_from_start_sec: 6.851
+        - positions: [-1.00041, 1.22737, -0.17588, 1.56879, -0.95639, -0.31372, 0.33762]
+          time_from_start_sec: 7.054
+        - positions: [-1.0007, 1.19009, -0.18034, 1.51365, -0.95813, -0.31482, 0.43993]
+          time_from_start_sec: 7.257
+        - positions: [-1.00086, 1.16471, -0.19541, 1.49009, -0.97578, -0.3162, 0.50272]
+          time_from_start_sec: 7.46
+        - positions: [-1.00095, 1.13062, -0.22295, 1.47442, -1.00503, -0.32318, 0.57116]
+          time_from_start_sec: 7.664
+        - positions: [-1.00093, 1.08315, -0.25105, 1.47435, -1.03571, -0.35549, 0.63134]
+          time_from_start_sec: 7.868
+        - positions: [-1.00075, 1.05736, -0.25274, 1.47477, -1.04749, -0.39687, 0.66188]
+          time_from_start_sec: 8.06
+        - positions: [-0.99772, 1.04011, -0.25274, 1.48449, -1.05938, -0.4604, 0.72117]
+          time_from_start_sec: 8.265
+        - positions: [-0.99337, 1.02974, -0.25264, 1.50699, -1.06299, -0.53339, 0.7695]
+          time_from_start_sec: 8.47
+        - positions: [-0.99222, 1.02172, -0.25264, 1.51807, -1.06249, -0.56657, 0.79344]
+          time_from_start_sec: 8.672
+        - positions: [-0.9921, 1.01501, -0.25264, 1.51807, -1.06249, -0.56657, 0.79339]
+          time_from_start_sec: 8.876
+        - positions: [-0.98765, 1.01374, -0.25264, 1.5176, -1.0753, -0.52433, 0.79208]
+          time_from_start_sec: 9.079
+        - positions: [-0.98187, 1.01261, -0.25264, 1.51427, -1.11336, -0.4633, 0.79083]
+          time_from_start_sec: 9.273
+        - positions: [-0.98187, 1.01255, -0.25264, 1.53805, -1.08614, -0.51958, 0.7928]
+          time_from_start_sec: 9.476
+        - positions: [-0.97962, 1.01274, -0.2525, 1.55889, -1.07111, -0.55358, 0.79287]
+          time_from_start_sec: 9.68
+        - positions: [-0.96737, 1.00435, -0.25274, 1.5535, -1.10357, -0.48546, 0.8005]
+          time_from_start_sec: 9.883

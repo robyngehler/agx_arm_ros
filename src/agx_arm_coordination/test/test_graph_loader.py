@@ -20,8 +20,39 @@ def test_shipped_catalogue_loads_and_has_demo_actions():
         assert action_id in actions
 
 
+def test_catalogue_fragments_are_merged_in():
+    # config/catalogue.d/*.yaml carries the demo actions whose bulky taught
+    # waypoints would otherwise drown catalogue.yaml; the coordinator must see
+    # them as one flat catalogue.
+    cat = ActivityCatalogue.from_config_dir(CONFIG_DIR)
+    actions = cat.actions
+    assert "left_hand_grip_handle" in actions          # from catalogue.d
+    assert "both_arms_home_to_pregrasp" in actions     # from catalogue.yaml
+
+
+def test_catalogue_fragment_may_not_redefine_an_action(tmp_path):
+    # A silent override would make the running behaviour depend on filename order.
+    (tmp_path / "catalogue.yaml").write_text(
+        "actions:\n"
+        "  dup:\n    actiontype_id: Gripper\n    robot_id: left_hand\n"
+        "    metadata: {skill_name: open_hand}\n",
+        encoding="utf-8",
+    )
+    fragment_dir = tmp_path / "catalogue.d"
+    fragment_dir.mkdir()
+    (fragment_dir / "clash.yaml").write_text(
+        "actions:\n"
+        "  dup:\n    actiontype_id: Gripper\n    robot_id: right_hand\n"
+        "    metadata: {skill_name: open_hand}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="redefines action_id"):
+        ActivityCatalogue.from_config_dir(tmp_path)
+
+
 @pytest.mark.parametrize("activity_id", [
     "hefeweizen_pour_v1",
+    "tea_pour_left_v1",
     "hands_open_close_release_v1",
     "hands_open_release_v1",
     "both_arms_pregrasp_grasp_retract_v1",
