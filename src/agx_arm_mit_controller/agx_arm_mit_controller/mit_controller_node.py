@@ -67,7 +67,7 @@ class NeroMitControllerNode(Node):
             "joint_names",
             ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         )
-        self.declare_parameter("control_rate_hz", 50.0)
+        self.declare_parameter("control_rate_hz", 100.0)
         self.declare_parameter("feedback_timeout_s", 0.25)
         self.declare_parameter("auto_enable_on_trajectory", True)
         self.declare_parameter("hold_final_point", True)

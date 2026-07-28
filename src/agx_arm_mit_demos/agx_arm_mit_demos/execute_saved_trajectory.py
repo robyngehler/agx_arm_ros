@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--feedback-timeout", type=float, default=3.0, help="Timeout waiting for fresh feedback/joint_states after mode changes")
 	parser.add_argument("--playback-speed-scale", type=float, default=1.0, help="Playback speed scale (0.25 = quarter-speed, 1.0 = recorded speed)")
 	parser.add_argument("--playback-lead-in-sec", type=float, default=0.0, help="Blend from the current hold pose to the first recorded waypoint over this many seconds")
-	parser.add_argument("--playback-smoothing-window", type=int, default=9, help="Zero-phase moving-average window (samples) applied to recorded positions at playback, velocities recomputed from the smoothed signal; <= 1 disables")
+	parser.add_argument("--playback-smoothing-window", type=int, default=15, help="Zero-phase moving-average window (samples) applied to recorded positions at playback, velocities recomputed from the smoothed signal; <= 1 disables")
 	parser.add_argument("--publish-repetitions", type=int, default=3, help="How often to republish the trajectory")
 	parser.add_argument("--publish-interval", type=float, default=0.2, help="Seconds between trajectory publishes")
 	return parser.parse_args()

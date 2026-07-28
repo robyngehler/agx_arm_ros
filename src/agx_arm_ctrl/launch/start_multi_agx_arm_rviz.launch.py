@@ -328,7 +328,7 @@ def generate_launch_description():
             DeclareLaunchArgument("gripper_default_effort", default_value="1.0"),
             DeclareLaunchArgument("follow", default_value="true", choices=["true", "false"]),
             DeclareLaunchArgument("use_mit_controller", default_value="true", choices=["true", "false"]),
-            DeclareLaunchArgument("mit_control_rate_hz", default_value="50.0"),
+            DeclareLaunchArgument("mit_control_rate_hz", default_value="100.0"),
             DeclareLaunchArgument("mit_params_file", default_value=default_mit_params_file),
             DeclareLaunchArgument("mit_joint_target_duration_s", default_value="0.75"),
             OpaqueFunction(function=_launch_actions),

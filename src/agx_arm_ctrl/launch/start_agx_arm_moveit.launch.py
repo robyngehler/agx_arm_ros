@@ -351,7 +351,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_mit_controller", default_value="true", choices=["true", "false"]),
             DeclareLaunchArgument("use_rviz", default_value="true", choices=["true", "false"]),
             DeclareLaunchArgument("db", default_value="false", choices=["true", "false"]),
-            DeclareLaunchArgument("mit_control_rate_hz", default_value="50.0"),
+            DeclareLaunchArgument("mit_control_rate_hz", default_value="100.0"),
             DeclareLaunchArgument("mit_params_file", default_value=default_mit_params_file),
             DeclareLaunchArgument(
                 "planning_pipelines",
