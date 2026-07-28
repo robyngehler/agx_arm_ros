@@ -50,12 +50,14 @@ from agx_arm_ctrl.omnihand.skills import (
     MOTION_CLOSE_UNTIL_CONTACT,
     MOTION_FREEZE,
     MOTION_OPEN,
+    MOTION_POSE,
     STATE_CLOSING_UNTIL_CONTACT,
     STATE_FAILED,
     STATE_GRASP_HOLDING,
     STATE_IDLE,
     STATE_OPENING,
     STATE_RELEASING,
+    STATE_SHAPING,
     contact_score,
     load_skill_catalogue,
     parse_tactile,
@@ -306,6 +308,8 @@ class OmniHandSkillController(Node):
 
         if skill.motion == MOTION_OPEN:
             return self._run_open(goal_handle, goal, metadata, skill, result)
+        if skill.motion == MOTION_POSE:
+            return self._run_pose(goal_handle, goal, metadata, skill, result)
         if skill.motion == MOTION_CLOSE_UNTIL_CONTACT:
             return self._run_close_until_contact(goal_handle, goal, metadata, skill, result)
         if skill.motion == MOTION_FREEZE:
@@ -333,9 +337,41 @@ class OmniHandSkillController(Node):
 
     def _run_open(self, goal_handle, goal, metadata, skill, result) -> PerformAction.Result:
         # Opening / releasing clears any internal hold first.
-        self._clear_hold()
         opening_state = STATE_RELEASING if "release" in skill.skill_name else STATE_OPENING
-        self._state = opening_state
+        return self._ramp_to_preset(
+            goal_handle, goal, metadata, skill, result,
+            motion_state=opening_state,
+            step_rad=self.defaults.open_step_rad,
+            label="open",
+        )
+
+    def _run_pose(self, goal_handle, goal, metadata, skill, result) -> PerformAction.Result:
+        """Reproduce a taught hand shape verbatim (no tactile gating).
+
+        The deterministic counterpart to ``close_until_contact``: the preset was
+        measured on the real object, so the shape itself *is* the grasp and no
+        calibrated contact threshold is needed. Uses the smaller ``pose_step_rad``
+        because a taught grip preset presses into the object.
+        """
+        return self._ramp_to_preset(
+            goal_handle, goal, metadata, skill, result,
+            motion_state=STATE_SHAPING,
+            step_rad=self.defaults.pose_step_rad,
+            label="pose",
+        )
+
+    def _ramp_to_preset(
+        self, goal_handle, goal, metadata, skill, result, *,
+        motion_state: str, step_rad: float, label: str,
+    ) -> PerformAction.Result:
+        """Bounded per-cycle ramp from the current pose to ``skill.target_preset``.
+
+        Shared by ``open``/``release`` and ``pose``; they differ only in the
+        reported state, the step size, and the wording. Any internal (tactile)
+        hold is cleared first — the new command supersedes it either way.
+        """
+        self._clear_hold()
+        self._state = motion_state
 
         target = self._resolve_preset(skill.target_preset)
         timeout = float(metadata.get("timeout_sec", self.defaults.open_settle_timeout_sec))
@@ -347,7 +383,7 @@ class OmniHandSkillController(Node):
             if goal_handle.is_cancel_requested:
                 return self._handle_cancel(goal_handle, metadata, result, hold_ok=False)
 
-            current = step_toward(current, target, self.defaults.open_step_rad)
+            current = step_toward(current, target, step_rad)
             self._publish_command(current)
 
             reached_command = within_tolerance(current, target, 1e-6)
@@ -357,12 +393,12 @@ class OmniHandSkillController(Node):
                 and within_tolerance(feedback_pose, target, self.defaults.open_tolerance_rad)
             )
             progress = 0.5 if not reached_command else (1.0 if reached_feedback else 0.8)
-            self._publish_feedback(goal_handle, opening_state, progress, 0.0)
+            self._publish_feedback(goal_handle, motion_state, progress, 0.0)
 
             if reached_command and (reached_feedback or feedback_pose is None):
                 self._state = STATE_IDLE
                 result.success = True
-                result.message = f"{skill.skill_name}: open reached"
+                result.message = f"{skill.skill_name}: {label} reached"
                 result.final_state = STATE_IDLE
                 self._emit_event(
                     "completed",
@@ -374,24 +410,27 @@ class OmniHandSkillController(Node):
                 return result
 
             if time.monotonic() > deadline:
-                # Command ramp done but feedback never confirmed open: treat the
-                # commanded-open as good enough (bridge clamps to limits) unless
-                # the hand is faulted.
+                # Command ramp done but feedback never confirmed the pose: treat
+                # the commanded pose as good enough (the bridge clamps to limits,
+                # and a taught grip preset is deliberately past the object surface
+                # so feedback legitimately stops short) unless the hand is faulted.
                 if reached_command and not self._hand_fault:
                     self._state = STATE_IDLE
                     result.success = True
-                    result.message = f"{skill.skill_name}: open commanded (feedback unconfirmed)"
+                    result.message = (
+                        f"{skill.skill_name}: {label} commanded (feedback unconfirmed)"
+                    )
                     result.final_state = STATE_IDLE
                     self._emit_event(
                         "completed", action_id=goal.action_id, state=STATE_IDLE,
-                        message="open commanded; feedback unconfirmed",
+                        message=f"{label} commanded; feedback unconfirmed",
                     )
                     goal_handle.succeed()
                     return result
-                return self._fail(goal_handle, result, f"{skill.skill_name}: open timed out")
+                return self._fail(goal_handle, result, f"{skill.skill_name}: {label} timed out")
 
             time.sleep(period)
-        return self._fail(goal_handle, result, "shutdown during open")
+        return self._fail(goal_handle, result, f"shutdown during {label}")
 
     def _run_close_until_contact(self, goal_handle, goal, metadata, skill, result) -> PerformAction.Result:
         self._clear_hold()

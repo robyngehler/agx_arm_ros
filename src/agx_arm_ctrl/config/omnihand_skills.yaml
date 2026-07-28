@@ -32,6 +32,27 @@ omnihand_skills:
     motion: freeze
     target_preset: null
 
+  # --- Tea-pour demo (tea_pour_left_v1) -------------------------------------
+  # These four use motion `pose`: their presets were captured on the real teapot
+  # (config/omnihand_pro_gestures.yaml, commit ce08f0c), so the taught shape IS
+  # the grasp and no calibrated tactile threshold is involved. That is the
+  # deliberate MVP tradeoff versus close_until_contact — deterministic and
+  # repeatable, but blind to a mispositioned handle. Recalibrate by repointing
+  # target_preset here; the skill_name in the activity graph never changes.
+  hand_rest_fist:
+    motion: pose
+    target_preset: fist_vendor_demo    # travel/rest shape, fingers tucked
+  pre_grip_handle:
+    motion: pose
+    target_preset: can_pre_grip        # open enough to thread around the handle
+  grip_handle:
+    motion: pose
+    target_preset: can_grip_V01        # taught closure on the teapot handle
+  release_handle:
+    motion: pose
+    target_preset: can_pre_grip        # same shape as pre-grip; separate name so
+                                       # release can be recalibrated on its own
+
 # Loop + monitoring tunables. Per-object contact_threshold / stable_samples /
 # timeout_sec come from the action metadata, NOT from here. All values below are
 # placeholders to calibrate on the Pro hardware (proposal §9.2).
@@ -39,6 +60,7 @@ defaults:
   control_rate_hz: 20.0
   close_step_rad: 0.05        # bounded per-cycle step toward the close target
   open_step_rad: 0.08         # bounded per-cycle step toward the open target
+  pose_step_rad: 0.05         # bounded per-cycle step toward a taught `pose` preset
   open_tolerance_rad: 0.06    # joints within this of the open preset => open reached
   open_settle_timeout_sec: 3.0
   contact_aggregation: mean   # mean | max | min over the matched contact_sensors

@@ -35,15 +35,23 @@ import yaml
 # Motion classes the controller knows how to run. Public skills map onto one of
 # these; the target preset (a named pose in the model's gesture config) and the
 # tactile parameters come from the action metadata / skill config.
+#
+# ``open`` and ``pose`` are the same bounded ramp to a preset and differ only in
+# intent: ``open`` releases (and clears any internal hold), ``pose`` reproduces a
+# taught hand shape verbatim. ``pose`` is the deterministic option for gestures
+# measured on the object itself — it does not need a calibrated tactile threshold,
+# which ``close_until_contact`` does.
 MOTION_OPEN = "open"
 MOTION_CLOSE_UNTIL_CONTACT = "close_until_contact"
+MOTION_POSE = "pose"
 MOTION_FREEZE = "freeze"
-VALID_MOTIONS = (MOTION_OPEN, MOTION_CLOSE_UNTIL_CONTACT, MOTION_FREEZE)
+VALID_MOTIONS = (MOTION_OPEN, MOTION_CLOSE_UNTIL_CONTACT, MOTION_POSE, MOTION_FREEZE)
 
 # Controller state-machine states (mirrors hand_skill_backend_mapping.md §4).
 STATE_IDLE = "IDLE"
 STATE_OPENING = "OPENING"
 STATE_CLOSING_UNTIL_CONTACT = "CLOSING_UNTIL_CONTACT"
+STATE_SHAPING = "SHAPING"          # ramping to a taught preset (MOTION_POSE)
 STATE_GRASP_HOLDING = "GRASP_HOLDING"
 STATE_RELEASING = "RELEASING"
 STATE_FAILED = "FAILED"
@@ -99,6 +107,9 @@ class SkillControllerDefaults:
     control_rate_hz: float = 20.0
     close_step_rad: float = 0.05
     open_step_rad: float = 0.08
+    # MOTION_POSE ramps to a *taught* preset, including grip poses that press into
+    # an object, so it uses the (slower) closing step size rather than the open one.
+    pose_step_rad: float = 0.05
     open_tolerance_rad: float = 0.06
     open_settle_timeout_sec: float = 3.0
     contact_aggregation: str = AGG_MEAN

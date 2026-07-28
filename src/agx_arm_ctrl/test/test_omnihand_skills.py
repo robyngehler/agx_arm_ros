@@ -6,6 +6,7 @@ from agx_arm_ctrl.omnihand.skills import (
     AGG_MIN,
     MOTION_CLOSE_UNTIL_CONTACT,
     MOTION_OPEN,
+    MOTION_POSE,
     aggregate_contact,
     contact_score,
     matched_finger_values,
@@ -41,6 +42,45 @@ def test_installed_skill_yaml_has_mvp_skills():
     assert grasp.motion == MOTION_CLOSE_UNTIL_CONTACT
     assert grasp.target_preset == "fist_vendor_demo"
     assert cat.resolve("stop_hand").target_preset is None
+
+
+def test_installed_skill_yaml_has_tea_demo_pose_skills():
+    # The tea-pour demo drives the hand by taught pose, not by tactile contact:
+    # every one of its skills must resolve to motion `pose` and to a preset that
+    # actually exists in the o12_pro gesture config.
+    from pathlib import Path
+
+    from ament_index_python.packages import get_package_share_directory
+    import yaml
+
+    from agx_arm_ctrl.omnihand.skills import load_skill_catalogue
+
+    config_dir = Path(get_package_share_directory("agx_arm_ctrl")) / "config"
+    cat = load_skill_catalogue(str(config_dir / "omnihand_skills.yaml"))
+    gestures = yaml.safe_load(
+        (config_dir / "omnihand_pro_gestures.yaml").read_text(encoding="utf-8")
+    )["omnihand_gestures"]
+
+    expected = {
+        "hand_rest_fist": "fist_vendor_demo",
+        "pre_grip_handle": "can_pre_grip",
+        "grip_handle": "can_grip_V01",
+        "release_handle": "can_pre_grip",
+    }
+    for skill_name, preset in expected.items():
+        skill = cat.resolve(skill_name)
+        assert skill.motion == MOTION_POSE, skill_name
+        assert skill.target_preset == preset, skill_name
+        assert preset in gestures, f"{skill_name} -> unknown preset {preset}"
+
+
+def test_pose_motion_needs_a_target_preset():
+    # A `pose` skill with no preset has nothing to ramp to; catch it at parse time
+    # rather than at the first hardware dispatch.
+    import pytest
+
+    with pytest.raises(ValueError):
+        parse_skill_catalogue({"omnihand_skills": {"bad": {"motion": MOTION_POSE}}})
 
 
 def test_gesture_yaml_joint_order_matches_registry():
