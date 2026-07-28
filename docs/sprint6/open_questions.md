@@ -8,6 +8,24 @@
 - Orchestration package → **`agx_arm_coordination`**.
 - CAN-bus resource tokens → **deferred** until contention is observed.
 
+## Opened by the tea demo (2026-07-28)
+
+- Anchor `Can_Grip_L` sits ~0.22 rad (j5) / 0.20 rad (j7) past the end of the `Grip_Can_L`
+	recording. Confirmed intentional — that twist seats the hand in the teapot handle — but it has
+	not been re-verified since the recording was taught. Re-capture if the seat looks wrong.
+- Is `allowed_start_tolerance` 0.05 rad enough for the MIT controller's standing error under the
+	teapot payload, or does it need to go higher? Too low aborts the replay before it moves (safe
+	failure); too high lets a replay start further from its taught path than intended.
+- Is the `pose` hand motion good enough for the demo, or does the grip need tactile confirmation?
+	`pose` is deterministic but blind — it closes on empty air if the handle is not where the anchor
+	says. Blocked on a calibrated `contact_threshold` (the 0.35 placeholder is orders of magnitude
+	below the Pro's raw normal-force values).
+- What is the real CPU headroom during the demo? The lowered hand rates in `start_tea_demo.launch.py`
+	are reasoned, not measured, against `sprint_refactor/reference/critical_cpu_paths.md`.
+- How should a coordinator **crash** be covered? The interrupt path is handled, but a hard crash
+	leaves the MoveIt goal executing. Candidates: a MoveIt-side execution watchdog, or a supervisor
+	that pins the arms when the coordinator disappears.
+
 ## Needs hardware validation / calibration
 
 - Which backend gestures/presets work best for the glass and the bottle grasp?

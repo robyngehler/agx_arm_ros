@@ -65,9 +65,37 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
 
 ## Step 5 — Full demo
 
+- [x] **first MVP demo assembled: `tea_pour_left_v1`** (2026-07-28) — left arm + left hand pour a
+	teapot; both sides brought up, only the left addressed. 17-node linear graph over 8 anchor
+	moves, 3 taught replays (`Grip_Can_L`, `CanFill02`, `Can_Release_L_V02`) and 5 hand poses.
+	Runbook: `../../control/bringups/tea_demo.md`. Chosen ahead of the Hefeweizen MVP as the
+	simpler single-side first test.
+	- new `pose` hand motion (deterministic ramp to a taught preset, no tactile gating) — the
+	  Hefeweizen `close_until_contact` path stays available but needs a calibrated threshold.
+	- recorded replay now dispatches as a planned `MoveGroup` approach to waypoint 0 **then**
+	  `ExecuteTrajectory`, so a taught segment no longer has to start bit-exact on its anchor.
+	- `trajectory_execution.allowed_start_tolerance` raised 0.01 → 0.05 (all three recordings
+	  exceeded the MoveIt default against their anchors).
+	- catalogue may now be split across `config/catalogue.d/*.yaml` fragments.
+- [ ] run `tea_pour_left_v1` on hardware, escalation ladder: no teapot → empty → water.
+	*(hardware-pending — nothing in this chain has been executed live.)*
 - [ ] run `hefeweizen_pour_v1` on the escalation ladder: no objects → dummy → empty → water → beer.
 	*(graph + `start_hefeweizen_demo.launch.py` ready; hardware-pending.)*
 - [x] `planning/hefeweizen_validation_log.md` created to capture runs (dev slice logged).
+
+## Step 6 — Stop / interrupt safety
+
+- [x] `Ctrl+C` on the coordinator no longer strands a running MoveIt goal: the node takes SIGINT
+	itself, the activity unwinds (cancel children → reopen hand windows → `cancel_trajectory` +
+	`hold_current` on the moving side), and a second interrupt escalates to `emergency_stop`.
+- [x] `Ctrl+C` on `run_activity` cancels the activity goal and waits for the result instead of
+	exiting while the robot keeps moving.
+- [x] the activity loop no longer reports **success** when it exits because rclpy went down with
+	nodes still pending.
+- [ ] verify the stop ladder on hardware, mid-replay and mid-hand-window.
+	*(hardware-pending; unit-tested only.)*
+- [ ] coordinator **crash** (as opposed to interrupt) is still uncovered — the MoveIt goal survives
+	the process. Needs either a MoveIt-side watchdog or a supervisor.
 
 ## Repo hygiene
 

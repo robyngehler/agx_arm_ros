@@ -95,6 +95,17 @@ MoveIt anchor transitions use the same `execution_profile` family as the compone
 
 ## Demos
 
+Tea pour (`tea_pour_left_v1`) — the first end-to-end demo, left arm plus left hand, both sides live.
+Start the components baseline with `mode:=moveit_mit` (and `use_rviz:=false`, a CPU decision), then:
+
+```bash
+ros2 launch agx_arm_coordination start_tea_demo.launch.py backend_type:=sdk
+ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
+```
+
+Full runbook, CPU budget and stop behaviour: [`tea_demo.md`](tea_demo.md). `Ctrl+C` on either the
+coordinator or the client now cancels the activity and pins the arm rather than just exiting.
+
 Hefeweizen coordinator: start the components baseline with `mode:=moveit_mit`, then run:
 
 ```bash
@@ -106,6 +117,7 @@ The staged dry-run and live sequence remains in `teach_and_run.md`.
 ## References
 
 - `../environment.md`: build, test, and runtime wrapper rules
+- `tea_demo.md`: the tea-pour demo runbook (chain, CPU budget, stop behaviour)
 - `teach_and_run.md`: teach loop, gravity, bus details, and coordinator-facing motion flow
 - `../../assets/control/single_vs_multi_arm_control_chain.md`: per-arm versus Duo interaction analysis
 - `../../assets/omnihand/omnihand_canfd_setup.md`: CAN transport and hardware bringup details
