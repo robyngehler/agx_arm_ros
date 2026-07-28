@@ -8,7 +8,13 @@ loader later without any coordinator change.
 Layout (installed to the package share/config):
 
     config/catalogue.yaml              resources + actions (shared catalogue)
+    config/catalogue.d/<name>.yaml     optional catalogue fragments, merged in
     config/activities/<id>.yaml        one activity graph (nodes + edges)
+
+``catalogue.d/`` exists so a demo whose actions carry bulky taught ``waypoints``
+can live in its own file instead of drowning the shared catalogue. Fragments use
+the same schema and share one flat ``action_id`` namespace: a fragment that
+redefines an existing ``action_id`` is an error, not a silent override.
 
 The coordinator constructs one :class:`ActivityCatalogue` and calls the three
 methods below.
@@ -44,6 +50,17 @@ class ActivityCatalogue:
         catalogue_path = config_dir / "catalogue.yaml"
         data = yaml.safe_load(catalogue_path.read_text(encoding="utf-8")) or {}
         actions = parse_catalogue(data)
+        for fragment in sorted((config_dir / "catalogue.d").glob("*.yaml")):
+            extra = parse_catalogue(
+                yaml.safe_load(fragment.read_text(encoding="utf-8")) or {}
+            )
+            clashes = sorted(set(extra) & set(actions))
+            if clashes:
+                raise ValueError(
+                    f"catalogue fragment {fragment.name} redefines action_id(s) "
+                    f"{clashes}; action_ids are a single flat namespace"
+                )
+            actions.update(extra)
         return cls(actions=actions, activities_dir=config_dir / "activities")
 
     # --- db_bridge-style contract -------------------------------------------
