@@ -1,11 +1,23 @@
-"""Unit tests for the coordinator's phased arm dispatch.
+"""Unit tests for the coordinator's stop path and phased arm dispatch.
 
-A recorded replay is dispatched as an *ordered pair* of MoveIt goals (planned
-approach to waypoint 0, then the replay). If phase 1 fails, the replay must not
-be sent -- that would run a taught motion from the wrong place.
+Two things are guarded here, both safety properties rather than features:
+
+- a recorded replay is dispatched as an *ordered pair* of MoveIt goals (planned
+  approach to waypoint 0, then the replay). If phase 1 fails, the replay must not
+  be sent -- that would run a taught motion from the wrong place.
+- Ctrl+C must reach the hardware. rclpy's default SIGINT handler drops the
+  context immediately, which strands a running MoveIt goal with no client left to
+  cancel it, so the coordinator takes the signal itself and unwinds: cancel
+  children -> reopen hand windows -> pin the arms, in that order.
+
+The node needs ROS to construct, so tests build a bare instance via ``__new__``.
 """
 
-from agx_arm_coordination.coordinator_node import _PhasedArmChild
+import threading
+
+import pytest
+
+from agx_arm_coordination.coordinator_node import CoordinatorNode, _PhasedArmChild
 
 
 SUCCESS = 1
@@ -56,6 +68,33 @@ def _drain(child, limit=20):
             return
         child.poll()
     raise AssertionError("child never completed")
+
+
+class _RecordingLogger:
+    def __init__(self):
+        self.messages = []
+
+    def info(self, msg, *_a, **_k):
+        self.messages.append(("info", str(msg)))
+
+    def warn(self, msg, *_a, **_k):
+        self.messages.append(("warn", str(msg)))
+
+    def error(self, msg, *_a, **_k):
+        self.messages.append(("error", str(msg)))
+
+
+def _coord():
+    node = CoordinatorNode.__new__(CoordinatorNode)
+    node._logger = _RecordingLogger()
+    node.get_logger = lambda: node._logger
+    node._stop_lock = threading.Lock()
+    node._stop_requested = False
+    node._stop_reason = ""
+    node._activity_running = False
+    node._shutdown_event = threading.Event()
+    node._open_hand_windows = set()
+    return node
 
 
 # --- phased arm dispatch -----------------------------------------------------
@@ -114,3 +153,75 @@ def test_phased_child_cancel_targets_the_current_phase():
     handle = child._goal_handle
     child.request_cancel()
     assert handle.cancelled
+
+
+# --- cooperative stop --------------------------------------------------------
+
+def test_request_stop_releases_main_when_no_activity_runs():
+    node = _coord()
+    node.request_stop("interrupt")
+    assert node.stop_requested
+    assert node._shutdown_event.is_set()
+
+
+def test_request_stop_waits_for_a_running_activity():
+    # Releasing main() here would tear the context down mid-trajectory, before the
+    # activity thread has had a chance to cancel anything.
+    node = _coord()
+    node._activity_running = True
+    node.request_stop("interrupt")
+    assert node.stop_requested
+    assert not node._shutdown_event.is_set()
+
+
+def test_request_stop_is_idempotent():
+    node = _coord()
+    node.request_stop("first")
+    node.request_stop("second")
+    assert node._stop_reason == "first"
+
+
+@pytest.mark.parametrize("robot_id,expected", [
+    ("left_arm", {"left"}),
+    ("right_arm", {"right"}),
+    ("both_arms", {"left", "right"}),
+    ("left_hand", set()),
+    ("", set()),
+])
+def test_sides_for_robot(robot_id, expected):
+    assert _coord()._sides_for_robot(robot_id) == expected
+
+
+def test_stop_running_cancels_then_resumes_then_pins():
+    # Order is load bearing: while a hand window is open the arm's MIT gate is
+    # closed, so a hold sent before resume_arm_control would be dropped before it
+    # reaches the arm.
+    node = _coord()
+    calls = []
+
+    class _Child:
+        action_nos = [1]
+        done = False
+
+        def request_cancel(self):
+            calls.append("cancel")
+
+    node._cancel_children = lambda running: calls.append("cancel")
+    node._resume_all_hand_windows = lambda: calls.append("resume")
+    node.safe_stop_arms = lambda sides, reason: calls.append(f"pin:{sorted(sides)}")
+    node._sides_in_flight = lambda running: {"left"}
+
+    node._stop_running({1: _Child()}, "interrupt")
+    assert calls == ["cancel", "resume", "pin:['left']"]
+
+
+def test_stop_running_skips_pinning_when_no_arm_was_moving():
+    node = _coord()
+    calls = []
+    node._cancel_children = lambda running: calls.append("cancel")
+    node._resume_all_hand_windows = lambda: calls.append("resume")
+    node.safe_stop_arms = lambda sides, reason: calls.append("pin")
+    node._sides_in_flight = lambda running: set()
+
+    node._stop_running({}, "interrupt")
+    assert calls == ["cancel", "resume"]

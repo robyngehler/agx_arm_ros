@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import signal
+import threading
 import time
 
 from ament_index_python.packages import get_package_share_directory
@@ -41,7 +43,7 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_srvs.srv import Trigger
+from std_srvs.srv import Empty, Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.action import PerformActivity, PerformAction
@@ -111,8 +113,14 @@ class _Child:
         self.mark(False, "no result interpreter")
 
     def request_cancel(self) -> None:
-        if self._goal_handle is not None and not self.done:
+        if self._goal_handle is None or self.done:
+            return
+        try:
             self._goal_handle.cancel_goal_async()
+        except Exception:
+            # Cancelling is a stop path: a torn-down context or an already-closed
+            # goal must not stop the remaining children from being cancelled.
+            pass
 
 
 class _HandChild(_Child):
@@ -197,6 +205,10 @@ class CoordinatorNode(Node):
         # verified hold (prepare_hand_window) and reopened afterwards
         # (resume_arm_control), so the hand actually owns the bus.
         self.declare_parameter("arm_service_template", "/{side}_arm")
+        # MIT controller namespace per side, used only by the safe-stop path
+        # (cancel_trajectory + hold_current).
+        self.declare_parameter("mit_controller_template", "/{side}_arm/mit_controller")
+        self.declare_parameter("stop_service_timeout_sec", 3.0)
         self.declare_parameter("handoff_enabled", True)
         self.declare_parameter("handoff_timeout_sec", 5.0)
         self.declare_parameter("arm_dry_run", False)
@@ -219,6 +231,8 @@ class CoordinatorNode(Node):
         config_dir = Path(config_dir_param)
         self.hand_action_template = str(self.get_parameter("hand_action_template").value)
         self.arm_service_template = str(self.get_parameter("arm_service_template").value)
+        self.mit_controller_template = str(self.get_parameter("mit_controller_template").value)
+        self.stop_service_timeout = float(self.get_parameter("stop_service_timeout_sec").value)
         self.handoff_enabled = bool(self.get_parameter("handoff_enabled").value)
         self.handoff_timeout = float(self.get_parameter("handoff_timeout_sec").value)
         self.arm_dry_run = bool(self.get_parameter("arm_dry_run").value)
@@ -242,6 +256,9 @@ class CoordinatorNode(Node):
         self._hand_clients: dict[str, ActionClient] = {}
         self._prepare_clients: dict[str, object] = {}
         self._resume_clients: dict[str, object] = {}
+        self._cancel_traj_clients: dict[str, object] = {}
+        self._hold_clients: dict[str, object] = {}
+        self._estop_clients: dict[str, object] = {}
         for side in ("left", "right"):
             name = self.hand_action_template.format(side=side)
             self._hand_clients[side] = ActionClient(
@@ -254,9 +271,34 @@ class CoordinatorNode(Node):
             self._resume_clients[side] = self.create_client(
                 Trigger, f"{arm_ns}/resume_arm_control", callback_group=self._cb_group
             )
+            # Safe-stop path. Cancelling the MoveIt goal is the primary stop;
+            # these pin the arm afterwards so "stopped" means held, not coasting.
+            mit_ns = self.mit_controller_template.format(side=side)
+            self._cancel_traj_clients[side] = self.create_client(
+                Empty, f"{mit_ns}/cancel_trajectory", callback_group=self._cb_group
+            )
+            self._hold_clients[side] = self.create_client(
+                Empty, f"{mit_ns}/hold_current", callback_group=self._cb_group
+            )
+            self._estop_clients[side] = self.create_client(
+                Trigger, f"{arm_ns}/emergency_stop", callback_group=self._cb_group
+            )
         # Sides whose arm is currently quiesced for a hand window (prepared but
         # not yet resumed), so any exit path can reopen them.
         self._open_hand_windows: set[str] = set()
+
+        # --- cooperative stop ------------------------------------------------
+        # Ctrl+C must reach the hardware, not just this process. rclpy's default
+        # SIGINT handler tears the context down immediately, which would strand a
+        # running MoveIt trajectory: the goal keeps executing with no client left
+        # to cancel it. main() therefore takes the signal and calls request_stop,
+        # and the activity loop unwinds through the normal abort path (cancel
+        # children -> resume hand windows -> pin the arms).
+        self._stop_lock = threading.Lock()
+        self._stop_requested = False
+        self._stop_reason = ""
+        self._activity_running = False
+        self._shutdown_event = threading.Event()
         # Arm motion goes through the MoveIt multi-arm slice: anchor->anchor via
         # MoveGroup (collision-aware plan + execute), recorded replay via
         # ExecuteTrajectory. MoveIt fans a both_arms plan out to the per-arm
@@ -301,6 +343,101 @@ class CoordinatorNode(Node):
         event.state = state
         event.message = message
         self.event_pub.publish(event)
+
+    # --- cooperative stop ----------------------------------------------------
+
+    @property
+    def stop_requested(self) -> bool:
+        with self._stop_lock:
+            return self._stop_requested
+
+    def request_stop(self, reason: str) -> None:
+        """Ask a running activity to unwind and stop the hardware.
+
+        Signal-handler safe: it only flips a flag and (when nothing is running)
+        releases main(). The actual cancelling happens on the activity thread,
+        which is still spinning, so the cancel goals can still be delivered.
+        """
+        with self._stop_lock:
+            if self._stop_requested:
+                return
+            self._stop_requested = True
+            self._stop_reason = reason
+            running = self._activity_running
+        self.get_logger().warn(
+            f"stop requested ({reason}); "
+            + ("unwinding the running activity" if running else "no activity running")
+        )
+        if not running:
+            self._shutdown_event.set()
+
+    def wait_for_shutdown(self) -> None:
+        """Block main() until a requested stop has been carried out.
+
+        Polled rather than an unbounded wait so the process stays responsive to
+        the signal handler (which only ever runs on the main thread).
+        """
+        while not self._shutdown_event.wait(0.2):
+            pass
+
+    def _call_empty_sync(self, client, label: str) -> tuple[bool, str]:
+        """Call an Empty service and wait for it (bounded); never raises."""
+        try:
+            if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
+                return False, f"{label}: service unavailable"
+            future = client.call_async(Empty.Request())
+            deadline = time.monotonic() + self.stop_service_timeout
+            while not future.done():
+                if time.monotonic() > deadline:
+                    return False, f"{label}: timed out"
+                time.sleep(self.poll_period)
+            return True, f"{label}: ok"
+        except Exception as exc:  # a stop path must never raise
+            return False, f"{label}: {exc}"
+
+    def _sides_for_robot(self, robot_id: str) -> set[str]:
+        if robot_id == "both_arms":
+            return {"left", "right"}
+        if robot_id in ("left_arm", "right_arm"):
+            return {robot_id.split("_", 1)[0]}
+        return set()
+
+    def safe_stop_arms(self, sides: set[str], reason: str) -> None:
+        """Pin the given arm sides where they stand (best effort, bounded).
+
+        Cancelling the MoveIt goal is what actually stops the motion; this runs
+        after it so "stopped" means *held* rather than left at whatever the last
+        streamed MIT command was. The Nero firmware has no MIT command watchdog —
+        silence is not a safe state — so an explicit hold is the difference
+        between stopping and merely going quiet.
+
+        Best effort by design: a missing service is logged, not escalated. The
+        escalation to ``emergency_stop`` is deliberate and separate
+        (``emergency_stop_all``, second Ctrl+C).
+        """
+        for side in sorted(sides):
+            for label, client in (
+                ("cancel_trajectory", self._cancel_traj_clients[side]),
+                ("hold_current", self._hold_clients[side]),
+            ):
+                ok, msg = self._call_empty_sync(client, f"{label}[{side}]")
+                if ok:
+                    self.get_logger().info(f"safe stop ({reason}): {msg}")
+                else:
+                    self.get_logger().warn(f"safe stop ({reason}): {msg}")
+
+    def emergency_stop_all(self) -> None:
+        """Last-resort stop on every side: damped zero, hold, electronic e-stop.
+
+        Only used on an explicit second interrupt. The physical e-stop remains the
+        only guaranteed stop while the arm firmware has no command watchdog.
+        """
+        for side in ("left", "right"):
+            ok, msg = self._call_trigger_sync(
+                self._estop_clients[side], f"emergency_stop[{side}]"
+            )
+            level = self.get_logger().info if ok else self.get_logger().error
+            level(f"emergency stop [{side}]: {msg}")
 
     # --- dispatch ------------------------------------------------------------
 
@@ -602,6 +739,24 @@ class CoordinatorNode(Node):
     # --- main execution ------------------------------------------------------
 
     def _execute(self, goal_handle) -> PerformActivity.Result:
+        with self._stop_lock:
+            if self._stop_requested:
+                result = PerformActivity.Result()
+                result.success = False
+                result.message = f"coordinator is stopping ({self._stop_reason})"
+                goal_handle.abort()
+                return result
+            self._activity_running = True
+        try:
+            return self._execute_activity(goal_handle)
+        finally:
+            with self._stop_lock:
+                self._activity_running = False
+                stopping = self._stop_requested
+            if stopping:
+                self._shutdown_event.set()
+
+    def _execute_activity(self, goal_handle) -> PerformActivity.Result:
         activity_id = goal_handle.request.activity_id
         result = PerformActivity.Result()
 
@@ -626,13 +781,13 @@ class CoordinatorNode(Node):
         self._open_hand_windows.clear()
 
         while rclpy.ok() and not scheduler.is_complete(completed):
-            if goal_handle.is_cancel_requested:
-                self._cancel_children(running)
-                self._resume_all_hand_windows()
+            if goal_handle.is_cancel_requested or self.stop_requested:
+                reason = self._stop_reason if self.stop_requested else "canceled"
+                self._stop_running(running, reason)
                 result.success = False
-                result.message = "canceled"
+                result.message = reason
                 result.completed_nodes = len(completed)
-                self._event("failed", activity_id=activity_id, message="canceled")
+                self._event("failed", activity_id=activity_id, message=reason)
                 goal_handle.canceled()
                 return result
 
@@ -694,6 +849,15 @@ class CoordinatorNode(Node):
 
             time.sleep(self.poll_period)
 
+        if not scheduler.is_complete(completed):
+            # rclpy went down (context shutdown) while nodes were still pending.
+            # Never report success here: the arm may be mid-trajectory, and a
+            # silently "successful" result would hide that from the caller.
+            return self._abort(
+                goal_handle, result, running, activity_id, "", len(completed),
+                "coordinator shut down before the activity completed",
+            )
+
         self._resume_all_hand_windows()
         result.success = True
         result.message = f"activity '{activity_id}' complete"
@@ -703,11 +867,32 @@ class CoordinatorNode(Node):
         goal_handle.succeed()
         return result
 
+    def _sides_in_flight(self, running: dict[int, _Child]) -> set[str]:
+        """Arm sides with a goal actually in flight — the ones a stop must pin."""
+        sides: set[str] = set()
+        for child in running.values():
+            if isinstance(child, _ArmChild):
+                sides |= self._sides_for_robot(self._child_robot_id(child))
+        return sides
+
+    def _stop_running(self, running: dict[int, _Child], reason: str) -> None:
+        """Bring everything in flight to a held stop, in the only order that works.
+
+        1. cancel the children — this is what actually stops the motion;
+        2. reopen any hand window, because while one is open the arm's MIT gate is
+           closed and a hold command would be dropped before reaching the arm;
+        3. pin the arms that were moving.
+        """
+        sides = self._sides_in_flight(running)
+        self._cancel_children(running)
+        self._resume_all_hand_windows()
+        if sides:
+            self.safe_stop_arms(sides, reason)
+
     def _abort(self, goal_handle, result, running, activity_id, failed_action_id,
                completed_count, message) -> PerformActivity.Result:
         self.get_logger().error(f"aborting '{activity_id}': {message}")
-        self._cancel_children(running)
-        self._resume_all_hand_windows()
+        self._stop_running(running, f"abort: {message}")
         result.success = False
         result.message = message
         result.failed_action_id = failed_action_id
@@ -738,11 +923,37 @@ def main(args: list[str] | None = None) -> None:
     node = CoordinatorNode()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
+
+    # Own the interrupt instead of letting rclpy tear the context down on the
+    # spot. A coordinator that just exits leaves its MoveIt trajectory and hand
+    # goals running on hardware with nobody left to cancel them, so the first
+    # interrupt asks the activity to unwind (cancel -> reopen hand windows -> pin
+    # the arms) while the graph is still alive to carry those messages. A second
+    # interrupt means the operator wants out now: escalate to the emergency stop
+    # and hand the signal back to the default handler.
+    previous_sigint = signal.getsignal(signal.SIGINT)
+
+    def _on_interrupt(signum, frame):
+        if node.stop_requested:
+            node.get_logger().error("second interrupt: escalating to emergency stop")
+            node.emergency_stop_all()
+            signal.signal(signal.SIGINT, previous_sigint)
+            raise KeyboardInterrupt
+        node.request_stop("interrupt (Ctrl+C)")
+
+    signal.signal(signal.SIGINT, _on_interrupt)
+    signal.signal(signal.SIGTERM, lambda signum, frame: node.request_stop("SIGTERM"))
+
+    spin_thread = threading.Thread(target=executor.spin, name="coordinator_spin", daemon=True)
+    spin_thread.start()
     try:
-        executor.spin()
+        # Blocks until request_stop() has been honoured: either nothing was
+        # running, or the activity thread finished unwinding.
+        node.wait_for_shutdown()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
