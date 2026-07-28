@@ -150,6 +150,40 @@ def _build_mit_trajectory_execution(arm_instances: list[dict[str, str]]) -> dict
     }
 
 
+def _apply_trajectory_execution_tuning(trajectory_execution: dict, context) -> None:
+    """Set the TrajectoryExecutionManager tolerances that real MIT execution needs.
+
+    MoveIt's defaults assume a stiff position-controlled arm. Two of them bite on
+    this stack and are both raised here, as launch-overridable values:
+
+    - ``allowed_start_tolerance`` (default 0.01 rad) is checked against the *first
+      point* of every trajectory sent to ``ExecuteTrajectory``. Replaying a taught
+      trajectory always starts from wherever the preceding move actually left the
+      arm, and the MIT controller settles with a small standing error, so the
+      default rejects perfectly good replays before they move.
+    - ``allowed_execution_duration_scaling`` (default 1.2) preempts a trajectory
+      the controller runs slower than commanded, which a compliant MIT arm under a
+      payload routinely does.
+
+    Only defaults are supplied: an explicit value already in the config wins.
+    """
+    defaults = {
+        "trajectory_execution.allowed_start_tolerance": ("trajectory_start_tolerance", "0.05"),
+        "trajectory_execution.allowed_execution_duration_scaling": (
+            "trajectory_duration_scaling", "2.0",
+        ),
+        "trajectory_execution.allowed_goal_duration_margin": (
+            "trajectory_goal_duration_margin", "2.0",
+        ),
+    }
+    for param, (launch_arg, fallback) in defaults.items():
+        if param in trajectory_execution:
+            continue
+        trajectory_execution[param] = float(
+            context.launch_configurations.get(launch_arg, fallback)
+        )
+
+
 def _side_frame(side: str, key: str) -> str:
     """Per-side arm frame/prefix from the registry (arm.sides.<side>.<key>)."""
     return str(ARM_SIDES.get(side, {}).get(key, ""))
@@ -457,6 +491,8 @@ def build_moveit_config(context):
 
     if use_mit_controller:
         moveit_config.trajectory_execution = _build_mit_trajectory_execution(arm_instances)
+
+    _apply_trajectory_execution_tuning(moveit_config.trajectory_execution, context)
 
     if arm_type == "nero":
         moveit_simple_controller_manager = moveit_config.trajectory_execution[

@@ -137,6 +137,54 @@ class _ArmChild(_Child):
         self.mark(ok, "" if ok else f"MoveIt error_code={code}")
 
 
+class _PhasedArmChild(_ArmChild):
+    """One catalogue action executed as an ordered chain of MoveIt goals.
+
+    Used for a recorded replay, which is really two steps: a planned
+    ``MoveGroup`` approach to the taught trajectory's first waypoint, then the
+    ``ExecuteTrajectory`` replay itself. A phase that fails fails the whole
+    action; the phases share one action_no, so the graph still sees a single node.
+
+    Phases are callables returning a goal future, invoked lazily: the approach is
+    sent first, and the replay goal is only built once the approach succeeded.
+    """
+
+    def __init__(self, action_no: int, action_id: str, phases: list, labels: list[str]) -> None:
+        super().__init__(action_no, action_id)
+        self._phases = list(phases)
+        self._labels = list(labels)
+        self._phase_index = -1
+
+    def start(self) -> None:
+        self._advance()
+
+    def _advance(self) -> None:
+        self._phase_index += 1
+        if self._phase_index >= len(self._phases):
+            self.mark(True, f"completed {len(self._phases)} phase(s)")
+            return
+        self._goal_future = self._phases[self._phase_index]()
+        self._result_future = None
+        self._goal_handle = None
+
+    def _label(self) -> str:
+        if 0 <= self._phase_index < len(self._labels):
+            return self._labels[self._phase_index]
+        return f"phase {self._phase_index + 1}"
+
+    def mark(self, success: bool, message: str) -> None:
+        if not success and not message.startswith("phase"):
+            message = f"{self._label()}: {message}"
+        super().mark(success, message)
+
+    def _interpret_result(self, wrapper) -> None:
+        code = wrapper.result.error_code.val
+        if code != MoveItErrorCodes.SUCCESS:
+            self.mark(False, f"MoveIt error_code={code}")
+            return
+        self._advance()
+
+
 class CoordinatorNode(Node):
 
     def __init__(self) -> None:
@@ -158,6 +206,10 @@ class CoordinatorNode(Node):
         self.declare_parameter("joint_goal_tolerance_rad", 0.01)
         self.declare_parameter("num_planning_attempts", 10)
         self.declare_parameter("allowed_planning_time_sec", 5.0)
+        # Scaling for the planned approach that precedes a recorded replay. Kept
+        # separate from the action's velocity_scaling, which for a recorded action
+        # stretches replay time rather than limiting the planner.
+        self.declare_parameter("recorded_approach_scaling", 0.10)
 
         config_dir_param = str(self.get_parameter("config_dir").value).strip()
         if not config_dir_param:
@@ -175,6 +227,9 @@ class CoordinatorNode(Node):
         self.joint_goal_tolerance = float(self.get_parameter("joint_goal_tolerance_rad").value)
         self.num_planning_attempts = int(self.get_parameter("num_planning_attempts").value)
         self.allowed_planning_time = float(self.get_parameter("allowed_planning_time_sec").value)
+        self.recorded_approach_scaling = min(
+            max(float(self.get_parameter("recorded_approach_scaling").value), 1e-3), 1.0
+        )
 
         self.catalogue = ActivityCatalogue.from_config_dir(config_dir)
         arm_config_path = config_dir / "arm_config.yaml"
@@ -348,19 +403,18 @@ class CoordinatorNode(Node):
             return self._dispatch_execute_trajectory(action_no, plan)
         raise DispatchError(f"unhandled arm plan type {type(plan).__name__}")
 
-    def _dispatch_move_group(self, action_no, plan: MoveGroupPlan) -> _Child:
-        """Anchor->anchor as a collision-aware MoveGroup plan+execute goal."""
-        if self.arm_dry_run:
-            child = _ArmChild(action_no, plan.action_id)
-            child.mark(True, f"dry_run: would plan+execute group '{plan.planning_group}' to a "
-                             f"{len(plan.joint_names)}-joint anchor via MoveGroup")
-            return child
+    def _require_move_group(self) -> None:
         if not self._move_group_client.wait_for_server(timeout_sec=self.goal_accept_timeout):
             raise DispatchError(
                 f"move_group action '{self.arm_planner.config.move_group_action}' not available"
             )
+
+    def _build_move_group_goal(
+        self, planning_group, joint_names, positions, velocity_scaling, acceleration_scaling
+    ) -> MoveGroup.Goal:
+        """A collision-aware joint-space plan+execute goal for one planning group."""
         constraints = Constraints()
-        for joint_name, position in zip(plan.joint_names, plan.target_positions):
+        for joint_name, position in zip(joint_names, positions):
             jc = JointConstraint()
             jc.joint_name = joint_name
             jc.position = float(position)
@@ -369,32 +423,36 @@ class CoordinatorNode(Node):
             jc.weight = 1.0
             constraints.joint_constraints.append(jc)
         request = MotionPlanRequest()
-        request.group_name = plan.planning_group
+        request.group_name = planning_group
         request.goal_constraints.append(constraints)
-        request.max_velocity_scaling_factor = plan.velocity_scaling
-        request.max_acceleration_scaling_factor = plan.acceleration_scaling
+        request.max_velocity_scaling_factor = velocity_scaling
+        request.max_acceleration_scaling_factor = acceleration_scaling
         request.num_planning_attempts = self.num_planning_attempts
         request.allowed_planning_time = self.allowed_planning_time
         goal = MoveGroup.Goal()
         goal.request = request
         goal.planning_options.plan_only = False  # plan AND execute
+        return goal
+
+    def _dispatch_move_group(self, action_no, plan: MoveGroupPlan) -> _Child:
+        """Anchor->anchor as a collision-aware MoveGroup plan+execute goal."""
+        if self.arm_dry_run:
+            child = _ArmChild(action_no, plan.action_id)
+            child.mark(True, f"dry_run: would plan+execute group '{plan.planning_group}' to a "
+                             f"{len(plan.joint_names)}-joint anchor via MoveGroup")
+            return child
+        self._require_move_group()
+        goal = self._build_move_group_goal(
+            plan.planning_group, plan.joint_names, plan.target_positions,
+            plan.velocity_scaling, plan.acceleration_scaling,
+        )
         child = _ArmChild(action_no, plan.action_id)
         child.attach_goal_future(self._move_group_client.send_goal_async(goal))
         return child
 
-    def _dispatch_execute_trajectory(self, action_no, plan: RecordedTrajectoryPlan) -> _Child:
-        """Replay a recorded trajectory through MoveIt's ExecuteTrajectory."""
-        if self.arm_dry_run:
-            child = _ArmChild(action_no, plan.action_id)
-            child.mark(True, f"dry_run: would replay {len(plan.points)} waypoint(s) on group "
-                             f"'{plan.planning_group}' via ExecuteTrajectory")
-            return child
-        exec_client = self._execute_trajectory_client
-        if not exec_client.wait_for_server(timeout_sec=self.goal_accept_timeout):
-            raise DispatchError(
-                "execute_trajectory action "
-                f"'{self.arm_planner.config.execute_trajectory_action}' not available"
-            )
+    def _build_execute_trajectory_goal(
+        self, plan: RecordedTrajectoryPlan
+    ) -> ExecuteTrajectory.Goal:
         traj = JointTrajectory()
         traj.joint_names = list(plan.joint_names)
         for point in plan.points:
@@ -408,8 +466,56 @@ class CoordinatorNode(Node):
         robot_traj.joint_trajectory = traj
         goal = ExecuteTrajectory.Goal()
         goal.trajectory = robot_traj
-        child = _ArmChild(action_no, plan.action_id)
-        child.attach_goal_future(exec_client.send_goal_async(goal))
+        return goal
+
+    def _dispatch_execute_trajectory(self, action_no, plan: RecordedTrajectoryPlan) -> _Child:
+        """Approach the replay's first waypoint (planned), then replay it.
+
+        A taught trajectory is recorded from wherever the arm happened to be, which
+        is never bit-exact where the graph parks it beforehand — the preceding
+        anchor is a staging pose, not a guaranteed start state. ``ExecuteTrajectory``
+        only *executes*: it does not plan, and MoveIt rejects a replay whose first
+        point deviates from the current state by more than
+        ``trajectory_execution.allowed_start_tolerance``.
+
+        So the offset is resolved the same way every other gap in the graph is: by
+        a collision-aware ``MoveGroup`` plan to the trajectory's own first waypoint,
+        run as phase 1 of the same action. That keeps taught data untouched and
+        works from wherever the arm actually is, instead of assuming it is on the
+        anchor. The approach runs at ``recorded_approach_scaling``, deliberately
+        independent of the action's ``velocity_scaling`` (which for a recorded
+        action is a replay time-stretch, not a planner limit).
+        """
+        if self.arm_dry_run:
+            child = _ArmChild(action_no, plan.action_id)
+            child.mark(True, f"dry_run: would approach waypoint 0 then replay "
+                             f"{len(plan.points)} waypoint(s) on group "
+                             f"'{plan.planning_group}' via MoveGroup+ExecuteTrajectory")
+            return child
+        self._require_move_group()
+        exec_client = self._execute_trajectory_client
+        if not exec_client.wait_for_server(timeout_sec=self.goal_accept_timeout):
+            raise DispatchError(
+                "execute_trajectory action "
+                f"'{self.arm_planner.config.execute_trajectory_action}' not available"
+            )
+
+        approach_goal = self._build_move_group_goal(
+            plan.planning_group, plan.joint_names, plan.points[0].positions,
+            self.recorded_approach_scaling, self.recorded_approach_scaling,
+        )
+        child = _PhasedArmChild(
+            action_no,
+            plan.action_id,
+            phases=[
+                lambda: self._move_group_client.send_goal_async(approach_goal),
+                lambda: exec_client.send_goal_async(
+                    self._build_execute_trajectory_goal(plan)
+                ),
+            ],
+            labels=["approach to waypoint 0", "recorded replay"],
+        )
+        child.start()
         return child
 
     # --- sync-group merge (Case 4) -------------------------------------------
