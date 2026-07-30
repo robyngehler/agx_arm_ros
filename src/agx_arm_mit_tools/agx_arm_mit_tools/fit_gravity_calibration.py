@@ -40,6 +40,20 @@ def _span(values: list[float]) -> float:
 	return max(values) - min(values)
 
 
+def _provenance_path(path: Path) -> str:
+	"""Render an input path for the stored source_log provenance field.
+
+	Kept relative to the invocation directory when possible, matching the
+	cwd-relative --output default. Absolute paths would otherwise bake this
+	machine's home directory into a source-managed config and make the
+	regenerated file differ per host.
+	"""
+	try:
+		return str(path.resolve().relative_to(Path.cwd().resolve()))
+	except ValueError:
+		return str(path)
+
+
 def _fit_joint_calibration(
 	joint_positions: list[float],
 	tau_model: list[float],
@@ -137,7 +151,7 @@ def main() -> None:
 		joint_names=joint_names,
 		scale=scale,
 		bias=bias,
-		source_log="\n".join(str(path) for path in resolved_paths),
+		source_log="\n".join(_provenance_path(path) for path in resolved_paths),
 		note=note,
 	)
 	output_path = save_calibration_model(model, args.output)

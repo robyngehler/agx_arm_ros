@@ -29,13 +29,34 @@ Use this class for documentation work, code changes, file-level checks, and offl
 
 ## Golden rules
 
-- use `scripts/agx_arm_install_deps.sh` for system and ROS dependencies
+- the production runtime interpreter is **system `/usr/bin/python3.10`**; Conda is optional and not
+  part of the validated runtime path
+- use `scripts/agx_arm_install_deps.sh` for the apt layer plus the pinned pip layer in
+  `requirements.txt`
 - use `scripts/colcon_build_system_python.sh` for workspace builds
-- use `scripts/setup_agx_arm_runtime_env.sh` to create or update the Conda runtime environment
-- use `scripts/run_in_ros_conda.sh -- <command>` for Conda-backed runtime commands
+- use `scripts/setup_trac_ik_overlay.sh` for the TRAC-IK overlay that `agx_arm_moveit` requires
+- use `scripts/setup_omnihand_sdk.sh` to build the vendored OmniHand SDK the bridge imports
 - do not mix manual `conda activate` with `source install/setup.bash` in the same shell flow
 - treat `vendor/OmniHand-Pro-2025` as upstream input, not as a normal workspace package for the
   default repo-wide `colcon build`
+
+## Dependency layers
+
+A provisioned host is defined by four layers. Missing any of them produces a workspace that builds but
+fails at runtime:
+
+| Layer | Source of truth | Provisioned by |
+|---|---|---|
+| apt (system + ROS) | `scripts/agx_arm_install_deps.sh` | that script, steps 1–3 |
+| pip (system `python3.10` user site) | `requirements.txt` | that script, step 4 |
+| TRAC-IK overlay (source build) | `config/trac_ik_overlay.repos` + `scripts/patches/` | `scripts/setup_trac_ik_overlay.sh` |
+| OmniHand vendor SDK (source build) | `vendor/OmniHand-Pro-2025` submodule | `scripts/setup_omnihand_sdk.sh` |
+
+`requirements.txt` exists because one pip dependency is load-bearing and cannot come from apt:
+Ubuntu 22.04 ships python-can 3.3.2, but the arm's CAN error-recovery path needs the
+python-can ≥ 4.0 exception types. See the comments in `requirements.txt`.
+
+For a blank host, follow `../project/jetson_migration.md` rather than assembling these by hand.
 
 ## System build path
 
@@ -79,6 +100,13 @@ bash ./scripts/colcon_build_system_python.sh
 ```
 
 ## Optional Conda runtime path
+
+status: OPTIONAL / NOT IN THE VALIDATED RUNTIME PATH
+
+This path is a development convenience, not the production runtime. The reference Jetson runs no
+`agx-arm-runtime` environment at all (`conda env list` shows only `base`), and every dependency the
+env would provide is already satisfied under system `python3.10` — including `pinocchio`, which comes
+from apt `ros-humble-pinocchio`. Skip this section when provisioning a new host.
 
 Create or update the runtime environment:
 
@@ -133,3 +161,5 @@ of raw `colcon build`.
 
 - `bringups/launches.md`: current launch matrix
 - `bringups/teach_and_run.md`: teach, replay, and coordination-facing workflow guidance
+- `../project/jetson_migration.md`: provisioning a new Jetson host from a blank Ubuntu 22.04 install
+  (this file assumes the host is already provisioned)

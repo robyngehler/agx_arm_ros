@@ -21,12 +21,13 @@ latency, so you can capture the bus alongside it, e.g.:
     # or a pcap for Wireshark:
     sudo tcpdump -i can_nero_right -w ~/omnihand_load.pcap
 
-    # terminal 2 — run the sustained load
-    cd ~/workspace/agx_arm_ros/vendor/OmniHand-Pro-2025
+    # terminal 2 — run the sustained load (paths relative to the repo root)
+    REPO=$(git -C . rev-parse --show-toplevel)
+    cd "$REPO/vendor/OmniHand-Pro-2025"
     PYTHONPATH=$PWD/build/agibot_hand_pkg \
     LD_LIBRARY_PATH=$PWD/build/agibot_hand_pkg/agibot_hand:$LD_LIBRARY_PATH \
     OMNIHAND_SOCKETCAN_IFACE=can_nero_right \
-    python3.10 ~/workspace/agx_arm_ros/scripts/omnihand/omnihand_load_test.py \
+    python3.10 "$REPO/scripts/omnihand/omnihand_load_test.py" \
         --hand-type right --duration 30
 
 Read-only by default. Pass --with-commands to also exercise the write path

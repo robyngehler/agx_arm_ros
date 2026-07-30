@@ -10,6 +10,7 @@ Stable repository structure, architecture decisions, and component ownership.
 - `components/implementation_map.md`: cross-component ownership and doc routing map
 - `roadmap_and_phases.md`: long-term Physical AI roadmap and thematic phase sequence
 - `control_layer_and_dependencies.md`: pyAgxArm control-layer pin and dependency ownership
+- `jetson_migration.md`: provisioning a second Jetson AGX Orin from a blank Ubuntu 22.04 install
 
 ## Scope
 

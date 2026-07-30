@@ -1,0 +1,47 @@
+# agx_arm_ros — Python (pip) layer for the SYSTEM python3.10 ROS runtime.
+#
+# This is the pip half of the dependency surface. The apt half lives in
+# scripts/agx_arm_install_deps.sh; the two together define a provisioned host.
+#
+# Install ONLY into the system interpreter's user site, never into conda:
+#
+#     /usr/bin/python3.10 -m pip install --user -r requirements.txt
+#
+# scripts/agx_arm_install_deps.sh does this for you. See
+# docs/project/jetson_migration.md for the full provisioning sequence and
+# docs/control/environment.md for the Python/ROS environment split.
+
+# --- runtime -----------------------------------------------------------------
+# CAN transport for the Nero arms via vendor/pyAgxArm.
+#
+# >= 4.0 is REQUIRED, not cosmetic: the arm's CAN error-recovery path uses
+# can.CanOperationError and can.CanInitializationError
+# (vendor/pyAgxArm/pyAgxArm/protocols/can_protocol/comms/can_comm.py), which
+# were introduced in python-can 4.0. Ubuntu 22.04's apt python3-can is 3.3.2
+# and fails at RUNTIME, not at build time, so it must not be used here.
+python-can>=4.0,<5
+
+# --- build-time: OmniHand vendor SDK -----------------------------------------
+# vendor/OmniHand-Pro-2025/build.sh needs these importable by the SAME
+# interpreter CMake selects (must be /usr/bin/python3.10 — a conda 3.13 build
+# produces a cpython-313 .so the ROS runtime cannot import).
+#
+# The vendor CMake check_python_package() calls look for build/setuptools/wheel;
+# pybind11 is found via find_package(pybind11 QUIET) and, when missing, is
+# downloaded through CMake FetchContent instead. Installing it here keeps the
+# SDK build offline-capable and reproducible.
+build
+setuptools
+wheel
+pybind11
+
+# --- versions validated on the reference Jetson AGX Orin ---------------------
+# ROS 2 Humble / L4T R36.2.0 / Ubuntu 22.04 / aarch64, 2026-07-30:
+#   python-can 4.6.1   build 1.5.0   setuptools 82.0.1   wheel 0.47.0
+#   pybind11 3.0.4
+# Pin exactly with requirements.lock.txt if you need a byte-identical host.
+#
+# Deliberately NOT listed (provided by apt so they match the ROS 2 Humble ABI —
+# installing pip copies of these shadows the apt versions and breaks rclpy):
+#   numpy scipy pyyaml pytest  -> python3-{numpy,scipy,yaml,pytest}
+#   pinocchio eigenpy          -> ros-humble-{pinocchio,eigenpy}

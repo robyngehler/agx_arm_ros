@@ -1,0 +1,18 @@
+# TRAC-IK overlay sources for ROS 2 Humble / aarch64.
+#
+# agx_arm_moveit declares <exec_depend>trac_ik_kinematics_plugin</exec_depend>,
+# but no ros-humble-trac-ik-kinematics-plugin apt package exists for Humble on
+# arm64, so the plugin is built from source in a SEPARATE overlay workspace
+# (not in this repo's src/, to keep it out of the agx_arm_ros colcon graph).
+#
+# Provision with:
+#     bash ./scripts/setup_trac_ik_overlay.sh
+#
+# The commit is pinned deliberately: 2.0.2 (d8d54ab) is the validated baseline.
+# It needs scripts/patches/trac_ik_moveit_humble_headers.patch, which the setup
+# script applies. See docs/project/jetson_migration.md.
+repositories:
+  trac_ik:
+    type: git
+    url: https://bitbucket.org/traclabs/trac_ik.git
+    version: d8d54abda51f10554501854a744f21fd5b63daf6

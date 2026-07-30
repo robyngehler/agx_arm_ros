@@ -27,5 +27,5 @@
     1.0,
     1.0
   ],
-  "source_log": "/home/user/workspace/agx_arm_ros/logs/nero_gravity_dataset.csv"
+  "source_log": "logs/nero_gravity_dataset.csv"
 }

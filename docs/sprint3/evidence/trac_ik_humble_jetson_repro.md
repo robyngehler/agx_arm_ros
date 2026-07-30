@@ -1,5 +1,17 @@
 # Reproducible TRAC-IK Source Install on ROS 2 Humble / Ubuntu 22.04 / Jetson AGX Orin
 
+> **Superseded operationally (2026-07-30).** This build is now automated and its inputs are
+> source-managed:
+>
+> - run `bash ./scripts/setup_trac_ik_overlay.sh`
+> - sources are pinned in `config/trac_ik_overlay.repos` (2.0.2 / `d8d54ab`)
+> - the MoveIt Humble header fix lives in
+>   `scripts/patches/trac_ik_moveit_humble_headers.patch` (it used to exist only as
+>   uncommitted local state on the reference host)
+>
+> Keep this file as the historical record of *why* the source build is needed and what was validated.
+> For provisioning a host, use `docs/project/jetson_migration.md`.
+
 Target platform:
 
 - NVIDIA Jetson AGX Orin

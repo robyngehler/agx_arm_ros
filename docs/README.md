@@ -27,6 +27,7 @@ This directory is the human-facing documentation hub for the current Duo baselin
 - Current hardware bringup: `control/bringups/launches.md`
 - Current teach and replay workflow: `control/bringups/teach_and_run.md`
 - Current package and staging rules: `project/repository_structure.md`
+- Provisioning a new Jetson host: `project/jetson_migration.md`
 - Current architecture diagrams: `project/architecture.md`
 - Current repo target and documentation ownership rules: `target/README.md`
 - Current implementation focus: `sprint6/`
