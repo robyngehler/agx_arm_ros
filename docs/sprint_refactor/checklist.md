@@ -75,10 +75,11 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 
 ### 0D Baseline instrumentation
 
-- [ ] Add in-node log counters for loop duration, callback duration, SDK call
-      origin with thread id, and per-interface CAN traffic (C6).
-- [ ] Record the external tooling recipe (`tegrastats`, `pidstat`,
-      `ip -s -d link`, `ros2 topic hz`/`bw`).
+- [x] Add in-node log counters for loop duration, callback duration, SDK call
+      origin with thread id (`agx_arm_ctrl/runtime_metrics.py`, off by default).
+- [x] Record the external tooling recipe as a runnable script:
+      `scripts/measure_can_baseline.sh` reports per-interface rates and drops
+      over a window plus process CPU, and sends nothing on any bus.
 
 ### 0E Hardware baseline (L3, safety slot)
 

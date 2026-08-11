@@ -17,6 +17,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 from geometry_msgs.msg import Pose, PoseStamped, PoseArray
 from scipy.spatial.transform import Rotation as R
 
+from agx_arm_ctrl.runtime_metrics import RuntimeMetrics
 from agx_arm_msgs.msg import (
     AgxArmStatus, GripperStatus,
     HandStatus, HandCmd, HandPositionTimeCmd,
@@ -73,6 +74,11 @@ class StopVerification(NamedTuple):
 
 
 class AgxArmRosNode(Node):
+    # Class-level, disabled: a bare instance (tests build one via __new__) and
+    # an unmeasured deployment then behave identically, and no call site has to
+    # ask whether instrumentation happens to be wired up.
+    metrics = RuntimeMetrics(enabled=False)
+
 
     def __init__(self):
         super().__init__("agx_arm_ctrl_single_node")
@@ -109,6 +115,10 @@ class AgxArmRosNode(Node):
         self.declare_parameter("fast_mode", False)
         self.declare_parameter("speed_percent", 100)
         self.declare_parameter("pub_rate", 200)
+        # Phase 0 baseline instrumentation (C6): off unless asked for, so an
+        # unmeasured deployment pays nothing.
+        self.declare_parameter("runtime_metrics_enabled", False)
+        self.declare_parameter("runtime_metrics_period_s", 10.0)
         self.declare_parameter("enable_timeout", 5.0)
         self.declare_parameter("effector_type", "none")
         self.declare_parameter("tcp_offset", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -170,6 +180,10 @@ class AgxArmRosNode(Node):
         self.declare_parameter("hand_window_hold_poll_s", 0.05)
 
     def _load_parameters(self):
+        self.metrics = RuntimeMetrics(
+            enabled=bool(self.get_parameter("runtime_metrics_enabled").value),
+            report_period_s=float(self.get_parameter("runtime_metrics_period_s").value),
+        )
         self.can_port = self.get_parameter("can_port").value
         self.arm_type = self.get_parameter("arm_type").value
         self.auto_enable = self.get_parameter("auto_enable").value
@@ -819,11 +833,19 @@ class AgxArmRosNode(Node):
                     # is the leader-angle stream. Treat it as a healthy bus so the
                     # recovery watchdog does not false-trigger on that silence.
                     self._last_good_feedback_monotonic = time.monotonic()
-                self._publish_joint_states()
-                self._publish_pose()
-                self._publish_arm_status()
-                self._publish_effector_status()
-                self._publish_leader_joint_angles()
+                # One timer around the whole publish batch: hot path 1 in
+                # reference/critical_cpu_paths.md is this loop's per-joint SDK
+                # reads, and the refactor has to show a before/after for it.
+                with self.metrics.time_block("publish_batch"):
+                    self._publish_joint_states()
+                    self._publish_pose()
+                    self._publish_arm_status()
+                    self._publish_effector_status()
+                    self._publish_leader_joint_angles()
+            if self.metrics.due():
+                report = self.metrics.report()
+                if report:
+                    self.get_logger().info(report)
             rate.sleep()
 
     ### bus recovery (P1)
@@ -1249,6 +1271,7 @@ class AgxArmRosNode(Node):
         return result
 
     def _publish_joint_states(self):
+        self.metrics.record_sdk_call("get_joint_angles")
         joint_states = self.agx_arm.get_joint_angles()
         # Same rule as _check_arm_ready: the instantaneous hz window starves
         # under GIL pressure while frames still arrive, so the advancing frame
@@ -1269,12 +1292,18 @@ class AgxArmRosNode(Node):
 
         velocitys = []
         efforts = []
-        for joint_index in range(1, self.arm_joint_count+1):
-            ms = self.agx_arm.get_motor_states(joint_index)
-            if ms is None:
-                return
-            velocitys.append(ms.msg.velocity)
-            efforts.append(ms.msg.torque)
+        # One blocking SDK round trip per joint, every cycle: hot path 1. The
+        # counter records the call and the thread, because "all SDK access from
+        # one worker" is the Phase 1 exit criterion and this is where the
+        # current answer is measured.
+        with self.metrics.time_block("motor_state_reads"):
+            for joint_index in range(1, self.arm_joint_count+1):
+                self.metrics.record_sdk_call("get_motor_states")
+                ms = self.agx_arm.get_motor_states(joint_index)
+                if ms is None:
+                    return
+                velocitys.append(ms.msg.velocity)
+                efforts.append(ms.msg.torque)
 
         msg = JointState()
         msg.header.stamp = self._float_to_ros_time(joint_states.timestamp)

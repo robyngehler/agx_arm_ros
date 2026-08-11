@@ -108,6 +108,49 @@ except where a `Superseded` note says otherwise.
 - Planned fix surface: shared manifest resolver, generated MoveIt/runtime
   artifacts, legacy-config quarantine.
 
+## 2026-08-11 (first instrumented measurements, L3 comm-only)
+
+Hardware access granted for communication only, no commanded motion. The arm
+driver was run with `auto_enable:=false`, so the joints were never energised.
+
+### The 200 Hz publish loop runs at 3.5 Hz when the bus is silent
+
+- Measured: `publish_batch: n=35 mean=0.03ms min=0.02ms max=0.09ms` over a 10 s
+  window with `pub_rate=200`, i.e. 35 iterations where 2000 were configured.
+- The work inside the batch is not the cost — 0.03 ms mean. The ~285 ms per
+  iteration is spent *outside* it, in the readiness and feedback-timeout paths
+  the loop takes when no frames arrive.
+- Impact on the plan: `pub_rate` is not the loop rate. Any Phase 5 claim about
+  decimating this loop has to state which regime it measured, because the
+  configured rate, the healthy-bus rate and the silent-bus rate are three
+  different numbers. The 0E baseline must capture the healthy case separately.
+- Not a fault by itself: degrading under a dead bus is reasonable. It is
+  recorded because the refactor's before/after depends on knowing it.
+
+### The faulty left hand costs ~1120 frames/s of pure drain
+
+- Measured on `left_hand` with the SDK bridge running: **1120 RX/s, 0 TX/s**,
+  no drops during the window. Cumulative counters show 6.8 M RX against 669 TX,
+  215 684 drops, and 19 bus-off/restart cycles.
+- Reading: the bridge has backed off and stopped transmitting (its fault
+  backoff working as designed), while the hand keeps streaming into the host.
+  The host drains 1120 frames per second for no exchange at all.
+- Consequence for 0E: this is CPU load with zero information content, and it
+  will sit underneath every baseline scenario until the cable is replaced.
+  Record it as a constant offset or take the baseline with that bridge stopped;
+  do not attribute it to the code under measurement.
+
+### Neither arm bus carries any traffic
+
+- Both `can_nero_left` and `can_nero_right` measured 0 RX/s **and 0 TX/s**, the
+  second with the arm driver connected and polling.
+- The arms' CAN feedback push is disabled by default, which explains the silence
+  in RX. It does not explain 0 TX: the driver produced no frames of its own, so
+  it never reached the point of re-asserting the push.
+- Open: whether the arms were powered at the time. No arm-side conclusion can be
+  drawn from this session, and no arm number belongs in the 0E baseline until a
+  run shows frames on the bus.
+
 ## 2026-08-11 (velocity truth, traced in the vendor checkout)
 
 ### The zeroed velocity is a vendor workaround on every Nero tier, not one driver
