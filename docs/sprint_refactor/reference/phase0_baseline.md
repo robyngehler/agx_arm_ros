@@ -1,6 +1,6 @@
 # Phase 0 Baseline — measured
 
-status: PARTIAL — no-motion scenarios measured directly; MIT load from captured pcaps
+status: COMPLETE for the authorised scenarios; bus-fault/recovery still owed
 date: 2026-08-11
 platform: Jetson AGX Orin, 12 cores, ROS Humble
 level: **L3** (real hardware, real CAN) for everything below
@@ -8,12 +8,11 @@ level: **L3** (real hardware, real CAN) for everything below
 The before-half of the refactor's before/after. Captured with the counters from
 `agx_arm_ctrl/runtime_metrics.py` and `scripts/measure_can_baseline.sh`.
 
-**Scope limit:** hardware access was granted for communication only, with no
-commanded motion, so every scenario measured *directly* here ran with
-`auto_enable:=false` — connected, streaming feedback, joints never energised.
-Scenario 4 is the exception and did not come from this session: it is read from
-pcaps captured separately while the MIT controllers were driving both arms. The
-hand-action and parallel scenarios are still missing and need a motion slot.
+**Scope.** Scenarios 1-3 were captured under a communication-only grant, with
+`auto_enable:=false` so no joint was energised. Scenario 4 is read from pcaps
+captured separately. Scenarios 5-8 used a later motion grant limited to hand
+`fist`/`zero` gestures and one minimal arm move, and were run against the full
+duo bring-up. Only bus-fault and recovery remain uncaptured.
 
 Hardware state during capture: both arms reachable and pushing feedback after
 the Jetson 40-pin header was configured; `hand_right` healthy; `hand_left` on a
@@ -110,6 +109,99 @@ change under load, and MIT adds ~700 f/s of command traffic on top. Across both
 buses that is ~5700 f/s of arm traffic, plus `hand_left`'s 1119 f/s of garbage,
 so a loaded system drains roughly **6800 frames/s**.
 
+## Scenario 5 — full stack holding, nothing moving
+
+Two arm drivers, two MIT controllers, `move_group` and `rviz2`, arms held by MIT,
+no motion commanded.
+
+| Process | % of one core | threads |
+| --- | ---: | ---: |
+| `arm_driver` (right) | 75.2 | 26 |
+| `arm_driver` (left) | 74.6 | 26 |
+| `mit_controller` | 63.3 | 25 |
+| `mit_controller` | 59.0 | 26 |
+| `rviz2` | 39.3 | 23 |
+| `move_group` | 9.8 | 28 |
+| **total** | **321.2** | |
+
+= 26.8 % of the 12-core machine **at rest**. CAN: 2170/2147 RX/s and **702 TX/s
+on each arm bus** — the MIT controllers stream 100 Hz × 7 joints just to hold,
+because the firmware has no command watchdog and silence is not a safe state.
+
+**A MIT controller costs as much as an arm driver to hold still.** At the
+200–250 Hz target of C2 that roughly doubles, to ~120–160 % per controller. This
+is the measured argument for reducing per-tick gravity cost rather than accepting
+the rate as the lever.
+
+## Scenario 6 — hand action, arms holding
+
+`hand_rest_fist` then `open_hand` on `hand_right` while both arms were held.
+
+| Interface | RX/s | TX/s |
+| --- | ---: | ---: |
+| `can_nero_right` | 2097 | 699 |
+| `can_nero_left` | 2085 | 698 |
+| `hand_right` | 28 | 28 |
+
+**The arm buses were not perturbed at all.** Under the old shared-bus topology
+this sequence required a hand window; here it is simply two devices on two buses.
+
+## Scenario 7 — one MIT arm moving
+
+Joint 4 of the right arm moved +0.05 rad and back over 8 s through the real FJT
+and MIT path.
+
+| Interface | RX/s | TX/s |
+| --- | ---: | ---: |
+| `can_nero_right` | 2105 | 701 |
+| `can_nero_left` | 2082 | 700 |
+
+**Motion adds no CAN traffic.** The rates are indistinguishable from holding.
+Bus load is a function of how many controllers are active, not of whether the
+robot moves, so CAN volume is not a proxy for activity and "reduce CAN load"
+work has to target the constant streaming rate. The RX side (~2100 f/s) is the
+firmware's push and cannot be reduced from the host at all except by disabling
+it.
+
+## Scenario 8 — parallel: same-side arm motion **and** hand action
+
+The C1 headline case, impossible before the topology change: the right arm ran a
+trajectory while the right hand executed a skill, at the same time, on the same
+side, with no hand window. Both completed successfully.
+
+| Process | % of one core |
+| --- | ---: |
+| **`omnihand_bridge`** | **115.1** |
+| `arm_driver` (right) | 73.6 |
+| `arm_driver` (left) | 73.1 |
+| `mit_controller` | 59.8 |
+| `mit_controller` | 56.2 |
+| `rviz2` | 36.7 |
+| `omnihand_skill` | 18.9 |
+| `move_group` | 11.2 |
+| **total** | **444.5** (37.0 % of the machine) |
+
+| Interface | RX/s | TX/s | drops/s |
+| --- | ---: | ---: | ---: |
+| `can_nero_right` | 2066 | 700 | 0 |
+| `can_nero_left` | 2120 | 700 | 0 |
+| `hand_right` | 27 | 27 | 0 |
+
+### The hand bridge is the most expensive process in the system
+
+`omnihand_bridge` cost **115 % of a core while moving 27 frames per second**. The
+arm driver moved ~2800 frames/s for 73 %. Per frame that is roughly a
+hundredfold difference, and it makes the bridge — not the arm loop — the largest
+single CPU consumer under load.
+
+This confirms hot path 4 in `critical_cpu_paths.md` and makes it far more
+serious than that note assumed: the cost is in blocking request/response
+handling, not in frame volume. Phase 5C's timer split and ownership-gated
+polling should be re-read as the **highest-value** CPU item, not a cleanup.
+
+Parallel operation itself cost nothing in contention: no drops, no bus-off, and
+the arm buses were unaffected throughout.
+
 ## Velocity on the wire — settled: the firmware does not report it
 
 The MIT captures answer this decisively, and no further hardware run is needed.
@@ -161,15 +253,16 @@ zero, so this capture settles nothing on its own. It is kept as the reference
 for what a stationary arm looks like, and as the state of the question before
 the MIT pcaps answered it above.
 
-## Still owed for a complete Phase 0 baseline
+## Still owed
 
-These need a motion slot and are not captured:
-
-- dual-arm hold; one MIT arm (two MIT arms captured, see scenario 4)
-- one hand action
-- same-side arm and hand in parallel (only possible under C1)
-- both sides arm-plus-hand in parallel
-- bus-fault and recovery
+- **bus-fault and recovery** — deliberately not provoked on live hardware in this
+  session.
+- **both sides arm-plus-hand in parallel** — only the right side was exercised;
+  the left hand's cable fault makes its half meaningless until replaced.
+- **SDK call attribution under the full stack.** Scenario 2 showed one thread
+  because nothing else ran. The Phase 1 exit criterion needs that same counter
+  with the coordinator and services active, which means enabling
+  `runtime_metrics_enabled` on a full bring-up.
 
 Two notes for whoever runs them:
 
