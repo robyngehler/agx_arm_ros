@@ -2,7 +2,9 @@
 
 This file tracks the defects that the V02 refactor must close. The initial
 entries below were cross-checked against the current code on 2026-07-27 in a
-read-only editor session; no live hardware validation was performed here.
+read-only editor session; no live hardware validation was performed here. They
+were re-verified against the working tree on 2026-08-11 and all still hold,
+except where a `Superseded` note says otherwise.
 
 ## 2026-07-27 (soft e-stop verification is not trustworthy yet)
 
@@ -38,10 +40,18 @@ read-only editor session; no live hardware validation was performed here.
   publication, readback, and retry timers.
 - Impact: the coordinator can believe the side bus has returned to the arm while
   the hand stack still emits CAN traffic.
-- Interim rule: treat same-side arm motion and ongoing hand hold/polling as
-  mutually exclusive until lease-based ownership lands.
-- Planned fix surface: lease contract in `agx_arm_msgs`, side authority in
-  `agx_arm_ctrl`, bridge/skill gating, coordinator release enforcement.
+- **Superseded 2026-08-11 (hardware topology change).** Each device now has its
+  own CAN interface (arms on native `can0`/`can1`, hands on FD-capable USB
+  adapters `can2`/`can3`), so background hand traffic no longer competes with
+  the arm bus. The *safety* argument for this entry is closed; the *CPU*
+  argument is not. Uncoordinated hand polling and recurring hold commands still
+  consume Jetson CPU, and CPU starvation — not bus arbitration — is what
+  overflowed the CAN RX socket in the sprint6 finding.
+- Interim rule (revised): same-side arm and hand motion may now run in parallel;
+  hand polling and hold traffic must still be justified by active hand ownership
+  because CPU is the remaining shared resource.
+- Planned fix surface: per-device bus modelling and hand ownership in
+  `agx_arm_ctrl` plus the registry (integration plan Phase 2).
 
 ## 2026-07-27 (SDK state mutation is not serialized)
 
@@ -97,3 +107,47 @@ read-only editor session; no live hardware validation was performed here.
   parallel configuration source.
 - Planned fix surface: shared manifest resolver, generated MoveIt/runtime
   artifacts, legacy-config quarantine.
+
+## 2026-08-11 (the config layer still assumes one bus per side)
+
+### The hand has no bus of its own in the registry
+
+- Symptom: the OmniHand bridge derives its SocketCAN interface from the *arm's*
+  `can_port`, and falls back to `can_nero_right` when the registry cannot be
+  read.
+- Current evidence:
+  `src/agx_arm_sim/agx_arm_description/config/duo_motion_registry.yaml` defines
+  `can_port` only under `arm.sides.*`; `omnihand_bridge_node.py:34-42`
+  (`resolve_can_interface`) reads that arm value, with
+  `_FALLBACK_CAN_INTERFACES` mapping both sides back onto the arm buses.
+- Impact: with hands on separate USB-CAN FD adapters, the resolved interface is
+  wrong by construction, and the fallback silently points a hand at an arm bus.
+- Interim rule: pass `can_interface` explicitly per hand bridge until the
+  registry carries a per-device bus entry.
+- Planned fix surface: registry schema bump plus fail-closed resolution
+  (integration plan 2A).
+
+### Hand backend interface selection is process-global
+
+- Symptom: the SDK backend selects its CAN interface by writing the
+  `OMNIHAND_SOCKETCAN_IFACE` environment variable of the whole process.
+- Current evidence: `agx_arm_ctrl/omnihand/sdk_o12_pro.py:152` and
+  `omnihand_bridge_node.py:517` both assign `os.environ[...]` in the backend
+  constructor.
+- Impact: two hand backends in one process would overwrite each other's
+  interface. Previously masked because both hands shared their side's arm bus;
+  with two distinct adapters this is a real correctness hazard.
+- Interim rule: never compose two hand backends into one process.
+- Planned fix surface: explicit interface argument in the backend constructor,
+  no environment mutation (integration plan 2A, 5D).
+
+### CAN bring-up scripts still describe shared side buses
+
+- Symptom: `scripts/activate_native_can.sh` documents and configures
+  `can0 -> can_nero_right (right side: right arm + right OmniHand)` and the
+  left-side equivalent.
+- Impact: the operational documentation contradicts the deployed four-interface
+  topology, and there is no stable-naming story for the two USB adapters, which
+  can enumerate in either order.
+- Planned fix surface: four-interface bring-up with deterministic adapter naming
+  (integration plan 0A, 2A).

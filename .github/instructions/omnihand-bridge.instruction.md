@@ -13,7 +13,8 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 
 ## Public ROS Contract
 
-- prefer shared `control/joint_states` for coordinated arm-plus-hand command flows
+- shared `control/joint_states` is the current arm-plus-hand command flow and is legacy: the V02 target is one abstract hand command carrying owner identity, control epoch, and sequence
+- resolve each hand's SocketCAN interface from its own registry entry, never from the arm's `can_port`, and select it through explicit backend construction rather than the process-global `OMNIHAND_SOCKETCAN_IFACE`
 - keep combined `feedback/joint_states` as the canonical follow-mode state
 - publish hand-only debug and diagnostics under `feedback/omnihand/*`
 - keep `control/omnihand/joint_trajectory` as a bridge-specific compatibility surface while the longer-term action or controller contract is still open

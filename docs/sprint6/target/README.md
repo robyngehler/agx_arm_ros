@@ -1,8 +1,24 @@
 # Sprint 6 Target
-status: ACTIVE_SPRINT_ENTRYPOINT
-last_updated: 2026-07-18
+status: PAUSED_PENDING_V02_REFACTOR
+last_updated: 2026-08-11
 
 Sprint 6 is the coordinated dual-arm plus dual-hand task layer.
+
+> **Paused.** The V02 refactor takes priority on safety, CPU relief, and
+> parallel operation; the demo is not meaningful before those land. The active
+> entrypoint is `docs/sprint_refactor/`, canonical plan
+> `docs/sprint_refactor/planning/integration_plan.md`.
+>
+> Two premises of this sprint have changed. Each device now has its own CAN bus
+> (arms `can0`/`can1`, hands `can2`/`can3` on USB-CAN FD adapters), so the
+> **step-and-settle and hand-window planning notes here are superseded** —
+> same-side arm and hand motion runs in parallel and step-and-settle is a
+> selectable degraded mode. The hand message surface is also being consolidated
+> into one abstract hand contract.
+>
+> Sprint 6 resumes and adapts to the resulting contracts once the refactor
+> phases land. Its remaining hardware-validation items become regression
+> criteria for the refactor rather than independent work.
 
 ## Main goal
 

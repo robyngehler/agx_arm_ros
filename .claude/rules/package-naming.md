@@ -36,9 +36,9 @@ environment and OmniHand bridge.
 
 ## Message And Surface Naming Rules
 
-- keep OmniHand-specific messages under `agx_arm_msgs`
-- use repo-owned names such as `OmniHandStatus` and `OmniHandTactileRaw`
-- do not reuse `HandCmd`, `HandPositionTimeCmd`, or `HandStatus` for OmniHand
+- keep hand messages under `agx_arm_msgs`
+- do not extend `HandCmd`, `HandPositionTimeCmd`, or `HandStatus` for OmniHand, and do not add a further OmniHand-only command or status message: the V02 target consolidates them with `GripperStatus` and `OmniHandStatus` into one abstract hand contract that must fit any hand (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D)
+- `OmniHandTactileRaw` stays repo-owned for hand-specific tactile payloads
 - use `omnihand_type:=left|right` for side selection and normalized `left_*` or `right_*` joint names in ROS-facing surfaces
 
 ## Split Decision Rule

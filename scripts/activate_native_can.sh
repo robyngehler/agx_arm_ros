@@ -5,9 +5,17 @@
 # standard, validated transport (see docs/sprint5/evidence/can_transport_decision.md
 # and docs/errors_and_fixes.md).
 #
-# Convention (sprint5):
-#   can0 -> can_nero_right   (right side: right arm + right OmniHand)
-#   can1 -> can_nero_left    (left  side: left  arm + left  OmniHand)
+# Convention (sprint5, arms only since the V02 topology change):
+#   can0 -> can_nero_right   (right arm)
+#   can1 -> can_nero_left    (left  arm)
+#
+# NOTE (V02 refactor): the OmniHands no longer share the arm's side bus. Each
+# hand runs on its own FD-capable USB-CAN adapter (peak_usb, can2/can3), brought
+# up separately — see scripts/omnihand_canfd_activate.sh and
+# docs/sprint_refactor/planning/integration_plan.md (constraint C1). The
+# shared-bus text below describes the previous topology; the hand-carrying
+# capability of these interfaces is retained only for the degraded single-bus
+# fallback mode.
 #
 # The bus is brought up in CAN FD mode with the validated OmniHand timing
 # (1 Mbit arbitration / 5 Mbit data, 0.8 sample points). A CAN FD SocketCAN

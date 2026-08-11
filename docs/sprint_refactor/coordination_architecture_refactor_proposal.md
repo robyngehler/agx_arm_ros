@@ -1,6 +1,26 @@
 # Proposal: Deterministic Coordination, Resource Ownership, and Runtime Consolidation for the Duo Nero System
 
-**Status:** Proposed  
+> **Amended 2026-08-11 — read `planning/integration_plan.md` first.**
+> This document is the architectural input, not the migration plan. The plan is
+> canonical; where they disagree, the plan wins.
+>
+> Two premises of this proposal have since changed:
+>
+> 1. **The side CAN bus is no longer shared.** Each device has its own interface
+>    (arms native `can0`/`can1`, hands on FD-capable USB adapters `can2`/`can3`).
+>    Same-side arm and hand motion may run in parallel. Everything here that
+>    treats the hand lease, bus-quiet verification, feedback-push silencing, or
+>    the shared `*_can_bus` resource claim as a *safety* mechanism is superseded
+>    (§3.3, §3.4, §7, §9, §12.6, §12.8, §16.3). The CPU arguments for bounding
+>    hand traffic survive; the bus arguments do not.
+> 2. **The MIT control rate is a requirement, not a lever.** It runs at 100 Hz
+>    (minimum for stability) with a 200-250 Hz target, so §12.2's "lower the
+>    rate" reasoning is replaced by reducing per-tick cost.
+>
+> Line references in Appendix A point at the reviewed snapshot and no longer
+> match the working tree; the plan carries current anchors.
+
+**Status:** Proposed, partially superseded  
 **Date:** 2026-07-27  
 **Scope:** One Duo unit consisting of two Nero arms, two OmniHands, one MoveIt instance, one Jetson, and one activity coordinator  
 **Primary goal:** Establish a deterministic and resource-efficient control architecture with explicit ownership, closed state machines, fail-closed handovers, and enforceable single sources of truth.  

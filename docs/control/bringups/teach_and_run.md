@@ -1,5 +1,13 @@
 # Teach + Run (hardware-first)
 
+> **Superseded in part — V02 refactor.** Each device now has its own CAN bus
+> (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD adapters), so
+> same-side arm and hand motion may run in parallel and the shared-bus hand
+> window is a selectable degraded mode, not normal operation. This page still
+> describes the **current code**, which resolves the hand interface from the arm
+> bus; it is rewritten in phase 2A. See
+> `docs/sprint_refactor/planning/integration_plan.md` (constraint C1).
+
 How to teach and run coordinated arm(+hand) motions — single arm, either side, or both arms
 simultaneously — by **reusing** the MIT demo/tools instead of building new motion code. Examples use
 the right side (`can_nero_right`); the left side and dual-arm mirror the same commands (see

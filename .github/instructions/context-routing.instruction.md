@@ -37,7 +37,8 @@ This repository is intentionally organized so Copilot can load only the guidance
 - OmniHand runtime contract and bridge surface: `omnihand-bridge.instruction.md`
 - operational workflow: `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/bringups/teach_and_run.md`
 - stable architecture and component ownership: `docs/project/architecture.md`, `docs/project/components/README.md`
-- current sprint entrypoint: `docs/sprint6/` with detailed planning and reference notes under `docs/sprint6/planning/` and `docs/sprint6/reference/`
+- current sprint entrypoint: `docs/sprint_refactor/` with detailed planning and reference notes under `docs/sprint_refactor/planning/` and `docs/sprint_refactor/reference/`; `planning/integration_plan.md` is the canonical plan and carries the binding constraints C1-C6
+- `docs/sprint6/` is paused until the refactor contracts land; treat its step-and-settle and hand-window notes as superseded
 - global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 
 ## Context Minimization Rules

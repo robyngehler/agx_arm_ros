@@ -21,9 +21,9 @@ Load this rule for ROS2-native questions and decisions.
 - keep the public ROS surface agx_arm-centric
 - reuse the current owning packages before creating a new ROS2 surface
 - when the task is multi-arm or multi-hand bringup, make description and launch surfaces arm-count-aware from the start
-- prefer shared `control/joint_states` and combined `feedback/joint_states` for coordinated arm-plus-hand flows
+- keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared `control/joint_states` is the current hand command flow and is legacy, since the V02 target is one abstract hand command with owner identity, control epoch, and sequence (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D)
 - keep hand-only diagnostics under `feedback/omnihand/*`
-- use standard ROS messages first and extend `agx_arm_msgs` only for repo-owned semantics
+- use standard ROS messages first and extend `agx_arm_msgs` only for repo-owned semantics, with statically defined fields
 - do not treat vendor ROS packages or vendor topics as the public repo contract
 - keep `colcon build` on system Python; use the repo-owned wrappers for optional Conda runtime and development shells instead of mixing build and runtime interpreters
 

@@ -1,5 +1,13 @@
 # Tea Pour Demo (`tea_pour_left_v1`) — Runbook
 
+> **Superseded in part — V02 refactor.** Each device now has its own CAN bus
+> (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD adapters), so
+> same-side arm and hand motion may run in parallel and the shared-bus hand
+> window is a selectable degraded mode, not normal operation. This page still
+> describes the **current code**, which resolves the hand interface from the arm
+> bus; it is rewritten in phase 2A. See
+> `docs/sprint_refactor/planning/integration_plan.md` (constraint C1).
+
 The first end-to-end hardware demo: the **left** arm plus the **left** OmniHand pick up a teapot,
 carry it to the pour station, pour, set it down and withdraw. The right arm and right hand are
 brought up and stay live, but the activity never addresses them — they hold wherever they are.

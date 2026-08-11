@@ -48,8 +48,11 @@ Do not load every rule by default. Match context to the task.
 - OmniHand bridge contract and runtime surface: `.claude/rules/omnihand-bridge.md`
 - how to run the system (environment + bringup + teach): `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/bringups/teach_and_run.md`
 - global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
-- current sprint entrypoint: `docs/sprint6/`
-- current sprint planning and reference notes: `docs/sprint6/planning/`, `docs/sprint6/reference/`
+- current sprint entrypoint: `docs/sprint_refactor/` (V02 refactor; the canonical
+  plan is `docs/sprint_refactor/planning/integration_plan.md`)
+- current sprint planning and reference notes: `docs/sprint_refactor/planning/`, `docs/sprint_refactor/reference/`
+- `docs/sprint6/` is paused and adapts to the refactor contracts afterwards; its
+  step-and-settle notes are superseded by the per-device CAN topology
 
 The files under `.claude/rules/` are the canonical agent-facing rule layer (workflow, naming,
 package-split, ROS2 practice). The human docs under `docs/project/` and `docs/assets/` describe repo
@@ -74,9 +77,14 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - treat `src/duo_body_description` as the Duo body staging package for system assembly while keeping
   `src/agx_arm_sim/agx_arm_description` and `src/agx_arm_moveit` as the long-term canonical surfaces
 - keep the OmniHand bridge in `agx_arm_ctrl`
-- prefer shared `control/joint_states` and combined `feedback/joint_states` for coordinated
-  arm-plus-hand flows
-- use repo-owned `agx_arm_msgs` messages for OmniHand-specific diagnostics and tactile payloads
+- keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared
+  `control/joint_states` is the current hand command flow and is legacy (V02 target: one abstract hand
+  command with owner identity, control epoch, and sequence)
+- each device owns its own CAN bus (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD
+  adapters); same-side arm and hand motion may run in parallel and the shared-bus hand window is a
+  selectable degraded mode
+- use repo-owned `agx_arm_msgs` messages for hand diagnostics and tactile payloads, with statically
+  defined fields
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
 - use `docs/control/environment.md` and `.claude/rules/ros2-development.md` for environment and ROS2-native decisions
 - update stable docs when public contracts change

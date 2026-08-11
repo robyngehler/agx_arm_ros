@@ -30,8 +30,10 @@ This directory is the human-facing documentation hub for the current Duo baselin
 - Provisioning a new Jetson host: `project/jetson_migration.md`
 - Current architecture diagrams: `project/architecture.md`
 - Current repo target and documentation ownership rules: `target/README.md`
-- Current implementation focus: `sprint6/`
-- Current V02 refactor planning surface: `sprint_refactor/`
+- Current implementation focus: `sprint_refactor/` (V02 refactor; canonical plan
+  `sprint_refactor/planning/integration_plan.md`)
+- `sprint6/` is paused and adapts to the refactor contracts afterwards; its step-and-settle
+  and hand-window notes are superseded by the per-device CAN topology
 
 For operational launches, prefer the `control/bringups/launches.md` taxonomy first: pick a baseline,
 then add the matching tool or demo on top. In the normal MoveIt or MIT wrapper path,

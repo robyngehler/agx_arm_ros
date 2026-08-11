@@ -38,10 +38,11 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 ## ROS Contract Rules
 
 - Keep the public ROS surface agx_arm-centric.
-- Prefer shared `control/joint_states` and combined `feedback/joint_states` when coordinating arm and end-effector motion.
+- Keep combined `feedback/joint_states` as the coordinated arm-plus-end-effector feedback surface. Shared `control/joint_states` is the current hand command flow and is legacy: the V02 target is one abstract hand command carrying owner identity, control epoch, and sequence.
+- Each device owns its own CAN bus (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD adapters). Same-side arm and hand motion may run in parallel; the shared-bus hand window is a selectable degraded mode, not normal operation.
 - Use `feedback/omnihand/*` for hand-only diagnostics, status, and debugging.
 - Keep `control/omnihand/joint_trajectory` only as a bridge-specific compatibility surface until a later action or controller contract is finalized.
-- Do not map OmniHand onto `HandCmd`, `HandPositionTimeCmd`, or `HandStatus`.
+- Do not extend `HandCmd`, `HandPositionTimeCmd`, or `HandStatus` for OmniHand, and do not add a further OmniHand-only command or status message. The V02 target consolidates them with `GripperStatus` and `OmniHandStatus` into one abstract hand contract that must fit any hand, with statically defined fields.
 
 ## Documentation And Source Rules
 

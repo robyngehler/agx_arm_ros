@@ -11,7 +11,7 @@ Load this instruction for ROS2-native questions and decisions.
 - keep the public ROS surface agx_arm-centric
 - reuse the current owning packages before creating a new ROS2 surface
 - when the task is multi-arm or multi-hand bringup, make description and launch surfaces arm-count-aware from the start
-- prefer shared `control/joint_states` and combined `feedback/joint_states` for coordinated arm-plus-hand flows
+- keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared `control/joint_states` is the current hand command flow and is legacy, since the V02 target is one abstract hand command with owner identity, control epoch, and sequence (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D)
 - keep hand-only diagnostics under `feedback/omnihand/*`
 - use standard ROS messages first and extend `agx_arm_msgs` only for repo-owned semantics
 - do not treat vendor ROS packages or vendor topics as the public repo contract
@@ -27,7 +27,7 @@ Load this instruction for ROS2-native questions and decisions.
 - `docs/sprintN/` for sprint-level targets, checklist, errors, open questions, and retained evidence
 - `docs/project/roadmap_and_phases.md` for long-term roadmap intent and thematic phases
 - `docs/checklist.md` for current sprint status and cross-sprint blockers
-- use `docs/sprint6/` for the current top-level sprint routing and `docs/sprint6/planning/` plus `docs/sprint6/reference/` for the detailed working record
+- use `docs/sprint_refactor/` for the current top-level sprint routing and `docs/sprint_refactor/planning/` plus `docs/sprint_refactor/reference/` for the detailed working record
 - keep `.github/` guidance synchronized with the stable docs it mirrors
 
 ## Validation
