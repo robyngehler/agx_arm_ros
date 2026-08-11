@@ -57,14 +57,24 @@ superseded.
 ```text
 can0  ->  can_nero_right     right arm      (native mttcan)
 can1  ->  can_nero_left      left  arm      (native mttcan)
-can2  ->  right_hand         right OmniHand (USB-CAN FD adapter, peak_usb)
-can3  ->  left_hand          left  OmniHand (USB-CAN FD adapter, peak_usb)
+can2  ->  hand_right         right OmniHand (USB-CAN FD adapter, peak_usb)
+can3  ->  hand_left          left  OmniHand (USB-CAN FD adapter, peak_usb)
 ```
 
 Like the arm buses, the hand adapters are used under stable renamed interfaces
-rather than raw `canN`; the bridge is launched with `can_interface:=left_hand` /
-`right_hand`. Deterministic naming is a 2A requirement precisely because two
+rather than raw `canN`; the bridge is launched with `can_interface:=hand_left` /
+`hand_right`. Deterministic naming is a 2A requirement precisely because two
 identical USB adapters can otherwise swap enumeration order.
+
+The interface names are `hand_left`/`hand_right`, not `left_hand`/`right_hand`;
+they were renamed on 2026-08-11 and an earlier revision of this plan had them
+the other way round. `left_hand` remains the *scheduler resource* name in
+`graph_model.py`, so the two spellings are not interchangeable — 2A must not
+derive one from the other by string surgery.
+
+The arm buses also need the Jetson 40-pin header configured before `mttcan`
+carries anything; an unconfigured header presents as an interface that is UP and
+completely silent.
 
 Consequences:
 

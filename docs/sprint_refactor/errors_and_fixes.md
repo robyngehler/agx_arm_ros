@@ -123,13 +123,14 @@ driver was run with `auto_enable:=false`, so the joints were never energised.
 - Impact on the plan: `pub_rate` is not the loop rate. Any Phase 5 claim about
   decimating this loop has to state which regime it measured, because the
   configured rate, the healthy-bus rate and the silent-bus rate are three
-  different numbers. The 0E baseline must capture the healthy case separately.
+  different numbers. The healthy case was captured the same day and reaches
+  198 Hz — see `reference/phase0_baseline.md`.
 - Not a fault by itself: degrading under a dead bus is reasonable. It is
   recorded because the refactor's before/after depends on knowing it.
 
 ### The faulty left hand costs ~1120 frames/s of pure drain
 
-- Measured on `left_hand` with the SDK bridge running: **1120 RX/s, 0 TX/s**,
+- Measured on `hand_left` with the SDK bridge running: **1120 RX/s, 0 TX/s**,
   no drops during the window. Cumulative counters show 6.8 M RX against 669 TX,
   215 684 drops, and 19 bus-off/restart cycles.
 - Reading: the bridge has backed off and stopped transmitting (its fault
@@ -142,14 +143,24 @@ driver was run with `auto_enable:=false`, so the joints were never energised.
 
 ### Neither arm bus carries any traffic
 
-- Both `can_nero_left` and `can_nero_right` measured 0 RX/s **and 0 TX/s**, the
-  second with the arm driver connected and polling.
-- The arms' CAN feedback push is disabled by default, which explains the silence
-  in RX. It does not explain 0 TX: the driver produced no frames of its own, so
-  it never reached the point of re-asserting the push.
-- Open: whether the arms were powered at the time. No arm-side conclusion can be
-  drawn from this session, and no arm number belongs in the 0E baseline until a
-  run shows frames on the bus.
+- **Resolved 2026-08-11 (same day):** the Jetson 40-pin header was not
+  configured, so `mttcan` presented two interfaces that were UP and completely
+  silent. With the header configured both arms push at ~2150 frames/s.
+- The lesson survives the fix: an unconfigured header is indistinguishable from
+  a powered-off arm by `ip link` alone — both read UP with zero counters. The
+  arms also send nothing until something activates them, so silence has at least
+  three causes and `measure_can_baseline.sh` reports SILENT rather than guessing.
+- The 0 TX from the driver is explained by the same thing: with no feedback the
+  node never reached the point of re-asserting the push.
+
+### CAN interface names are `hand_left`/`hand_right`
+
+- The hand adapters are named `hand_left` and `hand_right`, not
+  `left_hand`/`right_hand` — an earlier revision of the plan had them reversed
+  and it has been corrected.
+- Worth care in 2A: `left_hand` *is* the scheduler resource name in
+  `graph_model.py`, so the two spellings coexist with different meanings and
+  must not be derived from one another.
 
 ## 2026-08-11 (velocity truth, traced in the vendor checkout)
 

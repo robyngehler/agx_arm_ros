@@ -83,11 +83,22 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 
 ### 0E Hardware baseline (L3, safety slot)
 
-- [ ] Capture idle, dual-arm hold, one MIT arm, two MIT arms, one hand action.
+Captured so far in `reference/phase0_baseline.md` (no-motion scenarios only;
+hardware access was granted for communication, not commanded motion).
+
+- [x] Capture idle with no ROS nodes running: ~5430 frames/s of drain before any
+      of our code runs.
+- [x] Capture one arm driver, no motion: 71.6 % of one core, 198 Hz loop,
+      1587 SDK calls/s, publish batch 1.10 ms mean / 2.73 ms max.
+- [ ] Capture dual-arm hold, one MIT arm, two MIT arms, one hand action.
 - [ ] Capture same-side arm-and-hand in parallel (new scenario under C1).
 - [ ] Capture both sides arm-and-hand in parallel.
 - [ ] Capture bus-fault and recovery cases.
-- [ ] Record per-interface CAN counters and RX drop counts for every scenario.
+- [x] Record per-interface CAN counters and RX drop counts for every captured
+      scenario (`scripts/measure_can_baseline.sh`).
+- [ ] Settle the wire-level velocity question: capture `0x251` while a limp
+      joint is moved by hand — decisive either way, and needs no commanded
+      motion.
 
 ## Phase 1 - Side authority, serialized SDK access, arm feedback budget
 
