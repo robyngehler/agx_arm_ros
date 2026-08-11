@@ -225,3 +225,46 @@ def test_stop_running_skips_pinning_when_no_arm_was_moving():
 
     node._stop_running({}, "interrupt")
     assert calls == ["cancel", "resume"]
+
+
+# --- emergency stop outcome reporting ----------------------------------------
+
+def _estop_coord(results):
+    """Coordinator stub whose per-side e-stop returns (ok, message)."""
+    node = _coord()
+    node._estop_clients = {"left": object(), "right": object()}
+    node._call_trigger_sync = lambda client, label: results[
+        "left" if "left" in label else "right"
+    ]
+    return node
+
+
+def test_emergency_stop_demands_the_physical_estop_when_a_side_is_unverified():
+    """An unverified software stop must not scroll past as one error line.
+
+    The driver reports three outcomes — verified, contradicted by feedback, and
+    commanded-while-unverifiable. The last two differ as diagnoses but not as
+    situations: the arm must be assumed to be moving.
+    """
+    node = _estop_coord({
+        "left": (True, "left_arm stop=verified — confirmed stopped (peak 0.001 rad/s)"),
+        "right": (False, "right_arm stop=commanded_unverifiable (no joint feedback)"),
+    })
+    node.emergency_stop_all()
+
+    errors = [m for level, m in node._logger.messages if level == "error"]
+    assert any("PHYSICAL E-STOP REQUIRED" in m for m in errors)
+    demand = next(m for m in errors if "PHYSICAL E-STOP REQUIRED" in m)
+    assert "right" in demand
+    assert "left" not in demand, "a verified side must not be named as unconfirmed"
+
+
+def test_emergency_stop_stays_quiet_when_every_side_is_verified():
+    node = _estop_coord({
+        "left": (True, "left_arm stop=verified — confirmed stopped (peak 0.000 rad/s)"),
+        "right": (True, "right_arm stop=verified — confirmed stopped (peak 0.002 rad/s)"),
+    })
+    node.emergency_stop_all()
+
+    errors = [m for level, m in node._logger.messages if level == "error"]
+    assert not errors, f"verified stops must not raise an alarm: {errors}"

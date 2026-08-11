@@ -431,13 +431,30 @@ class CoordinatorNode(Node):
 
         Only used on an explicit second interrupt. The physical e-stop remains the
         only guaranteed stop while the arm firmware has no command watchdog.
+
+        The driver answers with three outcomes, not two: a stop confirmed in
+        feedback, a stop contradicted by feedback, and a stop that was commanded
+        while feedback could not answer the question at all. The last two are
+        different diagnoses but the same operational situation — an arm that must
+        be assumed to be moving — so they are collapsed into one unmissable
+        instruction here rather than left as per-side lines that scroll past.
         """
+        unconfirmed: list[str] = []
         for side in ("left", "right"):
             ok, msg = self._call_trigger_sync(
                 self._estop_clients[side], f"emergency_stop[{side}]"
             )
-            level = self.get_logger().info if ok else self.get_logger().error
-            level(f"emergency stop [{side}]: {msg}")
+            if ok:
+                self.get_logger().info(f"emergency stop [{side}]: {msg}")
+            else:
+                unconfirmed.append(side)
+                self.get_logger().error(f"emergency stop [{side}]: {msg}")
+        if unconfirmed:
+            self.get_logger().error(
+                "PHYSICAL E-STOP REQUIRED — software stop not confirmed on "
+                f"{', '.join(unconfirmed)}. A stop that cannot be verified is not "
+                "a stop: treat these arms as still in motion."
+            )
 
     # --- dispatch ------------------------------------------------------------
 

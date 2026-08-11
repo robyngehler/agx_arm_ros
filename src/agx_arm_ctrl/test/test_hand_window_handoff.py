@@ -67,12 +67,16 @@ class _FakeArm:
     def __init__(self, *, velocity=0.0, ctrl_mode=_CAN_CTRL, hz=1.0,
                  frame_ts=1.0, comm_err=None, mode_feedback=_MOVE_J,
                  push_live=False, disables_until_silent=1,
-                 move_j_lands_after=0):
+                 move_j_lands_after=0, feedback_advances=None):
         # push_live models the real firmware: while the push runs, every read
         # sees a NEW frame timestamp, and it only stops once a DISABLE mode
         # frame actually lands. disables_until_silent > 1 models the frame
         # being dropped on a saturated bus, which is why silence is verified.
         self.push_live = push_live
+        # hz is the feedback rate, so hz=0 means no new frames arrive. Deriving
+        # the default from it keeps the stale-stream cases (hz=0.0) stale
+        # without every test having to say so twice.
+        self.feedback_advances = (hz > 0) if feedback_advances is None else feedback_advances
         self.push_enabled = True
         self.disables_until_silent = disables_until_silent
         self._disable_count = 0
@@ -100,8 +104,10 @@ class _FakeArm:
     def _set_mode(self):
         push_bit = self._msg_mode.enable_can_push
         self.mode_frames.append((push_bit, self._msg_mode.move_mode))
-        if not self.push_live:
-            return
+        # The push bit is honoured whether or not this fake models a *live*
+        # push. It used to be ignored unless push_live was set, which was
+        # harmless only because frames never advanced then, so silence looked
+        # verified without anything having been silenced.
         if push_bit == _PUSH_DISABLE:
             self._disable_count += 1
             if self._disable_count >= self.disables_until_silent:
@@ -115,9 +121,23 @@ class _FakeArm:
         return [f for f in self.mode_frames if f[0] != _PUSH_INVALID]
 
     def get_joint_angles(self):
-        if self.push_live and self.push_enabled:
+        # Two separate things, which the old velocity check could not tell
+        # apart: whether the firmware's push is running (push_live/push_enabled,
+        # the silencing contract) and whether feedback is arriving at all
+        # (feedback_advances). Settle verification differentiates positions, so
+        # a frozen frame is now correctly read as "no evidence" rather than as
+        # a confident zero — a healthy arm must therefore advance its frames.
+        # The frames *are* the firmware's feedback push: they advance while a
+        # live stream exists and the push is enabled, and stop the moment it is
+        # silenced — which is what the silence verification looks for.
+        if self.push_enabled and (self.push_live or self.feedback_advances):
             self.frame_ts += 0.005
-        return SimpleNamespace(msg=[0.1] * 7, hz=self.hz, timestamp=self.frame_ts)
+        # Position is a function of frame time, so a fake built with
+        # velocity=0.5 actually travels at 0.5 rad/s once its frames advance.
+        # The old check read a standalone velocity field, so a "moving" fake
+        # never moved anything and the moving case was never really covered.
+        position = 0.1 + self.velocity * self.frame_ts
+        return SimpleNamespace(msg=[position] * 7, hz=self.hz, timestamp=self.frame_ts)
 
     def get_motor_states(self, _i):
         return SimpleNamespace(msg=SimpleNamespace(velocity=self.velocity))

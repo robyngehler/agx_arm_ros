@@ -108,6 +108,41 @@ except where a `Superseded` note says otherwise.
 - Planned fix surface: shared manifest resolver, generated MoveIt/runtime
   artifacts, legacy-config quarantine.
 
+## 2026-08-11 (velocity truth, traced in the vendor checkout)
+
+### The zeroed velocity is a vendor workaround on every Nero tier, not one driver
+
+- Traced in the development checkout (`control-layer-pin-2026-07-24`): the CAN
+  protocol **does** carry motor speed — `ArmMsgFeedbackHighSpd` bytes 0-1,
+  `int16`, unit 0.001 rad/s — and the override was introduced by `cea1cb9`
+  (2026-05-26), whose message describes it as a deliberate
+  "get_motor_states 电流/速度修正" (current/velocity correction).
+- It is present in `nero/default` (velocity zeroed **and** `current *= -1`) and
+  in `nero/versions/v111` (velocity only). `nero/versions/v112` does not define
+  `get_motor_states` at all — it subclasses the v111 driver, so **it inherits the
+  zeroing**. There is no driver tier that reports real velocity.
+- Consequence: bumping the firmware tier is not a route to honest velocity. The
+  repo derives speed from timestamped joint positions instead (landed), and the
+  protocol value can only be compared against it by patching the vendor driver
+  in the development checkout and running on hardware — an 0E activity.
+- The `current *= -1` sign correction on the default tier is still unaudited; it
+  changes the sign of a value nothing in this repo currently consumes, but it
+  should be confirmed against a known load before anything starts trusting it.
+
+### The ROS node can never select the v112 driver
+
+- Symptom: `agx_arm_ctrl_single_node._init_agx_arm` maps firmware to driver tier
+  with `elif self.is_nero: if current_version >= "1.11": firmeware_version =
+  NeroFW.V111`. There is no `NeroFW.V112` branch, so a 1.12 arm runs the v111
+  driver.
+- The comparison is also lexicographic on strings, which is the
+  "firmware version parsing using numeric tuples" defect the proposal listed.
+  `"1.9" >= "1.11"` is true, so a 1.9 arm would be given the v111 driver.
+- Impact: today this costs only the v112-specific APIs, because all tiers zero
+  velocity anyway. It stops being harmless the moment a tier difference matters.
+- Planned fix surface: numeric version parsing and the missing tier branch in
+  plan 1D, alongside the other driver-boundary defects.
+
 ## 2026-08-11 (found while building the L2 harness)
 
 ### The left hand's CAN link drops the response half of every exchange

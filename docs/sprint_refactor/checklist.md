@@ -61,14 +61,17 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 
 ### 0C Honest velocity and stop semantics
 
-- [ ] Provide a trustworthy velocity source (derived from timestamped positions)
+- [x] Provide a trustworthy velocity source (derived from timestamped positions)
       with an explicit validity flag.
-- [ ] Verify it against the protocol value using the C3 development checkout.
-- [ ] Separate `commanded` from `feedback_verified` in stop reporting.
-- [ ] Define and implement the coordinator response to a `commanded`-only stop,
+- [ ] Verify it against the protocol value using the C3 development checkout
+      (L3: needs a patched vendor driver on hardware — every tier zeroes it,
+      so there is no software-only comparison).
+- [x] Separate `commanded` from `feedback_verified` in stop reporting.
+- [x] Define and implement the coordinator response to a `commanded`-only stop,
       including the Ctrl+C stop ladder from commit `8e8fc44`.
-- [ ] Audit the undocumented `current *= -1` vendor mutation in `driver.py:541`.
-- [ ] Extend `test_emergency_stop_verify.py` for the new outcomes.
+- [ ] Audit the undocumented `current *= -1` vendor mutation in `driver.py:541`
+      (origin traced to `cea1cb9`; sign still unconfirmed against a known load).
+- [x] Extend `test_emergency_stop_verify.py` for the new outcomes.
 
 ### 0D Baseline instrumentation
 

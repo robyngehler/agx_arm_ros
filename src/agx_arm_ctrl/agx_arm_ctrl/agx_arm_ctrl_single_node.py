@@ -6,7 +6,7 @@ import rclpy
 import math
 import threading
 import subprocess
-from typing import Optional
+from typing import NamedTuple, Optional
 from pyAgxArm import create_agx_arm_config, AgxArmFactory, ArmModel, PiperFW, NeroFW
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
@@ -51,6 +51,26 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyAgxArm.api.agx_arm_factory import PiperCanDefaultConfig
+
+
+class StopVerification(NamedTuple):
+    """Outcome of checking whether the arm actually came to rest.
+
+    ``settled`` and ``evidence`` are deliberately separate. A stop that was
+    issued but could not be checked is not a stop that failed, and it is not a
+    stop that succeeded either — collapsing the two into one boolean is what
+    let an unverifiable stop be reported as confirmed.
+    """
+
+    settled: bool
+    evidence: bool
+    detail: str
+
+    @property
+    def verified(self) -> bool:
+        """True only for a stop confirmed against real feedback."""
+        return self.settled and self.evidence
+
 
 class AgxArmRosNode(Node):
 
@@ -1740,35 +1760,94 @@ class AgxArmRosNode(Node):
     # returns success (plan section 1.3.2), so the command alone proves nothing.
     ESTOP_VELOCITY_THRESHOLD_RAD_S = 0.05
     ESTOP_VERIFY_TIMEOUT_S = 0.5
+    # Two feedback frames must be at least this far apart before a finite
+    # difference means anything; below it encoder quantisation dominates the
+    # estimate and a moving arm can read as settled.
+    VELOCITY_MIN_SAMPLE_DT_S = 0.01
+
+    def _sample_joint_positions(self):
+        """One timestamped joint-position sample, or None when unavailable."""
+        try:
+            js = self.agx_arm.get_joint_angles()
+        except Exception:
+            return None
+        if js is None:
+            return None
+        try:
+            return float(js.timestamp), [float(value) for value in js.msg]
+        except (TypeError, ValueError):
+            return None
+
+    def _derive_joint_velocities(
+        self,
+        timeout_s: float,
+        poll_s: float,
+    ) -> tuple[Optional[list], str]:
+        """Per-joint speed from timestamped positions, or None with a reason.
+
+        The SDK's reported motor velocity is not usable: every Nero driver tier
+        overwrites it with 0.0 before returning motor feedback (an acknowledged
+        vendor workaround, ``# TODO: remove this after the bug is fixed``), and
+        the v112 tier inherits that behaviour from v111. Reading it makes a
+        moving arm look settled, which is the opposite of what a stop check is
+        for, so speed is differentiated from joint positions here instead.
+
+        ``dt`` comes from the feedback timestamps, not the wall clock: a stalled
+        bus that keeps returning the same frame yields no evidence rather than a
+        confident zero.
+        """
+        first = self._sample_joint_positions()
+        if first is None:
+            return None, "no joint feedback"
+        t0, q0 = first
+
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            time.sleep(poll_s)
+            sample = self._sample_joint_positions()
+            if sample is None:
+                return None, "joint feedback stopped mid-measurement"
+            t1, q1 = sample
+            dt = t1 - t0
+            if dt < self.VELOCITY_MIN_SAMPLE_DT_S:
+                continue
+            if len(q1) != len(q0):
+                return None, "joint feedback width changed mid-measurement"
+            return [abs(b - a) / dt for a, b in zip(q0, q1)], f"dt={dt * 1e3:.0f}ms"
+        return None, "feedback timestamp did not advance"
 
     def _arm_velocities_settled(
         self,
         threshold_rad_s: float = ESTOP_VELOCITY_THRESHOLD_RAD_S,
         timeout_s: float = ESTOP_VERIFY_TIMEOUT_S,
         poll_s: float = 0.02,
-    ) -> bool:
-        """Poll motor feedback until every joint velocity is under threshold.
+    ) -> "StopVerification":
+        """Decide whether the arm is confirmed stopped, and on what evidence.
 
-        Returns True only when the arm is confirmed stopped within the timeout.
-        Missing feedback (a dead bus) can never be confirmed stopped, so it
-        deliberately fails verification rather than reporting a phantom success.
+        Returns a :class:`StopVerification`. ``settled`` alone is not the whole
+        answer: a caller must be able to tell "confirmed stopped" from "could
+        not tell", because the second is a stop that was *commanded* and never
+        verified. Missing or stalled feedback therefore yields
+        ``evidence=False`` rather than a phantom success.
         """
         deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            velocities = []
-            try:
-                for joint_index in range(1, self.arm_joint_count + 1):
-                    ms = self.agx_arm.get_motor_states(joint_index)
-                    if ms is None:
-                        velocities = None
-                        break
-                    velocities.append(abs(float(ms.msg.velocity)))
-            except Exception:
-                velocities = None
-            if velocities and all(v < threshold_rad_s for v in velocities):
-                return True
-            time.sleep(poll_s)
-        return False
+        detail = "no measurement attempted"
+        had_evidence = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                break
+            velocities, detail = self._derive_joint_velocities(remaining, poll_s)
+            if velocities is None:
+                return StopVerification(False, had_evidence, detail)
+            had_evidence = True
+            peak = max(velocities) if velocities else 0.0
+            if peak < threshold_rad_s:
+                return StopVerification(
+                    True, True, f"peak {peak:.3f} rad/s ({detail})"
+                )
+            detail = f"peak {peak:.3f} rad/s ({detail})"
+        return StopVerification(False, had_evidence, detail)
 
     def _emergency_stop_callback(self, request, response):
         """Best-effort, UNCONDITIONAL, feedback-VERIFIED stop.
@@ -1826,21 +1905,24 @@ class AgxArmRosNode(Node):
                 )
 
             # Verify the stop actually took effect in feedback.
-            stopped = self._arm_velocities_settled()
+            verification = self._arm_velocities_settled()
+            stopped = verification.verified
             if stopped:
                 self.get_logger().info(
-                    f"Emergency stop verified: {self.arm_type} joints settled"
+                    f"Emergency stop verified: {self.arm_type} joints settled "
+                    f"({verification.detail})"
                 )
             else:
                 self.get_logger().error(
-                    "Emergency stop NOT verified (joints still moving or no feedback) — "
+                    f"Emergency stop NOT verified ({verification.detail}) — "
                     "escalating to electronic emergency stop"
                 )
                 try:
                     self.agx_arm.electronic_emergency_stop()
                 except Exception as e:
                     self.get_logger().error(f"electronic_emergency_stop failed: {e}")
-                stopped = self._arm_velocities_settled()
+                verification = self._arm_velocities_settled()
+                stopped = verification.verified
                 if not stopped:
                     # Last resort: hand the heavyweight link-reset recovery to the
                     # publish thread (owns the connection). This also flushes a
@@ -1854,26 +1936,44 @@ class AgxArmRosNode(Node):
                     recovery_requested = True
         except Exception as e:
             self.get_logger().error(f"Emergency stop failed: {e}")
+        # Three outcomes, not two. "Commanded but unverifiable" is its own
+        # result: the caller must be able to distinguish an arm that is proven
+        # at rest from one whose feedback could not answer the question, and
+        # only the first justifies dispatching further motion.
         if stopped:
             response.success = True
-            response.message = f"{self.arm_type} confirmed stopped (joints settled)"
-        else:
-            self.get_logger().error(
-                f"EMERGENCY STOP UNVERIFIED for {self.arm_type} — do not trust the "
-                "software stop; use the physical e-stop"
+            response.message = (
+                f"{self.arm_type} stop=verified — confirmed stopped "
+                f"({verification.detail})"
             )
+        else:
             response.success = False
+            if not verification.evidence:
+                self.get_logger().error(
+                    f"EMERGENCY STOP COMMANDED BUT UNVERIFIABLE for {self.arm_type} "
+                    f"({verification.detail}) — no usable velocity evidence; treat "
+                    "the arm as still moving and use the physical e-stop"
+                )
+            else:
+                self.get_logger().error(
+                    f"EMERGENCY STOP UNVERIFIED for {self.arm_type} "
+                    f"({verification.detail}) — do not trust the software stop; "
+                    "use the physical e-stop"
+                )
+            state = "commanded_unverifiable" if not verification.evidence else "unverified"
             if recovery_requested:
                 # The publish thread will run _recover_bus and latch a fault
                 # lockout; the caller (supervisor/operator) owns clearing it.
                 response.message = (
-                    f"{self.arm_type} NOT confirmed stopped — forced bus recovery "
-                    "requested; fault_lockout=latched, call clear_fault_lockout "
-                    "before re-arming. Use the physical e-stop if it still moves."
+                    f"{self.arm_type} stop={state} ({verification.detail}) — forced "
+                    "bus recovery requested; fault_lockout=latched, call "
+                    "clear_fault_lockout before re-arming. Use the physical e-stop "
+                    "if it still moves."
                 )
             else:
                 response.message = (
-                    f"{self.arm_type} NOT confirmed stopped — use the physical e-stop"
+                    f"{self.arm_type} stop={state} ({verification.detail}) — "
+                    "use the physical e-stop"
                 )
         return response
 
@@ -2239,7 +2339,11 @@ class AgxArmRosNode(Node):
         # holding ctrl_mode (CAN_CTRL/TCP_CTRL), and be in a firmware-executed
         # (non-MIT) move mode, else we do not claim a safe hold and the hand
         # window is not opened.
-        settled = self._arm_velocities_settled()
+        # A hand window may only open on a hold proven at rest: an unverifiable
+        # settle is not good enough here either, so `.verified` is required
+        # rather than the weaker "did not observe motion".
+        settle = self._arm_velocities_settled()
+        settled = settle.verified
         ctrl_mode = self._arm_ctrl_mode()
         held = self._ctrl_mode_is_hold(ctrl_mode)
         # Who holds the arm matters as much as whether it is held: with the
@@ -2271,10 +2375,10 @@ class AgxArmRosNode(Node):
             self._hand_window_active = False
             response.success = False
             response.message = (
-                f"hold NOT verified (settled={settled}, holding={held}, "
-                f"firmware_holds={firmware_holds}, ctrl_mode={ctrl_mode}, "
-                f"move_mode={move_mode}, move_j x{attempts}); "
-                "hand window not opened"
+                f"hold NOT verified (settled={settled} [{settle.detail}], "
+                f"holding={held}, firmware_holds={firmware_holds}, "
+                f"ctrl_mode={ctrl_mode}, move_mode={move_mode}, "
+                f"move_j x{attempts}); hand window not opened"
             )
             self.get_logger().error(response.message)
         return response
