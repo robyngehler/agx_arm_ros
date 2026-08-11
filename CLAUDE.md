@@ -62,6 +62,7 @@ structure and component contracts; keep the two consistent.
 
 Use these only for task-shaped work:
 
+- `commit-quality` — before every commit, no size threshold
 - `omnihand_bridge_work`
 
 ## Subagents
@@ -70,6 +71,7 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 
 - `ros-backend`
 - `integration-review`
+- `docs-keeper`
 
 ## Default Expectations
 
@@ -88,7 +90,10 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
 - use `docs/control/environment.md` and `.claude/rules/ros2-development.md` for environment and ROS2-native decisions
 - update stable docs when public contracts change
-- keep `.claude/` guidance in sync with the stable docs it mirrors
+- keep `.claude/` guidance in sync with the stable docs it mirrors, and with the
+  matching `.github/` adapter file — a rule changed in one layer only is a defect
+- follow the `commit-quality` skill before every commit, and name the level the
+  evidence came from when the change touches CAN, timing, or motion
 
 ## Quick Runtime Reference
 

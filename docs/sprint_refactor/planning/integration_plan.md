@@ -22,6 +22,17 @@ relief**, and **parallel operation**. The demo is not meaningful before those
 land. `docs/sprint6/` adapts to the resulting contracts afterwards rather than
 running in parallel for the same hardware and the same files.
 
+## Working practice
+
+- follow the `commit-quality` skill before every commit: the message states the
+  system-level change, why it was needed, and its consequence, and names the
+  level the evidence came from when the change touches CAN, timing, or motion
+- run the `docs-keeper` agent at each phase boundary to reconcile the docs tree
+  and the agent layer against the actual code state
+- when a statement in this surface is superseded, rewrite it and mark the old
+  reading superseded with its date; never append a contradicting "Update:" block
+- a rule, skill, or agent changed in `.claude/` but not in `.github/` is a defect
+
 ## Planning rules for this branch
 
 - fix release blockers and ownership bugs before doing cleanup or performance work
@@ -227,7 +238,8 @@ in 2A when the code catches up.
 
 - add an L2 mock integration test driving coordinator to arm driver to hand
   bridge through one activity including a hand action, on mock backends
-- encode the C4 ladder as a `.claude/skills/` workflow
+- encode the C4 ladder as a `.claude/skills/` workflow with a `.github/skills/`
+  mirror, following the shape of the existing `commit-quality` skill
 - define the `tea_pour_left_v1` regression criteria enforced after every phase
 
 Exit gate: an L2 run reproduces an activity end to end without hardware.

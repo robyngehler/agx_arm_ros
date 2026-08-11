@@ -84,3 +84,18 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - The smallest relevant docs were updated.
 - The Copilot-native `.github` mirrors remain consistent with the stable docs.
 - The narrowest relevant validation was run, or the limitation was called out.
+
+## Commit
+
+- Before every commit, follow `.claude/skills/commit-quality/SKILL.md` (skill name: `commit-quality`). This is not optional and not only for large changes.
+- A commit message states the **system-level change, why it was needed, and its consequence** — not a file list or a test inventory.
+- Name the level the evidence came from. A change touching CAN, timing, or motion that was not exercised on hardware says so in one clause.
+- Do not name co-authorship: no `Co-Authored-By:` trailer, no tool or model attribution, no "generated with" line, in any commit message, amend, or PR body.
+- Keep unrelated changes in separate commits.
+
+## Documentation Hygiene
+
+- Use the `docs-keeper` agent at sprint boundaries or after large merges to reconcile documentation with the actual code state.
+- When a superseded statement is corrected, rewrite the entry to the current state and mark the old reading as superseded with its date; do not append an "Update:" block that leaves the entry contradicting itself.
+- A document that no longer describes current state carries a first-line banner naming what changed and where the current record lives. Operational docs under `docs/control/` are bannered rather than rewritten while the code still implements the old behaviour.
+- `.claude/` and `.github/` are parallel adapter layers over the same rules: a rule, skill, or agent changed in one and not the other is a defect.

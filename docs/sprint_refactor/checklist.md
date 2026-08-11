@@ -54,7 +54,8 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 
 - [ ] Add an L2 mock integration test covering coordinator -> arm driver -> hand
       bridge for one activity including a hand action.
-- [ ] Encode the C4 test ladder as a `.claude/skills/` workflow.
+- [ ] Encode the C4 test ladder as a `.claude/skills/` workflow with a
+      `.github/skills/` mirror, following the `commit-quality` skill's shape.
 - [ ] Define the `tea_pour_left_v1` regression criteria enforced after every
       phase.
 

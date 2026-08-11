@@ -24,8 +24,15 @@ This repository is intentionally organized so Copilot can load only the guidance
 
 ## Choose Skills When
 
-- the task is a repeatable OmniHand bridge implementation or refactor workflow
+- `commit-quality`: before every commit, amend, or history rewrite — no size threshold
+- `omnihand_bridge_work`: a repeatable OmniHand bridge implementation or refactor workflow
 - the task needs a small checklist for docs, messages, launch wiring, and validation in one slice
+
+## Choose A Custom Agent When
+
+- `ros-backend`: focused ROS2 Python/C++ backend implementation or refactor in its own context window
+- `integration-review`: end-to-end consistency review across contracts, boundaries, docs, and validation
+- `docs-keeper`: reconcile the docs tree with the actual code state at a sprint boundary or after a large merge, including agent-layer mirror drift
 
 ## Practical Mapping
 

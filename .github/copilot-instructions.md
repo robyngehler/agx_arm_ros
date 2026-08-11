@@ -46,6 +46,7 @@ These instructions are concise Copilot-native mirrors of the current stable docs
 
 Use these only for task-shaped work:
 
+- `commit-quality` — before every commit, no size threshold
 - `omnihand_bridge_work`
 
 ## Custom Agents
@@ -54,6 +55,7 @@ Use these when a task benefits from a narrower persona:
 
 - `ros-backend`
 - `integration-review`
+- `docs-keeper`
 
 ## Default Expectations
 
@@ -66,6 +68,8 @@ Use these when a task benefits from a narrower persona:
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
 - use `.github/instructions/ros2-development.instruction.md` for ROS2-native questions and value-capture decisions
 - update stable docs when public contracts change
+- keep `.github/` guidance in sync with the matching `.claude/` adapter file — a rule changed in one layer only is a defect
+- follow the `commit-quality` skill before every commit, and name the level the evidence came from when the change touches CAN, timing, or motion
 
 ## Quick Runtime Reference
 
