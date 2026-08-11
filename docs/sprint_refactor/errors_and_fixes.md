@@ -108,6 +108,51 @@ except where a `Superseded` note says otherwise.
 - Planned fix surface: shared manifest resolver, generated MoveIt/runtime
   artifacts, legacy-config quarantine.
 
+## 2026-08-11 (found while building the L2 harness)
+
+### The left hand's CAN link drops the response half of every exchange
+
+- Symptom: the SDK bridge on the left hand logs `CANFD ID: 0x...... 请求超时`
+  for every request, followed by `motor Input size does not match expected motor
+  count.` — the vendor SDK reacting to a readback that never arrives.
+- Cause: a known bad CAN cable on the left hand, pending replacement. TX leaves
+  the host; the RX→TX exchange does not complete.
+- How to read it until the cable is fixed: a **rising TX/packet count means the
+  device is online**; a **rising drop count means the command was sent, the hand
+  tried to answer, and the link ate the response**. Do not read the timeouts as
+  a bridge defect or as evidence about the refactor.
+- Consequence for Phase 0: the left hand cannot contribute readback-dependent
+  numbers to the 0E baseline. Capture the left side's TX and drop counters, but
+  take joint-readback, verification-latency, and tactile figures from the right
+  side until the cable is replaced.
+
+### The coordinator can survive SIGINT when no activity is running
+
+- Symptom: the L2 harness leaked `/agx_arm_coordinator` into its ROS domain
+  after a failed run; the next run's domain guard caught it.
+- Current evidence: `coordinator_node.py` installs its own SIGINT handler so
+  Ctrl+C can unwind a *running* activity (`request_stop`). With nothing in
+  flight there is no loop to unwind, and the process kept spinning.
+- Impact: low in production, where the operator sends a second Ctrl+C, but it
+  means "Ctrl+C reaches the robot" is not the same statement as "Ctrl+C ends the
+  process".
+- Interim rule: the L2 harness escalates SIGINT → SIGTERM → SIGKILL rather than
+  trusting the first signal.
+- Planned fix surface: the stop-ladder migration in plan 3B, which should make
+  the idle case exit rather than spin.
+
+### An L2 harness on the default ROS domain reaches live hardware
+
+- Symptom: the first harness run spawned mock hand bridges and a coordinator
+  into the ambient domain, where an SDK hand bridge was live on a real CAN
+  interface.
+- Impact: identically named nodes and overlapping topics in the same graph as
+  running hardware. Nothing was damaged in this instance, but the exposure was
+  real and the run also hung on discovery against the larger graph.
+- Fix (landed): the harness runs on its own `ROS_DOMAIN_ID`, sets
+  `ROS_LOCALHOST_ONLY`, and refuses to start when that domain is not empty.
+- Rule: no mock-level harness runs on the domain that carries hardware.
+
 ## 2026-08-11 (the config layer still assumes one bus per side)
 
 ### The hand has no bus of its own in the registry

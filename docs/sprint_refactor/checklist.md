@@ -27,34 +27,34 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 
 ### 0A Guidance and topology hygiene
 
-- [ ] Repoint the sprint entrypoints from `docs/sprint6/` to
+- [x] Repoint the sprint entrypoints from `docs/sprint6/` to
       `docs/sprint_refactor/`: `CLAUDE.md`, `.claude/rules/context-routing.md`,
       `.github/copilot-instructions.md`.
-- [ ] Correct the ROS contract rules that now point the wrong way: `AGENTS.md`
+- [x] Correct the ROS contract rules that now point the wrong way: `AGENTS.md`
       shared `control/joint_states` and the "do not map onto Revo2 messages"
       rule, plus the `CLAUDE.md` mirror.
-- [ ] Update `.claude/rules/omnihand-bridge.md` for the per-device bus, hand
+- [x] Update `.claude/rules/omnihand-bridge.md` for the per-device bus, hand
       ownership, and the C5 consolidation.
-- [ ] Banner the operational docs that describe the shared bus and hand window
+- [x] Banner the operational docs that describe the shared bus and hand window
       as normal operation: `docs/control/bringups/teach_and_run.md`,
       `docs/control/bringups/tea_demo.md`,
       `docs/assets/omnihand/omnihand_solo_bringup_and_load_test.md`.
-- [ ] Mark the `docs/sprint6/` step-and-settle planning notes superseded and
+- [x] Mark the `docs/sprint6/` step-and-settle planning notes superseded and
       record that sprint6 adapts after the refactor.
-- [ ] Update `scripts/activate_native_can.sh` header, which still documents
+- [x] Update `scripts/activate_native_can.sh` header, which still documents
       can0/can1 as shared side buses.
-- [ ] Correct all `pyAgxArm` references to `vendor/pyAgxArm` and document the C3
+- [x] Correct all `pyAgxArm` references to `vendor/pyAgxArm` and document the C3
       workflow.
-- [ ] Record the MIT control-rate requirement (>= 100 Hz, target 200-250 Hz).
+- [x] Record the MIT control-rate requirement (>= 100 Hz, target 200-250 Hz).
 - [ ] Remove the stray untracked `vendor/Omnihand-2025-SDK/` checkout (legacy
       non-Pro `o10` SDK, no longer used; the runtime targets
       `vendor/OmniHand-Pro-2025`).
 
 ### 0B Regression harness and test ladder
 
-- [ ] Add an L2 mock integration test covering coordinator -> arm driver -> hand
+- [x] Add an L2 mock integration test covering coordinator -> arm driver -> hand
       bridge for one activity including a hand action.
-- [ ] Encode the C4 test ladder as a `.claude/skills/` workflow with a
+- [x] Encode the C4 test ladder as a `.claude/skills/` workflow with a
       `.github/skills/` mirror, following the `commit-quality` skill's shape.
 - [ ] Define the `tea_pour_left_v1` regression criteria enforced after every
       phase.

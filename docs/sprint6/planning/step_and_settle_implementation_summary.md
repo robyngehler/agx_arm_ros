@@ -1,5 +1,13 @@
 # Step-and-Settle Implementation Summary (arm↔hand handshake)
 
+> **Superseded — V02 topology change (2026-08-11).** Step-and-settle was built
+> because the arm and its hand shared one side CAN bus. Each device now has its
+> own interface (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD
+> adapters), so same-side arm and hand motion runs in parallel and step-and-settle
+> is a selectable degraded mode, not the operating model. The CPU findings in
+> here remain valid and feed the Phase 0 baseline. Current record:
+> `docs/sprint_refactor/planning/integration_plan.md` (constraint C1).
+
 Companion to `shared_can_step_and_settle_integration_plan.md`. It records, minimally but exhaustively,
 every problem addressed while implementing that plan — the fix and the rationale for each — plus the
 review remediation, the teach/storage work, and what is deliberately out of scope or still

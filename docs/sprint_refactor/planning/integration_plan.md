@@ -55,11 +55,16 @@ superseded.
 ### C1. Separate CAN bus per device (supersedes shared-bus step-and-settle)
 
 ```text
-can0  ->  can_nero_right     right arm    (native mttcan)
-can1  ->  can_nero_left      left  arm    (native mttcan)
-can2  ->  right hand         right OmniHand (USB-CAN FD adapter, peak_usb)
-can3  ->  left  hand         left  OmniHand (USB-CAN FD adapter, peak_usb)
+can0  ->  can_nero_right     right arm      (native mttcan)
+can1  ->  can_nero_left      left  arm      (native mttcan)
+can2  ->  right_hand         right OmniHand (USB-CAN FD adapter, peak_usb)
+can3  ->  left_hand          left  OmniHand (USB-CAN FD adapter, peak_usb)
 ```
+
+Like the arm buses, the hand adapters are used under stable renamed interfaces
+rather than raw `canN`; the bridge is launched with `can_interface:=left_hand` /
+`right_hand`. Deterministic naming is a 2A requirement precisely because two
+identical USB adapters can otherwise swap enumeration order.
 
 Consequences:
 
@@ -93,12 +98,17 @@ share one model instance per process, or compile the gravity path.
 ### C3. Vendor SDK: pinned execution path, separate development checkout
 
 `vendor/pyAgxArm` is a submodule pinned at `control-layer-pin-2026-07-24`
-(fork: `github.com/robyngehler/pyAgxArm`). The pinned submodule is the execution
-path and stays unchanged during a phase. Vendor development happens in a
-separate checkout of the same fork with the upstream vendor remote configured so
-upstream updates stay mergeable; relevant work is pushed, tagged, and lands here
-as an explicit pin bump followed by a workspace rebuild. No phase gate may depend
-on an unpinned or dirty submodule state.
+(commit `4f52610`, fork `github.com/robyngehler/pyAgxArm`). The pinned submodule
+is the execution path and stays unchanged during a phase. Vendor development
+happens in a separate checkout of the same fork with the upstream vendor remote
+configured so upstream updates stay mergeable; relevant work is pushed, tagged,
+and lands here as an explicit pin bump followed by a workspace rebuild. No phase
+gate may depend on an unpinned or dirty submodule state.
+
+`docs/project/control_layer_and_dependencies.md` is the canonical record of this
+workflow, including the editable-install recipes and the drift-prevention rules;
+do not restate it here. **The development checkout is currently absent on this
+host**, so recreating it per that document is a prerequisite for 0C.
 
 ### C4. Test ladder
 
@@ -237,10 +247,19 @@ in 2A when the code catches up.
 ### 0B. Regression harness and test ladder
 
 - add an L2 mock integration test driving coordinator to arm driver to hand
-  bridge through one activity including a hand action, on mock backends
+  bridge through one activity including a hand action, on mock backends **(done)**
 - encode the C4 ladder as a `.claude/skills/` workflow with a `.github/skills/`
-  mirror, following the shape of the existing `commit-quality` skill
+  mirror, following the shape of the existing `commit-quality` skill **(done)**
 - define the `tea_pour_left_v1` regression criteria enforced after every phase
+
+Notes from building it:
+
+- the production arm driver has **no mock backend**, so the harness uses an arm
+  test double (`test/l2_arm_double.py`) offering the driver's service surface.
+  Phase 1 changes that surface, and the double is where the new contract gets
+  pinned first.
+- the harness runs on its own `ROS_DOMAIN_ID` and refuses a non-empty domain;
+  this machine carries live hardware on the default domain.
 
 Exit gate: an L2 run reproduces an activity end to end without hardware.
 

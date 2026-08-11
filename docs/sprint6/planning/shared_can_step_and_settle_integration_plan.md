@@ -1,5 +1,13 @@
 # Shared CAN Step-and-Settle Integration Plan
 
+> **Superseded — V02 topology change (2026-08-11).** Step-and-settle was built
+> because the arm and its hand shared one side CAN bus. Each device now has its
+> own interface (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD
+> adapters), so same-side arm and hand motion runs in parallel and step-and-settle
+> is a selectable degraded mode, not the operating model. The CPU findings in
+> here remain valid and feed the Phase 0 baseline. Current record:
+> `docs/sprint_refactor/planning/integration_plan.md` (constraint C1).
+
 Status: investigation and integration plan, 2026-07-19. Updated same day after inspecting the pinned
 `vendor/pyAgxArm` submodule (`37d87e6`); the SDK findings in section 1.3 revise parts of Phase 1 and
 add one previously undocumented hazard (silent TX command loss, section 1.3.2).

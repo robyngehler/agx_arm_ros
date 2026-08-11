@@ -63,6 +63,7 @@ structure and component contracts; keep the two consistent.
 Use these only for task-shaped work:
 
 - `commit-quality` — before every commit, no size threshold
+- `test-ladder` — before validating any change, to pick the level and name it
 - `omnihand_bridge_work`
 
 ## Subagents

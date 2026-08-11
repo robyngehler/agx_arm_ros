@@ -1,6 +1,12 @@
 # pyAgxArm Control-Layer Pin & Submodule Migration
 
-**Status:** Submodule wired · **Date:** 2026-06-12 (submodule landed 2026-06-15)
+**Status:** Submodule wired · **Date:** 2026-06-12 (submodule landed 2026-06-15;
+pin advanced 2026-07-24; reviewed 2026-08-11)
+
+This file is the canonical record of the two-tier vendor workflow that the V02
+refactor references as constraint C3
+(`docs/sprint_refactor/planning/integration_plan.md`): the pinned submodule is
+the execution path, and vendor development happens in a separate checkout.
 
 The `agx_arm_ros` runtime drives the Nero arms through **pyAgxArm**. This file records exactly
 which pyAgxArm the control layer runs, how it is installed, and how the pinned in-repo runtime
@@ -19,11 +25,13 @@ cannot even import `rclpy`. See `../assets/control/single_vs_multi_arm_control_c
 
 - Interpreter: **`/usr/bin/python3.10`** (ROS Humble). conda base (3.13) is **not** a ROS runtime.
 - pyAgxArm: editable install (`pyAgxArm.egg-link` → `vendor/pyAgxArm` **submodule**).
-- Commit: **`37d87e6`** ("Add minimal Nero validation scripts"), 1 local commit on top of
-  upstream `agilexrobotics/pyAgxArm@19e28e8`.
-- Tag: **`control-layer-pin-2026-06-12`** → `37d87e6` (pin only — HW validation pending).
+- Commit: **`4f52610`** ("feat(comm): make silent TX loss observable"), on top of `37d87e6`
+  ("Add minimal Nero validation scripts"), which sits on upstream
+  `agilexrobotics/pyAgxArm@19e28e8`.
+- Tag: **`control-layer-pin-2026-07-24`** → `4f52610`. The earlier
+  `control-layer-pin-2026-06-12` → `37d87e6` is history.
 - Submodule: `vendor/pyAgxArm` → fork `github.com/robyngehler/pyAgxArm`, gitlink pinned at the
-  tag. Fork `master` is newer upstream (`97f56a6`); we intentionally pin to `37d87e6`.
+  tag. Fork `master` is newer upstream; we intentionally pin to the tag.
 
 ### Reproduce the install (system 3.10, editable)
 
@@ -85,3 +93,21 @@ Ongoing workflow:
   install, and repo-local validation stay pinned to the reviewed baseline.
 - Optional: keep a named fork branch such as `control-layer` for discoverability in addition to the
   tags that the submodule pin follows.
+
+### Recreating the external checkout
+
+As of 2026-08-11 the development checkout is **not present on this host**; only the
+pinned submodule exists. Any vendor-side work — starting with the V02 velocity
+fix — needs it back, set up so upstream vendor updates keep flowing in:
+
+```bash
+git clone git@github.com:robyngehler/pyAgxArm.git /home/user/workspace/pyAgxArm
+cd /home/user/workspace/pyAgxArm
+git remote add upstream https://github.com/agilexrobotics/pyAgxArm.git
+git fetch upstream --tags
+git checkout -b control-layer control-layer-pin-2026-07-24   # same commit the repo runs
+```
+
+Do not point the editable install at this checkout while validating repo
+behaviour: the runtime pin stays `vendor/pyAgxArm` unless a development
+verification is explicitly intended (see the two install recipes above).

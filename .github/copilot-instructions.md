@@ -47,6 +47,7 @@ These instructions are concise Copilot-native mirrors of the current stable docs
 Use these only for task-shaped work:
 
 - `commit-quality` — before every commit, no size threshold
+- `test-ladder` — before validating any change, to pick the level and name it
 - `omnihand_bridge_work`
 
 ## Custom Agents

@@ -18,7 +18,7 @@ Validation boundary for this note:
 
 | Proposal area | Status | Current evidence | Planning consequence |
 | --- | --- | --- | --- |
-| Velocity truth and stop verification | Confirmed | `pyAgxArm/.../driver.py` still forces `motor_state.msg.velocity = 0.0`; `agx_arm_ctrl_single_node.py` still uses motor velocity in `_arm_velocities_settled()` | Phase 0 must start with honest velocity or derived velocity plus honest stop semantics |
+| Velocity truth and stop verification | Confirmed | `vendor/pyAgxArm/.../driver.py` still forces `motor_state.msg.velocity = 0.0`; `agx_arm_ctrl_single_node.py` still uses motor velocity in `_arm_velocities_settled()` | Phase 0 must start with honest velocity or derived velocity plus honest stop semantics |
 | SDK ownership and TOCTOU risk | Confirmed | mode and CAN-push helpers still mutate shared SDK state outside one serialized hardware-owner path | Side authority plus worker/queue stays the correct first runtime refactor |
 | Hand handover contract is only partial | Confirmed | `prepare_hand_window` and `resume_arm_control` exist, but they only expose Trigger success/failure rather than a lease identity plus epoch | Leases should replace or wrap the current handover services before coordinator assumptions get stronger |
 | Hand control continues after grasp completion | Confirmed | `omnihand_skill_controller_node.py` still runs `_hold_tick()` and republishes the grasp target while holding internally | Phase 2 must remove recurring post-success hand traffic before same-side arm motion is considered safe |
@@ -45,7 +45,7 @@ Validation boundary for this note:
 
 ## Current implementation entry points
 
-- `pyAgxArm/pyAgxArm/protocols/can_protocol/drivers/nero/default/driver.py`
+- `vendor/pyAgxArm/pyAgxArm/protocols/can_protocol/drivers/nero/default/driver.py`
 - `src/agx_arm_ctrl/agx_arm_ctrl/agx_arm_ctrl_single_node.py`
 - `src/agx_arm_ctrl/agx_arm_ctrl/nero_can_push.py`
 - `src/agx_arm_ctrl/agx_arm_ctrl/omnihand_skill_controller_node.py`

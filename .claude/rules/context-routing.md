@@ -30,6 +30,7 @@ This repository is organized so Claude Code loads only the guidance needed for t
 ## Use A Skill When
 
 - `commit-quality`: before every commit, amend, or history rewrite — no size threshold
+- `test-ladder`: before validating a change, to choose L1/L2/L3 and state the level the evidence came from
 - `omnihand_bridge_work`: a repeatable OmniHand bridge implementation or refactor workflow
 - the task needs a small checklist for docs, messages, launch wiring, and validation in one slice
 
