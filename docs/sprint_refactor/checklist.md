@@ -63,9 +63,9 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 
 - [x] Provide a trustworthy velocity source (derived from timestamped positions)
       with an explicit validity flag.
-- [ ] Verify it against the protocol value using the C3 development checkout
-      (L3: needs a patched vendor driver on hardware — every tier zeroes it,
-      so there is no software-only comparison).
+- [x] Verify it against the protocol value: settled from the MIT pcaps — the
+      firmware reports 0 (+/-1) while the joints move, so there is no protocol
+      value to compare against and the derived source is the only one.
 - [x] Separate `commanded` from `feedback_verified` in stop reporting.
 - [x] Define and implement the coordinator response to a `commanded`-only stop,
       including the Ctrl+C stop ladder from commit `8e8fc44`.
@@ -90,15 +90,16 @@ hardware access was granted for communication, not commanded motion).
       of our code runs.
 - [x] Capture one arm driver, no motion: 71.6 % of one core, 198 Hz loop,
       1587 SDK calls/s, publish batch 1.10 ms mean / 2.73 ms max.
-- [ ] Capture dual-arm hold, one MIT arm, two MIT arms, one hand action.
+- [x] Capture two MIT arms under load (pcaps): 2849 f/s per bus, MIT at
+      100 Hz per joint, feedback rate unchanged from idle.
+- [ ] Capture dual-arm hold, one MIT arm, one hand action.
 - [ ] Capture same-side arm-and-hand in parallel (new scenario under C1).
 - [ ] Capture both sides arm-and-hand in parallel.
 - [ ] Capture bus-fault and recovery cases.
 - [x] Record per-interface CAN counters and RX drop counts for every captured
       scenario (`scripts/measure_can_baseline.sh`).
-- [ ] Settle the wire-level velocity question: capture `0x251` while a limp
-      joint is moved by hand — decisive either way, and needs no commanded
-      motion.
+- [x] Settle the wire-level velocity question (`evidence/*.pcap`,
+      `scripts/analyze_can_pcap.py`): the firmware does not report velocity.
 
 ## Phase 1 - Side authority, serialized SDK access, arm feedback budget
 

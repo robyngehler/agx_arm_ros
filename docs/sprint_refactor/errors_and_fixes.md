@@ -162,6 +162,26 @@ driver was run with `auto_enable:=false`, so the joints were never energised.
   `graph_model.py`, so the two spellings coexist with different meanings and
   must not be derived from one another.
 
+## 2026-08-11 (velocity truth — settled on the wire)
+
+### The Nero firmware does not report joint velocity at all
+
+- Evidence: `evidence/can_nero_{left,right}.pcap`, captured with both MIT
+  controllers driving the arms, analysed by `scripts/analyze_can_pcap.py`.
+- While the joints were being driven, the reported velocity field in
+  `0x251`-`0x257` (bytes 0-1, int16, 0.001 rad/s) stayed at **0**, reaching
+  **±1** on three joints. Velocity derived from the position bytes of the *same
+  frames* peaked at 542-1403 units/s on the right arm and 3215 on the left.
+- The vendor's `velocity = 0.0` override therefore hides nothing: the wire data
+  is already zero. Removing it would expose a field that looks plausible and is
+  wrong, which is worse than an obvious zero.
+- **Deriving velocity from timestamped positions is the only available source**,
+  not a stopgap. This closes the question without patching the vendor driver.
+- Knock-on: everything that consumed that field was reading zeros, including the
+  MIT controller's goal-velocity tolerance checks — those have never constrained
+  velocity. Phase 1 must treat them as unavailable until they are fed from the
+  derived source.
+
 ## 2026-08-11 (velocity truth, traced in the vendor checkout)
 
 ### The zeroed velocity is a vendor workaround on every Nero tier, not one driver
