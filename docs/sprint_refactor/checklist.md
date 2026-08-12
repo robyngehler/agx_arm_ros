@@ -84,8 +84,9 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 
 ### 0E Hardware baseline (L3, safety slot)
 
-Captured so far in `reference/phase0_baseline.md` (no-motion scenarios only;
-hardware access was granted for communication, not commanded motion).
+Captured in `reference/phase0_baseline.md`, nine scenarios across three grants:
+communication-only, then hand gestures plus one minimal arm move, then fault
+injection.
 
 - [x] Capture idle with no ROS nodes running: ~5430 frames/s of drain before any
       of our code runs.
