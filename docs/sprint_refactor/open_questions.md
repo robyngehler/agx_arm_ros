@@ -136,3 +136,14 @@ is reserved for them.
   `docs/assets/` in Phase 4 for runtime contracts, `docs/project/` when package
   or generated-artifact policy changes). Operational docs carry supersession
   banners until the phase that rewrites them.
+
+## Opened 2026-08-12 (hardware)
+
+- **The two arms run different firmware.** Right is 1.06 (default protocol
+  tier), left is 1.11 (`NeroFW.V111`). The tiers differ in MIT frame encoding,
+  motion-mode handling, and the status enum, so the arms are not
+  protocol-identical. Both work today because the driver resolves the tier per
+  arm. Open: is the split intentional, or was one arm never updated? Until it is
+  answered, no code may assume the two arms speak the same protocol, and any
+  measurement taken on one arm has to name which one. Flashing firmware is a
+  hardware decision, not a refactor task.

@@ -18,6 +18,7 @@ from geometry_msgs.msg import Pose, PoseStamped, PoseArray
 from scipy.spatial.transform import Rotation as R
 
 from agx_arm_ctrl.command_validation import (
+    mit_limits_for_tier,
     positions_outside_joint_limits,
     validate_mit_command,
 )
@@ -459,6 +460,11 @@ class AgxArmRosNode(Node):
         self._hand_window_silence_started = 0.0
 
     def _init_agx_arm(self):
+        # Defaults matching the driver the SDK builds when no tier is given, so
+        # an arm whose firmware never answers is still validated against the
+        # protocol it is actually being driven with.
+        self.firmware_tier = NeroFW.DEFAULT
+        self.mit_limits = mit_limits_for_tier(NeroFW.DEFAULT)
         config: PiperCanDefaultConfig = create_agx_arm_config(
             robot=self.arm_type, comm="can", channel=self.can_port
         )
@@ -499,7 +505,17 @@ class AgxArmRosNode(Node):
                     firmeware_version, explanation = resolve_nero_firmware(
                         current_version
                     )
-                    self.get_logger().info(f"Nero protocol tier: {explanation}")
+                    # The tier decides the MIT bounds, not just the driver:
+                    # the two arms in this unit run different firmware, and the
+                    # 1.11 tier bounds feed-forward torque at 16 N·m on every
+                    # joint where the default tier bounds it per joint.
+                    self.firmware_tier = firmeware_version
+                    self.mit_limits = mit_limits_for_tier(firmeware_version)
+                    self.get_logger().info(
+                        f"Nero protocol tier: {explanation}; MIT torque bound "
+                        f"per joint: "
+                        f"{[self.mit_limits.torque_limit(j) for j in range(1, 8)]}"
+                    )
 
                 if firmeware_version != PiperFW.DEFAULT:
                     self.agx_arm.disconnect()
@@ -1883,7 +1899,7 @@ class AgxArmRosNode(Node):
         # dropping others would leave the arm in a pose nobody commanded.
         rejection = validate_mit_command(
             msg.joint_index, msg.p_des, msg.v_des, msg.kp, msg.kd, msg.torque,
-            joint_count=self.arm_joint_count,
+            joint_count=self.arm_joint_count, limits=self.mit_limits,
         )
         if rejection is not None:
             self._reject_command("move_mit", rejection)

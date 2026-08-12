@@ -404,3 +404,42 @@ reported the effect anyway. Fixed at L1; neither has run on hardware yet.
   remains the live coupling until that lands. The `unit_safety_epoch` is also
   still per process — the coordinator stopping every side covers the current
   e-stop path, but it is not the same guarantee as one synchronised epoch.
+
+## 2026-08-12 (L3, found by running the drivers against both arms)
+
+### The two arms do not run the same firmware
+
+- Finding: the right arm reports **1.06** and is driven by the default Nero
+  protocol tier; the left arm reports **1.11** and is driven by `NeroFW.V111`.
+  Both drivers connect and both arms work, so nothing has ever surfaced it.
+  Startup now logs the tier on every run — it was recorded nowhere before.
+- Why it matters beyond bookkeeping: the tiers are not the same protocol. The
+  1.11 codec encodes MIT frames differently (12-bit feed-forward torque, no
+  CRC), overrides `set_motion_mode`, `move_mit`, `get_flange_pose` and
+  `get_motor_states`, and carries its own status enum. Any assumption that both
+  arms behave identically at the protocol level is currently unfounded.
+- Not changed here: whether the asymmetry is intentional is a hardware
+  question, recorded in `open_questions.md`.
+
+### One MIT torque table was applied to both protocol tiers
+
+- Symptom: the new hardware-boundary validation bounded feed-forward torque per
+  joint at 24/16/8 N·m, taken from the default tier's `move_mit`.
+- Impact: the 1.11 tier bounds **every** joint at 16 N·m. Against the left arm
+  the table was wrong in both directions — it would have refused a legitimate
+  9-16 N·m command on joints 5-7, freezing a running impedance loop at its last
+  setpoint, and it would have admitted 17-24 N·m on joints 1-2 for the SDK to
+  raise on. The defect was introduced by the validation change itself and found
+  the same day by running against both arms.
+- Not currently reachable in this deployment: the MIT controller's configured
+  `torque_limit` is 8 N·m on every joint, so live traffic never enters the
+  divergent range. The contract was still wrong, and the configs are
+  per-deployment.
+- Fix: `mit_limits_for_tier()` selects the bounds from the resolved firmware
+  tier, the driver stores them at startup and logs them, and an unresolved arm
+  falls back to the default tier — which is the driver the SDK builds when no
+  tier is given, so the fallback matches what the arm is actually driven with.
+- Evidence (L3, 2026-08-12): right arm logs bounds
+  `[24, 24, 16, 16, 8, 8, 8]`, left arm logs `[16] * 7`; a 12 N·m command on
+  joint 6 is refused by the right arm against `[-8, 8]`, and a 20 N·m command
+  on the same joint is refused by the left arm against `[-16, 16]`.

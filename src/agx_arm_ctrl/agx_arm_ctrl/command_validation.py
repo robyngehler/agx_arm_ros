@@ -42,23 +42,62 @@ class MitProtocolLimits:
     Taken from the pinned vendor driver's ``move_mit`` documentation. Outside
     these, the SDK either raises or the on-wire encoding wraps, so a value out
     here is never a command anyone meant to send.
+
+    **The torque bound depends on the firmware tier**, which was found on
+    hardware: the two arms in this unit do not run the same firmware. The
+    default-tier driver bounds feed-forward torque per joint (24/16/8 N·m), and
+    the 1.11 driver — which the 1.12 driver inherits — bounds every joint at
+    16 N·m with a different on-wire encoding (12-bit t_ff, no CRC). Using one
+    for the other rejects legitimate commands on joints 5-7 or admits ones the
+    SDK will refuse on joints 1-2.
     """
 
     p_des: Tuple[float, float] = (-12.5, 12.5)
     v_des: Tuple[float, float] = (-45.0, 45.0)
     kp: Tuple[float, float] = (0.0, 500.0)
     kd: Tuple[float, float] = (-5.0, 5.0)
+    # Per joint, 1-based. Empty means the tier bounds every joint the same.
+    torque_by_joint: Tuple[float, ...] = ()
+    torque_uniform: float = 16.0
 
     def torque_limit(self, joint_index: int) -> float:
-        """Feed-forward torque bound, which is per joint on this arm."""
-        if joint_index <= 2:
-            return 24.0
-        if joint_index <= 4:
-            return 16.0
-        return 8.0
+        """Feed-forward torque bound for one joint under this firmware tier."""
+        if not self.torque_by_joint:
+            return self.torque_uniform
+        if 1 <= joint_index <= len(self.torque_by_joint):
+            return self.torque_by_joint[joint_index - 1]
+        # Unknown joint: the caller rejects it anyway, so answer conservatively
+        # rather than assume a bound this arm may not have.
+        return min(self.torque_by_joint)
 
 
-NERO_MIT_LIMITS = MitProtocolLimits()
+NERO_DEFAULT_MIT_LIMITS = MitProtocolLimits(
+    torque_by_joint=(24.0, 24.0, 16.0, 16.0, 8.0, 8.0, 8.0),
+)
+"""Firmware <= 1.10. Feed-forward torque is bounded per joint."""
+
+NERO_V111_MIT_LIMITS = MitProtocolLimits(torque_uniform=16.0)
+"""Firmware 1.11 and 1.12 — the 1.12 driver inherits 1.11's ``move_mit``."""
+
+_MIT_LIMITS_BY_TIER = {
+    "default": NERO_DEFAULT_MIT_LIMITS,
+    "v111": NERO_V111_MIT_LIMITS,
+    "v112": NERO_V111_MIT_LIMITS,
+}
+
+# Kept as the module default because it matches the driver the SDK builds when
+# no firmware tier is given, which is what an unresolved arm actually runs.
+NERO_MIT_LIMITS = NERO_DEFAULT_MIT_LIMITS
+
+
+def mit_limits_for_tier(tier) -> MitProtocolLimits:
+    """Return the MIT bounds for a resolved Nero firmware tier.
+
+    Keyed by the tier string rather than the SDK constant so this module needs
+    no vendor import and stays testable without a workspace build; the SDK's
+    ``NeroFW`` values *are* those strings.
+    """
+    return _MIT_LIMITS_BY_TIER.get(str(tier), NERO_DEFAULT_MIT_LIMITS)
 
 
 @dataclass(frozen=True)

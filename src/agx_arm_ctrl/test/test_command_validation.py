@@ -10,6 +10,9 @@ import math
 import pytest
 
 from agx_arm_ctrl.command_validation import (
+    NERO_DEFAULT_MIT_LIMITS,
+    NERO_V111_MIT_LIMITS,
+    mit_limits_for_tier,
     positions_outside_joint_limits,
     validate_mit_command,
 )
@@ -23,9 +26,11 @@ def _command(
     kd=(0.8, 0.8, 0.8),
     torque=(0.0, 0.0, 0.0),
     joint_count=7,
+    limits=NERO_DEFAULT_MIT_LIMITS,
 ):
     return validate_mit_command(
-        joint_index, p_des, v_des, kp, kd, torque, joint_count=joint_count
+        joint_index, p_des, v_des, kp, kd, torque,
+        joint_count=joint_count, limits=limits,
     )
 
 
@@ -100,8 +105,8 @@ def test_gains_outside_the_protocol_range_are_refused():
     assert _command(kd=(0.8, -5.1, 0.8)).reason == "out_of_range"
 
 
-def test_the_torque_bound_is_per_joint():
-    """Joints 1-2 take 24 Nm, 3-4 take 16, 5-7 take 8."""
+def test_the_default_tier_bounds_torque_per_joint():
+    """Firmware <= 1.10: joints 1-2 take 24 Nm, 3-4 take 16, 5-7 take 8."""
     assert _command(joint_index=(1,), p_des=(0.0,), v_des=(0.0,),
                     kp=(10.0,), kd=(0.8,), torque=(23.0,)) is None
     assert _command(joint_index=(3,), p_des=(0.0,), v_des=(0.0,),
@@ -198,6 +203,7 @@ def _mit_node(arm):
     node.arm_joint_count = 7
     node.arm_joint_names = list(JOINT_NAMES)
     node.arm_joint_limits = dict(JOINT_LIMITS)
+    node.mit_limits = NERO_DEFAULT_MIT_LIMITS
     node._command_rejections = {}
     node._last_rejection_log_monotonic = {}
     node._rejection_log_period_s = 0.0
@@ -266,3 +272,46 @@ def test_a_position_past_a_joint_limit_is_warned_but_still_sent():
     assert len(arm.sent) == 2, "a joint-limit excursion must not freeze the loop"
     assert node.logger.warns
     assert "joint2" in node.logger.warns[-1]
+
+
+# --- the firmware tier decides the torque bound ------------------------------
+#
+# Found on hardware 2026-08-12: the two arms of this unit do not run the same
+# firmware (right 1.06 -> default tier, left 1.11 -> v111). The tiers bound
+# feed-forward torque differently, so one table for both is wrong in both
+# directions.
+
+def _torque(joint, value, limits):
+    return validate_mit_command(
+        (joint,), (0.0,), (0.0,), (10.0,), (0.8,), (value,),
+        joint_count=7, limits=limits,
+    )
+
+
+def test_the_v111_tier_bounds_every_joint_at_the_same_torque():
+    for joint in range(1, 8):
+        assert _torque(joint, 15.9, NERO_V111_MIT_LIMITS) is None
+        assert _torque(joint, 16.1, NERO_V111_MIT_LIMITS).reason == "out_of_range"
+
+
+def test_the_default_table_would_refuse_valid_v111_commands():
+    """The dangerous direction: a legitimate command frozen out mid-stream."""
+    assert _torque(6, 12.0, NERO_V111_MIT_LIMITS) is None
+    assert _torque(6, 12.0, NERO_DEFAULT_MIT_LIMITS).reason == "out_of_range"
+
+
+def test_the_v111_table_would_admit_commands_the_default_tier_refuses():
+    assert _torque(1, 20.0, NERO_DEFAULT_MIT_LIMITS) is None
+    assert _torque(1, 20.0, NERO_V111_MIT_LIMITS).reason == "out_of_range"
+
+
+def test_the_tier_lookup_covers_every_tier_the_sdk_ships():
+    assert mit_limits_for_tier("default") is NERO_DEFAULT_MIT_LIMITS
+    assert mit_limits_for_tier("v111") is NERO_V111_MIT_LIMITS
+    # 1.12 inherits 1.11's move_mit, so it inherits its bounds.
+    assert mit_limits_for_tier("v112") is NERO_V111_MIT_LIMITS
+
+
+def test_an_unknown_tier_falls_back_to_the_driver_the_sdk_would_build():
+    assert mit_limits_for_tier("v999") is NERO_DEFAULT_MIT_LIMITS
+    assert mit_limits_for_tier(None) is NERO_DEFAULT_MIT_LIMITS

@@ -160,6 +160,10 @@ Routed through the runtime:
       cannot encode are refused whole, before the SDK sees them. Rejections are
       counted per reason and logged rate-limited, because a malformed stream
       arrives at the control rate.
+- [x] Bound the MIT values per **firmware tier**, not per arm model. The first
+      version applied the default tier's per-joint torque table to both arms,
+      which against the 1.11 arm would have refused legitimate commands on
+      joints 5-7 and admitted impossible ones on joints 1-2 (L3, 2026-08-12).
 - [ ] Promote the joint-limit check from flagged to refused. A position past a
       joint's *configured* limit is currently warned and still forwarded:
       refusing mid-stream would freeze a running impedance loop at its last
@@ -182,9 +186,12 @@ Routed through the runtime:
       churn.
 - [ ] Confirm one SDK thread per arm with the counter under a **full** stack.
 
-Not yet exercised on hardware: the enable-readback and firmware-tier changes are
-L1 only. Which protocol tier the arms actually run on is still unrecorded — the
-next hardware session logs it at startup.
+Exercised on hardware 2026-08-12. The enable readback confirmed on the first
+attempt on both arms, so the stricter check introduces no spurious failures. The
+protocol tier is now recorded, and it is **not the same on both arms**: right
+1.06 (default tier), left 1.11 (`NeroFW.V111`). See `errors_and_fixes.md` and
+`open_questions.md` — the tiers differ in MIT frame encoding, so nothing may
+assume the two arms are protocol-identical.
 
 ### 1B Feedback snapshot and driver CPU reduction
 
