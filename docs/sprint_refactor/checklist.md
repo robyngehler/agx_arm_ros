@@ -56,8 +56,9 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
       bridge for one activity including a hand action.
 - [x] Encode the C4 test ladder as a `.claude/skills/` workflow with a
       `.github/skills/` mirror, following the `commit-quality` skill's shape.
-- [ ] Define the `tea_pour_left_v1` regression criteria enforced after every
-      phase.
+- [~] Define the `tea_pour_left_v1` regression criteria — **deferred by
+      decision**; the L2 harness is the standing regression net until the demo
+      is re-taught against the new contracts.
 
 ### 0C Honest velocity and stop semantics
 
@@ -92,10 +93,14 @@ hardware access was granted for communication, not commanded motion).
       1587 SDK calls/s, publish batch 1.10 ms mean / 2.73 ms max.
 - [x] Capture two MIT arms under load (pcaps): 2849 f/s per bus, MIT at
       100 Hz per joint, feedback rate unchanged from idle.
-- [ ] Capture dual-arm hold, one MIT arm, one hand action.
-- [ ] Capture same-side arm-and-hand in parallel (new scenario under C1).
-- [ ] Capture both sides arm-and-hand in parallel.
-- [ ] Capture bus-fault and recovery cases.
+- [x] Capture dual-arm hold, one MIT arm, one hand action.
+- [x] Capture same-side arm-and-hand in parallel: both completed, no drops,
+      arm buses unaffected — the case C1 exists to allow.
+- [ ] Capture both sides arm-and-hand in parallel (blocked: `hand_left`
+      cable fault makes its half meaningless until replaced).
+- [x] Capture bus-fault and recovery: detection took ~2 s after a 1.6 s
+      starvation misdiagnosis, the loop stalled 10 s in one gap, and the
+      "recovery succeeded" claim was the bus returning on its own.
 - [x] Record per-interface CAN counters and RX drop counts for every captured
       scenario (`scripts/measure_can_baseline.sh`).
 - [x] Settle the wire-level velocity question (`evidence/*.pcap`,

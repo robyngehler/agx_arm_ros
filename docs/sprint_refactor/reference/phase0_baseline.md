@@ -1,6 +1,6 @@
 # Phase 0 Baseline — measured
 
-status: COMPLETE for the authorised scenarios; bus-fault/recovery still owed
+status: COMPLETE for the authorised scenarios
 date: 2026-08-11
 platform: Jetson AGX Orin, 12 cores, ROS Humble
 level: **L3** (real hardware, real CAN) for everything below
@@ -12,7 +12,7 @@ The before-half of the refactor's before/after. Captured with the counters from
 `auto_enable:=false` so no joint was energised. Scenario 4 is read from pcaps
 captured separately. Scenarios 5-8 used a later motion grant limited to hand
 `fist`/`zero` gestures and one minimal arm move, and were run against the full
-duo bring-up. Only bus-fault and recovery remain uncaptured.
+duo bring-up. Scenario 9 injected a bus fault under a later explicit grant.
 
 Hardware state during capture: both arms reachable and pushing feedback after
 the Jetson 40-pin header was configured; `hand_right` healthy; `hand_left` on a
@@ -202,6 +202,71 @@ polling should be re-read as the **highest-value** CPU item, not a cleanup.
 Parallel operation itself cost nothing in contention: no drops, no bus-off, and
 the arm buses were unaffected throughout.
 
+## Scenario 9 — bus fault and recovery
+
+`can_nero_right` taken down under a running driver (`auto_enable:=false`, so no
+joint could move), held down 12 s, then restored. Timeline from the driver log:
+
+| t | event |
+| ---: | --- |
+| 0.0 s | link down |
+| +0.4 s | `is_ok() reads false but kernel feedback frames are still advancing … treating as local starvation, not recovering` |
+| +2.1 s | `CAN bus stall detected … starting recovery` (starvation suppressions: 329) |
+| +8.1 s | `CAN bus recovery attempt 1 did not restore feedback` |
+| +12.1 s | `CAN bus recovery succeeded on attempt 2` |
+| +12.1 s | `FAULT LOCKOUT engaged … refusing new motion until clear_fault_lockout` |
+| +12.1 s | `publish-loop overrun: 10059 ms gap` |
+| +12.1 s | `silent TX loss: 1 send(s) dropped … Network is down [Error Code 100]` |
+| +17 s | back to 200 Hz, 1600 SDK calls/s |
+
+Loop rate during the fault: **22 Hz** (283 iterations over 13.2 s) — faster than
+the 3.5 Hz silent-bus case, because a downed socket errors quickly instead of
+waiting for timeouts.
+
+What works: the fault was detected, the lockout engaged and is fail-closed, the
+loop recovered to full rate by itself once the bus returned, and the silent-TX
+observability added in the pinned SDK correctly reported `Network is down`.
+
+### "Recovery succeeded" is not a recovery
+
+Attempt 2 reported success at +12.1 s — the same moment the link was manually
+restored. With `bus_recovery_link_reset` false (the default), the recovery path
+cannot bring a downed interface back, so what the log calls a successful
+recovery on attempt 2 is the bus returning on its own while an attempt happened
+to be in flight.
+
+This is the same defect class as the stop path's "confirmed stopped": an action
+that cannot verify its own effect claims the effect anyway. A caller reading
+"recovery succeeded on attempt 2" would conclude the recovery logic fixed the
+bus. It did not. Phase 1C's verified-rearm split should make recovery report
+what it *checked*, not what happened to be true afterwards.
+
+### The watchdog spends the first seconds diagnosing the wrong thing
+
+For ~1.6 s the driver attributed a dead bus to local CPU starvation and
+explicitly declined to recover, logging 329 starvation suppressions. The
+heuristic exists for a real reason — under GIL pressure a starved loop looks
+exactly like a dead bus — but the baseline shows the ambiguity is not free: it
+delays recovery, and it is unresolvable from inside the node that is itself
+starving. Phase 1's serialized worker should make the two distinguishable
+(a stalled worker knows it is stalled) rather than guessed at.
+
+### A 10-second hole in the publish loop
+
+The loop blocked for `10059 ms` in one gap. Nothing drained the RX socket for
+those ten seconds. On this machine the other three interfaces were quiet, but at
+the measured idle rate of ~2150 f/s per arm bus a ten-second stall is far beyond
+the ~125 ms the kernel buffer holds — which is exactly the RX-overflow mechanism
+recorded in sprint6. **A fault on one bus can therefore cause frame loss on the
+others**, because they share one stalling process only by way of the GIL.
+
+### Stale message text
+
+The TX-loss warning still reads "On the shared bus this is usually hand-frame
+arbitration loss, not a dead arm". There is no shared bus any more (C1); on a
+per-device bus that sentence sends the reader after the wrong cause. Fix with the
+2B message pass.
+
 ## Velocity on the wire — settled: the firmware does not report it
 
 The MIT captures answer this decisively, and no further hardware run is needed.
@@ -255,8 +320,6 @@ the MIT pcaps answered it above.
 
 ## Still owed
 
-- **bus-fault and recovery** — deliberately not provoked on live hardware in this
-  session.
 - **both sides arm-plus-hand in parallel** — only the right side was exercised;
   the left hand's cable fault makes its half meaningless until replaced.
 - **SDK call attribution under the full stack.** Scenario 2 showed one thread
