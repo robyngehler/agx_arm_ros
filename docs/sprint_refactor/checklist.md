@@ -135,6 +135,10 @@ Rules and mechanism (L1, `agx_arm_ctrl/device_authority.py`, `sdk_worker.py`):
 
 Routed through the runtime:
 
+- [x] Validated on hardware, both arms (`reference/phase1a_hardware_validation.md`):
+      enable readback, per-tier MIT bounds, the four rejection paths, a full
+      MIT hold with zero rejections, and the authority through e-stop,
+      lockout-clear and a disable/enable cycle.
 - [x] Each arm driver builds its own authority and publishes it latched on
       `feedback/authority` (`AgxDeviceAuthority`), derived from the gates the
       driver already acts on — enable readback, feedback readiness, fault

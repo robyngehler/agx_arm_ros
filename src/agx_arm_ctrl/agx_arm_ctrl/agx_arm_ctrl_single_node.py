@@ -938,12 +938,21 @@ class AgxArmRosNode(Node):
         # This is the operator's "I have looked at it" surface, so it is also
         # what releases a unit stop. It clears the latch; it does not arm the
         # device — that still needs the gates to come back.
-        if self._unit_safety.stopped:
+        released_unit_stop = self._unit_safety.stopped
+        if released_unit_stop:
             self._unit_safety.rearm("fault lockout cleared")
         self._sync_authority("fault lockout cleared")
         response.success = True
-        response.message = (
-            "fault lockout cleared" if was_locked else "no fault lockout was active"
+        # Report every latch this released. A verified emergency stop leaves a
+        # unit stop and no fault lockout, so reporting only the lockout said
+        # "nothing was active" about a call that had just rearmed the unit.
+        cleared = []
+        if was_locked:
+            cleared.append("fault lockout cleared")
+        if released_unit_stop:
+            cleared.append("unit safety stop released")
+        response.message = "; ".join(cleared) or (
+            "nothing to clear: no fault lockout and no unit stop was active"
         )
         self.get_logger().warn(response.message)
         return response
@@ -2257,9 +2266,13 @@ class AgxArmRosNode(Node):
         # only the first justifies dispatching further motion.
         if stopped:
             response.success = True
+            # The latched unit stop has to be named here. Without it a caller
+            # reads "confirmed stopped", finds the arm refusing motion, and has
+            # no way to know what is holding it or how to release it.
             response.message = (
                 f"{self.arm_type} stop=verified — confirmed stopped "
-                f"({verification.detail})"
+                f"({verification.detail}); unit safety stop is latched, call "
+                "clear_fault_lockout to release it"
             )
         else:
             response.success = False

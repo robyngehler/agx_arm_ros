@@ -219,3 +219,27 @@ def test_attaching_a_listener_hands_it_the_current_state():
     assert len(seen) == 1
     assert seen[0].state is DeviceState.READY
     assert seen[0].device_id == "arm_left"
+
+
+# --- what the services tell the caller ---------------------------------------
+
+def test_clearing_reports_every_latch_it_released():
+    """Found on hardware: a verified e-stop leaves a unit stop and no lockout.
+
+    Reporting only the lockout answered "no fault lockout was active" to a call
+    that had just rearmed the unit.
+    """
+    from std_srvs.srv import Trigger
+
+    node = _ready_node()
+    node._unit_safety.stop("emergency stop")
+
+    response = node._clear_fault_lockout_callback(None, Trigger.Response())
+    assert "unit safety stop released" in response.message
+
+    node._fault_lockout = True
+    response = node._clear_fault_lockout_callback(None, Trigger.Response())
+    assert response.message == "fault lockout cleared"
+
+    response = node._clear_fault_lockout_callback(None, Trigger.Response())
+    assert "nothing to clear" in response.message
