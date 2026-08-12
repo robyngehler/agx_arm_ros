@@ -18,6 +18,7 @@ import threading
 import pytest
 
 from agx_arm_coordination.coordinator_node import CoordinatorNode, _PhasedArmChild
+from agx_arm_coordination.unit_activity import UnitActivity
 
 
 SUCCESS = 1
@@ -91,7 +92,7 @@ def _coord():
     node._stop_lock = threading.Lock()
     node._stop_requested = False
     node._stop_reason = ""
-    node._activity_running = False
+    node._unit_activity = UnitActivity()
     node._shutdown_event = threading.Event()
     node._open_hand_windows = set()
     return node
@@ -168,7 +169,7 @@ def test_request_stop_waits_for_a_running_activity():
     # Releasing main() here would tear the context down mid-trajectory, before the
     # activity thread has had a chance to cancel anything.
     node = _coord()
-    node._activity_running = True
+    node._unit_activity.try_claim("tea_pour_left_v1")
     node.request_stop("interrupt")
     assert node.stop_requested
     assert not node._shutdown_event.is_set()

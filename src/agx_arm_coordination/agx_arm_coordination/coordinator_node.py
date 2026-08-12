@@ -62,6 +62,7 @@ from agx_arm_coordination.arm_executor import (
 from agx_arm_coordination.graph_loader import ActivityCatalogue
 from agx_arm_coordination.graph_model import ACTIONTYPE_TRAJECTORY, Scheduler
 from agx_arm_coordination.performer import KIND_ARM, KIND_HAND, RoutingError, route
+from agx_arm_coordination.unit_activity import UnitActivity
 
 
 class DispatchError(RuntimeError):
@@ -297,7 +298,9 @@ class CoordinatorNode(Node):
         self._stop_lock = threading.Lock()
         self._stop_requested = False
         self._stop_reason = ""
-        self._activity_running = False
+        # One authoritative answer to "may another activity start?". Replaces a
+        # plain running-flag that nothing consulted before dispatching.
+        self._unit_activity = UnitActivity()
         self._shutdown_event = threading.Event()
         # Arm motion goes through the MoveIt multi-arm slice: anchor->anchor via
         # MoveGroup (collision-aware plan + execute), recorded replay via
@@ -317,7 +320,7 @@ class CoordinatorNode(Node):
             PerformActivity,
             "execute_activity",
             execute_callback=self._execute,
-            goal_callback=lambda _req: GoalResponse.ACCEPT,
+            goal_callback=self._on_goal,
             cancel_callback=lambda _gh: CancelResponse.ACCEPT,
             callback_group=self._cb_group,
         )
@@ -363,7 +366,9 @@ class CoordinatorNode(Node):
                 return
             self._stop_requested = True
             self._stop_reason = reason
-            running = self._activity_running
+        # Refuses further activities and tells us whether one still has to
+        # unwind before main() may release.
+        running = self._unit_activity.begin_stop(reason)
         self.get_logger().warn(
             f"stop requested ({reason}); "
             + ("unwinding the running activity" if running else "no activity running")
@@ -755,22 +760,47 @@ class CoordinatorNode(Node):
 
     # --- main execution ------------------------------------------------------
 
+    def _on_goal(self, request) -> GoalResponse:
+        """Refuse a second activity at the door instead of executing it.
+
+        Every goal used to be accepted unconditionally, and the callback group
+        is reentrant, so two overlapping goals would both have run — against the
+        same arms. This is the cheap refusal; :meth:`_execute` still claims the
+        unit authoritatively, because two goals can pass this check at once.
+        """
+        admission = self._unit_activity.can_accept(request.activity_id)
+        if admission.accepted:
+            return GoalResponse.ACCEPT
+        self.get_logger().warn(f"rejecting activity goal: {admission.detail}")
+        self._event(
+            "rejected",
+            activity_id=request.activity_id,
+            state=admission.reason.value,
+            message=admission.detail,
+        )
+        return GoalResponse.REJECT
+
     def _execute(self, goal_handle) -> PerformActivity.Result:
-        with self._stop_lock:
-            if self._stop_requested:
-                result = PerformActivity.Result()
-                result.success = False
-                result.message = f"coordinator is stopping ({self._stop_reason})"
-                goal_handle.abort()
-                return result
-            self._activity_running = True
+        activity_id = goal_handle.request.activity_id
+        admission = self._unit_activity.try_claim(activity_id)
+        if not admission.accepted:
+            result = PerformActivity.Result()
+            result.success = False
+            result.message = admission.detail
+            self.get_logger().warn(f"refusing to execute: {admission.detail}")
+            self._event(
+                "rejected",
+                activity_id=activity_id,
+                state=admission.reason.value,
+                message=admission.detail,
+            )
+            goal_handle.abort()
+            return result
         try:
             return self._execute_activity(goal_handle)
         finally:
-            with self._stop_lock:
-                self._activity_running = False
-                stopping = self._stop_requested
-            if stopping:
+            self._unit_activity.release(activity_id)
+            if self.stop_requested:
                 self._shutdown_event.set()
 
     def _execute_activity(self, goal_handle) -> PerformActivity.Result:

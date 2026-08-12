@@ -1,0 +1,158 @@
+"""One authoritative answer to "may another activity start on this unit?".
+
+Phase 1C of the V02 refactor, and deliberately small: this is the exclusivity
+guard, not the event-driven coordinator rewrite that follows in Phase 3.
+
+It is pulled ahead of the parallel-operation work on purpose. Each device now
+has its own CAN bus, so a later phase lets same-side arm and hand motion run at
+the same time — which multiplies the ways two activities can interleave. The
+rule that only one activity owns the unit has to exist *before* that
+parallelism, not after it.
+
+What it replaces: the coordinator accepted every goal unconditionally
+(``goal_callback=lambda _req: GoalResponse.ACCEPT``) and tracked a running
+activity in a plain boolean that nothing consulted before dispatching. Two
+overlapping goals would both have been executed, against the same arms.
+
+The state is two values and a reason:
+
+.. code-block:: text
+
+    READY      -> accept one activity
+    EXECUTING  -> reject every further goal, with a structured reason
+"""
+
+from __future__ import annotations
+
+import threading
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional
+
+
+class UnitActivityState(Enum):
+    """Whether the unit is free to take an activity."""
+
+    READY = "ready"
+    EXECUTING = "executing"
+
+
+class RejectReason(Enum):
+    """Why an activity was not admitted."""
+
+    UNIT_BUSY = "unit_busy"
+    UNIT_STOPPING = "unit_stopping"
+
+
+@dataclass(frozen=True)
+class Admission:
+    """The decision, and — when refused — a reason a caller can act on."""
+
+    accepted: bool
+    reason: Optional[RejectReason] = None
+    detail: str = ""
+
+    def __bool__(self) -> bool:
+        """Allow ``if admission:`` where only the outcome matters."""
+        return self.accepted
+
+
+ADMITTED = Admission(accepted=True)
+
+
+class UnitActivity:
+    """Tracks the one activity a unit may be running, and refuses the rest.
+
+    :meth:`can_accept` is the cheap non-mutating check for the action server's
+    goal callback. :meth:`try_claim` is the authoritative one: it decides and
+    takes the slot in a single step, so two goals that both passed the goal
+    callback cannot both start executing.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._activity_id = ""
+        self._stopping = False
+        self._stop_reason = ""
+        self.rejected_count = 0
+
+    @property
+    def state(self) -> UnitActivityState:
+        with self._lock:
+            return (
+                UnitActivityState.EXECUTING
+                if self._activity_id
+                else UnitActivityState.READY
+            )
+
+    @property
+    def activity_id(self) -> str:
+        """The running activity, or an empty string when the unit is ready."""
+        with self._lock:
+            return self._activity_id
+
+    @property
+    def is_running(self) -> bool:
+        with self._lock:
+            return bool(self._activity_id)
+
+    def can_accept(self, activity_id: str) -> Admission:
+        """Report whether an activity would be admitted, without taking the slot."""
+        with self._lock:
+            return self._admission_locked(activity_id)
+
+    def try_claim(self, activity_id: str) -> Admission:
+        """Take the unit for one activity, or refuse with a reason."""
+        with self._lock:
+            admission = self._admission_locked(activity_id)
+            if admission.accepted:
+                self._activity_id = activity_id
+            else:
+                self.rejected_count += 1
+            return admission
+
+    def _admission_locked(self, activity_id: str) -> Admission:
+        if self._stopping:
+            return Admission(
+                False,
+                RejectReason.UNIT_STOPPING,
+                f"coordinator is stopping ({self._stop_reason})",
+            )
+        if self._activity_id:
+            return Admission(
+                False,
+                RejectReason.UNIT_BUSY,
+                f"activity '{self._activity_id}' is already running; "
+                f"'{activity_id}' was not started",
+            )
+        return ADMITTED
+
+    def release(self, activity_id: str) -> None:
+        """Give the unit back. Releasing an activity that is not the current one
+        is ignored, so a late unwind cannot free a slot someone else holds.
+        """
+        with self._lock:
+            if self._activity_id == activity_id:
+                self._activity_id = ""
+
+    def begin_stop(self, reason: str) -> bool:
+        """Refuse further activities and report whether one is still running.
+
+        The caller uses the return value to decide whether it may release the
+        process immediately or has to let the running activity unwind first.
+        """
+        with self._lock:
+            if not self._stopping:
+                self._stopping = True
+                self._stop_reason = reason
+            return bool(self._activity_id)
+
+    @property
+    def stopping(self) -> bool:
+        with self._lock:
+            return self._stopping
+
+    @property
+    def stop_reason(self) -> str:
+        with self._lock:
+            return self._stop_reason

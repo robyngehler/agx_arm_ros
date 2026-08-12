@@ -13,7 +13,13 @@ string robot_id       # left_hand | right_hand | both_arms | left_arm | right_ar
 string activity_id
 string action_id
 
-# info | warning | error | started | completed | failed | slip_warning | contact_lost
+# info | warning | error | started | completed | failed | rejected | slip_warning |
+# contact_lost
+#
+# 'rejected' is a request the unit refused before it became an activity — a
+# second concurrent goal, or one arriving while the coordinator is stopping. It
+# is deliberately not 'failed': nothing was executed, so a consumer counting
+# failures must not count it.
 string event_type
 string state          # executor/coordinator state at emission time
 float32 contact_score # aggregated tactile contact score when relevant, else 0.0

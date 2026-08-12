@@ -29,6 +29,7 @@ ordering. It proves nothing about CAN timing, CPU, or motion — those need L3.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -301,4 +302,53 @@ def test_hand_window_is_bracketed_per_side(graph):
         )
         assert side_calls[-1] == f"{side}:resume_arm_control", (
             f"{side} did not end on resume_arm_control: {side_calls}"
+        )
+
+
+def test_a_second_concurrent_activity_is_refused(graph):
+    """One activity owns the unit at a time (integration plan 1C).
+
+    The coordinator used to accept every goal unconditionally on a reentrant
+    callback group, so two overlapping requests would both have been dispatched
+    against the same arms. The guard is deliberately in place *before* the
+    parallel-operation work, which multiplies the ways two activities can
+    interleave.
+
+    Two separate client processes cannot prove this: the mock activity finishes
+    in under a second and process startup jitter is larger than that, so the
+    goals do not overlap. The probe sends the second goal from the same process
+    the moment the first is accepted.
+
+    Placed last in the module on purpose: it runs an extra activity, and the
+    call-log assertions above read the arm double's whole history.
+    """
+    probe = subprocess.run(
+        ["python3", str(Path(__file__).parent / "l2_double_goal.py"),
+         "--activity", ACTIVITY,
+         "--timeout-sec", str(int(ACTIVITY_TIMEOUT_S - 20))],
+        capture_output=True, text=True, timeout=ACTIVITY_TIMEOUT_S, env=_l2_env(),
+    )
+    graph.assert_all_alive()
+    assert probe.returncode == 0, (
+        f"double-goal probe failed (rc={probe.returncode})\n"
+        f"--- probe ---\n{probe.stdout[-1500:]}\n{probe.stderr[-1500:]}"
+    )
+    report = json.loads(probe.stdout.strip().splitlines()[-1])
+    context = (
+        f"\nreport={report}\n"
+        f"--- coordinator ---\n{graph.output('coordinator')[-2000:]}"
+    )
+
+    assert report["first"].get("success") is True, (
+        f"the first activity did not run{context}"
+    )
+    second = report["second"]
+    assert second.get("success") is not True, (
+        f"both concurrent activities ran; the unit accepted two commanders{context}"
+    )
+    # Refused at the door or refused by the claim — both are correct, and the
+    # refusal has to carry a reason either way.
+    if second.get("accepted"):
+        assert "already running" in second.get("message", ""), (
+            f"the refused activity gave no reason{context}"
         )

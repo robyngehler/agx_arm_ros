@@ -184,10 +184,21 @@ next hardware session logs it at startup.
 
 Pulled ahead of Phase 2 on review: the rule must hold before parallelism exists.
 
-- [ ] `READY` accepts one activity; `EXECUTING` rejects every further goal with
-      a structured reason.
-- [ ] One authoritative unit activity state and failure reason.
-- [ ] No polling-loop or event-queue work here — that stays in Phase 3.
+- [x] `READY` accepts one activity; `EXECUTING` rejects every further goal with
+      a structured reason. The goal callback refuses at the door; the claim
+      inside execute is authoritative, because two goals can pass the door
+      check at once on a reentrant callback group.
+- [x] One authoritative unit activity state and failure reason
+      (`agx_arm_coordination/unit_activity.py`), replacing a running-flag that
+      nothing consulted before dispatching.
+- [x] No polling-loop or event-queue work here — that stays in Phase 3.
+- [x] L2 regression: a second goal sent while an activity runs is rejected.
+      Two client processes cannot show this — the mock activity finishes in
+      under a second, less than process startup jitter — so the probe sends the
+      second goal from the same process the moment the first is accepted.
+
+Exit gate met at L2 with mock backends and an arm double. Nothing here touches
+hardware.
 
 ## Phase 2 - Parallel operation
 
