@@ -155,7 +155,9 @@ class AgxArmRosNode(Node):
 
         ### device authority (built before the SDK so a failed connect is
         ### still reported as a state rather than as silence)
-        self._unit_safety = UnitSafety()
+        # Named, so a second allocator on the unit shows up as a counted
+        # contradiction rather than as a silently merged epoch.
+        self._unit_safety = UnitSafety(self.device_id)
         self._authority = DeviceAuthority(self.device_id, self._unit_safety)
 
         ### AgxArmFactory
@@ -790,7 +792,7 @@ class AgxArmRosNode(Node):
             msg.device_epoch = snapshot.device_epoch
             msg.unit_safety_epoch = snapshot.unit_safety_epoch
             msg.unit_stopped = snapshot.unit_stopped
-            msg.accepts_motion = snapshot.accepts_motion
+            msg.motion_ready = snapshot.motion_ready
             msg.owner_id = snapshot.owner_id
             msg.reason = snapshot.reason
             self.authority_pub.publish(msg)

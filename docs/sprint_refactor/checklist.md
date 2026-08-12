@@ -147,10 +147,25 @@ Routed through the runtime:
 - [ ] The two hand transport authorities. Only the arms publish so far.
 - [ ] Route all arm SDK calls for one device through the worker.
 - [ ] Reject stale epoch and out-of-order sequence on the live command path.
-- [ ] Synchronise `unit_safety_epoch` across processes. Each node currently
-      keeps its own, so a unit stop raised in one node is not yet seen by the
-      others; the coordinator calls every side's stop service, which covers the
-      current e-stop path but is not the same guarantee.
+- [x] Separate hardware readiness from permission. `motion_ready` says the
+      device is ready; `may_command(owner)` answers whether *this* commander
+      may stream, using the same checks as admission minus the sequence. Reading
+      one as the other is how a controller gets told yes and then has every
+      command refused for want of an owner.
+- [x] Make a second unit-safety allocator detectable: generations carry the
+      writer that minted them, an observer refuses to mint at all, and an
+      equal-generation contradiction is counted with the stop winning rather
+      than silently dropped.
+- [ ] **Introduce the single unit-safety writer.** Every driver is still its
+      own, which is why the contradiction counter exists. A device must be able
+      to stop *itself* without another process being alive, so the target is:
+      the device stop is a device-level fault on its own epoch, and only the
+      writer allocates unit generations, on request. Needs the coordinator side
+      and changes what the 2026-08-12 hardware run validated, so it lands with
+      the stamping slice, not before.
+- [ ] Claim ownership for the MIT controller, and switch its gate from
+      `motion_ready` to `may_command`. Until then it gates on readiness, which
+      is unchanged behaviour and safe only because admission is not yet live.
 - [x] Freeze one command stamp for every commandable device — `owner_id`,
       `device_epoch`, `unit_safety_epoch`, `sequence` — before changing any
       ABI, so the migration happens once (`open_questions.md`).

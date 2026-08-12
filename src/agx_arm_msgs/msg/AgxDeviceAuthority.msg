@@ -37,9 +37,14 @@ uint64 device_epoch
 uint64 unit_safety_epoch
 bool unit_stopped
 
-# True only in STATE_READY. Carried explicitly so no consumer has to re-derive
-# the rule, and so the rule can only change in one place.
-bool accepts_motion
+# True only in STATE_READY: the hardware is ready to be commanded.
+#
+# This is NOT permission to command. Admission at the boundary additionally
+# requires that the commander is the device's current owner and that both
+# epochs and the sequence are current, so a consumer that reads this as "I may
+# stream" can be told yes and then have every command refused. Check `owner_id`
+# against your own commander identity as well.
+bool motion_ready
 
 string owner_id           # current commander, empty when unclaimed
 string reason             # why the device is in this state

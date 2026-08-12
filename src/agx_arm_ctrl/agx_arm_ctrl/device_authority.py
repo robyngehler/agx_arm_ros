@@ -12,8 +12,9 @@ Two epochs, because they answer different questions:
 
 * ``device_epoch`` — bumped when *this* device's ownership, arming or transport
   changes, so a command issued before the change is rejected after it;
-* ``unit_safety_epoch`` — bumped for what genuinely invalidates every device at
-  once: an emergency stop or a unit fault.
+* ``unit_safety_epoch`` — bumped on every unit-safety transition, the stop and
+  the rearm alike, since a device rearmed under the old generation must not be
+  treated as current.
 
 Deliberately free of ROS and of the vendor SDK, so the rules are testable at L1
 without a workspace build or hardware.
@@ -105,11 +106,19 @@ class CommandStamp:
 
 @dataclass(frozen=True)
 class UnitSafetySnapshot:
-    """Unit-wide safety state as published and as observed by other processes."""
+    """Unit-wide safety state as published and as observed by other processes.
+
+    ``writer_id`` names the process that allocated the generation. Without it,
+    two writers can mint the same epoch with opposite meanings — one publishing
+    "5, stopped", another "5, rearmed" — and a receiver that only compares
+    numbers cannot tell that it is looking at a contradiction rather than a
+    duplicate.
+    """
 
     epoch: int
     stopped: bool
     reason: str
+    writer_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -117,7 +126,7 @@ class AuthoritySnapshot:
     """One device's authoritative state — the payload other nodes consume.
 
     MIT consumes this instead of the ``feedback/hand_window_active`` boolean and
-    aborts when ``accepts_motion`` goes false or the epoch moves under it.
+    aborts when ``motion_ready`` goes false or the epoch moves under it.
     """
 
     device_id: str
@@ -129,8 +138,13 @@ class AuthoritySnapshot:
     reason: str
 
     @property
-    def accepts_motion(self) -> bool:
-        """True only while the device admits motion commands."""
+    def motion_ready(self) -> bool:
+        """True when the hardware is ready — not that *you* may command it.
+
+        Permission needs ownership and current epochs too; see
+        :meth:`DeviceAuthority.may_command`. Keeping the two apart is what stops
+        a consumer being told yes and then having every command refused.
+        """
         return self.state is DeviceState.READY
 
 
@@ -141,13 +155,34 @@ class UnitSafety:
     :meth:`snapshot` and feeding what arrives into :meth:`observe`. Epochs only
     ever move forward, so a late or reordered message cannot walk the unit back
     into a state it has already left.
+
+    **Exactly one process on a unit may be the writer.** A second writer is not
+    redundancy: both allocate from their own counter, so the unit ends up with
+    one generation number carrying two meanings — "5, stopped" from one and
+    "5, rearmed" from the other — and no receiver can order them. Observers
+    adopt what the writer publishes and refuse to mint generations; a device
+    that needs a unit stop asks the writer for one.
+
+    Until a single writer exists in the running system, every driver is still
+    its own writer. That is why :meth:`observe` counts contradictions rather
+    than ignoring them: the symptom has to be visible while the gap is open.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, writer_id: str = "", *, writer: bool = True) -> None:
+        """Create a unit-safety view.
+
+        ``writer=False`` makes this a pure observer: it adopts what the
+        authoritative writer publishes and refuses to mint generations of its
+        own. Exactly one process on a unit may be the writer — see the class
+        docstring for why a second one is not merely redundant.
+        """
         self._lock = threading.Lock()
+        self._writer_id = writer_id
+        self._writer = writer
         self._epoch = 0
         self._stopped = False
         self._reason = "init"
+        self.conflicts = 0
         self._listeners: List[Callable[[UnitSafetySnapshot], None]] = []
 
     def snapshot(self) -> UnitSafetySnapshot:
@@ -156,7 +191,10 @@ class UnitSafety:
 
     def _snapshot_locked(self) -> UnitSafetySnapshot:
         return UnitSafetySnapshot(
-            epoch=self._epoch, stopped=self._stopped, reason=self._reason
+            epoch=self._epoch,
+            stopped=self._stopped,
+            reason=self._reason,
+            writer_id=self._writer_id,
         )
 
     def add_listener(
@@ -179,6 +217,12 @@ class UnitSafety:
         """Clear the unit stop. Devices land in STANDBY, not in READY."""
         return self._advance(stopped=False, reason=reason)
 
+    @property
+    def is_writer(self) -> bool:
+        """Whether this view may allocate unit-safety generations."""
+        with self._lock:
+            return self._writer
+
     def observe(self, snapshot: UnitSafetySnapshot) -> bool:
         """Adopt unit safety state seen from another process.
 
@@ -187,11 +231,29 @@ class UnitSafety:
         cannot resurrect a cleared stop or drop a live one.
         """
         with self._lock:
-            if snapshot.epoch <= self._epoch:
+            contradiction = (
+                snapshot.epoch == self._epoch
+                and snapshot.stopped != self._stopped
+                and snapshot.writer_id != self._writer_id
+            )
+            if contradiction:
+                # One generation, two meanings, two allocators. No ordering
+                # resolves this — it is the concrete symptom of more than one
+                # writer, so it is counted, and the safer reading wins.
+                self.conflicts += 1
+                if not snapshot.stopped:
+                    return False
+                self._stopped = True
+                self._reason = (
+                    f"conflicting unit-safety generation {snapshot.epoch} from "
+                    f"'{snapshot.writer_id}'; holding the stop"
+                )
+            elif snapshot.epoch <= self._epoch:
                 return False
-            self._epoch = snapshot.epoch
-            self._stopped = snapshot.stopped
-            self._reason = snapshot.reason
+            else:
+                self._epoch = snapshot.epoch
+                self._stopped = snapshot.stopped
+                self._reason = snapshot.reason
             current = self._snapshot_locked()
             listeners = list(self._listeners)
         self._notify(listeners, current)
@@ -199,6 +261,14 @@ class UnitSafety:
 
     def _advance(self, *, stopped: bool, reason: str) -> UnitSafetySnapshot:
         with self._lock:
+            if not self._writer:
+                # An observer minting its own generation is exactly how two
+                # processes end up with the same epoch meaning opposite things.
+                raise RuntimeError(
+                    f"'{self._writer_id or 'observer'}' is not the unit-safety "
+                    "writer and may not allocate a generation; request the stop "
+                    "from the writer instead"
+                )
             self._epoch += 1
             self._stopped = stopped
             self._reason = reason
@@ -309,7 +379,8 @@ class DeviceAuthority:
             return self._owner_id
 
     @property
-    def accepts_motion(self) -> bool:
+    def motion_ready(self) -> bool:
+        """Hardware readiness only. See :meth:`may_command` for permission."""
         with self._lock:
             return self._state is DeviceState.READY
 
@@ -485,6 +556,36 @@ class DeviceAuthority:
             )
 
     # -- admission ------------------------------------------------------
+
+    def may_command(self, owner_id: str) -> Verdict:
+        """Would a correctly stamped command from ``owner_id`` be admitted?
+
+        The same checks :meth:`admit` makes, minus the sequence — which is a
+        property of the command, not of the permission. This exists so a
+        consumer can ask the question it actually cares about ("may I stream?")
+        instead of inferring it from ``motion_ready``, which answers only "is
+        the hardware ready?". The two differ whenever the device is unowned or
+        owned by somebody else, and inferring one from the other is how a
+        controller ends up streaming commands that are all refused.
+        """
+        with self._lock:
+            if self._state is not DeviceState.READY:
+                return Verdict(
+                    False,
+                    Reject.NOT_READY,
+                    f"{self.device_id} is {self._state.value}: {self._reason}",
+                )
+            if not self._owner_id:
+                return Verdict(
+                    False, Reject.NO_OWNER, f"{self.device_id} has no commander"
+                )
+            if owner_id != self._owner_id:
+                return Verdict(
+                    False,
+                    Reject.NOT_OWNER,
+                    f"'{owner_id}' is not the commander ('{self._owner_id}')",
+                )
+            return ACCEPTED
 
     def admit(self, stamp: CommandStamp) -> Verdict:
         """Decide whether one command may reach the hardware, and record it.

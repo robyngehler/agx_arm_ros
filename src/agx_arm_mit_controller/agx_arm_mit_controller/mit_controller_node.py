@@ -542,11 +542,11 @@ class NeroMitControllerNode(Node):
             if previous is None:
                 self.get_logger().info(
                     f"Device authority for '{msg.device_id}' is now the gate "
-                    f"(state={msg.state}, accepts_motion={msg.accepts_motion})"
+                    f"(state={msg.state}, motion_ready={msg.motion_ready})"
                 )
                 return
 
-            lost_motion = previous.accepts_motion and not msg.accepts_motion
+            lost_motion = previous.motion_ready and not msg.motion_ready
             new_epoch = (
                 previous.device_epoch != msg.device_epoch
                 or previous.unit_safety_epoch != msg.unit_safety_epoch
@@ -567,13 +567,13 @@ class NeroMitControllerNode(Node):
                     f"device authority changed while executing "
                     f"(state={msg.state}, device_epoch={msg.device_epoch}, "
                     f"unit_safety_epoch={msg.unit_safety_epoch}, "
-                    f"accepts_motion={msg.accepts_motion}): {msg.reason}"
+                    f"motion_ready={msg.motion_ready}): {msg.reason}"
                 )
             self.get_logger().warn(
                 f"Device authority changed (state={msg.state}, "
                 f"device_epoch={msg.device_epoch}, "
                 f"unit_safety_epoch={msg.unit_safety_epoch}, "
-                f"accepts_motion={msg.accepts_motion}): {msg.reason}"
+                f"motion_ready={msg.motion_ready}): {msg.reason}"
                 + ("; aborted the active trajectory" if had_trajectory else "")
             )
 
@@ -581,7 +581,7 @@ class NeroMitControllerNode(Node):
         """True when the published authority says not to command this device."""
         return (
             self.device_authority is not None
-            and not self.device_authority.accepts_motion
+            and not self.device_authority.motion_ready
         )
 
     def _enter_non_finite_fault(self, detail: str) -> None:

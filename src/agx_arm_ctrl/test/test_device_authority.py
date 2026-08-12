@@ -104,7 +104,7 @@ def test_acknowledging_a_fault_does_not_arm_the_device():
 
     assert authority.acknowledge_fault("operator").accepted
     assert authority.state is DeviceState.STANDBY
-    assert not authority.accepts_motion
+    assert not authority.motion_ready
 
     verdict = authority.admit(authority.stamp("mit", sequence=1))
     assert not verdict.accepted
@@ -122,7 +122,7 @@ def test_rearm_without_evidence_is_refused():
     assert authority.state is DeviceState.STANDBY
 
     assert authority.rearm(verified=True, detail="feedback advancing").accepted
-    assert authority.accepts_motion
+    assert authority.motion_ready
 
 
 def test_a_latched_fault_must_be_acknowledged_before_rearming():
@@ -147,8 +147,8 @@ def test_unit_stop_halts_every_device_and_a_unit_rearm_does_not_arm_them():
     safety.rearm("estop released")
     assert arm.state is DeviceState.STANDBY
     assert hand.state is DeviceState.STANDBY
-    assert not arm.accepts_motion
-    assert not hand.accepts_motion
+    assert not arm.motion_ready
+    assert not hand.motion_ready
 
 
 def test_an_arm_recovery_does_not_invalidate_the_same_side_hand():
@@ -166,7 +166,7 @@ def test_an_arm_recovery_does_not_invalidate_the_same_side_hand():
     arm.go_standby("can_nero_left back")
     assert arm.rearm(verified=True, detail="feedback advancing").accepted
 
-    assert hand.accepts_motion
+    assert hand.motion_ready
     assert hand.admit(hand_stamp).accepted
 
 
@@ -214,7 +214,7 @@ def test_authority_changes_are_published_as_they_happen():
     safety.stop("emergency stop")
     assert seen, "an emergency stop must reach the consumer without a poll"
     assert seen[-1].state is DeviceState.STOPPED
-    assert not seen[-1].accepts_motion
+    assert not seen[-1].motion_ready
     assert seen[-1].unit_stopped
 
 
@@ -223,7 +223,7 @@ def test_a_device_constructed_during_a_unit_stop_starts_stopped():
     safety.stop("emergency stop")
     late = DeviceAuthority("hand_right", safety)
     assert late.state is DeviceState.STOPPED
-    assert not late.accepts_motion
+    assert not late.motion_ready
 
 
 def test_rearm_is_refused_while_the_unit_stop_is_active():
@@ -235,3 +235,126 @@ def test_rearm_is_refused_while_the_unit_stop_is_active():
     refused = device.rearm(verified=True, detail="feedback advancing")
     assert not refused.accepted
     assert "unit" in refused.detail
+
+
+# --- readiness is not permission ---------------------------------------------
+
+def test_a_ready_but_unowned_device_is_not_commandable():
+    """The gap the rename exists to close.
+
+    `motion_ready` says the hardware is ready. It says nothing about whether
+    *you* may command it, and a consumer that reads it as permission would
+    stream commands that admission refuses on every single one.
+    """
+    safety = UnitSafety()
+    device = DeviceAuthority("arm_left", safety)
+    device.go_standby("connected")
+    assert device.rearm(verified=True, detail="feedback advancing").accepted
+
+    assert device.motion_ready is True
+    verdict = device.may_command("mit")
+    assert not verdict.accepted
+    assert verdict.reason is Reject.NO_OWNER
+
+
+def test_may_command_agrees_with_admit_on_the_same_state():
+    """One rule, two callers: the check must not drift between them."""
+    safety = UnitSafety()
+    device = DeviceAuthority("arm_left", safety)
+    device.go_standby("connected")
+
+    for owner in ("mit", "teach_gui"):
+        for claimed in (None, "mit"):
+            device.revoke("test reset")
+            if claimed:
+                device.claim(claimed)
+            device.rearm(verified=True, detail="test")
+            permission = device.may_command(owner)
+            admitted = device.admit(device.stamp(owner, sequence=1))
+            assert permission.accepted == admitted.accepted, (
+                f"may_command and admit disagree for owner={owner!r} "
+                f"claimed={claimed!r}"
+            )
+            if not permission.accepted:
+                assert permission.reason is admitted.reason
+
+
+def test_may_command_refuses_a_device_that_is_not_ready():
+    authority, _ = _armed(owner="mit")
+    assert authority.may_command("mit").accepted
+
+    authority.enter_recovering("bus down")
+    verdict = authority.may_command("mit")
+    assert not verdict.accepted
+    assert verdict.reason is Reject.NOT_READY
+
+
+def test_may_command_refuses_a_different_commander():
+    authority, _ = _armed(owner="coordinator")
+    verdict = authority.may_command("teach_gui")
+    assert not verdict.accepted
+    assert verdict.reason is Reject.NOT_OWNER
+
+
+# --- unit safety needs exactly one writer ------------------------------------
+
+def test_an_observer_may_not_allocate_a_generation():
+    """A second allocator is how one epoch ends up meaning two things."""
+    observer = UnitSafety("arm_left", writer=False)
+    assert observer.is_writer is False
+
+    for attempt in (lambda: observer.stop("local estop"),
+                    lambda: observer.rearm("local clear")):
+        try:
+            attempt()
+        except RuntimeError as exc:
+            assert "not the unit-safety writer" in str(exc)
+        else:
+            raise AssertionError("an observer minted its own generation")
+
+
+def test_an_observer_still_adopts_what_the_writer_publishes():
+    writer = UnitSafety("supervisor")
+    observer = UnitSafety("arm_left", writer=False)
+
+    assert observer.observe(writer.stop("emergency stop"))
+    assert observer.stopped
+    assert observer.observe(writer.rearm("released"))
+    assert not observer.stopped
+
+
+def test_two_writers_minting_the_same_generation_is_counted_not_merged():
+    """The concrete symptom of more than one writer, made visible."""
+    left = UnitSafety("arm_left")
+    right = UnitSafety("arm_right")
+
+    left.stop("left estop")          # left is at epoch 1, stopped
+    right.rearm("right says fine")   # right is at epoch 1, NOT stopped
+
+    assert not left.observe(right.snapshot())
+    assert left.conflicts == 1
+    # The safer reading survives: a contradiction never clears a live stop.
+    assert left.stopped
+
+
+def test_a_contradicting_stop_wins_over_a_local_rearm():
+    left = UnitSafety("arm_left")
+    right = UnitSafety("arm_right")
+
+    left.rearm("left says fine")
+    right.stop("right estop")
+
+    assert left.observe(right.snapshot())
+    assert left.conflicts == 1
+    assert left.stopped
+
+
+def test_a_duplicate_from_the_same_writer_is_not_a_conflict():
+    """Republished latched state must not look like a second allocator."""
+    writer = UnitSafety("supervisor")
+    observer = UnitSafety("arm_left", writer=False)
+    observer.observe(writer.stop("emergency stop"))
+
+    assert not observer.observe(writer.snapshot())
+    assert observer.conflicts == 0
+    assert observer.stopped

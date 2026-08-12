@@ -21,7 +21,7 @@ from agx_arm_mit_controller.mit_controller_node import (
 def _authority(
     *,
     state=AgxDeviceAuthority.STATE_READY,
-    accepts_motion=True,
+    motion_ready=True,
     device_epoch=1,
     unit_safety_epoch=0,
     reason="test",
@@ -29,7 +29,7 @@ def _authority(
     msg = AgxDeviceAuthority()
     msg.device_id = "arm_right"
     msg.state = state
-    msg.accepts_motion = accepts_motion
+    msg.motion_ready = motion_ready
     msg.device_epoch = device_epoch
     msg.unit_safety_epoch = unit_safety_epoch
     msg.reason = reason
@@ -69,7 +69,7 @@ def test_losing_motion_stands_the_controller_down():
         node._authority_callback(
             _authority(
                 state=AgxDeviceAuthority.STATE_STOPPED,
-                accepts_motion=False,
+                motion_ready=False,
                 device_epoch=2,
                 unit_safety_epoch=1,
                 reason="unit stop: emergency stop requested",
@@ -153,7 +153,7 @@ def test_regaining_authority_recaptures_rather_than_resuming_a_stale_target():
         node._authority_callback(
             _authority(
                 state=AgxDeviceAuthority.STATE_STANDBY,
-                accepts_motion=False,
+                motion_ready=False,
                 device_epoch=2,
             )
         )
@@ -178,7 +178,7 @@ def test_every_non_ready_state_blocks_motion():
             AgxDeviceAuthority.STATE_STOPPED,
         ):
             node._authority_callback(
-                _authority(state=state, accepts_motion=False, device_epoch=state + 10)
+                _authority(state=state, motion_ready=False, device_epoch=state + 10)
             )
             assert node._authority_blocks_motion() is True
     finally:
@@ -201,7 +201,7 @@ def test_losing_authority_latches_an_abort_for_the_active_goal():
         node._authority_callback(
             _authority(
                 state=AgxDeviceAuthority.STATE_STOPPED,
-                accepts_motion=False,
+                motion_ready=False,
                 device_epoch=2,
                 unit_safety_epoch=1,
                 reason="unit stop: emergency stop requested",
@@ -224,7 +224,7 @@ def test_no_abort_is_latched_when_no_goal_is_running():
         node._authority_callback(_authority())
         node.active_goal_handle = None
 
-        node._authority_callback(_authority(accepts_motion=False, device_epoch=2))
+        node._authority_callback(_authority(motion_ready=False, device_epoch=2))
 
         assert node._take_authority_abort() is None
     finally:

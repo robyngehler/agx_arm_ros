@@ -67,9 +67,9 @@ def test_an_unrecognised_interface_still_produces_a_usable_id():
 
 # --- gates map to one state --------------------------------------------------
 
-def test_all_gates_open_means_the_device_accepts_motion():
+def test_all_gates_open_means_the_device_motion_ready():
     node = _ready_node()
-    assert node._authority.snapshot().accepts_motion
+    assert node._authority.snapshot().motion_ready
 
 
 def test_an_arm_that_is_not_enabled_does_not_accept_motion():
@@ -79,7 +79,7 @@ def test_an_arm_that_is_not_enabled_does_not_accept_motion():
 
     snapshot = node._authority.snapshot()
     assert snapshot.state is DeviceState.STANDBY
-    assert not snapshot.accepts_motion
+    assert not snapshot.motion_ready
     assert "not enabled" in snapshot.reason
 
 
@@ -115,7 +115,7 @@ def test_a_fault_lockout_faults_the_device_immediately():
     node = _ready_node()
     node._enter_fault_lockout("bus recovery")
     assert node._authority.state is DeviceState.FAULTED
-    assert not node._authority.snapshot().accepts_motion
+    assert not node._authority.snapshot().motion_ready
 
 
 def test_clearing_the_lockout_acknowledges_but_does_not_arm_in_one_step():
@@ -193,7 +193,7 @@ def test_a_unit_stop_is_published_without_waiting_for_a_sync():
     assert seen, "an emergency stop must reach subscribers without a poll"
     assert seen[-1].state is DeviceState.STOPPED
     assert seen[-1].unit_stopped
-    assert not seen[-1].accepts_motion
+    assert not seen[-1].motion_ready
 
 
 def test_clearing_the_fault_lockout_releases_the_unit_stop_but_arms_nothing():
@@ -207,7 +207,7 @@ def test_clearing_the_fault_lockout_releases_the_unit_stop_but_arms_nothing():
 
     assert not node._unit_safety.stopped
     assert node._authority.state is DeviceState.STANDBY
-    assert not node._authority.snapshot().accepts_motion
+    assert not node._authority.snapshot().motion_ready
 
 
 def test_attaching_a_listener_hands_it_the_current_state():
