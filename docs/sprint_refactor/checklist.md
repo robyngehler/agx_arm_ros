@@ -112,32 +112,63 @@ injection.
 
 ### 1A Device authority, epoch, serialized SDK
 
+The rules and the mechanism are separated deliberately: the model is built and
+proven at L1 first, then routed through the runtime. A checked box in the first
+group means the behaviour is decided and tested, not that the driver uses it
+yet.
+
+Rules and mechanism (L1, `agx_arm_ctrl/device_authority.py`, `sdk_worker.py`):
+
+- [x] Per-device `device_epoch` plus a unit-wide `unit_safety_epoch`, with an
+      L1 test that an arm recovery does not invalidate the same-side hand and
+      that a unit stop does.
+- [x] Admission at the boundary: state, owner, both epochs, and a per-epoch
+      sequence watermark, each with a structured reject reason.
+- [x] Single-commander ownership: claim, release, and safety revoke, each
+      bumping the device epoch.
+- [x] Separate fault acknowledge from verified rearm — acknowledging clears the
+      latch and arms nothing, and `rearm` refuses without positive evidence.
+- [x] Serialized SDK worker: one named thread per device, safety lane ahead of
+      queued motion, stale-epoch work dropped instead of delivered late,
+      superseded setpoints replaced, and a call that never ran distinguishable
+      from one that failed.
+
+Routed through the runtime:
+
 - [ ] Four device authorities (`Left/RightArmAuthority`,
       `Left/RightHandTransportAuthority`), each publishing its own state.
-- [ ] Per-device `device_epoch` plus a global `unit_safety_epoch`, so an arm
-      recovery does not invalidate the same-side hand.
-- [ ] Route all arm SDK calls for one device through one serialized worker, with
-      a priority lane for emergency stop.
-- [ ] Reject stale epoch and out-of-order sequence at the hardware boundary.
+- [ ] Route all arm SDK calls for one device through the worker.
+- [ ] Reject stale epoch and out-of-order sequence on the live command path.
 - [ ] Extend `MoveMITMsg` with the epochs and a sequence; add `srv/` to
       `src/agx_arm_msgs`.
 - [ ] Make the MIT controller consume the authoritative device state instead of
       `feedback/hand_window_active`, and abort on authority loss.
-- [ ] Separate fault acknowledge from verified rearm, and make recovery report
-      what it verified — 0E showed "recovery succeeded" for a bus that returned
-      on its own.
+- [x] Make CAN recovery report what it verified — 0E showed "recovery
+      succeeded" for a bus that returned on its own. The re-arm result was
+      being discarded; the log line now names feedback and the enable readback
+      separately, and a restored bus with an unconfirmed enable is an error.
 - [ ] Add full hardware-boundary command validation (duplicate or missing joint
       indexes, empty commands, non-finite values, out-of-range values).
 - [ ] Replace the unassigned `AgxArmStatus.err_status` with a documented
       structured error representation.
-- [ ] Fix enable readback and firmware-version parsing (no `NeroFW.V112` branch;
-      versions compared as strings); make forced e-stop recovery independent of
-      the optional normal-recovery setting.
+- [x] Fix the enable readback: a contradicted enable used to warn and return
+      success, leaving `enable_flag` stale. The readback now decides both the
+      flag and the return value, with a short settle window for a lagging frame.
+- [x] Fix the firmware-version parsing: there was no `NeroFW.V112` branch at
+      all, so a 1.12 arm ran on the 1.11 protocol, and versions were compared
+      as strings. `resolve_nero_firmware` parses numerically and logs the tier,
+      which nothing recorded before.
+- [ ] Make forced e-stop recovery independent of the optional normal-recovery
+      setting.
 - [ ] Disable or quarantine direct legacy arm motion ingress for coordinated
       hardware profiles.
 - [ ] Stress-validate MIT streaming plus e-stop, recovery, and enable/disable
       churn.
 - [ ] Confirm one SDK thread per arm with the counter under a **full** stack.
+
+Not yet exercised on hardware: the enable-readback and firmware-tier changes are
+L1 only. Which protocol tier the arms actually run on is still unrecorded — the
+next hardware session logs it at startup.
 
 ### 1B Feedback snapshot and driver CPU reduction
 

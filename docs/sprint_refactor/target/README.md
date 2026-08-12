@@ -63,8 +63,11 @@ afterwards rather than competing for the same hardware and the same files.
   policy.
 - **Phase 0 is complete** for the authorised scenarios: guidance hygiene, the
   L2 harness, honest velocity and stop semantics, in-node instrumentation, and a
-  nine-scenario hardware baseline (`reference/phase0_baseline.md`). Phase 1 is
-  next.
+  nine-scenario hardware baseline (`reference/phase0_baseline.md`).
+- **Phase 1A is under way.** The authority, epoch, and serialized-worker rules
+  are built and proven at L1 (`agx_arm_ctrl/device_authority.py`,
+  `agx_arm_ctrl/sdk_worker.py`); routing the arm driver through them is next.
+  Three defects found on the way are fixed and logged in `errors_and_fixes.md`.
 - `tea_pour_left_v1` is the end-to-end regression benchmark for every phase.
 
 ## Deliverables
