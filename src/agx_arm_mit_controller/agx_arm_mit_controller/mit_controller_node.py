@@ -19,7 +19,7 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from agx_arm_msgs.msg import AgxArmStatus, MoveMITMsg
+from agx_arm_msgs.msg import AgxArmStatus, AgxDeviceAuthority, MoveMITMsg
 
 from .feedforward_model import CalibrationModel, load_calibration_model
 from .gravity_model import GravityModel, GravityModelError, create_gravity_model
@@ -54,6 +54,7 @@ class ExecutionState(str, Enum):
     STALE_FEEDBACK = "STALE_FEEDBACK"
     FAULTED = "FAULTED"
     HAND_WINDOW = "HAND_WINDOW"
+    NOT_AUTHORISED = "NOT_AUTHORISED"
 
 
 class NeroMitControllerNode(Node):
@@ -171,6 +172,10 @@ class NeroMitControllerNode(Node):
         # on feedback/hand_window_active, because the CAN feedback this
         # controller reads is exactly what goes quiet.
         self.hand_window_active = False
+        # The device's authoritative state, or None until one arrives. None is
+        # not "not authorised": a driver that publishes no authority leaves the
+        # legacy gates in charge rather than freezing the arm.
+        self.device_authority: Optional[AgxDeviceAuthority] = None
         self.execution_state = ExecutionState.DISABLED
         self.holding_final_point = False
         self.active_goal_handle = None
@@ -214,6 +219,15 @@ class NeroMitControllerNode(Node):
             self._hand_window_callback,
             # Latched by the driver (transient_local): a late-joining controller
             # still learns an already-open window.
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
+            AgxDeviceAuthority,
+            "feedback/authority",
+            self._authority_callback,
+            # Latched by the driver: a late-joining controller learns the
+            # current state instead of waiting for the next transition.
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
             callback_group=self.callback_group,
         )
@@ -458,6 +472,61 @@ class NeroMitControllerNode(Node):
             if was_fault_active and not self.arm_fault_active and self.enabled and self._has_fresh_feedback():
                 self.hold_reference = self._capture_current_reference()
                 self.holding_final_point = False
+
+    def _authority_callback(self, msg: AgxDeviceAuthority) -> None:
+        """Track the device's authoritative state and abort on losing it.
+
+        Replaces reasoning from `feedback/hand_window_active`, which said only
+        that the shared bus was busy: it could not distinguish a deliberate
+        quiescence from a fault, an emergency stop, or the device changing
+        hands. Any of those must stop this controller streaming, and only one
+        of them was previously visible.
+
+        An **epoch change aborts too**, even when the device still accepts
+        motion. A new epoch means whatever was in flight was issued against a
+        device state that no longer exists — a recovery, a rearm, or another
+        commander taking over.
+        """
+        with self.state_lock:
+            previous = self.device_authority
+            self.device_authority = msg
+            if previous is None:
+                self.get_logger().info(
+                    f"Device authority for '{msg.device_id}' is now the gate "
+                    f"(state={msg.state}, accepts_motion={msg.accepts_motion})"
+                )
+                return
+
+            lost_motion = previous.accepts_motion and not msg.accepts_motion
+            new_epoch = (
+                previous.device_epoch != msg.device_epoch
+                or previous.unit_safety_epoch != msg.unit_safety_epoch
+            )
+            if not (lost_motion or new_epoch):
+                return
+
+            # Drop everything in flight. A trajectory's start clock keeps
+            # running while we are stood down, so resuming against it would
+            # sample a far-ahead point and snap the arm; the hold reference is
+            # dropped so a resume recaptures where the arm actually is.
+            had_trajectory = self.active_trajectory is not None
+            self.active_trajectory = None
+            self.hold_reference = None
+            self.holding_final_point = False
+            self.get_logger().warn(
+                f"Device authority changed (state={msg.state}, "
+                f"device_epoch={msg.device_epoch}, "
+                f"unit_safety_epoch={msg.unit_safety_epoch}, "
+                f"accepts_motion={msg.accepts_motion}): {msg.reason}"
+                + ("; aborted the active trajectory" if had_trajectory else "")
+            )
+
+    def _authority_blocks_motion(self) -> bool:
+        """True when the published authority says not to command this device."""
+        return (
+            self.device_authority is not None
+            and not self.device_authority.accepts_motion
+        )
 
     def _hand_window_callback(self, msg: Bool) -> None:
         with self.state_lock:
@@ -1014,6 +1083,23 @@ class NeroMitControllerNode(Node):
         with self.state_lock:
             if not self.enabled:
                 self._set_execution_state(ExecutionState.DISABLED)
+                return
+
+            if self._authority_blocks_motion():
+                # One gate for every reason the device will not take motion —
+                # hand window, fault, emergency stop, recovery, not enabled.
+                # Publishing here is pointless (the driver refuses it at the
+                # boundary) and harmful (a dead-man on an expected silence
+                # floods that gate). Legacy gates below still apply while no
+                # authority has ever been published.
+                #
+                # This sits ahead of the stale-feedback dead-man on purpose,
+                # which is only safe because the driver stops the arm itself on
+                # the one path that both refuses our commands and can leave the
+                # arm moving: bus recovery sends a damped MIT zero before it
+                # tears the link down. Feedback merely going stale does not
+                # revoke authority, so the dead-man below still covers that.
+                self._set_execution_state(ExecutionState.NOT_AUTHORISED)
                 return
 
             if self.hand_window_active:

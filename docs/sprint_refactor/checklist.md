@@ -153,8 +153,17 @@ Routed through the runtime:
       current e-stop path but is not the same guarantee.
 - [ ] Extend `MoveMITMsg` with the epochs and a sequence; add `srv/` to
       `src/agx_arm_msgs`.
-- [ ] Make the MIT controller consume the authoritative device state instead of
-      `feedback/hand_window_active`, and abort on authority loss.
+- [x] Make the MIT controller consume the authoritative device state instead of
+      `feedback/hand_window_active`, and abort on authority loss. It aborts on
+      losing motion *and* on any epoch change, because a new epoch means the
+      in-flight work was issued against a device state that no longer exists.
+      The legacy gates still decide while no authority has ever been published,
+      so a driver without one does not freeze the arm. Validated on hardware:
+      100.2/s while holding, 0 in 8 s after an emergency stop, back to 93.8/s
+      after the stop was cleared, with no operator step in between.
+- [ ] Retire `feedback/hand_window_active` as a controller input once the hand
+      transport authorities publish. The subscription is still in place as the
+      fallback path.
 - [x] Make CAN recovery report what it verified — 0E showed "recovery
       succeeded" for a bus that returned on its own. The re-arm result was
       being discarded; the log line now names feedback and the enable readback

@@ -22,7 +22,8 @@ and is why the tier now appears in the startup log. The tiers are different
 protocols, not different revisions of one: the 1.11 driver encodes MIT frames
 with a 12-bit feed-forward torque field and no CRC, and overrides
 `set_motion_mode`, `move_mit`, `get_flange_pose` and `get_motor_states`.
-Whether the split is intentional is an open question in `open_questions.md`.
+The arms were bought as different versions and cannot be flashed, so this is
+permanent — binding constraint C8 in `planning/integration_plan.md`.
 
 ## Enable readback
 
@@ -100,3 +101,41 @@ Against the 0E baseline (1.10 ms mean batch, per-joint reads ~10 % of it) this
 is unchanged within run-to-run variation. The Phase 1A additions — validation
 per command, one authority sync per publish cycle — did not move the hot path.
 The serialized SDK worker is not in this path yet.
+
+## MIT consuming the authority (added 2026-08-12, same session)
+
+Right arm, driver plus MIT controller from the deployed launch, arm held at its
+own pose throughout.
+
+| step | messages on `control/move_mit` |
+| --- | --- |
+| MIT enabled, holding | 601 in 6 s (100.2/s) |
+| after `emergency_stop` | **0 in 8 s** |
+| after `clear_fault_lockout` | 563 in 6 s (93.8/s) |
+
+The controller stands down completely on losing authority and resumes on its
+own when authority returns — no operator step in between. The dip in the resume
+rate is the gain ramp and the hold recapture.
+
+The controller's own log carried the whole chain:
+
+```
+Device authority for 'arm_right' is now the gate (state=0, accepts_motion=False)
+Device authority changed (state=2, device_epoch=1, unit_safety_epoch=0, accepts_motion=True): rearmed: publish loop
+Device authority changed (state=5, device_epoch=2, unit_safety_epoch=1, accepts_motion=False): unit stop: emergency stop requested
+Device authority changed (state=2, device_epoch=3, unit_safety_epoch=2, accepts_motion=True): rearmed: fault lockout cleared
+```
+
+### How this was measured, and how it was nearly mismeasured
+
+`ros2 topic hz` is not a trustworthy witness for "did this node stop
+publishing?". Its output is block-buffered when redirected, so the last seconds
+are lost when the process is killed, and a shell marker appended to the same
+file has no defined position relative to those buffered flushes. During this
+session that produced two confident-looking zeros that were artifacts — one of
+them briefly supported a wrong conclusion, that `hold_current` stops the
+stream, which the deterministic count then disproved at 100.2/s.
+
+Every number in the table above comes from `scripts/count_topic_messages.py`,
+which subscribes, counts over a fixed window, and prints once at the end. Use it
+for any "is it still publishing?" question; do not use `ros2 topic hz`.
