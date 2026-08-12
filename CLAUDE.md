@@ -83,6 +83,8 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared
   `control/joint_states` is the current hand command flow and is legacy (V02 target: one abstract hand
   command with owner identity, control epoch, and sequence)
+- the two arms run different, unflashable firmware (right 1.06 default tier, left 1.11 `NeroFW.V111`);
+  anything derived from the protocol is per tier, not per robot model, and a measurement names its arm
 - each device owns its own CAN bus (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD
   adapters); same-side arm and hand motion may run in parallel and the shared-bus hand window is a
   selectable degraded mode

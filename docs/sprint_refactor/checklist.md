@@ -3,8 +3,8 @@
 Phases follow `planning/integration_plan.md`, which is the canonical plan.
 Binding constraints C1 (one CAN bus per device), C2 (MIT rate is a requirement),
 C3 (pinned submodule vs development checkout), C4 (test ladder), C5 (message
-policy), C6 (instrumentation form), and C7 (bus topology is one declared fact)
-are defined there.
+policy), C6 (instrumentation form), C7 (bus topology is one declared fact), and
+C8 (the two arms speak different protocol tiers, permanently) are defined there.
 
 Priority: safety, CPU relief, and parallel operation come before demo work.
 `docs/sprint6/` adapts afterwards.

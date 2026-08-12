@@ -123,6 +123,39 @@ Consequence for the phases: 2A introduces the declaration, 2B derives the
 handoff from it, and 2C derives the resource model from it. Nothing reads
 `handoff_enabled` directly after that.
 
+### C8. The two arms speak different protocol tiers, permanently
+
+The arms were bought as different versions and cannot be flashed. The right arm
+runs firmware 1.06 (default Nero protocol tier), the left runs 1.11
+(`NeroFW.V111`). This is a standing property of the unit.
+
+The tiers are not two revisions of one protocol. The 1.11 driver encodes MIT
+frames with a 12-bit feed-forward torque field and no CRC, and overrides
+`set_motion_mode`, `move_mit`, `get_flange_pose` and `get_motor_states`; it also
+carries its own status enum. The vendor SDK dispatches per tier, so the split is
+handled *if and only if* the tier is resolved per arm and nothing above the SDK
+assumes symmetry.
+
+What follows from it:
+
+- **Anything derived from the protocol is per tier, not per robot model.** The
+  first casualty was the MIT feed-forward torque bound: 24/16/8 N·m per joint on
+  the default tier, a flat 16 N·m on 1.11. One table for both arms refuses
+  legitimate commands on one arm and admits impossible ones on the other.
+- **A config that is valid on one arm may not be on the other.** The MIT
+  controller's `torque_limit` is shared configuration; above 16 N·m it is
+  accepted by the right arm and refused by the left, which under a dual-arm
+  activity leaves one arm executing and one frozen at its last setpoint. The
+  driver refuses loudly and names the bound, which is the current handling.
+- **Every measurement names the arm it came from.** A number taken on one arm
+  is not a number about "the Nero".
+- Audited 2026-08-12 and *not* affected: the status and mode comparisons all go
+  through `self.agx_arm.ARM_STATUS`, which is tier-dispatched; and the flange
+  pose, where the default tier applies a posture correction that 1.11 does not
+  need, reaches only `feedback/tcp_pose`, which nothing in the workspace
+  consumes. If a consumer for that topic ever appears, the correction has to be
+  re-checked against both tiers first.
+
 ### C2. MIT control rate is a requirement
 
 100 Hz today (`mit_controller_node.py` `control_rate_hz`, raised from 50 Hz in

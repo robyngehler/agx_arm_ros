@@ -59,6 +59,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - Default to no hardware access until the user explicitly grants it for the current session.
 - Before any hardware-touching action, ask whether hardware access is allowed. This includes `sudo` CAN bringup scripts, real arm or OmniHand launches, direct ROS hardware tests, and vendor SDK probes against live devices.
 - If hardware access is granted, `sudo` is allowed for repo workflows because the password is intentionally disabled in the intended hardware environment.
+- The two arms run different, unflashable firmware: right is 1.06 (default Nero protocol tier), left is 1.11 (`NeroFW.V111`). Mixed protocol tiers are the permanent baseline. Anything derived from the protocol — value ranges, frame encoding, status enums — is per tier, not per robot model, and every measurement names the arm it came from.
 - Distinguish Jetson or other `aarch64` ROS plus hardware sessions from x86 or editor-only sessions. Do not present x86 checks as a substitute for CAN timing or live-device validation.
 
 ## Environment And Build Rules

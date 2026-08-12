@@ -1,6 +1,6 @@
 # Sprint Refactor Target
 status: ACTIVE_REFACTOR_ENTRYPOINT
-last_updated: 2026-08-11
+last_updated: 2026-08-12
 branch: ROS2_Duo_System_V02
 
 Sprint Refactor is the V02 migration surface for the coordination, safety, and
@@ -46,6 +46,9 @@ Defined in `planning/integration_plan.md`:
   public ROS metrics contract in Phase 0
 - **C7** bus topology is one declared fact (`bus_topology`); the scheduler's
   claims and the handoff both derive from it rather than being set separately
+- **C8** the two arms run different firmware (right 1.06, left 1.11) and cannot
+  be flashed; mixed protocol tiers are the baseline, so anything derived from
+  the protocol is per tier and any assumption of symmetry is a defect
 
 ## Priority
 
@@ -64,10 +67,14 @@ afterwards rather than competing for the same hardware and the same files.
 - **Phase 0 is complete** for the authorised scenarios: guidance hygiene, the
   L2 harness, honest velocity and stop semantics, in-node instrumentation, and a
   nine-scenario hardware baseline (`reference/phase0_baseline.md`).
-- **Phase 1A is under way.** The authority, epoch, and serialized-worker rules
-  are built and proven at L1 (`agx_arm_ctrl/device_authority.py`,
-  `agx_arm_ctrl/sdk_worker.py`); routing the arm driver through them is next.
-  Three defects found on the way are fixed and logged in `errors_and_fixes.md`.
+- **Phase 1A is under way and validated on hardware** for what has landed:
+  boundary validation, per-tier MIT bounds, the published device authority, and
+  the stop and enable paths (`reference/phase1a_hardware_validation.md`). Still
+  open in 1A: MIT consuming the authority, the command stamp, and routing SDK
+  calls through the serialized worker.
+- The hardware session also established C8 — the two arms are on different,
+  unflashable firmware — and found six defects, all logged in
+  `errors_and_fixes.md`.
 - `tea_pour_left_v1` is the end-to-end regression benchmark for every phase.
 
 ## Deliverables
