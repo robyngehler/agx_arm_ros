@@ -305,3 +305,58 @@ driver was run with `auto_enable:=false`, so the joints were never energised.
   can enumerate in either order.
 - Planned fix surface: four-interface bring-up with deterministic adapter naming
   (integration plan 0A, 2A).
+## 2026-08-12 (Phase 1A, found while building the authority and worker)
+
+Both entries are the same shape as the e-stop and the CAN-recovery defects
+already recorded in this sprint: an action that could not verify its own effect
+reported the effect anyway. Fixed at L1; neither has run on hardware yet.
+
+### An enable the readback contradicted was reported as success
+
+- Symptom: `_enable_arm` checked `get_joint_enable_status(255)` against the
+  request, logged a warning when they disagreed, and then returned `True`
+  regardless. `self.enable_flag` was only assigned when the readback agreed, so
+  a disagreement left it holding its previous value.
+- Impact: a failed *disable* was the dangerous direction — `enable_flag` stayed
+  `True`, and everything gated on it (`_check_can_control`, the e-stop path, the
+  hand window, leader mode) went on believing the arm was commandable. A failed
+  *enable* was the quiet direction: the service reported success while control
+  stayed blocked.
+- Fix: the readback decides both the flag and the return value. The readback is
+  served from the last low-speed feedback frame, which can predate the command,
+  so it is re-read until it agrees or the enable timeout expires — a lag is not
+  a contradiction.
+- Fixed in: `agx_arm_ctrl_single_node._enable_arm`, with L1 tests in
+  `test/test_arm_enable_and_firmware.py`. The one caller that discarded the
+  result, the CAN recovery re-arm, now reports it (see below).
+
+### CAN recovery reported success without saying what it verified
+
+- Symptom: `_recover_bus` called `_enable_arm` and discarded the result, then
+  logged `CAN bus recovery succeeded on attempt N` on the strength of feedback
+  advancing alone.
+- Impact: the 0E fault test produced exactly that line for a bus that had come
+  back on its own. Feedback advancing says the link is alive; it says nothing
+  about whether the arm is armed.
+- Fix: the re-arm outcome is carried to the verdict and named in the log —
+  feedback and the enable readback are reported separately, `not requested` is
+  distinguished from `NOT confirmed`, and a restored bus with an unconfirmed
+  enable logs as an error. The fault lockout after recovery is unchanged.
+- Not fixed by this: a reconnect still cannot prove it was the reconnect that
+  restored the bus rather than the bus recovering by itself. The log now claims
+  only what was checked.
+
+### An arm on firmware 1.12 was driven with the 1.11 protocol
+
+- Symptom: startup mapped the Nero firmware string to a driver tier with
+  `if current_version >= "1.11": firmeware_version = NeroFW.V111`. There was no
+  `NeroFW.V112` branch, although the pinned SDK ships `NeroDriverV112` and
+  documents `V112 >= 1.12`.
+- Impact: a 1.12 arm silently ran the 1.11 protocol; both tiers connect, so
+  nothing surfaced. The comparison was also done on strings, which only ordered
+  correctly because the firmware happens to report a zero-padded minor
+  (`1.07`, `1.11`, `1.12`) — an unpadded `1.9` compares as newer than `1.11`.
+- Fix: `resolve_nero_firmware()` parses `major.minor` numerically, has a V112
+  branch, and returns an explanation that startup logs.
+- Open: which tier the two arms actually run on is still unrecorded anywhere in
+  this repository. The next hardware session captures it from the startup log.

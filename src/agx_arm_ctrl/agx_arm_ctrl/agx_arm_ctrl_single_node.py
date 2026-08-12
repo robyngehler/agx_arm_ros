@@ -54,6 +54,38 @@ if TYPE_CHECKING:
     from pyAgxArm.api.agx_arm_factory import PiperCanDefaultConfig
 
 
+def resolve_nero_firmware(software_version) -> tuple:
+    """Map a reported Nero firmware version to the driver tier that speaks it.
+
+    Returns ``(tier, explanation)``; the explanation is meant for the startup
+    log, because nothing in the repository currently records which protocol
+    tier the arms actually run on.
+
+    Two defects are fixed here (Phase 1A):
+
+    * **there was no ``NeroFW.V112`` branch at all**, so an arm on firmware 1.12
+      was driven with the 1.11 protocol — silently, since both tiers connect;
+    * the version was compared as a **string**. The firmware happens to report a
+      zero-padded minor ("1.07", "1.11", "1.12"), which made that ordering work
+      by accident inside one major version and nowhere else.
+    """
+    text = str(software_version).strip()
+    try:
+        major_text, _, minor_text = text.partition(".")
+        version = (int(major_text), int(minor_text or 0))
+    except ValueError:
+        return NeroFW.DEFAULT, (
+            f"firmware version '{text}' is not parseable as major.minor; "
+            "falling back to the default Nero protocol"
+        )
+
+    if version >= (1, 12):
+        return NeroFW.V112, f"firmware {text} -> NeroFW.V112"
+    if version >= (1, 11):
+        return NeroFW.V111, f"firmware {text} -> NeroFW.V111"
+    return NeroFW.DEFAULT, f"firmware {text} -> NeroFW.DEFAULT"
+
+
 class StopVerification(NamedTuple):
     """Outcome of checking whether the arm actually came to rest.
 
@@ -409,9 +441,11 @@ class AgxArmRosNode(Node):
                     elif current_version >= "S-V1.8-8":
                         firmeware_version = PiperFW.V188
                 elif self.is_nero:
-                    if current_version >= "1.11":
-                        firmeware_version = NeroFW.V111
-                
+                    firmeware_version, explanation = resolve_nero_firmware(
+                        current_version
+                    )
+                    self.get_logger().info(f"Nero protocol tier: {explanation}")
+
                 if firmeware_version != PiperFW.DEFAULT:
                     self.agx_arm.disconnect()
                     config = create_agx_arm_config(
@@ -753,29 +787,48 @@ class AgxArmRosNode(Node):
             time.sleep(poll_interval)
 
     def _enable_arm(self, enable: bool = True, timeout: float = 5.0) -> bool:
+        """Command enable/disable and report only what the readback confirmed.
+
+        The command returning is not evidence that the joints changed state; the
+        per-joint readback is. This used to warn about a contradicting readback
+        and then ``return True`` anyway, leaving ``self.enable_flag`` at its
+        previous value — so a failed *disable* left the rest of the node
+        believing the arm was still commandable. ``enable_flag`` now always
+        carries what the readback said, and the return value says whether that
+        matched the request.
+        """
         start_time = time.time()
+        deadline = start_time + timeout
         action_name = "enable" if enable else "disable"
-        
+
         while not (self.agx_arm.enable() if enable else self.agx_arm.disable()):
-            if time.time() - start_time > timeout:
+            if time.time() > deadline:
                 self.get_logger().error(
                     f"Timeout waiting for arm to {action_name} after {timeout} seconds"
                 )
                 return False
             time.sleep(0.01)
-        
-        joints_status = self.agx_arm.get_joint_enable_status(255)
-        all_joints_in_target_status = joints_status if enable else not joints_status
 
-        if all_joints_in_target_status:
-            self.enable_flag = True if enable else False
+        # The readback is served from the last low-speed feedback frame, which
+        # may still predate the command, so give it the remaining budget to
+        # agree before calling it a contradiction.
+        while True:
+            joints_enabled = bool(self.agx_arm.get_joint_enable_status(255))
+            if joints_enabled == enable or time.time() >= deadline:
+                break
+            time.sleep(0.02)
+
+        self.enable_flag = joints_enabled
+        if joints_enabled == enable:
             self.get_logger().info(f"All joints {action_name} status is {self.enable_flag}")
-        else:
-            self.get_logger().warn(
-                f"Not all joints are {action_name}d after {action_name}ing the arm"
-            )
-        
-        return True
+            return True
+
+        self.get_logger().error(
+            f"{action_name} was accepted by the arm but the joint readback still "
+            f"reports enabled={joints_enabled} after {timeout:.1f}s. Treating the "
+            f"arm as NOT {action_name}d."
+        )
+        return False
 
     ### publisher thread
     def _publish_thread(self):
@@ -1125,12 +1178,18 @@ class AgxArmRosNode(Node):
                     time.sleep(0.2)
                     continue
 
+                # None means "not requested"; True/False is what the enable
+                # readback confirmed. Recovery reports this instead of implying
+                # the arm is armed because the link came back.
+                rearmed = None
                 try:
                     if self.auto_enable:
-                        self._enable_arm(True, self.enable_timeout)
+                        rearmed = self._enable_arm(True, self.enable_timeout)
                     self.agx_arm.set_speed_percent(self.speed_percent)
                     self.agx_arm.set_tcp_offset(self.tcp_offset)
                 except Exception as e:
+                    if self.auto_enable and rearmed is None:
+                        rearmed = False
                     self.get_logger().warn(f"re-arm during recovery failed: {e}")
 
                 self._tx_stall_detected = False
@@ -1143,10 +1202,28 @@ class AgxArmRosNode(Node):
                 self._leader_mode_active = False
 
                 if self._wait_for_feedback(self.enable_timeout):
-                    self.get_logger().info(
-                        f"CAN bus recovery succeeded on attempt {attempt}"
-                    )
+                    # Say what was verified, not what happened to be true
+                    # afterwards. The 0E fault test logged "recovery succeeded"
+                    # for a bus that had come back on its own, and the re-arm
+                    # result was discarded on the way there.
+                    if rearmed is None:
+                        enable_note = "joints enabled: not requested (auto_enable off)"
+                    elif rearmed:
+                        enable_note = "joints enabled: confirmed by readback"
+                    else:
+                        enable_note = "joints enabled: NOT confirmed"
                     recovered = True
+                    if rearmed is False:
+                        self.get_logger().error(
+                            f"CAN bus feedback restored on attempt {attempt}, but "
+                            f"the arm is not confirmed enabled ({enable_note}). "
+                            "The fault lockout stays until this is resolved."
+                        )
+                    else:
+                        self.get_logger().info(
+                            f"CAN bus recovery verified on attempt {attempt}: "
+                            f"feedback advancing, {enable_note}"
+                        )
                     break
                 self.get_logger().warn(
                     f"CAN bus recovery attempt {attempt} did not restore feedback"
