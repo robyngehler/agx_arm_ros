@@ -21,6 +21,7 @@ makes it safe to leave in place across the migration.
 
 from __future__ import annotations
 
+import inspect
 import threading
 import time
 from collections import defaultdict
@@ -152,3 +153,48 @@ class _Timer:
                 self._name, time.perf_counter() - self._start
             )
         return False
+
+
+class MeasuredSdk:
+    """Times every vendor-SDK call by name, without touching the call sites.
+
+    Phase 1A needs a latency budget before all SDK access moves onto one
+    serialized worker thread. The worker's safety lane overtakes *queued* work,
+    but nothing preempts a call already executing on that thread, so an
+    emergency stop can only be as prompt as the longest call it might queue
+    behind. That number has to be measured per call, not assumed.
+
+    Wrapping the SDK object rather than instrumenting each call site is what
+    makes the coverage complete: a call nobody thought to measure is still
+    measured, which is exactly the one that would set the worst case.
+
+    Attribute access falls through unchanged for everything that is not a
+    routine — the driver reads `ARM_STATUS`, `OPTIONS` and `joint_nums` off the
+    SDK object, and those are classes and values, not calls to time.
+    """
+
+    __slots__ = ("_inner", "_metrics")
+
+    def __init__(self, inner, metrics: RuntimeMetrics) -> None:
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_metrics", metrics)
+
+    def __getattr__(self, name):
+        attribute = getattr(self._inner, name)
+        if not inspect.isroutine(attribute):
+            return attribute
+
+        def measured(*args, **kwargs):
+            self._metrics.record_sdk_call(name)
+            with self._metrics.time_block(f"sdk.{name}"):
+                return attribute(*args, **kwargs)
+
+        return measured
+
+    def __setattr__(self, name, value):
+        setattr(self._inner, name, value)
+
+    @property
+    def unwrapped(self):
+        """The real SDK object, for identity checks and teardown."""
+        return self._inner

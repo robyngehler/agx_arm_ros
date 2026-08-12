@@ -145,7 +145,17 @@ Routed through the runtime:
       lockout, recovery, hand window — with the epochs coming from the
       authority's own transitions rather than from those gates.
 - [ ] The two hand transport authorities. Only the arms publish so far.
-- [ ] Route all arm SDK calls for one device through the worker.
+- [x] Measure the per-call SDK latency that the worker's safety lane has to
+      queue behind, before routing anything through it
+      (`reference/sdk_latency_budget.md`). Individual calls are almost all
+      sub-millisecond; the hazard is the driver's composite retry loops, which
+      would turn a 1 ms call into a 5 s block on the stop path. Rule: one SDK
+      call per worker task, never a loop. Budget: stop reaches the SDK within
+      20 ms under normal load.
+- [ ] Measure `connect`/`disconnect` under a real bus fault — the only calls
+      still unbounded — and run the L3 stop-latency stress test.
+- [ ] Route all arm SDK calls for one device through the worker, one call per
+      task.
 - [ ] Reject stale epoch and out-of-order sequence on the live command path.
 - [x] Separate hardware readiness from permission. `motion_ready` says the
       device is ready; `may_command(owner)` answers whether *this* commander

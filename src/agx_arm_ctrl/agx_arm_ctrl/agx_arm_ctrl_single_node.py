@@ -23,7 +23,7 @@ from agx_arm_ctrl.command_validation import (
     validate_mit_command,
 )
 from agx_arm_ctrl.device_authority import DeviceAuthority, DeviceState, UnitSafety
-from agx_arm_ctrl.runtime_metrics import RuntimeMetrics
+from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
 from agx_arm_msgs.msg import (
     AgxArmStatus, AgxDeviceAuthority, GripperStatus,
     HandStatus, HandCmd, HandPositionTimeCmd,
@@ -470,7 +470,7 @@ class AgxArmRosNode(Node):
         config: PiperCanDefaultConfig = create_agx_arm_config(
             robot=self.arm_type, comm="can", channel=self.can_port
         )
-        self.agx_arm = AgxArmFactory.create_arm(config)
+        self.agx_arm = self._measured(AgxArmFactory.create_arm(config))
         self.agx_arm.connect()
 
         self.arm_joint_names = list(config["joint_limits"].keys())
@@ -525,7 +525,7 @@ class AgxArmRosNode(Node):
                         robot=self.arm_type, comm="can", channel=self.can_port,
                         firmeware_version=firmeware_version
                     )
-                    self.agx_arm = AgxArmFactory.create_arm(config)
+                    self.agx_arm = self._measured(AgxArmFactory.create_arm(config))
                     self.agx_arm.connect()
             else:
                 self.get_logger().error(
@@ -539,6 +539,16 @@ class AgxArmRosNode(Node):
             self.agx_arm.set_speed_percent(self.speed_percent)
             self.agx_arm.set_tcp_offset(self.tcp_offset)
         self._check_tx_observability_contract()
+
+    def _measured(self, arm):
+        """Wrap the SDK in per-call timing while instrumentation is on.
+
+        Off by default, so an unmeasured deployment pays nothing and gets the
+        raw object back.
+        """
+        if not self.metrics.enabled:
+            return arm
+        return MeasuredSdk(arm, self.metrics)
 
     def _check_tx_observability_contract(self) -> None:
         """Warn loudly at startup if the pinned SDK lacks TX-error observability.

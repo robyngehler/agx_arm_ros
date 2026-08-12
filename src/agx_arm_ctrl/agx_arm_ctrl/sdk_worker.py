@@ -25,6 +25,21 @@ A third "reads first" lane was considered and rejected: reordering a read ahead
 of a queued write breaks the causality the callers rely on. Freshness for
 streaming setpoints is handled by ``replace_key`` instead, which is ordering-
 preserving because it replaces a command that has not started yet.
+
+**One SDK call per task, never a retry loop.** The safety lane overtakes queued
+work; nothing preempts work already running. Measured on hardware
+(`docs/sprint_refactor/reference/sdk_latency_budget.md`), individual SDK calls
+are almost all sub-millisecond — the worst on the hot path is ``move_mit`` at
+3.32 ms — so a single call is not what threatens the stop path. The driver's
+*composite* operations are: ``_enable_arm`` is a `while not enable()` loop
+bounded only by a 5 s timeout, and it is 48 calls of at most 1.15 ms each.
+Submitted as one task that becomes a 5 s block on an emergency stop; submitted
+as one task per iteration, the safety lane interleaves. Callers keep their loops
+and submit each iteration.
+
+The budget that follows: an emergency stop reaches the SDK within 20 ms while
+normal work runs. ``sdk_queue_wait`` and ``sdk.<call>`` are timed separately so
+a violation says which of the two caused it.
 """
 
 from __future__ import annotations
