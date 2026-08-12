@@ -122,6 +122,17 @@ class NeroMitControllerNode(Node):
         self.declare_parameter("input_joint_prefix", "")
         self.declare_parameter("reject_new_goal_while_executing", True)
         self.declare_parameter("enable_debug_joint_trajectory_topic", False)
+        # Fail-closed by default. A missing authority publisher, a namespace
+        # typo, or a QoS mismatch is indistinguishable from "an old driver that
+        # publishes none", so treating absence as permission makes a wiring
+        # error look like a supported configuration. Set false only in a
+        # development profile that knowingly runs without a device authority.
+        self.declare_parameter("require_device_authority", True)
+        # Which device this controller is allowed to be gated by. Empty accepts
+        # whatever arrives and says so once — useful for bring-up, wrong for
+        # coordinated hardware, where two arms publish two authorities.
+        self.declare_parameter("expected_device_id", "")
+        self.declare_parameter("authority_startup_grace_s", 5.0)
 
         self.joint_names = list(self.get_parameter("joint_names").value)
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
@@ -155,6 +166,13 @@ class NeroMitControllerNode(Node):
         )
         self.enable_debug_joint_trajectory_topic = bool(
             self.get_parameter("enable_debug_joint_trajectory_topic").value
+        )
+        self.require_device_authority = bool(
+            self.get_parameter("require_device_authority").value
+        )
+        self.expected_device_id = str(self.get_parameter("expected_device_id").value)
+        self.authority_startup_grace_s = max(
+            0.0, float(self.get_parameter("authority_startup_grace_s").value)
         )
 
         if self.control_rate_hz <= 0.0:
@@ -201,6 +219,9 @@ class NeroMitControllerNode(Node):
         # action loop, which owns the goal and makes the terminal call.
         self._authority_abort_reason: Optional[str] = None
         self._last_non_finite_log = 0.0
+        self._authority_started_monotonic = time.monotonic()
+        self._last_missing_authority_log = 0.0
+        self.foreign_authority_messages = 0
         self.execution_state = ExecutionState.DISABLED
         self.holding_final_point = False
         self.active_goal_handle = None
@@ -537,6 +558,22 @@ class NeroMitControllerNode(Node):
         commander taking over.
         """
         with self.state_lock:
+            if self.expected_device_id and msg.device_id != self.expected_device_id:
+                # Two arms publish two authorities. Being gated by the wrong
+                # one is worse than being gated by none: it would report ready
+                # while the device this controller commands is stopped.
+                self.foreign_authority_messages += 1
+                now = time.monotonic()
+                if now - self._last_missing_authority_log > 5.0:
+                    self._last_missing_authority_log = now
+                    self.get_logger().error(
+                        f"Ignoring authority for '{msg.device_id}': this "
+                        f"controller expects '{self.expected_device_id}'. Check "
+                        f"the namespace wiring ({self.foreign_authority_messages}"
+                        " messages ignored so far)"
+                    )
+                return
+
             previous = self.device_authority
             self.device_authority = msg
             if previous is None:
@@ -578,11 +615,32 @@ class NeroMitControllerNode(Node):
             )
 
     def _authority_blocks_motion(self) -> bool:
-        """True when the published authority says not to command this device."""
-        return (
-            self.device_authority is not None
-            and not self.device_authority.motion_ready
-        )
+        """True when this controller has no standing permission to command.
+
+        Absence of an authority is a block, not a pass, whenever one is
+        required: a namespace typo and an old driver look identical from here,
+        and only one of them is a configuration anybody chose.
+        """
+        if self.device_authority is None:
+            if not self.require_device_authority:
+                return False
+            now = time.monotonic()
+            if (
+                now - self._authority_started_monotonic
+                > self.authority_startup_grace_s
+                and now - self._last_missing_authority_log > 5.0
+            ):
+                self._last_missing_authority_log = now
+                expected = self.expected_device_id or "any device"
+                self.get_logger().error(
+                    "No device authority received on 'feedback/authority' "
+                    f"(expecting {expected}); refusing to command. Check the "
+                    "namespace and that the arm driver is running, or set "
+                    "require_device_authority:=false for a development profile "
+                    "that knowingly runs without one."
+                )
+            return True
+        return not self.device_authority.motion_ready
 
     def _enter_non_finite_fault(self, detail: str) -> None:
         """Stop commanding on a corrupt control value, and hold the arm.

@@ -31,6 +31,9 @@ def test_stale_feedback_drops_active_trajectory_and_recaptures_hold():
     node = NeroMitControllerNode()
     try:
         node._feedback_callback(_joint_state([0.0] * 7))
+        # Legacy gate under test: it only applies where no device authority
+        # is published, which is the development profile.
+        node.require_device_authority = False
         node._set_enabled(True)
 
         # Arm a trajectory whose start clock is already well in the past.

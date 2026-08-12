@@ -25,6 +25,7 @@ def _authority(
     device_epoch=1,
     unit_safety_epoch=0,
     reason="test",
+    accepts_motion_device=None,
 ):
     msg = AgxDeviceAuthority()
     msg.device_id = "arm_right"
@@ -36,9 +37,12 @@ def _authority(
     return msg
 
 
-def _node():
+def _node(require_authority=False):
     rclpy.init()
     node = NeroMitControllerNode()
+    # Most tests here drive the authority directly, so the requirement is off
+    # unless the test is about the requirement itself.
+    node.require_device_authority = require_authority
     node._set_enabled(True)
     return node
 
@@ -49,11 +53,51 @@ def _close(node):
         rclpy.shutdown()
 
 
-def test_without_any_authority_the_legacy_gates_still_decide():
-    """A driver that publishes no authority must not freeze the arm."""
-    node = _node()
+def test_a_missing_authority_is_a_block_when_one_is_required():
+    """Fail-closed by default.
+
+    A namespace typo, a QoS mismatch and an old driver are indistinguishable
+    from here, and only one of them is a configuration anybody chose. Treating
+    absence as permission makes a wiring error look supported.
+    """
+    node = _node(require_authority=True)
     try:
         assert node.device_authority is None
+        assert node._authority_blocks_motion() is True
+    finally:
+        _close(node)
+
+
+def test_the_development_profile_can_still_run_without_one():
+    """Explicitly chosen, and named as such — not the default."""
+    node = _node(require_authority=False)
+    try:
+        assert node.device_authority is None
+        assert node._authority_blocks_motion() is False
+    finally:
+        _close(node)
+
+
+def test_authority_for_another_device_is_ignored_not_obeyed():
+    """Two arms publish two authorities.
+
+    Being gated by the wrong one is worse than being gated by none: it would
+    report ready while the device this controller commands is stopped.
+    """
+    node = _node(require_authority=True)
+    try:
+        node.expected_device_id = "arm_right"
+        node._authority_callback(_authority())          # arm_right, ready
+        assert node.device_authority is not None
+
+        foreign = _authority(accepts_motion_device="arm_left")
+        foreign.device_id = "arm_left"
+        foreign.motion_ready = False
+        foreign.state = AgxDeviceAuthority.STATE_STOPPED
+        node._authority_callback(foreign)
+
+        assert node.foreign_authority_messages == 1
+        assert node.device_authority.device_id == "arm_right"
         assert node._authority_blocks_motion() is False
     finally:
         _close(node)

@@ -53,11 +53,30 @@ def _duo_system_xacro_path() -> str:
     return ""
 
 
+def _expected_device_id(can_port: str) -> str:
+    """Name the arm this controller is allowed to be gated by.
+
+    Mirrors `derive_device_id` in `agx_arm_ctrl.agx_arm_ctrl_single_node`, which
+    is the source of truth. It is copied rather than imported on purpose:
+    importing that module pulls the vendor SDK and scipy into the launch
+    process, which is a heavy and needless coupling for one string rule. Keep
+    the two in step — they read the same `can_port`.
+    """
+    port = str(can_port or "").strip().lower()
+    for side in ("left", "right"):
+        if port.endswith(side):
+            return f"arm_{side}"
+    return f"arm_{port}" if port else "arm_unknown"
+
+
 def _build_controller_node(context):
     # gravity_arm_side bakes the arm's real body mount into the gravity URDF
     # (ground truth from the description), so gravity compensation is correct for
     # the tilted body-mounted arm without a hand-typed gravity_mounting_rpy.
     gravity_arm_side = LaunchConfiguration("gravity_arm_side").perform(context).strip()
+    expected_device_id = _expected_device_id(
+        LaunchConfiguration("can_port").perform(context)
+    )
     custom_model = LaunchConfiguration("custom_model").perform(context).strip()
     if gravity_arm_side in ("left", "right") and not custom_model:
         custom_model = _duo_system_xacro_path()
@@ -106,6 +125,11 @@ def _build_controller_node(context):
                     "enable_debug_joint_trajectory_topic": LaunchConfiguration(
                         "enable_debug_joint_trajectory_topic"
                     ),
+                    # Derived from the same CAN port the driver uses, so the
+                    # controller is gated by *its own* arm's authority. With two
+                    # arms publishing, being gated by the wrong one would report
+                    # ready while the commanded device is stopped.
+                    "expected_device_id": expected_device_id,
                 },
             ],
         ),

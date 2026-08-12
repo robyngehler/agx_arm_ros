@@ -221,6 +221,13 @@ Routed through the runtime:
       which nothing recorded before.
 - [ ] Make forced e-stop recovery independent of the optional normal-recovery
       setting.
+- [x] Make the device authority mandatory rather than fail-open. A namespace
+      typo, a QoS mismatch and an old driver are indistinguishable from the
+      controller, so absence is now a refusal; the legacy gates survive only in
+      a named development profile. The launch derives `expected_device_id` from
+      the same `can_port` as the driver, so a controller cannot be gated by the
+      other arm's authority. Verified on hardware: the standard launch still
+      streams at 100.0/s.
 - [ ] Disable or quarantine direct legacy arm motion ingress for coordinated
       hardware profiles.
 - [ ] Stress-validate MIT streaming plus e-stop, recovery, and enable/disable

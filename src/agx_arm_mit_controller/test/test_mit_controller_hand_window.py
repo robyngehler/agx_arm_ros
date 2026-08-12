@@ -25,6 +25,9 @@ def test_open_window_stands_the_controller_down_and_drops_the_trajectory():
     rclpy.init()
     node = NeroMitControllerNode()
     try:
+        # Legacy gate under test: it only applies where no device authority
+        # is published, which is the development profile.
+        node.require_device_authority = False
         node._set_enabled(True)
         node.active_trajectory = object()
         node.hold_reference = object()
@@ -51,6 +54,9 @@ def test_stand_down_takes_precedence_over_the_stale_feedback_dead_man():
     rclpy.init()
     node = NeroMitControllerNode()
     try:
+        # Legacy gate under test: it only applies where no device authority
+        # is published, which is the development profile.
+        node.require_device_authority = False
         node._set_enabled(True)
         node._hand_window_callback(_bool(True))
 
@@ -68,6 +74,9 @@ def test_closing_the_window_recaptures_the_hold_reference():
     rclpy.init()
     node = NeroMitControllerNode()
     try:
+        # Legacy gate under test: it only applies where no device authority
+        # is published, which is the development profile.
+        node.require_device_authority = False
         node._set_enabled(True)
         node._hand_window_callback(_bool(True))
         node.hold_reference = object()  # pretend something set it

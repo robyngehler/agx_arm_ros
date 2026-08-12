@@ -139,3 +139,17 @@ stream, which the deterministic count then disproved at 100.2/s.
 Every number in the table above comes from `scripts/count_topic_messages.py`,
 which subscribes, counts over a fixed window, and prints once at the end. Use it
 for any "is it still publishing?" question; do not use `ros2 topic hz`.
+
+## Fail-closed authority (added 2026-08-12)
+
+`require_device_authority` now defaults to true, so a missing authority is a
+refusal rather than a pass. The risk of that change is that a wiring mistake in
+the deployed launch would stop the arms; verified on hardware that it does not:
+the standard launch comes up, the controller reports
+`Device authority for 'arm_right' is now the gate`, the identity check accepts
+it, and MIT settles at **100.0 commands/s**.
+
+The launch derives `expected_device_id` from the same `can_port` the driver
+uses, so with two arms publishing, a controller cannot be gated by the other
+arm's authority — which would report ready while the device it commands is
+stopped.
