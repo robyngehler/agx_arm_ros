@@ -30,9 +30,10 @@ uint8 state
 # A command carrying an older epoch is rejected rather than delivered late.
 uint64 device_epoch
 
-# Bumped only by what invalidates every device at once: an emergency stop or a
-# unit fault. Separate from device_epoch so an arm recovery cannot abort a hand
-# grasp on a bus the hand does not share.
+# Bumped on every unit-safety transition — the stop and the rearm alike, since
+# a device rearmed under the old generation must not be treated as current.
+# Separate from device_epoch so an arm recovery cannot abort a hand grasp on a
+# bus the hand does not share.
 uint64 unit_safety_epoch
 bool unit_stopped
 

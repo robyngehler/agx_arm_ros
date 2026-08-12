@@ -85,7 +85,24 @@ implements it.
   single-goal action server can enforce without a new interface, and the epoch
   plus sequence reject late messages across ownership transitions. Adds no new interface. *Reopens if* a
   second legitimate commander must coexist with the skill controller.
-- **Extend `MoveMITMsg` with `control_epoch` and `sequence`;** do not introduce
+- **One command stamp for every commandable device, frozen 2026-08-12.** The
+  four fields are the same everywhere — the ROS messages, `CommandStamp`, the
+  driver's admission check, the MIT producer, and the hand contract:
+
+  ```text
+  string owner_id           # who is commanding
+  uint64 device_epoch       # the device generation it was issued under
+  uint64 unit_safety_epoch  # the unit generation it was issued under
+  uint64 sequence           # per owner, per epoch, strictly increasing
+  ```
+
+  Both epochs, always. A device that deliberately does not participate in unit
+  safety documents that as a named exception rather than dropping the field —
+  otherwise the same wire name means two different things on two devices. The
+  earlier spellings (`control_epoch`; owner plus device epoch plus sequence
+  without the unit epoch) are superseded by this one.
+
+- **Extend `MoveMITMsg` with that stamp;** do not introduce
   `ArmMitCommand`. Rationale: C5 creates only what is missing, and a parallel
   message would require migrating the hot streaming path twice. Legacy ingress
   is isolated by the profile gate in plan 1D, not by a second message type.

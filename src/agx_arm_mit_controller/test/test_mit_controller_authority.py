@@ -183,3 +183,62 @@ def test_every_non_ready_state_blocks_motion():
             assert node._authority_blocks_motion() is True
     finally:
         _close(node)
+
+
+# --- the action goal must terminate too --------------------------------------
+
+def test_losing_authority_latches_an_abort_for_the_active_goal():
+    """Stopping the stream is not enough: the FJT goal owns its own buffer.
+
+    Without this the goal stayed active until some unrelated condition timed it
+    out, and could still report on a run that had lost permission to command.
+    """
+    node = _node()
+    try:
+        node._authority_callback(_authority())
+        node.active_goal_handle = object()
+
+        node._authority_callback(
+            _authority(
+                state=AgxDeviceAuthority.STATE_STOPPED,
+                accepts_motion=False,
+                device_epoch=2,
+                unit_safety_epoch=1,
+                reason="unit stop: emergency stop requested",
+            )
+        )
+
+        reason = node._take_authority_abort()
+        assert reason is not None
+        assert "device authority changed" in reason
+        assert "emergency stop" in reason
+        # Consumed once: the goal terminates on it exactly once.
+        assert node._take_authority_abort() is None
+    finally:
+        _close(node)
+
+
+def test_no_abort_is_latched_when_no_goal_is_running():
+    node = _node()
+    try:
+        node._authority_callback(_authority())
+        node.active_goal_handle = None
+
+        node._authority_callback(_authority(accepts_motion=False, device_epoch=2))
+
+        assert node._take_authority_abort() is None
+    finally:
+        _close(node)
+
+
+def test_an_epoch_bump_alone_aborts_a_running_goal():
+    node = _node()
+    try:
+        node._authority_callback(_authority(device_epoch=1))
+        node.active_goal_handle = object()
+
+        node._authority_callback(_authority(device_epoch=2))
+
+        assert node._take_authority_abort() is not None
+    finally:
+        _close(node)

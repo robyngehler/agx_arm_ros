@@ -1,7 +1,7 @@
 # Sprint Refactor Target
 status: ACTIVE_REFACTOR_ENTRYPOINT
 last_updated: 2026-08-12
-branch: ROS2_Duo_System_V02
+branch: ROS2_Duo_System_V02_refactor
 
 Sprint Refactor is the V02 migration surface for the coordination, safety, and
 runtime-consolidation work proposed for the current Duo Nero system.
@@ -69,9 +69,10 @@ afterwards rather than competing for the same hardware and the same files.
   nine-scenario hardware baseline (`reference/phase0_baseline.md`).
 - **Phase 1A is under way and validated on hardware** for what has landed:
   boundary validation, per-tier MIT bounds, the published device authority, and
-  the stop and enable paths (`reference/phase1a_hardware_validation.md`). Still
-  open in 1A: MIT consuming the authority, the command stamp, and routing SDK
-  calls through the serialized worker.
+  the stop and enable paths, and MIT standing down on authority loss
+  (`reference/phase1a_hardware_validation.md`). Still open in 1A: the command
+  stamp on the wire, live admission at the boundary, and routing SDK calls
+  through the serialized worker.
 - The hardware session also established C8 — the two arms are on different,
   unflashable firmware — and found six defects, all logged in
   `errors_and_fixes.md`.

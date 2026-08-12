@@ -151,8 +151,11 @@ Routed through the runtime:
       keeps its own, so a unit stop raised in one node is not yet seen by the
       others; the coordinator calls every side's stop service, which covers the
       current e-stop path but is not the same guarantee.
-- [ ] Extend `MoveMITMsg` with the epochs and a sequence; add `srv/` to
-      `src/agx_arm_msgs`.
+- [x] Freeze one command stamp for every commandable device — `owner_id`,
+      `device_epoch`, `unit_safety_epoch`, `sequence` — before changing any
+      ABI, so the migration happens once (`open_questions.md`).
+- [ ] Extend `MoveMITMsg` with that stamp; add `srv/` to `src/agx_arm_msgs`.
+      Producer, consumer, docs and tests migrate in the same change set.
 - [x] Make the MIT controller consume the authoritative device state instead of
       `feedback/hand_window_active`, and abort on authority loss. It aborts on
       losing motion *and* on any epoch change, because a new epoch means the

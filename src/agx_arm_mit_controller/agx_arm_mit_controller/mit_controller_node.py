@@ -28,7 +28,28 @@ from .trajectory_buffer import JointTrajectoryBuffer, SampledTrajectoryPoint, du
 
 
 def clamp(value: float, limit: float) -> float:
+    """Saturate a **finite** value into [-limit, limit].
+
+    Callers must reject non-finite input first. `max(-limit, min(limit, nan))`
+    returns `limit`: a single NaN in a trajectory, a gain, or the gravity
+    feedforward would silently become the *maximum* command, and it would reach
+    the driver as a perfectly plausible number that no boundary check can
+    recognise as wrong. `first_non_finite` is that first layer.
+    """
     return max(-limit, min(limit, value))
+
+
+def first_non_finite(named_values) -> Optional[str]:
+    """Name the first non-finite value in ``(label, values)`` pairs, else None."""
+    for label, values in named_values:
+        for index, value in enumerate(values):
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return f"{label}[{index}]={value!r} is not a number"
+            if not math.isfinite(number):
+                return f"{label}[{index}]={number}"
+    return None
 
 
 def scale_gravity_feedforward(
@@ -176,6 +197,10 @@ class NeroMitControllerNode(Node):
         # not "not authorised": a driver that publishes no authority leaves the
         # legacy gates in charge rather than freezing the arm.
         self.device_authority: Optional[AgxDeviceAuthority] = None
+        # Set when authority is lost or an epoch moves; consumed by the
+        # action loop, which owns the goal and makes the terminal call.
+        self._authority_abort_reason: Optional[str] = None
+        self._last_non_finite_log = 0.0
         self.execution_state = ExecutionState.DISABLED
         self.holding_final_point = False
         self.active_goal_handle = None
@@ -257,6 +282,16 @@ class NeroMitControllerNode(Node):
             cancel_callback=self._cancel_callback,
             callback_group=self.callback_group,
         )
+        # These two lines used to sit after a `return` in the parameter
+        # callback, so they never ran. Restored where they were meant to be.
+        self.get_logger().info(
+            f"FollowJointTrajectory action available on '{self.action_name}'"
+        )
+        if self.enable_debug_joint_trajectory_topic:
+            self.get_logger().warn(
+                "Debug ~/joint_trajectory input is enabled; keep it disabled "
+                "during production MoveIt execution"
+            )
 
         self.timer = self.create_timer(
             1.0 / self.control_rate_hz,
@@ -280,6 +315,10 @@ class NeroMitControllerNode(Node):
 
         live_vectors = {"freedrive_kd", "kp", "kd"}
         live_scalars = {"gravity_scale", "gravity_feedforward_sign"}
+        # Validate the whole batch into a staging dict first. Applying as we go
+        # left the arm running on a half-applied batch whenever a later
+        # parameter failed — live gains, mid-flight, with no way back.
+        staged: dict = {}
         for param in params:
             try:
                 if param.name in live_vectors:
@@ -289,19 +328,29 @@ class NeroMitControllerNode(Node):
                             successful=False,
                             reason=f"{param.name} needs {len(self.joint_names)} values",
                         )
-                    setattr(self, param.name, values)
+                    corrupt = first_non_finite(((param.name, values),))
+                    if corrupt is not None:
+                        return SetParametersResult(
+                            successful=False, reason=f"non-finite value: {corrupt}"
+                        )
+                    staged[param.name] = values
                 elif param.name in live_scalars:
-                    setattr(self, param.name, float(param.value))
+                    value = float(param.value)
+                    if not math.isfinite(value):
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f"{param.name} must be finite, got {value}",
+                        )
+                    staged[param.name] = value
             except (TypeError, ValueError) as exc:
                 return SetParametersResult(successful=False, reason=f"{param.name}: {exc}")
+
+        # Commit only now, with the whole batch known good. Held under the
+        # state lock so the control loop never reads a half-updated gain set.
+        with self.state_lock:
+            for name, value in staged.items():
+                setattr(self, name, value)
         return SetParametersResult(successful=True)
-        self.get_logger().info(
-            f"FollowJointTrajectory action available on '{self.action_name}'"
-        )
-        if self.enable_debug_joint_trajectory_topic:
-            self.get_logger().warn(
-                "Debug ~/joint_trajectory input is enabled; keep it disabled during production MoveIt execution"
-            )
 
     def _init_feedforward_models(self) -> None:
         calibration_path: Path | None = None
@@ -513,6 +562,13 @@ class NeroMitControllerNode(Node):
             self.active_trajectory = None
             self.hold_reference = None
             self.holding_final_point = False
+            if self.active_goal_handle is not None:
+                self._request_authority_abort(
+                    f"device authority changed while executing "
+                    f"(state={msg.state}, device_epoch={msg.device_epoch}, "
+                    f"unit_safety_epoch={msg.unit_safety_epoch}, "
+                    f"accepts_motion={msg.accepts_motion}): {msg.reason}"
+                )
             self.get_logger().warn(
                 f"Device authority changed (state={msg.state}, "
                 f"device_epoch={msg.device_epoch}, "
@@ -527,6 +583,80 @@ class NeroMitControllerNode(Node):
             self.device_authority is not None
             and not self.device_authority.accepts_motion
         )
+
+    def _enter_non_finite_fault(self, detail: str) -> None:
+        """Stop commanding on a corrupt control value, and hold the arm.
+
+        Three things are deliberately *not* done here. Saturating is out:
+        `clamp` turns NaN into the maximum command. Publishing nothing is out
+        too — the firmware executes the last setpoint it received indefinitely,
+        so silence leaves a moving arm moving. And the gravity feedforward is
+        not reused, because it is the most likely source of the corruption.
+
+        What is sent instead is a position hold at the measured pose with zero
+        feed-forward torque: finite by construction, and it holds the arm where
+        it already is. If the gains themselves are corrupt there is nothing
+        safe left to send, so it publishes nothing and says so.
+
+        Caller holds ``state_lock``.
+        """
+        self.active_trajectory = None
+        self.hold_reference = None
+        self.holding_final_point = False
+        if self.active_goal_handle is not None:
+            self._request_authority_abort(f"non-finite control value: {detail}")
+
+        now = time.monotonic()
+        if now - self._last_non_finite_log > 1.0:
+            self._last_non_finite_log = now
+            self.get_logger().error(
+                f"Refusing to command on a non-finite control value ({detail}); "
+                "holding the measured pose with zero feed-forward torque"
+            )
+
+        positions = [self.feedback_positions.get(name) for name in self.joint_names]
+        unsafe = first_non_finite((
+            ("measured", [0.0 if value is None else value for value in positions]),
+            ("kp", self.kp),
+            ("kd", self.kd),
+        ))
+        if any(value is None for value in positions) or unsafe is not None:
+            self.get_logger().error(
+                "No safe hold command can be built either "
+                f"({unsafe or 'missing joint feedback'}); publishing nothing. "
+                "The firmware still holds its last setpoint — use the emergency "
+                "stop if the arm is moving."
+            )
+            self._set_execution_state(ExecutionState.FAULTED)
+            return
+
+        cmd = MoveMITMsg()
+        cmd.joint_index = list(range(1, len(self.joint_names) + 1))
+        cmd.p_des = [float(value) for value in positions]
+        cmd.v_des = [0.0] * len(self.joint_names)
+        cmd.kp = [float(value) for value in self.kp]
+        cmd.kd = [float(value) for value in self.kd]
+        cmd.torque = [0.0] * len(self.joint_names)
+        self.move_mit_pub.publish(cmd)
+        self._set_execution_state(ExecutionState.FAULTED)
+
+    def _request_authority_abort(self, reason: str) -> None:
+        """Latch a reason for the action loop to end its goal with.
+
+        The terminal transition is not made here. This runs on whichever
+        callback observed the loss, and the goal is owned by the execute
+        thread; signalling it is what keeps the transition on one thread.
+        Caller holds ``state_lock``.
+        """
+        if self._authority_abort_reason is None:
+            self._authority_abort_reason = reason
+
+    def _take_authority_abort(self) -> Optional[str]:
+        """Consume a latched abort reason, if one is pending."""
+        with self.state_lock:
+            reason = self._authority_abort_reason
+            self._authority_abort_reason = None
+            return reason
 
     def _hand_window_callback(self, msg: Bool) -> None:
         with self.state_lock:
@@ -953,6 +1083,25 @@ class NeroMitControllerNode(Node):
                             self.arm_fault_message or "Arm fault while executing the goal",
                         )
 
+                    # Authority loss stopped the streaming, but the goal owns its
+                    # own trajectory buffer and would otherwise stay active until
+                    # some other condition timed it out — reporting a run that no
+                    # longer had permission to command the device. The callback
+                    # only latches the reason; the terminal transition happens
+                    # here, on the thread that owns the goal.
+                    authority_abort = self._take_authority_abort()
+                    if authority_abort is not None:
+                        self.active_trajectory = None
+                        self.hold_reference = None
+                        self.holding_final_point = False
+                        self.active_goal_handle = None
+                        self._set_execution_state(ExecutionState.NOT_AUTHORISED)
+                        goal_handle.abort()
+                        return self._failed_result(
+                            FollowJointTrajectory.Result.INVALID_GOAL,
+                            authority_abort,
+                        )
+
                     if not self._has_fresh_feedback():
                         # Mirror the position-limit abort: never leave the stale
                         # trajectory armed, or a feedback comeback snaps the arm to
@@ -1160,6 +1309,22 @@ class NeroMitControllerNode(Node):
             # scale gain if control was recently enabled to provide a smooth ramp-up of the controller effort
             gain_scale = self._gain_scale()
             feedforward = self._compute_feedforward(reference)
+
+            # Before any saturation: clamp() maps NaN and +inf onto the maximum
+            # command, so a corrupt gravity solve or a bad trajectory point
+            # would leave here as full torque, indistinguishable downstream from
+            # a deliberate one.
+            corrupt = first_non_finite((
+                ("p_des", reference.positions),
+                ("v_des", reference.velocities),
+                ("feedforward", feedforward),
+                ("kp", self.kp),
+                ("kd", self.kd),
+                ("gain_scale", (gain_scale,)),
+            ))
+            if corrupt is not None:
+                self._enter_non_finite_fault(corrupt)
+                return
 
             cmd = MoveMITMsg()
             cmd.joint_index = list(range(1, len(self.joint_names) + 1))

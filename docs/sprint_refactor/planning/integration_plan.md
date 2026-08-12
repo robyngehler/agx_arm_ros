@@ -2,12 +2,12 @@
 
 status: CANONICAL_PLAN
 last_updated: 2026-08-11
-branch: ROS2_Duo_System_V02
+branch: ROS2_Duo_System_V02_refactor
 
 ## Goal
 
 Turn the coordination refactor proposal into a migration sequence that can be
-implemented on branch `ROS2_Duo_System_V02` without building later work on top
+implemented on branch `ROS2_Duo_System_V02_refactor` without building later work on top
 of unsafe ownership assumptions.
 
 This plan is the canonical migration surface. `../coordination_architecture_refactor_proposal.md`
@@ -41,7 +41,11 @@ running in parallel for the same hardware and the same files.
 - validate along the test ladder (C4), not just "the narrowest package"
 - treat hardware validation as a gated activity, not as something implied by
   editor-only code review
-- keep `tea_pour_left_v1` runnable after every phase as the end-to-end
+- the **L2 activity harness is the mandatory regression after every phase**.
+  `tea_pour_left_v1` is deferred by decision until the demo is re-taught
+  against the new contracts, so it is the eventual end-to-end benchmark, not a
+  current gate
+- once re-taught, keep `tea_pour_left_v1` runnable after every phase as the end-to-end
   regression benchmark, accepting that it will be re-taught once the contracts
   settle
 
@@ -322,7 +326,8 @@ in 2A when the code catches up.
   bridge through one activity including a hand action, on mock backends **(done)**
 - encode the C4 ladder as a `.claude/skills/` workflow with a `.github/skills/`
   mirror, following the shape of the existing `commit-quality` skill **(done)**
-- define the `tea_pour_left_v1` regression criteria enforced after every phase
+- define the `tea_pour_left_v1` regression criteria (deferred: the L2 harness
+  is the standing regression until the demo is re-taught)
 
 Notes from building it:
 
@@ -428,9 +433,11 @@ The authority and epoch model above, plus the worker that makes it real:
 - all SDK calls for one arm run on one worker or queue, with emergency stop on a
   priority lane ahead of queued motion
 - old-epoch queued commands are dropped after ownership transitions or recovery
-- extend `MoveMITMsg` with the epochs and a `sequence` rather than adding a
+- extend `MoveMITMsg` with the frozen command stamp — `owner_id`,
+  `device_epoch`, `unit_safety_epoch`, `sequence` — rather than adding a
   parallel `ArmMitCommand` (frozen decision); this is an ABI change needing a
-  coordinated workspace rebuild
+  coordinated workspace rebuild, and producer, consumer, docs and tests migrate
+  in the same change set
 - MIT consumes the authoritative device state instead of the
   `feedback/hand_window_active` boolean, and aborts on authority loss
 - reject at the hardware boundary: wrong epoch, duplicate or missing joint
