@@ -1,5 +1,5 @@
 # Proposal Code Cross-Check
-status: INITIAL_READ_ONLY_AUDIT
+status: INITIAL_READ_ONLY_AUDIT — partially SUPERSEDED_BY_C1 (see note below)
 date: 2026-07-27
 branch: ROS2_Duo_System_V02
 
@@ -13,6 +13,15 @@ Validation boundary for this note:
 - read-only workspace inspection only
 - no live hardware access
 - no runtime CPU or CAN measurements captured in this session
+
+> **SUPERSEDED_BY_C1 (2026-08-11).** Two conclusions in the table below rest on
+> the arm and its hand sharing one CAN bus. Each device now has its own
+> interface, so: a lease is **not** the replacement for the handover (the
+> handover itself is retired, and single-goal arbitration replaces the lease),
+> and removing recurring hand traffic is **not** a safety precondition for
+> same-side arm motion — it is a CPU measure. The rows are left intact as the
+> record of what was true on 2026-07-27; the canonical reading is
+> `planning/integration_plan.md` C1 and 2C.
 
 ## Confirmed findings
 

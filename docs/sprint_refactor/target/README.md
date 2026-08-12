@@ -44,6 +44,8 @@ Defined in `planning/integration_plan.md`:
   consolidated into one abstract contract
 - **C6** instrumentation as in-node log counters plus external tooling; no new
   public ROS metrics contract in Phase 0
+- **C7** bus topology is one declared fact (`bus_topology`); the scheduler's
+  claims and the handoff both derive from it rather than being set separately
 
 ## Priority
 
@@ -59,7 +61,10 @@ afterwards rather than competing for the same hardware and the same files.
 - The plan has been updated for the four-bus hardware topology, the MIT rate
   requirement, the vendor-submodule workflow, the test ladder, and the message
   policy.
-- Implementation has not started in this sprint surface yet.
+- **Phase 0 is complete** for the authorised scenarios: guidance hygiene, the
+  L2 harness, honest velocity and stop semantics, in-node instrumentation, and a
+  nine-scenario hardware baseline (`reference/phase0_baseline.md`). Phase 1 is
+  next.
 - `tea_pour_left_v1` is the end-to-end regression benchmark for every phase.
 
 ## Deliverables

@@ -95,6 +95,14 @@ Consequences:
 
 This is a release blocker. Before the rest of the coordination refactor is considered operational, velocity must be restored from the protocol or estimated from timestamped joint positions. Until then, software stop results must be reported as **commanded but not velocity-verified**.
 
+> **SUPERSEDED 2026-08-11 — the protocol option does not exist.** Captured CAN
+> traffic with both arms under MIT control shows the firmware's velocity field
+> flat at 0 (+/-1) while the joints move at up to 3.2 rad/s. Every Nero driver
+> tier zeroes it, and v112 inherits that from v111, so there is nothing to
+> restore. **Do not unmask the vendor value** — it would surface a field that
+> reads plausible and is wrong. Velocity derived from timestamped positions is
+> authoritative. Evidence: `reference/phase0_baseline.md`, `evidence/*.pcap`.
+
 ### 3.2 The arm SDK has no exclusive caller
 
 The arm SDK object is accessed from:
@@ -112,6 +120,10 @@ A simple precondition check such as `_check_can_control()` is not sufficient bec
 
 ### 3.3 The current hand window is not a complete ownership transfer
 
+> **HISTORICAL — DO NOT IMPLEMENT.** shared-bus rationale; the bus is no longer shared (C1). The canonical plan is
+> `planning/integration_plan.md`.
+
+
 `prepare_hand_window` gates arm commands and verifies a firmware hold. However, it can return `success=True` even when CAN feedback push silencing was not verified. The coordinator interprets any successful response as a valid hand window and dispatches the hand action.
 
 The contract therefore currently conflates:
@@ -122,6 +134,10 @@ The contract therefore currently conflates:
 For deterministic behavior, a hand lease must require both.
 
 ### 3.4 Hand control continues after the coordinator releases the window
+
+> **HISTORICAL — DO NOT IMPLEMENT.** the safety argument is void under C1; the CPU argument survives in plan 2C. The canonical plan is
+> `planning/integration_plan.md`.
+
 
 After a confirmed grasp, `OmniHandSkillController` marks the action successful and enables an internal hold timer. That timer republishes the same hand target at the configured skill-control rate and continues tactile monitoring. The coordinator, meanwhile, receives the successful action result and immediately calls `resume_arm_control`.
 
@@ -324,6 +340,10 @@ Rules:
 
 ## 6.2 Side Hardware Authority State
 
+> **HISTORICAL — DO NOT IMPLEMENT.** superseded: authority is per device, not per side (plan, Authority and epoch model). The canonical plan is
+> `planning/integration_plan.md`.
+
+
 ```text
 STARTING
   ├──> DISABLED
@@ -430,6 +450,10 @@ Rules:
 
 ## 6.5 OmniHand Bridge State
 
+> **HISTORICAL — DO NOT IMPLEMENT.** lease-derived permission; replaced by single-goal arbitration in plan 2C. The canonical plan is
+> `planning/integration_plan.md`.
+
+
 The bridge should not invent another complex state machine. It derives permission from `SideControlState` and maintains a small transport state:
 
 ```text
@@ -450,6 +474,10 @@ It may call the vendor SDK only when:
 ---
 
 ## 7. Minimal Lease-Based Handshake
+
+> **HISTORICAL — DO NOT IMPLEMENT.** the lease existed to arbitrate a shared bus and is struck entirely. The canonical plan is
+> `planning/integration_plan.md`.
+
 
 The CAN workaround is temporary, so the handshake should remain compact. It nevertheless needs identity and expiry to prevent stale asynchronous messages from crossing ownership transitions.
 
@@ -567,6 +595,10 @@ The side authority validates state and epoch inside the same serialized hardware
 ---
 
 ## 9. Resource Model
+
+> **HISTORICAL — DO NOT IMPLEMENT.** the shared `*_can_bus` claims are superseded; see plan C7 and 2B. The canonical plan is
+> `planning/integration_plan.md`.
+
 
 The existing scheduler correctly recognizes physical intersections such as `left_arm`, `left_hand`, and `left_can_bus`. This model should be moved out of hardcoded Python and into the system registry.
 
@@ -881,6 +913,10 @@ This removes one long-lived executor thread per active activity and prevents mul
 
 ## 12.6 OmniHand bridge: ownership-aware adaptive polling
 
+> **HISTORICAL — DO NOT IMPLEMENT.** keep the polling discipline, drop the bus-ownership rationale (plan 2C). The canonical plan is
+> `planning/integration_plan.md`.
+
+
 The bridge should receive `SideControlState` and use the following policy:
 
 ### ARM_CONTROL
@@ -928,6 +964,10 @@ Suggested structure:
 - publish status on change plus heartbeat.
 
 ## 12.8 Remove periodic hand hold commands
+
+> **HISTORICAL — DO NOT IMPLEMENT.** still wanted, on CPU grounds rather than bus grounds (plan 2C). The canonical plan is
+> `planning/integration_plan.md`.
+
 
 Delete the production behavior in `_hold_tick()` that republishes the target continuously.
 
@@ -1057,8 +1097,12 @@ Legacy direct motion topics may remain behind a `development_legacy_commands` pr
 
 ## 14.2 Vendor Nero driver
 
-- remove the unconditional `motor_state.msg.velocity = 0.0` override;
-- confirm protocol sign and scaling for velocity;
+- ~~remove the unconditional `motor_state.msg.velocity = 0.0` override~~ —
+  **do not do this**: the wire field is itself zero while the arm moves, so
+  removing the override exposes a wrong value rather than a real one (see the
+  supersession note in §3.1);
+- ~~confirm protocol sign and scaling for velocity~~ — settled: there is no
+  usable protocol velocity;
 - add a unit/hardware test against position-derived velocity;
 - expose thread-safety guarantees or explicitly document non-thread-safe behavior;
 - add a public push-control API so repository code no longer mutates `_msg_mode` privately;
@@ -1290,6 +1334,10 @@ Run dual-arm MIT streaming while repeatedly requesting:
 Instrument SDK call sequence, thread ID, epoch, and state. Acceptance criterion: all SDK calls for one arm originate from one worker thread and no old-epoch motion is sent after a transition.
 
 ## 16.3 Hand traffic test
+
+> **HISTORICAL — DO NOT IMPLEMENT.** acceptance criterion replaced by the plan's Phase 2 exit gate. The canonical plan is
+> `planning/integration_plan.md`.
+
 
 For each side:
 

@@ -35,7 +35,14 @@ numbers in the symptom list below.
 
 ## Identified hot paths
 
-1. **Driver publish loop at `pub_rate` = 200 Hz with per-joint Python SDK reads.**
+1. **The whole 200 Hz feedback/publish batch — not the per-joint reads alone.**
+   *(Reformulated 2026-08-11 after measurement.)* The batch costs 1.10 ms mean
+   against a 5 ms period; the per-joint `get_motor_states` calls named below are
+   only ~0.11 ms of that, about a tenth. The remaining 90 % is pose, arm status,
+   effector status, leader publication and message construction/serialisation.
+   Optimising the reads alone recovers little; the batch as a whole is the
+   target. Original text follows.
+
    `agx_arm_ctrl_single_node._publish_joint_states` calls `get_motor_states(joint_index)` once per joint
    (7×) plus `get_joint_angles()` every cycle, i.e. ~8 SDK calls × 200 Hz × 2 arms ≈ 3.2k blocking SDK
    calls/s, all under the CPython GIL. This is the dominant single-node load and the source of the

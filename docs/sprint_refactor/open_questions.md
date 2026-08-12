@@ -25,7 +25,7 @@
 - **Autonomous hand setpoint hold.** No longer gates the design; it was the
   deciding question only while arm and hand shared a bus. It moves to the Phase 0
   measurement list, where it decides how far recurring hold traffic can be
-  removed in 2D.
+  removed in 2C.
 - **Vendor SDK change workflow.** The pinned submodule
   (`vendor/pyAgxArm`, tag `control-layer-pin-2026-07-24`) stays unchanged as the
   execution path. Development happens in a separate checkout of the same fork,
@@ -48,9 +48,10 @@
 - **Handover services.** `prepare_hand_window` and `resume_arm_control` are kept,
   but as the implementation of a selectable *degraded-topology mode*, not as
   migration scaffolding. Parallel operation is the new normal mode. The switch is
-  the existing `handoff_enabled` coordinator parameter. Note that the flag alone
-  does not produce parallel operation: `ROBOT_UNITS` must also stop sharing a bus
-  token per side (plan 2B and 2C).
+  the topology declaration `bus_topology` (C7), from which both `handoff_enabled`
+  and the scheduler's bus tokens derive. The flag alone never produced parallel
+  operation: `ROBOT_UNITS` must stop sharing a token per side too, which is why
+  the two are now one declared fact rather than two switches.
 - **Hardware slot.** Reserved for the first safety checks: velocity truth, stop
   semantics, and the 0E baseline including the new parallel scenarios.
 - **Instrumentation form.** In-node log counters plus external tooling for the
@@ -59,7 +60,7 @@
   parallel operation; the demo is not meaningful before those land, and
   `docs/sprint6/` adapts afterwards.
 - **Old Phase 2 "leased hand control".** Struck. What survives is redistributed
-  across plan 2A-2D and 4D; the struck items are listed in the plan so they do
+  across plan 2A-2C and 4D; the struck items are listed in the plan so they do
   not get resurrected.
 - **Hand SDK and hardware variants.** There are two hand devices: OmniHand
   (`o10`, 10 actuated joints) and OmniHand Pro (`o12_pro`, 12 actuated joints);
@@ -75,13 +76,14 @@ These are decided so implementation does not stall on them. Each carries the
 condition that would reopen it; none is expected to reopen before the phase that
 implements it.
 
-- **No separate hand ownership contract.** Single-commander arbitration is
-  achieved through the existing single-goal action semantics of the hand skill
-  controller plus `owner_id`, `control_epoch`, and `sequence` fields in the
-  consolidated hand command. Rationale: the lease existed to arbitrate a shared
-  bus (C1 removed that); what remains is "one commander per device", which the
-  action server already enforces, and the epoch plus sequence reject late
-  messages across ownership transitions. Adds no new interface. *Reopens if* a
+- **No separate hand ownership contract.** Single-commander arbitration will be
+  achieved by rejecting a second active goal on the hand skill controller, plus
+  `owner_id`, `device_epoch`, and `sequence` fields in the consolidated hand
+  command. Note this is work, not a property the code already has: the
+  controller currently accepts goals unconditionally. Rationale: the lease existed to arbitrate a shared
+  bus (C1 removed that); what remains is "one commander per device", which a
+  single-goal action server can enforce without a new interface, and the epoch
+  plus sequence reject late messages across ownership transitions. Adds no new interface. *Reopens if* a
   second legitimate commander must coexist with the skill controller.
 - **Extend `MoveMITMsg` with `control_epoch` and `sequence`;** do not introduce
   `ArmMitCommand`. Rationale: C5 creates only what is missing, and a parallel
@@ -104,7 +106,7 @@ implements it.
   reviewed at the Phase 5 close-out against the measured four-bus evidence. No
   new work is invested in it in the meantime.
 
-## Measurements the Phase 0 baseline must answer
+## Remaining Phase-0 / pre-Phase-1 measurement questions
 
 Not blockers: these are the questions 0E exists to answer, and the hardware slot
 is reserved for them.

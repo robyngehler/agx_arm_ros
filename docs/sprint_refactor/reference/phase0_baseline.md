@@ -199,8 +199,10 @@ serious than that note assumed: the cost is in blocking request/response
 handling, not in frame volume. Phase 5C's timer split and ownership-gated
 polling should be re-read as the **highest-value** CPU item, not a cleanup.
 
-Parallel operation itself cost nothing in contention: no drops, no bus-off, and
-the arm buses were unaffected throughout.
+**No CAN-level contention was observed**: no drops, no bus-off, and the arm
+buses were unaffected throughout. That is a statement about the wire only — the
+same run cost 444.5 % of a core, so the host-side contention for CPU, the GIL
+and executor threads is precisely what remains to be managed.
 
 ## Scenario 9 — bus fault and recovery
 

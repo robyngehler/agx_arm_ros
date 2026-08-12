@@ -3,7 +3,8 @@
 Phases follow `planning/integration_plan.md`, which is the canonical plan.
 Binding constraints C1 (one CAN bus per device), C2 (MIT rate is a requirement),
 C3 (pinned submodule vs development checkout), C4 (test ladder), C5 (message
-policy), and C6 (instrumentation form) are defined there.
+policy), C6 (instrumentation form), and C7 (bus topology is one declared fact)
+are defined there.
 
 Priority: safety, CPU relief, and parallel operation come before demo work.
 `docs/sprint6/` adapts afterwards.
@@ -107,78 +108,112 @@ injection.
 - [x] Settle the wire-level velocity question (`evidence/*.pcap`,
       `scripts/analyze_can_pcap.py`): the firmware does not report velocity.
 
-## Phase 1 - Side authority, serialized SDK access, arm feedback budget
+## Phase 1 - Device authority, serialized SDK access, unit guard
 
-- [ ] Add an authoritative per-side state contract with a control epoch.
-- [ ] Route all arm SDK calls for one side through one serialized worker or
-      command queue, with a priority lane for emergency stop.
-- [ ] Reject stale-epoch commands at the hardware boundary.
-- [ ] Make the MIT controller consume the authoritative side state instead of
+### 1A Device authority, epoch, serialized SDK
+
+- [ ] Four device authorities (`Left/RightArmAuthority`,
+      `Left/RightHandTransportAuthority`), each publishing its own state.
+- [ ] Per-device `device_epoch` plus a global `unit_safety_epoch`, so an arm
+      recovery does not invalidate the same-side hand.
+- [ ] Route all arm SDK calls for one device through one serialized worker, with
+      a priority lane for emergency stop.
+- [ ] Reject stale epoch and out-of-order sequence at the hardware boundary.
+- [ ] Extend `MoveMITMsg` with the epochs and a sequence; add `srv/` to
+      `src/agx_arm_msgs`.
+- [ ] Make the MIT controller consume the authoritative device state instead of
       `feedback/hand_window_active`, and abort on authority loss.
-- [ ] Separate fault acknowledge from verified rearm.
+- [ ] Separate fault acknowledge from verified rearm, and make recovery report
+      what it verified — 0E showed "recovery succeeded" for a bus that returned
+      on its own.
 - [ ] Add full hardware-boundary command validation (duplicate or missing joint
       indexes, empty commands, non-finite values, out-of-range values).
 - [ ] Replace the unassigned `AgxArmStatus.err_status` with a documented
       structured error representation.
-- [ ] Fix enable readback and firmware-version parsing; make forced e-stop
-      recovery independent of the optional normal-recovery setting.
+- [ ] Fix enable readback and firmware-version parsing (no `NeroFW.V112` branch;
+      versions compared as strings); make forced e-stop recovery independent of
+      the optional normal-recovery setting.
 - [ ] Disable or quarantine direct legacy arm motion ingress for coordinated
       hardware profiles.
-- [ ] Add the `srv/` directory to `src/agx_arm_msgs` for the new contracts.
-- [ ] Separate acquisition cadence from publication cadence; one immutable
-      feedback snapshot per cycle, no SDK getters in callbacks (1E).
 - [ ] Stress-validate MIT streaming plus e-stop, recovery, and enable/disable
       churn.
-- [ ] Measure the arm-driver CPU improvement against the 0E baseline.
+- [ ] Confirm one SDK thread per arm with the counter under a **full** stack.
+
+### 1B Feedback snapshot and driver CPU reduction
+
+- [ ] Separate acquisition cadence from publication cadence; one immutable
+      snapshot per cycle, no SDK getters in callbacks.
+- [ ] Target the whole publish batch, not only the per-joint reads (measured at
+      ~10 % of it).
+- [ ] Ensure a stalled loop cannot stop draining the RX socket (0E: one 10 s gap).
+- [ ] Measure the arm-driver CPU improvement against the 0E baseline (71.6 % of
+      a core at rest, 1.10 ms mean batch against a 5 ms period).
+
+### 1C One active unit activity — the small guard
+
+Pulled ahead of Phase 2 on review: the rule must hold before parallelism exists.
+
+- [ ] `READY` accepts one activity; `EXECUTING` rejects every further goal with
+      a structured reason.
+- [ ] One authoritative unit activity state and failure reason.
+- [ ] No polling-loop or event-queue work here — that stays in Phase 3.
 
 ## Phase 2 - Parallel operation
 
-### 2A Four-bus topology
+### 2A Declare the topology, model the four buses
 
-- [ ] Add `omnihand.sides.<side>.can_port` to the registry and bump the schema
-      version.
+- [ ] Add `bus_topology` to the registry as the single declared fact (C7) and
+      `omnihand.sides.<side>.can_port`; bump the schema version.
 - [ ] Remove the bridge's derivation of its interface from the arm `can_port`;
       fail closed for hardware profiles instead of falling back to
       `can_nero_right`.
 - [ ] Replace process-global `OMNIHAND_SOCKETCAN_IFACE` selection with explicit
       backend construction.
-- [ ] Update CAN bring-up for four interfaces with deterministic adapter naming.
+- [ ] Adopt `scripts/activate_duo_can.sh` as the supported bring-up and retire
+      `activate_native_can.sh` / `omnihand_canfd_activate.sh`.
 - [ ] Rewrite the operational docs bannered in 0A for the four-bus reality.
 
-### 2B Close the hand-window path
+### 2B Parallel resource model, handoff derived not configured
 
-- [ ] Make parallel the default mode and step-and-settle a selectable degraded
-      mode, using the existing `handoff_enabled` coordinator parameter as the
-      switch.
-- [ ] Remove the MIT stand-down on `feedback/hand_window_active` from the
-      parallel path.
-- [ ] Keep `prepare_hand_window` / `resume_arm_control` only as the degraded-mode
-      implementation, documented as such, with no new work invested.
-
-### 2C Parallel resource model
-
-- [ ] Split `ROBOT_UNITS` so `<side>_arm` and `<side>_hand` no longer share one
-      bus token.
-- [ ] Allow concurrent same-side arm and hand scheduling.
-- [ ] Re-couple them through configuration in degraded mode, not through code.
+- [ ] Derive the scheduler's bus tokens from `bus_topology`; under
+      `dedicated_per_device`, `<side>_arm` and `<side>_hand` stop sharing one.
+- [ ] Derive `handoff_enabled` from the same value; nothing reads it directly.
+- [ ] Remove the MIT stand-down on `feedback/hand_window_active`.
+- [ ] Keep `prepare_hand_window` / `resume_arm_control` only as the
+      `shared_per_side` implementation.
+- [ ] Fix the stale TX-loss warning that blames "hand-frame arbitration loss on
+      the shared bus".
 - [ ] Add tests for the newly reachable interleavings.
 
-### 2D Hand commander arbitration
+### 2C Hand arbitration and transport efficiency
 
-- [ ] Enforce one commander per hand device.
-- [ ] Decide explicit ownership contract versus single-goal action semantics
-      plus owner id and epoch.
-- [ ] Stop bridge polling and retries outside active hand ownership.
-- [ ] Remove recurring host-side hold traffic after a grasp completes.
-- [ ] Validate parallel same-side arm and hand motion on hardware without CAN RX
-      drops.
-- [ ] Verify the degraded mode still executes an activity when selected.
+Moved ahead of the coordinator rewrite: 115 % of a core for 27 frames/s makes
+this the largest measured CPU consumer in the system.
 
-## Phase 3 - Coordinator exclusivity and event-driven execution
+- [ ] Implement the frozen contract: single-goal arbitration plus `owner_id`,
+      `device_epoch` and `sequence`; no separate lease.
+- [ ] Reject stale-epoch and out-of-order hand commands at the bridge boundary.
+- [ ] Profile the O12 Pro backend at SDK-call level: which calls, how many per
+      setpoint, how long each blocks.
+- [ ] Eliminate the read-before-write round trip in the full-joint command path.
+- [ ] Decouple command verification, joint readback, tactile and status into
+      separate schedules.
+- [ ] Stop polling entirely while no hand action is active.
+- [ ] Remove the recurring post-grasp hold traffic.
+- [ ] Bound and record the SDK round trips per commanded setpoint.
+- [ ] Measure the hand-bridge CPU reduction against the 115 % baseline.
+- [ ] Validate parallel same-side arm and hand motion without CAN RX drops.
+- [ ] Verify the `shared_per_side` topology still executes an activity.
 
-- [ ] Enforce one active unit activity in `coordinator_node.py`.
+## Phase 3 - Event-driven coordinator and strict synchronization
+
+The exclusivity guard landed in 1C; this is the conversion itself.
+
 - [ ] Replace polling and `time.sleep` with event-driven completion handling and
       a low-rate deadline watchdog.
+- [ ] Make SIGINT with no activity in flight exit rather than spin (0B finding).
+- [ ] Extend the 1C guard to the full unit activity state machine, with cleanup
+      as part of completion.
 - [ ] Migrate the Ctrl+C stop ladder and replay planning onto the event model
       without weakening them.
 - [ ] Make `sync_flag` merge strict: merge-or-fail, never independent fallback.
@@ -211,8 +246,12 @@ injection.
 ## Phase 5 - Runtime consolidation and close-out measurements
 
 - [ ] Make MIT action completion event-driven with one trajectory sampler.
-- [ ] Reduce per-tick gravity-compensation cost so the control rate can rise
-      toward 200-250 Hz (C2). May be pulled forward if 0E shows it dominating.
+- [ ] Decompose the MIT tick before optimising it (trajectory sample, feedback
+      snapshot, gravity/RNEA, command construction, ROS publish, action
+      feedback/tolerance, locking/executor). "Gravity dominates" is a hypothesis;
+      the same assumption about the arm driver's SDK reads was measured wrong.
+- [ ] Then reduce whatever the decomposition names, so the rate can rise toward
+      200-250 Hz (C2).
 - [ ] Split OmniHand bridge timers by command verification, tactile, and status
       semantics.
 - [ ] Bound executor thread counts and keep each vendor SDK session in its own
