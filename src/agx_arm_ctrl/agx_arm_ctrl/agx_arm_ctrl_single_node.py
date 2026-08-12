@@ -17,9 +17,14 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 from geometry_msgs.msg import Pose, PoseStamped, PoseArray
 from scipy.spatial.transform import Rotation as R
 
+from agx_arm_ctrl.command_validation import (
+    positions_outside_joint_limits,
+    validate_mit_command,
+)
+from agx_arm_ctrl.device_authority import DeviceAuthority, DeviceState, UnitSafety
 from agx_arm_ctrl.runtime_metrics import RuntimeMetrics
 from agx_arm_msgs.msg import (
-    AgxArmStatus, GripperStatus,
+    AgxArmStatus, AgxDeviceAuthority, GripperStatus,
     HandStatus, HandCmd, HandPositionTimeCmd,
     MoveMITMsg
 )
@@ -52,6 +57,33 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyAgxArm.api.agx_arm_factory import PiperCanDefaultConfig
+
+
+AUTHORITY_STATE_CODES = {
+    DeviceState.OFFLINE: AgxDeviceAuthority.STATE_OFFLINE,
+    DeviceState.STANDBY: AgxDeviceAuthority.STATE_STANDBY,
+    DeviceState.READY: AgxDeviceAuthority.STATE_READY,
+    DeviceState.RECOVERING: AgxDeviceAuthority.STATE_RECOVERING,
+    DeviceState.FAULTED: AgxDeviceAuthority.STATE_FAULTED,
+    DeviceState.STOPPED: AgxDeviceAuthority.STATE_STOPPED,
+}
+
+
+def derive_device_id(can_port) -> str:
+    """Name this arm for the authority contract, from its CAN interface.
+
+    The deployed arm interfaces are ``can_nero_left`` and ``can_nero_right``.
+
+    Note this is *not* the coordinator's resource name: the scheduler's resource
+    for the left hand is ``left_hand`` while its device is ``hand_left``. The
+    two spellings are separate contracts and must not be derived from one
+    another — set ``device_id`` explicitly wherever that matters.
+    """
+    port = str(can_port or "").strip().lower()
+    for side in ("left", "right"):
+        if port.endswith(side):
+            return f"arm_{side}"
+    return f"arm_{port}" if port else "arm_unknown"
 
 
 def resolve_nero_firmware(software_version) -> tuple:
@@ -120,6 +152,11 @@ class AgxArmRosNode(Node):
         self._load_parameters()
         self._log_parameters()
 
+        ### device authority (built before the SDK so a failed connect is
+        ### still reported as a state rather than as silence)
+        self._unit_safety = UnitSafety()
+        self._authority = DeviceAuthority(self.device_id, self._unit_safety)
+
         ### AgxArmFactory
         self._init_agx_arm()
 
@@ -143,6 +180,10 @@ class AgxArmRosNode(Node):
     def _declare_parameters(self):
         self.declare_parameter("can_port", "can_nero_right")
         self.declare_parameter("arm_type", "nero")
+        # Identity of this device in the authority contract. Empty derives it
+        # from the CAN port (can_nero_left -> arm_left), which is the deployed
+        # naming; set it explicitly for anything that does not follow it.
+        self.declare_parameter("device_id", "")
         self.declare_parameter("auto_enable", True)
         self.declare_parameter("fast_mode", False)
         self.declare_parameter("speed_percent", 100)
@@ -218,6 +259,10 @@ class AgxArmRosNode(Node):
         )
         self.can_port = self.get_parameter("can_port").value
         self.arm_type = self.get_parameter("arm_type").value
+        self.device_id = (
+            self.get_parameter("device_id").value
+            or derive_device_id(self.can_port)
+        )
         self.auto_enable = self.get_parameter("auto_enable").value
         self.fast_mode = self.get_parameter("fast_mode").value
         self.speed_percent = self.get_parameter("speed_percent").value
@@ -333,6 +378,13 @@ class AgxArmRosNode(Node):
         # was still live while a starvation-sensitive signal read stale/not-ok.
         self._loop_overrun_suppressions = 0
         self._last_overrun_log_monotonic = 0.0
+        # Rejected-command bookkeeping. A malformed stream arrives at the
+        # control rate, so the log is rate-limited per reason and carries the
+        # suppressed count: flooding the log is itself a CPU problem on this
+        # Jetson, and the 0E baseline shows how little headroom there is.
+        self._command_rejections = {}
+        self._last_rejection_log_monotonic = {}
+        self._rejection_log_period_s = 2.0
         # recovery trigger category -> count, surfaced on every recovery so a
         # CPU-stress run shows what actually drove each reconnect.
         self._recovery_reason_counts = {}
@@ -414,6 +466,9 @@ class AgxArmRosNode(Node):
         self.agx_arm.connect()
 
         self.arm_joint_names = list(config["joint_limits"].keys())
+        # Kept, not just the names: the boundary check needs the bounds to say
+        # when a commanded position is outside the joint's configured range.
+        self.arm_joint_limits = dict(config["joint_limits"])
         self.arm_joint_count = self.agx_arm.joint_nums
 
         if self.auto_enable:
@@ -537,6 +592,15 @@ class AgxArmRosNode(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._publish_hand_window_active()
+        # The authoritative device state. Latched, because a controller that
+        # joins late must not have to wait for the next transition to learn
+        # whether the device accepts motion. Attaching the listener publishes
+        # the current state immediately.
+        self.authority_pub = self.create_publisher(
+            AgxDeviceAuthority, "feedback/authority",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self._authority.set_on_change(self._publish_authority)
         self.leader_joint_angles_pub = self.create_publisher(
             JointState, "feedback/leader_joint_angles", 1
         )
@@ -695,6 +759,111 @@ class AgxArmRosNode(Node):
                 return False
         return True
 
+    def _publish_authority(self, snapshot) -> None:
+        """Publish one authority transition. Never breaks the caller.
+
+        Called from whichever thread caused the transition — the publish loop,
+        a service handler, the recovery path — so a publish failure must not
+        propagate into a control path.
+        """
+        try:
+            msg = AgxDeviceAuthority()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.device_id = snapshot.device_id
+            msg.state = AUTHORITY_STATE_CODES[snapshot.state]
+            msg.device_epoch = snapshot.device_epoch
+            msg.unit_safety_epoch = snapshot.unit_safety_epoch
+            msg.unit_stopped = snapshot.unit_stopped
+            msg.accepts_motion = snapshot.accepts_motion
+            msg.owner_id = snapshot.owner_id
+            msg.reason = snapshot.reason
+            self.authority_pub.publish(msg)
+        except Exception as e:
+            self.get_logger().error(f"publishing device authority failed: {e}")
+
+    def _sync_authority(self, reason: str) -> None:
+        """Bring the device authority in step with the driver's gates.
+
+        Derived from the existing gates on purpose at this stage. Those gates
+        are already what the driver acts on; publishing them as one
+        authoritative state is what a controller needs before ownership itself
+        moves into the authority. The **epochs are not derived** — they come
+        from the authority's own transitions, so a command issued before an
+        interruption is rejected after it.
+
+        Cheap and idempotent: a transition that changes nothing publishes
+        nothing, so calling this every publish cycle costs a lock.
+        """
+        authority = self._authority
+        if self._unit_safety.stopped:
+            # Only a unit rearm leaves this state; nothing below may override it.
+            return
+        if self._recovery_in_progress:
+            authority.enter_recovering(reason)
+            return
+        if self._fault_lockout:
+            authority.enter_faulted(reason)
+            return
+        if authority.state is DeviceState.FAULTED:
+            # The lockout is gone, so clear_fault_lockout was called.
+            # Acknowledging the latch is not arming the device.
+            authority.acknowledge_fault(reason)
+        if not self.enable_flag:
+            authority.go_standby(f"{reason}: arm not enabled")
+            return
+        if self._hand_window_active:
+            authority.go_standby(f"{reason}: hand window holds the arm")
+            return
+        if not self.control_ready:
+            authority.go_standby(f"{reason}: waiting for feedback")
+            return
+        # enable_flag is the joint enable readback and control_ready is
+        # advancing feedback: both are checks, not assumptions, so this rearm
+        # is backed by evidence rather than by the absence of a complaint.
+        authority.rearm(verified=True, detail=reason)
+
+    def _reject_command(self, path: str, rejection) -> None:
+        """Refuse one command at the hardware boundary, audibly but not loudly.
+
+        Every rejection is counted; the log line is rate-limited per reason and
+        reports how many were suppressed, so a stream of bad commands is visible
+        without the logging itself becoming the load.
+        """
+        key = (path, rejection.reason)
+        count = self._command_rejections.get(key, 0) + 1
+        self._command_rejections[key] = count
+
+        now = time.monotonic()
+        last = self._last_rejection_log_monotonic.get(key, 0.0)
+        if now - last < self._rejection_log_period_s:
+            return
+        self._last_rejection_log_monotonic[key] = now
+        self.get_logger().error(
+            f"{path} rejected ({rejection.reason}): {rejection.detail} "
+            f"[{count} rejected on this path for this reason so far]"
+        )
+
+    def _warn_command_limits(self, path: str, outside: list) -> None:
+        """Flag a command past the configured joint limits without refusing it.
+
+        The firmware enforces its own limits, and refusing mid-stream would
+        freeze a running impedance loop at its last setpoint. Promoted to a
+        rejection once a hardware session shows the controller never
+        legitimately crosses a limit.
+        """
+        key = (path, "joint_limits")
+        count = self._command_rejections.get(key, 0) + 1
+        self._command_rejections[key] = count
+        now = time.monotonic()
+        last = self._last_rejection_log_monotonic.get(key, 0.0)
+        if now - last < self._rejection_log_period_s:
+            return
+        self._last_rejection_log_monotonic[key] = now
+        self.get_logger().warn(
+            f"{path} commands a joint past its configured limit: "
+            f"{'; '.join(outside)} [{count} so far, still forwarded]"
+        )
+
     def _publish_fault_lockout(self) -> None:
         try:
             self.fault_lockout_pub.publish(Bool(data=self._fault_lockout))
@@ -739,6 +908,9 @@ class AgxArmRosNode(Node):
                 "clear_fault_lockout is called. Verify the arm before re-enabling."
             )
             self._publish_fault_lockout()
+            # Immediately, not on the next publish tick: a controller aborting
+            # on authority loss should not stream into a latched fault.
+            self._sync_authority(f"fault lockout: {reason}")
 
     def _clear_fault_lockout_callback(self, request, response):
         del request
@@ -747,6 +919,12 @@ class AgxArmRosNode(Node):
         self._fault_lockout_logged = False
         self._last_good_feedback_monotonic = time.monotonic()
         self._publish_fault_lockout()
+        # This is the operator's "I have looked at it" surface, so it is also
+        # what releases a unit stop. It clears the latch; it does not arm the
+        # device — that still needs the gates to come back.
+        if self._unit_safety.stopped:
+            self._unit_safety.rearm("fault lockout cleared")
+        self._sync_authority("fault lockout cleared")
         response.success = True
         response.message = (
             "fault lockout cleared" if was_locked else "no fault lockout was active"
@@ -870,6 +1048,7 @@ class AgxArmRosNode(Node):
                 self.get_logger().error(f"bus recovery check failed: {e}")
 
             self._surface_silent_tx_loss()
+            self._sync_authority("publish loop")
 
             if self.agx_arm.is_ok():
                 if self._check_arm_ready():
@@ -1698,14 +1877,23 @@ class AgxArmRosNode(Node):
         if not self._check_can_control():
             return
 
-        arrays = [msg.joint_index, msg.p_des, msg.v_des, msg.kp, msg.kd, msg.torque]
-        if len(set(len(arr) for arr in arrays)) > 1:
-            self.get_logger().error("MoveMITMsg arrays have inconsistent lengths")
+        # The hardware boundary is the input contract; SDK clamping is a last
+        # protection behind it. A rejected message is rejected whole: the
+        # firmware holds its last setpoint, and admitting some joints while
+        # dropping others would leave the arm in a pose nobody commanded.
+        rejection = validate_mit_command(
+            msg.joint_index, msg.p_des, msg.v_des, msg.kp, msg.kd, msg.torque,
+            joint_count=self.arm_joint_count,
+        )
+        if rejection is not None:
+            self._reject_command("move_mit", rejection)
             return
 
-        if not arrays[0]:
-            self.get_logger().warn("Received empty MoveMITMsg")
-            return
+        outside = positions_outside_joint_limits(
+            msg.joint_index, msg.p_des, self.arm_joint_names, self.arm_joint_limits
+        )
+        if outside:
+            self._warn_command_limits("move_mit", outside)
 
         try:
             # Send ArmMsgModeCtrl once per mode transition, not once per joint.
@@ -1976,6 +2164,11 @@ class AgxArmRosNode(Node):
         """
         stopped = False
         recovery_requested = False
+        # Raised first, before anything is attempted. An emergency stop is the
+        # case that genuinely invalidates every device at once, and the epoch
+        # bump has to precede the stop attempt so nothing issued during it is
+        # still considered current.
+        self._unit_safety.stop("emergency stop requested")
         # Every stage below is verified in feedback, so an open hand window must
         # not keep that feedback silenced through an emergency stop.
         self._restore_feedback_push("emergency stop")

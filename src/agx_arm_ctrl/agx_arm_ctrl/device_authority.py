@@ -262,6 +262,22 @@ class DeviceAuthority:
 
     # -- observation ----------------------------------------------------
 
+    def set_on_change(
+        self, listener: Optional[Callable[[AuthoritySnapshot], None]]
+    ) -> None:
+        """Attach the change listener and immediately hand it current state.
+
+        Exists because the publisher usually outlives its transport: a ROS node
+        builds its authority before its publishers, and a listener that only
+        saw *future* transitions would leave the first subscriber waiting for a
+        state change that may never come.
+        """
+        with self._lock:
+            self._on_change = listener
+            snapshot = self._snapshot_locked()
+        if listener is not None:
+            listener(snapshot)
+
     def snapshot(self) -> AuthoritySnapshot:
         with self._lock:
             return self._snapshot_locked()

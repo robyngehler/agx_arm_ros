@@ -10,6 +10,7 @@ a bare instance via __new__ and drive the lockout state machine directly.
 from std_srvs.srv import Trigger
 
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
+from agx_arm_ctrl.device_authority import DeviceAuthority, UnitSafety
 
 
 class _FakeLogger:
@@ -33,6 +34,12 @@ def _node(require_ack=True):
     node._control_ready_logged = True
     node._hand_window_active = False
     node._last_good_feedback_monotonic = 0.0
+    node._recovery_in_progress = False
+    node.enable_flag = True
+    # The lockout drives the published device authority, so a bare node needs
+    # one. No publisher is attached: transitions are recorded, not published.
+    node._unit_safety = UnitSafety()
+    node._authority = DeviceAuthority("arm_left", node._unit_safety)
     return node
 
 

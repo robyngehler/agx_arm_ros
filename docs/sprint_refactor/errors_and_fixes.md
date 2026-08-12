@@ -360,3 +360,47 @@ reported the effect anyway. Fixed at L1; neither has run on hardware yet.
   branch, and returns an explanation that startup logs.
 - Open: which tier the two arms actually run on is still unrecorded anywhere in
   this repository. The next hardware session captures it from the startup log.
+
+## 2026-08-12 (Phase 1A, the hardware boundary had no input contract)
+
+### Anything in a MIT message reached the vendor SDK
+
+- Symptom: `_move_mit_callback` checked that the six parallel arrays were the
+  same length and that the message was not empty, then forwarded the contents
+  joint by joint to `move_mit`.
+- Impact: a NaN or infinity, a joint index the arm does not have, the same joint
+  commanded twice in one message, or a gain an order of magnitude past the
+  protocol range all reached the hardware boundary unexamined. The SDK clamps
+  some of these, which is worse than refusing them: a clamped command is a
+  *different* command, and the sender never learns it was wrong.
+- Fix: `command_validation.validate_mit_command` refuses the message as a whole
+  before any frame is sent. Whole, not per joint — the firmware keeps executing
+  the last setpoint it received, so admitting six joints and dropping the
+  seventh would leave the arm in a pose nobody commanded.
+- Deliberately not refused: a position outside the joint's *configured* limit.
+  It is warned and still forwarded, because refusing mid-stream would freeze a
+  running impedance loop at its last setpoint. Promoted to a rejection once a
+  hardware session establishes that the MIT controller never legitimately
+  crosses a limit.
+- Note on logging: rejections are counted per reason and the log line is
+  rate-limited. A malformed stream arrives at the control rate, and on this
+  Jetson the logging would itself become the load.
+
+### Readiness was four booleans and none of them were published
+
+- Symptom: whether the arm would accept motion was spread across `enable_flag`,
+  `control_ready`, `_fault_lockout` and `_hand_window_active`. The only thing a
+  controller could subscribe to was `feedback/hand_window_active`.
+- Impact: that boolean says "the shared bus is busy" and nothing about faults,
+  emergency stops, or who is commanding, so a controller could not distinguish
+  a deliberate quiescence from a dead device — and had no way at all to notice
+  that the device it was streaming to had changed hands.
+- Fix: the driver now publishes one authoritative `AgxDeviceAuthority` on
+  `feedback/authority`, latched, on change. The state is derived from the gates
+  above, which is honest at this stage — they are already what the driver acts
+  on. The **epochs are not derived**: they come from the authority's own
+  transitions, so a command issued before an interruption is rejected after it.
+- Open: the MIT controller does not consume it yet, so `hand_window_active`
+  remains the live coupling until that lands. The `unit_safety_epoch` is also
+  still per process — the coordinator stopping every side covers the current
+  e-stop path, but it is not the same guarantee as one synchronised epoch.

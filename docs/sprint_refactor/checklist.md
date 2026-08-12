@@ -135,10 +135,18 @@ Rules and mechanism (L1, `agx_arm_ctrl/device_authority.py`, `sdk_worker.py`):
 
 Routed through the runtime:
 
-- [ ] Four device authorities (`Left/RightArmAuthority`,
-      `Left/RightHandTransportAuthority`), each publishing its own state.
+- [x] Each arm driver builds its own authority and publishes it latched on
+      `feedback/authority` (`AgxDeviceAuthority`), derived from the gates the
+      driver already acts on — enable readback, feedback readiness, fault
+      lockout, recovery, hand window — with the epochs coming from the
+      authority's own transitions rather than from those gates.
+- [ ] The two hand transport authorities. Only the arms publish so far.
 - [ ] Route all arm SDK calls for one device through the worker.
 - [ ] Reject stale epoch and out-of-order sequence on the live command path.
+- [ ] Synchronise `unit_safety_epoch` across processes. Each node currently
+      keeps its own, so a unit stop raised in one node is not yet seen by the
+      others; the coordinator calls every side's stop service, which covers the
+      current e-stop path but is not the same guarantee.
 - [ ] Extend `MoveMITMsg` with the epochs and a sequence; add `srv/` to
       `src/agx_arm_msgs`.
 - [ ] Make the MIT controller consume the authoritative device state instead of
@@ -147,8 +155,16 @@ Routed through the runtime:
       succeeded" for a bus that returned on its own. The re-arm result was
       being discarded; the log line now names feedback and the enable readback
       separately, and a restored bus with an unconfirmed enable is an error.
-- [ ] Add full hardware-boundary command validation (duplicate or missing joint
-      indexes, empty commands, non-finite values, out-of-range values).
+- [x] Hardware-boundary command validation for MIT: duplicate or unknown joint
+      indexes, empty commands, non-finite values, and values the protocol
+      cannot encode are refused whole, before the SDK sees them. Rejections are
+      counted per reason and logged rate-limited, because a malformed stream
+      arrives at the control rate.
+- [ ] Promote the joint-limit check from flagged to refused. A position past a
+      joint's *configured* limit is currently warned and still forwarded:
+      refusing mid-stream would freeze a running impedance loop at its last
+      setpoint, and no hardware session has yet shown the controller never
+      legitimately crosses a limit.
 - [ ] Replace the unassigned `AgxArmStatus.err_status` with a documented
       structured error representation.
 - [x] Fix the enable readback: a contradicted enable used to warn and return
