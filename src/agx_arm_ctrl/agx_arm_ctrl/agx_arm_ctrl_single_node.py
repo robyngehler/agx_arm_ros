@@ -2519,6 +2519,36 @@ class AgxArmRosNode(Node):
         # The unit-wide statement that a new safety era began is the writer's to
         # make, and is requested without waiting for it.
         self._request_unit_stop("emergency stop requested")
+
+        if self._recovery_in_progress:
+            # Recovery owns the SDK session exclusively and is in the middle of
+            # tearing the link down. Every stage below would issue a call
+            # against that session, competing with the owner for a transport
+            # that is not there — and none of them could be verified, because
+            # verification reads the same dead link.
+            #
+            # So: latch, request the unit stop, and say plainly that a new
+            # hardware stop cannot be confirmed right now. The arm is already
+            # covered by the damped zero recovery sends before the teardown and
+            # by the fault lockout after it; that is a mitigation, and the
+            # independent watchdog is the boundary for this regime.
+            response.success = False
+            response.message = (
+                f"{self.arm_type} stop=unverifiable — the device is RECOVERING "
+                f"({self.recovery_active_s:.1f}s so far) and its SDK session "
+                "belongs to recovery, so no stop was attempted over it. This "
+                "device is latched and refuses motion, and a unit stop was "
+                "requested. A NEW hardware stop cannot be confirmed until "
+                "recovery ends — use the physical emergency stop if the arm is "
+                "moving."
+            )
+            self.get_logger().error(
+                "EMERGENCY STOP DURING RECOVERY: latched locally and requested "
+                "a unit stop, but issued no SDK call — recovery owns the "
+                "session. A new hardware stop is NOT verifiable in this window."
+            )
+            return response
+
         # Every stage below is verified in feedback, so an open hand window must
         # not keep that feedback silenced through an emergency stop.
         self._restore_feedback_push("emergency stop")
