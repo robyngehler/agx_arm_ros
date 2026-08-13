@@ -1,4 +1,4 @@
-"""One thread per device, and every vendor-SDK call goes through it.
+"""One owner of a device's SDK session at any instant.
 
 Phase 1A of the V02 refactor. Today the arm driver reaches the SDK from the
 200 Hz publish thread, from ROS subscription callbacks and from service handlers
@@ -26,8 +26,8 @@ of a queued write breaks the causality the callers rely on. Freshness for
 streaming setpoints is handled by ``replace_key`` instead, which is ordering-
 preserving because it replaces a command that has not started yet.
 
-**One SDK call per task, never a retry loop.** The safety lane overtakes queued
-work; nothing preempts work already running. Measured on hardware
+**Exactly one SDK owner at any instant, and one SDK call per task.** The
+safety lane overtakes queued work; nothing preempts work already running. Measured on hardware
 (`docs/sprint_refactor/reference/sdk_latency_budget.md`), individual SDK calls
 are almost all sub-millisecond — the worst on the hot path is ``move_mit`` at
 3.32 ms — so a single call is not what threatens the stop path. The driver's
@@ -40,6 +40,12 @@ and submit each iteration.
 The budget that follows: an emergency stop reaches the SDK within 20 ms while
 normal work runs. ``sdk_queue_wait`` and ``sdk.<call>`` are timed separately so
 a violation says which of the two caused it.
+
+**Recovery does not run here.** A measured `disconnect` blocks for a second in
+one call, which no task granularity shortens, so destructive recovery owns the
+SDK session exclusively instead of queueing behind — and while it does, this
+worker owns nothing. The invariant is one owner at a time, not one thread for
+everything; the earlier wording "no SDK call outside the worker" is superseded.
 """
 
 from __future__ import annotations

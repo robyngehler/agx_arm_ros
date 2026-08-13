@@ -1,9 +1,14 @@
 """L1 tests for the serialized per-device SDK worker.
 
-The Phase 1A exit gate is "no arm SDK call outside the worker, and the SDK-call
-counter still shows one thread per arm". These tests hold the worker to the
-properties that gate depends on: one thread, safety ahead of queued motion, and
-work from a superseded epoch never reaching the hardware.
+The Phase 1A exit gate is **exactly one SDK owner at any instant**: steady-state
+commands and reads through this worker, and destructive recovery owning the SDK
+session exclusively while the device is recovering. These tests hold the worker
+to the steady-state half — one thread, safety ahead of queued motion, and work
+from a superseded epoch never reaching the hardware.
+
+Note what this worker does **not** give: priority is non-preemptive once a call
+has started, and a measured 1 s blocking `disconnect` is why recovery is not
+routed through here at all.
 """
 
 import threading

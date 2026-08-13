@@ -127,3 +127,100 @@ def test_node_clock_stale_and_frames_frozen_recovers():
     )
     assert node._should_recover_bus() is True
     assert node._recovery_reason_counts.get("stale_feedback") == 1
+
+
+# --- recovery runs off the acquisition path ----------------------------------
+
+def test_requesting_recovery_returns_immediately_and_latches_the_authority():
+    """Measured on hardware: inline recovery cost 13.1 s of publish loop.
+
+    During it nothing published state, nothing drained the CAN RX socket, and
+    there was no way to see how long recovery had been running. The acquisition
+    path now only detects, latches and requests.
+    """
+    import threading as _threading
+    import time as _time
+
+    from agx_arm_ctrl.device_authority import (
+        DeviceAuthority,
+        DeviceState,
+        UnitSafety,
+    )
+
+    node = AgxArmRosNode.__new__(AgxArmRosNode)
+    node.get_logger = lambda: _RecoveryLogger()
+    node.device_id = "arm_left"
+    node._recovery_in_progress = False
+    node._recovery_lock = _threading.Lock()
+    node._recovery_started_monotonic = 0.0
+    node._recover_reason = "not_ok"
+    node.control_ready = True
+    node._control_ready_logged = True
+    node._unit_safety = UnitSafety("arm_left", writer=False)
+    node._authority = DeviceAuthority("arm_left", node._unit_safety)
+    node._authority.go_standby("connected")
+    node._authority.rearm(verified=True, detail="test")
+
+    released = _threading.Event()
+    node._recover_bus = lambda: released.wait(5.0)
+
+    started = _time.monotonic()
+    node._request_recovery()
+    elapsed = _time.monotonic() - started
+
+    try:
+        assert elapsed < 0.5, f"_request_recovery blocked for {elapsed:.2f}s"
+        assert node._recovery_in_progress is True
+        assert node._authority.state is DeviceState.RECOVERING
+        assert not node._authority.snapshot().motion_ready
+        # How long it has been running is observable, not hidden.
+        assert node.recovery_active_s > 0.0
+    finally:
+        released.set()
+        _time.sleep(0.2)
+
+    assert node._recovery_in_progress is False
+    assert node.recovery_active_s == 0.0
+
+
+def test_a_second_request_does_not_start_a_second_recovery():
+    import threading as _threading
+    import time as _time
+
+    from agx_arm_ctrl.device_authority import DeviceAuthority, UnitSafety
+
+    node = AgxArmRosNode.__new__(AgxArmRosNode)
+    node.get_logger = lambda: _RecoveryLogger()
+    node.device_id = "arm_left"
+    node._recovery_in_progress = False
+    node._recovery_lock = _threading.Lock()
+    node._recovery_started_monotonic = 0.0
+    node._recover_reason = "not_ok"
+    node.control_ready = True
+    node._control_ready_logged = True
+    node._unit_safety = UnitSafety("arm_left", writer=False)
+    node._authority = DeviceAuthority("arm_left", node._unit_safety)
+
+    released = _threading.Event()
+    runs = []
+    node._recover_bus = lambda: (runs.append(1), released.wait(5.0))
+
+    node._request_recovery()
+    node._request_recovery()
+    node._request_recovery()
+    _time.sleep(0.2)
+    released.set()
+    _time.sleep(0.3)
+
+    assert len(runs) == 1, f"recovery ran {len(runs)} times concurrently"
+
+
+class _RecoveryLogger:
+    def info(self, *_a, **_k):
+        pass
+
+    def warn(self, *_a, **_k):
+        pass
+
+    def error(self, *_a, **_k):
+        pass

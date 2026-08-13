@@ -47,3 +47,25 @@ Read these first when changing package boundaries or OmniHand integration surfac
 - prefer `bash ./scripts/colcon_build_system_python.sh --packages-select ...` for message, launch, and bridge work when the environment supports it
 - run `colcon test --packages-select ...` from a system-Python ROS shell when relevant tests exist
 - call out explicitly when hardware validation could not be run in the current environment
+
+## Editing By Script
+
+Scripted edits (`python3 - <<'PY'` doing `str.replace`) are fine for repetitive
+changes, but they fail *silently*: a replace whose anchor does not match leaves
+the file untouched and the script still exits 0.
+
+- **Verify the effect, never the run.** End the script by asserting the new
+  content is present (`assert marker in path.read_text()`), or re-read the file
+  and grep for it. A bare `print("ok")` after a replace says the interpreter
+  reached the end, nothing more — it once reported success for a 90-line
+  insertion that never landed, and only a lint warning about an unused import
+  revealed it.
+- Anchor on text that is certain to exist. Method signatures with type
+  annotations are the usual trap: `def _stop_callback(self, request, response):`
+  and `def _stop_callback(self, request: Trigger.Request, ...) -> ...:` are not
+  the same string.
+- Prefer the `Edit` tool for single, exact edits — it fails loudly when the old
+  text is absent, which is the behaviour a silent replace lacks.
+- Never `git add -A <dir>` when the working tree may hold changes that are not
+  yours. Stage the paths you touched by name; a sweeping add has twice pulled an
+  unrelated file into a commit whose message did not mention it.

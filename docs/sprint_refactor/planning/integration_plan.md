@@ -457,9 +457,20 @@ The authority and epoch model above, plus the worker that makes it real:
   hardware profiles
 - add the `srv/` directory to `src/agx_arm_msgs` for the new contracts
 
-Exit gate: no arm SDK call outside the worker on the migrated path; stale-epoch
+Exit gate: **exactly one SDK owner at any instant** — steady-state commands
+and reads go through the serialized device worker, and destructive recovery
+exclusively owns the SDK session while the device is `RECOVERING`. (The earlier
+wording, "no arm SDK call outside the worker", is superseded: a measured 1 s
+blocking `disconnect` means recovery must not share the worker with the safety
+lane, so the invariant is single ownership, not single thread.) Stale-epoch
 commands rejected in tests; MIT aborts immediately on authority loss; the
-SDK-call counter under a *full* stack still shows one thread per arm.
+SDK-call counter under a *full* stack shows one steady-state thread per arm,
+with recovery accounted separately.
+
+Also required, and not yet met: worker priority is **non-preemptive once an SDK
+call has started**, the pre-teardown damped zero is a mitigation rather than a
+bounded protective guarantee, and the 13.1 s recovery-induced publish-loop
+stall is an open Phase 1B defect.
 
 ### 1B. Feedback snapshot and driver CPU reduction
 

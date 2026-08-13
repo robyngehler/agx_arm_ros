@@ -380,6 +380,8 @@ class AgxArmRosNode(Node):
         # bus recovery state
         self._had_control_ready = False
         self._recovery_in_progress = False
+        self._recovery_lock = threading.Lock()
+        self._recovery_started_monotonic = 0.0
         self._last_good_feedback_monotonic = time.monotonic()
         # Feedback-frame progress tracking for _check_arm_ready: the vendor
         # frame timestamp advancing is the ground truth for a live bus; the
@@ -1239,11 +1241,20 @@ class AgxArmRosNode(Node):
             # Never let recovery bookkeeping crash the publish loop.
             try:
                 if self._should_recover_bus():
-                    self._recover_bus()
-                    rate.sleep()
-                    continue
+                    self._request_recovery()
             except Exception as e:
                 self.get_logger().error(f"bus recovery check failed: {e}")
+
+            if self._recovery_in_progress:
+                # Recovery owns the SDK session exclusively while it runs, so
+                # this loop must not touch it — but it must keep running.
+                # Recovering inline used to block this thread for the whole
+                # attempt: 13.1 s measured on hardware, during which nothing
+                # published state and nothing drained the CAN RX socket.
+                self._publish_authority(self._authority.snapshot())
+                self._publish_fault_lockout()
+                rate.sleep()
+                continue
 
             self._surface_silent_tx_loss()
             self._sync_authority("publish loop")
@@ -1496,8 +1507,62 @@ class AgxArmRosNode(Node):
             )
         return False
 
+    def _request_recovery(self) -> None:
+        """Hand recovery to its own thread and return immediately.
+
+        The acquisition loop detects the fault, latches the authority, and keeps
+        running. It does not perform the recovery: `disconnect` alone blocks for
+        a second on a sick bus, and inline recovery cost 13.1 s of publish loop
+        on hardware — no state published, no RX socket drained, no timeout
+        accounting, and no way to see how long recovery had been running.
+
+        Recovery takes exclusive ownership of the SDK session for its duration.
+        That is the invariant: one owner at any instant, not one thread for
+        everything.
+        """
+        with self._recovery_lock:
+            if self._recovery_in_progress:
+                return
+            self._recovery_in_progress = True
+            self._recovery_started_monotonic = time.monotonic()
+        # Latched before the thread starts, so there is no window in which the
+        # device still looks commandable while its session is being torn down.
+        self._authority.enter_recovering(self._recover_reason or "bus recovery")
+        self.control_ready = False
+        self._control_ready_logged = False
+        thread = threading.Thread(
+            target=self._recovery_thread, name=f"recovery-{self.device_id}", daemon=True
+        )
+        thread.start()
+
+    def _recovery_thread(self) -> None:
+        """Run one recovery attempt off the acquisition path."""
+        try:
+            self._recover_bus()
+        except Exception as exc:
+            self.get_logger().error(f"recovery thread failed: {exc}")
+        finally:
+            with self._recovery_lock:
+                self._recovery_in_progress = False
+            duration = time.monotonic() - self._recovery_started_monotonic
+            self.get_logger().warn(
+                f"recovery finished after {duration:.1f}s; the acquisition loop "
+                "kept publishing throughout"
+            )
+
+    @property
+    def recovery_active_s(self) -> float:
+        """How long recovery has been running, or 0.0 when it is not.
+
+        Exposed because "hide how long recovery has been active" was one of the
+        things the inline version did.
+        """
+        with self._recovery_lock:
+            if not self._recovery_in_progress:
+                return 0.0
+            return time.monotonic() - self._recovery_started_monotonic
+
     def _recover_bus(self):
-        self._recovery_in_progress = True
         # A recovery must never run against a deliberately silenced bus: every
         # verification step below reads feedback. Restore the push and drop the
         # hand window — the shared bus is the problem now, not the hand.
@@ -1622,7 +1687,6 @@ class AgxArmRosNode(Node):
             self._clear_comm_error()
             self._last_recovery_end_monotonic = time.monotonic()
             self._recovery_cooldown_logged = False
-            self._recovery_in_progress = False
             # Hold an explicit fault lockout after recovery: the publish loop
             # would otherwise re-arm control_ready on the next healthy tick and
             # silently accept motion. Requires clear_fault_lockout to release.
