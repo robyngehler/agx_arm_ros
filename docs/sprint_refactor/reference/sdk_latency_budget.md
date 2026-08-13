@@ -162,6 +162,57 @@ The honest-reporting fix from 2026-08-12 held under a real fault:
 confirmed by readback` — feedback and the enable readback named separately,
 rather than the bare "recovery succeeded" the 0E run produced.
 
+## Routing the acquisition batch (2026-08-13)
+
+The batch is now acquired as **one** worker task rather than eight separate
+ones. That was a correction to this document's own rule: "one SDK call per task"
+was too crude a statement of the real principle, which is *bounded* work. Seven
+motor-state reads plus pose and status measure 0.10-0.20 ms in total — less than
+one `move_mit` at 3.32 ms — and nothing about them retries or waits on the bus.
+A retry loop bounded only by a 5 s timeout is the thing that must never be one
+task; a fixed batch of bounded reads is not.
+
+Measured with the batch routed, MIT streaming at 100 Hz:
+
+| | |
+| --- | --- |
+| `sdk.acquire_feedback_snapshot` | mean 0.43 ms, max 1.03 ms |
+| `sdk_queue_wait` | mean 0.47 ms, **max 5.05 ms** |
+| `publish_batch` | mean 0.84 ms, max 2.18 ms |
+| acquisition cycles | 2000 in 10 s (200/s) |
+| MIT command rate | 100.2/s, unchanged |
+
+The queue hand-off costs 0.47 ms on average against a 5 ms period, and its
+worst case reaches the whole period. That is affordable at one hand-off per
+cycle and would not have been at eight — which is the measurement that decided
+the design.
+
+### The exit gate is not met yet
+
+`sdk calls: 52000 (5199/s) from 2 thread(s)`. The batch moved to the worker
+(28000 calls), but the loop's own health checks did not:
+
+```
+is_ok[_publish_thread]: 400/s
+has_comm_error[_publish_thread]: 200/s
+get_send_error_count[_publish_thread]: 200/s
+get_joint_angles[_publish_thread]: 200/s
+```
+
+Those sit in `_check_arm_ready`, `_check_arm_connected`, `_surface_silent_tx_loss`
+and `_should_recover_bus`, which run *before* the acquisition and decide whether
+to recover at all. Folding them into the snapshot means acquiring first and
+deciding second — a loop restructure, not a call move. Until it lands, "exactly
+one SDK owner at any instant" is **not** satisfied and Phase 1A does not close.
+
+### One number left unexplained
+
+The loop ran 2000 acquisition cycles in 10 s, while a subscriber counted 141.4
+`feedback/joint_states` per second. The publisher's depth is 1 and the
+subscriber's is 50, so delivery rather than production is the likely difference
+— but `ros2 topic info --verbose` reports the depth as UNKNOWN here, so this is
+untested and recorded as open rather than explained away.
+
 ## Accepted limit
 
 The recovery window is not a defect to be closed by better scheduling. A vendor

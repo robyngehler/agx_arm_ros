@@ -8,7 +8,7 @@ looked like coverage while providing none.
 
 from agx_arm_msgs.msg import AgxArmStatus
 
-from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
+from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode, FeedbackSnapshot
 
 
 class _ErrStatus:
@@ -45,13 +45,26 @@ class _Arm:
         return self._status
 
 
+def _snapshot(status):
+    """The batch is acquired once and shared; publishers only read it."""
+    return FeedbackSnapshot(
+        joint_angles=None,
+        motor_states=(),
+        flange_pose=None,
+        tcp_pose=None,
+        arm_status=status,
+        leader_joint_angles=None,
+        acquired_at=0.0,
+    )
+
+
 def _publish(err_code=0, angle_limits=(), comm_faults=()):
     published = []
     node = AgxArmRosNode.__new__(AgxArmRosNode)
     node.arm_joint_count = 7
-    node.agx_arm = _Arm(_Status(_StatusMsg(err_code, angle_limits, comm_faults)))
     node.arm_status_pub = type("P", (), {"publish": lambda _s, m: published.append(m)})()
-    node._publish_arm_status()
+    status = _Status(_StatusMsg(err_code, angle_limits, comm_faults))
+    node._publish_arm_status(_snapshot(status))
     return published[0]
 
 
@@ -91,9 +104,8 @@ def test_a_missing_vendor_field_does_not_break_publication():
     node.arm_joint_count = 7
     status = _StatusMsg(angle_limits=(1,))
     del status.err_code
-    node.agx_arm = _Arm(_Status(status))
     node.arm_status_pub = type("P", (), {"publish": lambda _s, m: published.append(m)})()
-    node._publish_arm_status()
+    node._publish_arm_status(_snapshot(_Status(status)))
 
     assert published[0].fault_code == 0
     assert published[0].any_fault is True

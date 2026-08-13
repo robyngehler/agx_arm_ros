@@ -31,6 +31,7 @@ from agx_arm_ctrl.device_authority import (
 )
 from agx_arm_msgs.srv import ClaimDevice, RequestUnitStop
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
+from agx_arm_ctrl.sdk_worker import CallNotExecuted, CallOutcomeUnknown, SdkWorker
 from agx_arm_msgs.msg import (
     AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, AgxUnitSafety,
     GripperStatus,
@@ -127,6 +128,30 @@ def resolve_nero_firmware(software_version) -> tuple:
     return NeroFW.DEFAULT, f"firmware {text} -> NeroFW.DEFAULT"
 
 
+class FeedbackSnapshot(NamedTuple):
+    """Everything the publish batch reads from the SDK, taken in one go.
+
+    The batch used to make eight-plus separate SDK calls from the publish
+    thread, interleaved with ROS message construction. Two problems: it raced
+    every other thread that touched the SDK, and the values it published were
+    not from one instant — `get_arm_status()` was even read twice per cycle,
+    with a chance of disagreeing with itself.
+
+    Acquiring it as one bounded worker task fixes both. Bounded is the word that
+    matters: a fixed set of sub-millisecond reads (0.10 ms measured for all
+    seven motor states) is nothing like a retry loop bounded only by a 5 s
+    timeout, and only the latter would threaten the safety lane.
+    """
+
+    joint_angles: object
+    motor_states: tuple
+    flange_pose: object
+    tcp_pose: object
+    arm_status: object
+    leader_joint_angles: object
+    acquired_at: float
+
+
 class _StampRejection(NamedTuple):
     """Adapts an authority verdict to the rejection-logging shape."""
 
@@ -176,6 +201,11 @@ class AgxArmRosNode(Node):
         # unit-wide statement that a new safety era began is one process's job.
         self._unit_safety = UnitSafety(self.device_id, writer=False)
         self._authority = DeviceAuthority(self.device_id, self._unit_safety)
+        # The steady-state owner of this device's SDK session. Recovery
+        # takes ownership from it explicitly; nothing else touches the SDK.
+        self._sdk = SdkWorker(
+            self.device_id, metrics=self.metrics, logger=self.get_logger()
+        )
 
         ### AgxArmFactory
         self._init_agx_arm()
@@ -1315,12 +1345,36 @@ class AgxArmRosNode(Node):
                 # One timer around the whole publish batch: hot path 1 in
                 # reference/critical_cpu_paths.md is this loop's per-joint SDK
                 # reads, and the refactor has to show a before/after for it.
-                with self.metrics.time_block("publish_batch"):
-                    self._publish_joint_states()
-                    self._publish_pose()
-                    self._publish_arm_status()
-                    self._publish_effector_status()
-                    self._publish_leader_joint_angles()
+                # One worker request per cycle, not one per read. The batch
+                # is a single logical acquisition, and taking it as one bounded
+                # task is what removes the race without paying a queue
+                # hand-off eight times over. (Phase 1B decouples the cadences:
+                # the worker will schedule acquisition itself and this loop
+                # will only republish the latest snapshot.)
+                try:
+                    snapshot = self._sdk.call(
+                        "acquire_feedback_snapshot",
+                        self._acquire_feedback_snapshot,
+                        timeout=self.feedback_timeout,
+                    )
+                except CallOutcomeUnknown as exc:
+                    self.get_logger().warn(f"feedback acquisition: {exc}")
+                    snapshot = None
+                except CallNotExecuted as exc:
+                    # Dropped or rejected: the session is not ours right now.
+                    self.get_logger().debug(f"feedback acquisition skipped: {exc}")
+                    snapshot = None
+                except Exception as exc:
+                    self.get_logger().error(f"feedback acquisition failed: {exc}")
+                    snapshot = None
+
+                if snapshot is not None:
+                    with self.metrics.time_block("publish_batch"):
+                        self._publish_joint_states(snapshot)
+                        self._publish_pose(snapshot)
+                        self._publish_arm_status(snapshot)
+                        self._publish_effector_status()
+                        self._publish_leader_joint_angles(snapshot)
             if self.metrics.due():
                 report = self.metrics.report()
                 if report:
@@ -1569,11 +1623,30 @@ class AgxArmRosNode(Node):
                 return
             self._recovery_in_progress = True
             self._recovery_started_monotonic = time.monotonic()
-        # Latched before the thread starts, so there is no window in which the
-        # device still looks commandable while its session is being torn down.
+        # Ownership handover, in order. Each step exists because skipping it
+        # leaves either a commandable device with no session, or two owners on
+        # one session.
+        #
+        #   1-2  authority -> RECOVERING, so normal admission closes
+        #   3    device generation bumped: what was in flight is now stale
+        #   4    queued stale work discarded rather than delivered late
+        #   5-6  the worker finishes its in-flight call and stops dequeuing
+        #   7    recovery takes exclusive SDK ownership (its own thread)
         self._authority.enter_recovering(self._recover_reason or "bus recovery")
         self.control_ready = False
         self._control_ready_logged = False
+        self._sdk.set_epoch(self._authority.device_epoch)
+        if not self._sdk.quiesce(timeout=self.enable_timeout):
+            # A call is still running. Handing the session over anyway would put
+            # two owners on it, which is the race this whole structure removes —
+            # so recovery waits for the next tick instead of forcing it.
+            self.get_logger().error(
+                "cannot start recovery: the SDK worker is still executing a "
+                "call and ownership must not be taken from it. Retrying."
+            )
+            with self._recovery_lock:
+                self._recovery_in_progress = False
+            return
         thread = threading.Thread(
             target=self._recovery_thread, name=f"recovery-{self.device_id}", daemon=True
         )
@@ -1586,6 +1659,12 @@ class AgxArmRosNode(Node):
         except Exception as exc:
             self.get_logger().error(f"recovery thread failed: {exc}")
         finally:
+            #   8-9  recovery ran and established a verified state
+            #   10   the worker gets the SDK session back, under the generation
+            #        recovery left behind, so nothing queued during the handover
+            #        arrives against the old one
+            self._sdk.set_epoch(self._authority.device_epoch)
+            self._sdk.resume()
             with self._recovery_lock:
                 self._recovery_in_progress = False
             duration = time.monotonic() - self._recovery_started_monotonic
@@ -1832,9 +1911,46 @@ class AgxArmRosNode(Node):
 
         return result
 
-    def _publish_joint_states(self):
+    def _acquire_feedback_snapshot(self) -> FeedbackSnapshot:
+        """Read the whole feedback batch. Runs on the SDK worker, as one task.
+
+        Every read here is bounded and served from already-received frames, so
+        the whole batch costs about what one `move_mit` does. Nothing in it
+        retries or waits on the bus.
+        """
+        joint_angles = self.agx_arm.get_joint_angles()
         self.metrics.record_sdk_call("get_joint_angles")
-        joint_states = self.agx_arm.get_joint_angles()
+
+        motor_states = []
+        with self.metrics.time_block("motor_state_reads"):
+            for joint_index in range(1, self.arm_joint_count + 1):
+                self.metrics.record_sdk_call("get_motor_states")
+                motor_states.append(self.agx_arm.get_motor_states(joint_index))
+
+        flange_pose = self.agx_arm.get_flange_pose()
+        tcp_pose = (
+            self.agx_arm.get_flange2tcp_pose(flange_pose.msg)
+            if flange_pose is not None and flange_pose.hz > 0
+            else None
+        )
+        # Read once and shared: the batch used to fetch this twice per cycle,
+        # once for the pose and once for the status, with no guarantee the two
+        # agreed.
+        arm_status = self.agx_arm.get_arm_status()
+        leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+
+        return FeedbackSnapshot(
+            joint_angles=joint_angles,
+            motor_states=tuple(motor_states),
+            flange_pose=flange_pose,
+            tcp_pose=tcp_pose,
+            arm_status=arm_status,
+            leader_joint_angles=leader_joint_angles,
+            acquired_at=time.monotonic(),
+        )
+
+    def _publish_joint_states(self, snapshot: FeedbackSnapshot):
+        joint_states = snapshot.joint_angles
         # Same rule as _check_arm_ready: the instantaneous hz window starves
         # under GIL pressure while frames still arrive, so the advancing frame
         # timestamp is what decides whether the normal stream is alive.
@@ -1858,10 +1974,9 @@ class AgxArmRosNode(Node):
         # counter records the call and the thread, because "all SDK access from
         # one worker" is the Phase 1 exit criterion and this is where the
         # current answer is measured.
-        with self.metrics.time_block("motor_state_reads"):
+        if True:
             for joint_index in range(1, self.arm_joint_count+1):
-                self.metrics.record_sdk_call("get_motor_states")
-                ms = self.agx_arm.get_motor_states(joint_index)
+                ms = snapshot.motor_states[joint_index - 1]
                 if ms is None:
                     return
                 velocitys.append(ms.msg.velocity)
@@ -1904,12 +2019,12 @@ class AgxArmRosNode(Node):
             msg.name, msg.position, msg.velocity, msg.effort = map(list, zip(*joints_data))
             self.joint_states_pub.publish(msg)
 
-    def _publish_pose(self):
-        flange_pose = self.agx_arm.get_flange_pose()
+    def _publish_pose(self, snapshot: FeedbackSnapshot):
+        flange_pose = snapshot.flange_pose
         if flange_pose is None or flange_pose.hz <= 0:
             return
-        
-        tcp_pose = self.agx_arm.get_flange2tcp_pose(flange_pose.msg)
+
+        tcp_pose = snapshot.tcp_pose
 
         # pose1 = Pose()
         # pose1.position.x, pose1.position.y, pose1.position.z = flange_pose.msg[0:3]
@@ -1930,8 +2045,8 @@ class AgxArmRosNode(Node):
         msg.pose = pose2
         self.tcp_pose_pub.publish(msg)
 
-    def _publish_arm_status(self):
-        arm_status = self.agx_arm.get_arm_status()
+    def _publish_arm_status(self, snapshot: FeedbackSnapshot):
+        arm_status = snapshot.arm_status
         if arm_status is None:
             return
 
@@ -1961,8 +2076,8 @@ class AgxArmRosNode(Node):
 
         self.arm_status_pub.publish(msg)
 
-    def _publish_leader_joint_angles(self):
-        leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+    def _publish_leader_joint_angles(self, snapshot: FeedbackSnapshot):
+        leader_joint_angles = snapshot.leader_joint_angles
         if leader_joint_angles is None:
             return
 

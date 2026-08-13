@@ -12,6 +12,7 @@ instance via ``__new__`` and exercise the pure predicate methods directly.
 import time
 from types import SimpleNamespace
 
+from agx_arm_ctrl.sdk_worker import SdkWorker as _SdkWorker
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
 
 
@@ -156,6 +157,10 @@ def test_requesting_recovery_returns_immediately_and_latches_the_authority():
     node._recover_reason = "not_ok"
     node.control_ready = True
     node._control_ready_logged = True
+    node.enable_timeout = 1.0
+    # A real worker: recovery has to take the SDK session from it and give it
+    # back, which is the property under test, not a detail to stub away.
+    node._sdk = _SdkWorker("arm_left")
     node._unit_safety = UnitSafety("arm_left", writer=False)
     node._authority = DeviceAuthority("arm_left", node._unit_safety)
     node._authority.go_standby("connected")
@@ -198,6 +203,10 @@ def test_a_second_request_does_not_start_a_second_recovery():
     node._recover_reason = "not_ok"
     node.control_ready = True
     node._control_ready_logged = True
+    node.enable_timeout = 1.0
+    # A real worker: recovery has to take the SDK session from it and give it
+    # back, which is the property under test, not a detail to stub away.
+    node._sdk = _SdkWorker("arm_left")
     node._unit_safety = UnitSafety("arm_left", writer=False)
     node._authority = DeviceAuthority("arm_left", node._unit_safety)
 
@@ -258,3 +267,56 @@ def test_the_watchdog_itself_still_honours_its_switch():
     node._force_recovery = False
 
     assert node._should_recover_bus() is False
+
+
+def test_recovery_takes_the_sdk_session_and_gives_it_back():
+    """The handover, in the order that keeps exactly one owner throughout."""
+    import threading as _threading
+    import time as _time
+
+    from agx_arm_ctrl.device_authority import DeviceAuthority, UnitSafety
+    from agx_arm_ctrl.sdk_worker import SdkWorker as _W
+
+    node = AgxArmRosNode.__new__(AgxArmRosNode)
+    node.get_logger = lambda: _RecoveryLogger()
+    node.device_id = "arm_left"
+    node._recovery_in_progress = False
+    node._recovery_lock = _threading.Lock()
+    node._recovery_started_monotonic = 0.0
+    node._recover_reason = "not_ok"
+    node.control_ready = True
+    node._control_ready_logged = True
+    node.enable_timeout = 1.0
+    node._sdk = _W("arm_left")
+    node._unit_safety = UnitSafety("arm_left", writer=False)
+    node._authority = DeviceAuthority("arm_left", node._unit_safety)
+    node._authority.go_standby("connected")
+    node._authority.rearm(verified=True, detail="test")
+
+    released = _threading.Event()
+    owned_during_recovery = []
+
+    def recovery():
+        # While recovery owns the session the worker must be quiesced.
+        owned_during_recovery.append(node._sdk.quiesced)
+        released.wait(5.0)
+
+    node._recover_bus = recovery
+
+    try:
+        node._request_recovery()
+        _time.sleep(0.3)
+        assert node._sdk.quiesced is True, "worker still owns the session"
+
+        # Work submitted during the handover does not execute meanwhile.
+        ran = []
+        node._sdk.submit("joint_ctrl", lambda: ran.append("ran"))
+        _time.sleep(0.2)
+        assert ran == []
+    finally:
+        released.set()
+        _time.sleep(0.4)
+
+    assert owned_during_recovery == [True]
+    assert node._sdk.quiesced is False, "session was not handed back"
+    node._sdk.shutdown()
