@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 from std_srvs.srv import Trigger
 
+from agx_arm_ctrl.sdk_worker import SdkWorker as _SdkWorker
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
 
 _CAN_CTRL = 0x01   # active holding mode (verified hold)
@@ -178,6 +179,10 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
     node = AgxArmRosNode.__new__(AgxArmRosNode)
     node.get_logger = lambda: _FakeLogger()
     node.agx_arm = arm
+    # The service path reads the SDK through the session owner now, so the
+    # stub needs a real worker rather than a direct handle.
+    node._sdk = _SdkWorker("arm_test")
+    node.feedback_timeout = 1.0
     node.is_nero = True
     node.arm_joint_count = 7
     node._recovery_in_progress = False

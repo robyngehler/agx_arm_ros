@@ -85,6 +85,27 @@ def _make_node(*, is_ok: bool, frame_ts: float, node_feedback_age_s: float,
     return node
 
 
+def _snap(node):
+    """The watchdog now judges a snapshot, not the SDK directly.
+
+    Acquisition happens first and the decision second, so the health values it
+    reads come from the same instant as the feedback they are judging.
+    """
+    from agx_arm_ctrl.agx_arm_ctrl_single_node import FeedbackSnapshot
+
+    return FeedbackSnapshot(
+        joint_angles=node.agx_arm.get_joint_angles(),
+        motor_states=(),
+        flange_pose=None,
+        tcp_pose=None,
+        arm_status=None,
+        leader_joint_angles=None,
+        is_ok=bool(node.agx_arm.is_ok()),
+        send_error_count=-1,
+        acquired_at=0.0,
+    )
+
+
 def test_not_ok_but_frames_advancing_is_suppressed():
     # is_ok() reads false but a NEW kernel frame arrives -> local starvation.
     node = _make_node(
@@ -92,7 +113,7 @@ def test_not_ok_but_frames_advancing_is_suppressed():
         frames_have_advanced=False,  # last seen ts differs below
     )
     node._last_feedback_frame_ts = 100.0  # 101.0 != 100.0 -> advanced
-    assert node._should_recover_bus() is False
+    assert node._should_recover_bus(_snap(node)) is False
     assert node._loop_overrun_suppressions == 1
     assert node._recovery_reason_counts == {}
 
@@ -103,7 +124,7 @@ def test_not_ok_and_frames_frozen_recovers():
         is_ok=False, frame_ts=100.0, node_feedback_age_s=0.0,
         frames_have_advanced=False,
     )
-    assert node._should_recover_bus() is True
+    assert node._should_recover_bus(_snap(node)) is True
     assert node._recovery_reason_counts.get("not_ok") == 1
 
 
@@ -115,7 +136,7 @@ def test_node_clock_stale_but_frames_advancing_is_suppressed():
         frames_have_advanced=False,
     )
     node._last_feedback_frame_ts = 204.0  # 205.0 != 204.0 -> advanced
-    assert node._should_recover_bus() is False
+    assert node._should_recover_bus(_snap(node)) is False
     assert node._loop_overrun_suppressions == 1
     assert node._recovery_reason_counts == {}
 
@@ -126,7 +147,7 @@ def test_node_clock_stale_and_frames_frozen_recovers():
         is_ok=True, frame_ts=200.0, node_feedback_age_s=10.0,
         frames_have_advanced=False,
     )
-    assert node._should_recover_bus() is True
+    assert node._should_recover_bus(_snap(node)) is True
     assert node._recovery_reason_counts.get("stale_feedback") == 1
 
 
@@ -253,7 +274,7 @@ def test_a_forced_estop_recovery_survives_the_watchdog_being_disabled():
         triggered.append(category) or True
     )
 
-    assert node._should_recover_bus() is True
+    assert node._should_recover_bus(None) is True
     assert triggered == ["forced_estop"]
     # Consumed once, so it does not re-fire on the next tick.
     assert node._force_recovery is False
@@ -266,7 +287,7 @@ def test_the_watchdog_itself_still_honours_its_switch():
     node.bus_recovery_enabled = False
     node._force_recovery = False
 
-    assert node._should_recover_bus() is False
+    assert node._should_recover_bus(None) is False
 
 
 def test_recovery_takes_the_sdk_session_and_gives_it_back():

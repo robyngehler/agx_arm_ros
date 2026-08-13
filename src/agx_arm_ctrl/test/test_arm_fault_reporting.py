@@ -54,6 +54,8 @@ def _snapshot(status):
         tcp_pose=None,
         arm_status=status,
         leader_joint_angles=None,
+        is_ok=True,
+        send_error_count=-1,
         acquired_at=0.0,
     )
 

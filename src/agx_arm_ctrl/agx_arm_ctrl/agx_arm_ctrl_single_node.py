@@ -149,6 +149,12 @@ class FeedbackSnapshot(NamedTuple):
     tcp_pose: object
     arm_status: object
     leader_joint_angles: object
+    # Health, read in the same instant as the data it judges. These used to run
+    # on the publish thread *before* acquisition — they decide whether to
+    # recover at all — which is why the SDK still had two callers after the
+    # batch moved. Acquiring first and deciding second is what leaves one.
+    is_ok: bool
+    send_error_count: int
     acquired_at: float
 
 
@@ -803,8 +809,12 @@ class AgxArmRosNode(Node):
         value = array[index]
         return default if math.isnan(value) else value
 
-    def _check_arm_ready(self) -> bool:
-        joint_states = self.agx_arm.get_joint_angles()
+    def _check_arm_ready(self, snapshot: "FeedbackSnapshot" = None) -> bool:
+        joint_states = (
+            snapshot.joint_angles if snapshot is not None else self._sdk_read(
+                "get_joint_angles", self.agx_arm.get_joint_angles
+            )
+        )
         if joint_states is None:
             return False
         # hz is pyAgxArm's instantaneous 0.1 s fps window. In a GIL-saturated
@@ -839,8 +849,27 @@ class AgxArmRosNode(Node):
         leader_joint_angles = self.agx_arm.get_leader_joint_angles()
         return leader_joint_angles is not None and leader_joint_angles.hz > 0
 
-    def _check_arm_connected(self) -> bool:
-        return self.agx_arm is not None and self.agx_arm.is_ok()
+    def _check_arm_connected(self, snapshot: "FeedbackSnapshot" = None) -> bool:
+        if snapshot is not None:
+            return snapshot.is_ok
+        return self.agx_arm is not None and bool(
+            self._sdk_read("is_ok", self.agx_arm.is_ok)
+        )
+
+    def _sdk_read(self, name: str, fn):
+        """One bounded SDK read, through the owner of the session.
+
+        Callers outside the publish loop — services, one-off checks — have no
+        snapshot to hand. Routing them here keeps the single-owner invariant
+        without every call site having to acquire a whole batch. Returns None if
+        the session is not currently ours, which reads as "not ready".
+        """
+        try:
+            return self._sdk.call(name, fn, timeout=self.feedback_timeout)
+        except (CallOutcomeUnknown, CallNotExecuted):
+            return None
+        except Exception:
+            return None
 
     def _check_can_control(self) -> bool:
         if self._fault_lockout:
@@ -1307,12 +1336,6 @@ class AgxArmRosNode(Node):
             # P1: detect a stalled bus (TX ENOBUFS slot leak or stale feedback)
             # and re-establish the link instead of dead-locking until restart.
             # Never let recovery bookkeeping crash the publish loop.
-            try:
-                if self._should_recover_bus():
-                    self._request_recovery()
-            except Exception as e:
-                self.get_logger().error(f"bus recovery check failed: {e}")
-
             if self._recovery_in_progress:
                 # Recovery owns the SDK session exclusively while it runs, so
                 # this loop must not touch it — but it must keep running.
@@ -1324,57 +1347,70 @@ class AgxArmRosNode(Node):
                 rate.sleep()
                 continue
 
-            self._surface_silent_tx_loss()
+            # Acquire first, decide second — one worker request per cycle.
+            # The batch is a single logical acquisition, and taking it as one
+            # bounded task is what removes the race without paying a queue
+            # hand-off eight times over. The health checks below used to run
+            # *before* it and read the SDK themselves, which is why the call
+            # counter still showed two threads once the batch had moved; they
+            # now judge the same instant the data came from.
+            #
+            # (Phase 1B decouples the cadences: the worker will schedule
+            # acquisition itself and this loop will only republish.)
+            try:
+                snapshot = self._sdk.call(
+                    "acquire_feedback_snapshot",
+                    self._acquire_feedback_snapshot,
+                    timeout=self.feedback_timeout,
+                )
+            except CallOutcomeUnknown as exc:
+                self.get_logger().warn(f"feedback acquisition: {exc}")
+                snapshot = None
+            except CallNotExecuted:
+                # Dropped or rejected: the session is not ours at this moment.
+                snapshot = None
+            except Exception as exc:
+                self.get_logger().error(f"feedback acquisition failed: {exc}")
+                snapshot = None
+
+            if snapshot is None:
+                rate.sleep()
+                continue
+
+            try:
+                if self._should_recover_bus(snapshot):
+                    self._request_recovery()
+                    rate.sleep()
+                    continue
+            except Exception as e:
+                self.get_logger().error(f"bus recovery check failed: {e}")
+
+            self._surface_silent_tx_loss(snapshot)
             self._sync_authority("publish loop")
 
-            if self.agx_arm.is_ok():
-                if self._check_arm_ready():
-                    self._last_good_feedback_monotonic = time.monotonic()
-                    if not self.control_ready:
-                        self.control_ready = True
-                        self._had_control_ready = True
-                        if not self._control_ready_logged:
-                            self.get_logger().info("Agx_arm feedback is ready, control is now enabled")
-                            self._control_ready_logged = True
-                elif self._leader_mode_active and self._leader_feedback_fresh():
-                    # In leader/drag mode the firmware disables the normal
-                    # joint-state push (enable_can_push=DISABLE); the live signal
-                    # is the leader-angle stream. Treat it as a healthy bus so the
-                    # recovery watchdog does not false-trigger on that silence.
-                    self._last_good_feedback_monotonic = time.monotonic()
-                # One timer around the whole publish batch: hot path 1 in
-                # reference/critical_cpu_paths.md is this loop's per-joint SDK
-                # reads, and the refactor has to show a before/after for it.
-                # One worker request per cycle, not one per read. The batch
-                # is a single logical acquisition, and taking it as one bounded
-                # task is what removes the race without paying a queue
-                # hand-off eight times over. (Phase 1B decouples the cadences:
-                # the worker will schedule acquisition itself and this loop
-                # will only republish the latest snapshot.)
-                try:
-                    snapshot = self._sdk.call(
-                        "acquire_feedback_snapshot",
-                        self._acquire_feedback_snapshot,
-                        timeout=self.feedback_timeout,
-                    )
-                except CallOutcomeUnknown as exc:
-                    self.get_logger().warn(f"feedback acquisition: {exc}")
-                    snapshot = None
-                except CallNotExecuted as exc:
-                    # Dropped or rejected: the session is not ours right now.
-                    self.get_logger().debug(f"feedback acquisition skipped: {exc}")
-                    snapshot = None
-                except Exception as exc:
-                    self.get_logger().error(f"feedback acquisition failed: {exc}")
-                    snapshot = None
+            if snapshot.is_ok and self._check_arm_ready(snapshot):
+                self._last_good_feedback_monotonic = time.monotonic()
+                if not self.control_ready:
+                    self.control_ready = True
+                    self._had_control_ready = True
+                    if not self._control_ready_logged:
+                        self.get_logger().info(
+                            "Agx_arm feedback is ready, control is now enabled"
+                        )
+                        self._control_ready_logged = True
+            elif self._leader_mode_active and self._leader_feedback_fresh():
+                # In leader/drag mode the firmware disables the normal
+                # joint-state push; the live signal is the leader-angle stream.
+                # Treat it as a healthy bus so the watchdog does not
+                # false-trigger on that intentional silence.
+                self._last_good_feedback_monotonic = time.monotonic()
 
-                if snapshot is not None:
-                    with self.metrics.time_block("publish_batch"):
-                        self._publish_joint_states(snapshot)
-                        self._publish_pose(snapshot)
-                        self._publish_arm_status(snapshot)
-                        self._publish_effector_status()
-                        self._publish_leader_joint_angles(snapshot)
+            with self.metrics.time_block("publish_batch"):
+                self._publish_joint_states(snapshot)
+                self._publish_pose(snapshot)
+                self._publish_arm_status(snapshot)
+                self._publish_effector_status()
+                self._publish_leader_joint_angles(snapshot)
             if self.metrics.due():
                 report = self.metrics.report()
                 if report:
@@ -1423,7 +1459,7 @@ class AgxArmRosNode(Node):
         )
         return True
 
-    def _feedback_actually_stale(self) -> bool:
+    def _feedback_actually_stale(self, snapshot: "FeedbackSnapshot" = None) -> bool:
         """Kernel-RX-timestamp confirmation that the bus is genuinely silent.
 
         The FPS window (`is_ok()`/`hz`) and the node-observed feedback clock both
@@ -1432,10 +1468,12 @@ class AgxArmRosNode(Node):
         frames queue in the socket buffer and carry their true arrival times when
         the node resumes, so a still-advancing timestamp means the bus is live.
         """
-        try:
-            joint_states = self.agx_arm.get_joint_angles()
-        except Exception:
-            return True
+        if snapshot is not None:
+            joint_states = snapshot.joint_angles
+        else:
+            joint_states = self._sdk_read(
+                "get_joint_angles", self.agx_arm.get_joint_angles
+            )
         if joint_states is None:
             return True
         return not self._feedback_frame_advancing(joint_states.timestamp)
@@ -1459,7 +1497,7 @@ class AgxArmRosNode(Node):
             )
         return False
 
-    def _surface_silent_tx_loss(self) -> None:
+    def _surface_silent_tx_loss(self, snapshot: "FeedbackSnapshot") -> None:
         """Log commands the SDK dropped silently while feedback looked healthy.
 
         On the shared bus this is usually the hand losing arbitration, not a dead
@@ -1467,13 +1505,9 @@ class AgxArmRosNode(Node):
         forked send-error count while RX keeps flowing is the only evidence that
         arm commands are being dropped (plan section 1.3.2).
         """
-        get_count = getattr(self.agx_arm, "get_send_error_count", None)
-        if get_count is None:
+        if snapshot is None or snapshot.send_error_count < 0:
             return
-        try:
-            count = int(get_count())
-        except Exception:
-            return
+        count = snapshot.send_error_count
         if count <= self._last_send_error_count:
             self._last_send_error_count = count
             return
@@ -1493,7 +1527,7 @@ class AgxArmRosNode(Node):
             "the shared bus this is usually hand-frame arbitration loss, not a dead arm."
         )
 
-    def _should_recover_bus(self) -> bool:
+    def _should_recover_bus(self, snapshot: "FeedbackSnapshot" = None) -> bool:
         if self._recovery_in_progress:
             return False
         # Explicit escalation from an unverified emergency stop, checked BEFORE
@@ -1555,7 +1589,10 @@ class AgxArmRosNode(Node):
         # it (last_error / swallow-style comm model). Classify so a benign error
         # never forces a heavyweight reconnect.
         try:
-            comm_err = self.agx_arm.has_comm_error() and self.agx_arm.get_comm_error()
+            comm_err = self._sdk_read(
+                "has_comm_error",
+                lambda: self.agx_arm.has_comm_error() and self.agx_arm.get_comm_error(),
+            )
         except Exception:
             comm_err = None
         if comm_err and self._is_recoverable_can_error(comm_err):
@@ -1582,11 +1619,12 @@ class AgxArmRosNode(Node):
                 )
             return False
         try:
-            if not self.agx_arm.is_ok():
+            if not (snapshot.is_ok if snapshot is not None
+                    else bool(self._sdk_read("is_ok", self.agx_arm.is_ok))):
                 # is_ok() is FPS-based (SDK monitor thread) and false-triggers
                 # under whole-process CPU/GIL saturation. Only recover when the
                 # kernel RX timestamp confirms the bus is actually silent.
-                if self._feedback_actually_stale():
+                if self._feedback_actually_stale(snapshot):
                     return self._trigger_recovery("not_ok", "driver reports not ok")
                 return self._suppress_recovery_as_starvation("is_ok() reads false")
         except Exception:
@@ -1595,7 +1633,7 @@ class AgxArmRosNode(Node):
             # The node-observed feedback clock is stale, but a publish-loop stall
             # ages it without the bus going down. Confirm with the kernel RX
             # timestamp before the heavyweight reconnect.
-            if self._feedback_actually_stale():
+            if self._feedback_actually_stale(snapshot):
                 return self._trigger_recovery(
                     "stale_feedback",
                     f"no ready feedback for {self.feedback_timeout:.1f} s",
@@ -1938,6 +1976,9 @@ class AgxArmRosNode(Node):
         # agreed.
         arm_status = self.agx_arm.get_arm_status()
         leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+        is_ok = bool(self.agx_arm.is_ok())
+        get_count = getattr(self.agx_arm, "get_send_error_count", None)
+        send_error_count = int(get_count()) if get_count is not None else -1
 
         return FeedbackSnapshot(
             joint_angles=joint_angles,
@@ -1946,6 +1987,8 @@ class AgxArmRosNode(Node):
             tcp_pose=tcp_pose,
             arm_status=arm_status,
             leader_joint_angles=leader_joint_angles,
+            is_ok=is_ok,
+            send_error_count=send_error_count,
             acquired_at=time.monotonic(),
         )
 
@@ -3230,7 +3273,10 @@ class AgxArmRosNode(Node):
             self.get_logger().error(response.message)
             return response
         try:
-            comm_err = self.agx_arm.has_comm_error() and self.agx_arm.get_comm_error()
+            comm_err = self._sdk_read(
+                "has_comm_error",
+                lambda: self.agx_arm.has_comm_error() and self.agx_arm.get_comm_error(),
+            )
         except Exception:
             comm_err = None
         if comm_err and self._is_recoverable_can_error(comm_err):

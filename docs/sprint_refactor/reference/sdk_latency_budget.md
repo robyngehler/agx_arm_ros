@@ -187,23 +187,40 @@ worst case reaches the whole period. That is affordable at one hand-off per
 cycle and would not have been at eight — which is the measurement that decided
 the design.
 
-### The exit gate is not met yet
+### The exit gate, measured twice (2026-08-13)
 
-`sdk calls: 52000 (5199/s) from 2 thread(s)`. The batch moved to the worker
-(28000 calls), but the loop's own health checks did not:
+**First attempt**: `from 2 thread(s)`. The batch had moved, but the loop's own
+health checks had not — `is_ok`, `has_comm_error`, `get_send_error_count`,
+`get_joint_angles` ran on the publish thread *before* acquisition, because they
+decide whether to acquire at all.
+
+**After acquiring first and deciding second**, with the health values carried in
+the snapshot they judge:
 
 ```
-is_ok[_publish_thread]: 400/s
-has_comm_error[_publish_thread]: 200/s
-get_send_error_count[_publish_thread]: 200/s
-get_joint_angles[_publish_thread]: 200/s
+sdk calls: 49975 (4995/s) from 1 thread(s): sdk-arm_right
+publish_batch:                 mean 0.92 ms, max 2.95 ms
+sdk.acquire_feedback_snapshot: mean 0.51 ms, max 1.36 ms
+sdk_queue_wait:                mean 0.35 ms, max 3.71 ms
 ```
 
-Those sit in `_check_arm_ready`, `_check_arm_connected`, `_surface_silent_tx_loss`
-and `_should_recover_bus`, which run *before* the acquisition and decide whether
-to recover at all. Folding them into the snapshot means acquiring first and
-deciding second — a loop restructure, not a call move. Until it lands, "exactly
-one SDK owner at any instant" is **not** satisfied and Phase 1A does not close.
+The **acquisition path** now has exactly one owner. That is the half of the gate
+this work closes.
+
+**The command path does not.** A window with MIT streaming reports:
+
+```
+sdk calls: 50980 (5096/s) from 2 thread(s): MainThread, sdk-arm_right
+    move_mit[MainThread]: 7000 (700/s)
+    set_auto_set_motion_mode_enabled[MainThread]: 33/s
+    set_motion_mode[MainThread]: 1
+```
+
+`_move_mit_callback` still reaches the SDK directly from the subscription
+thread, which is the largest single writer in the system at 700 calls/s. So
+"exactly one SDK owner at any instant" holds for reads and **not** for commands,
+and Phase 1A does not close until the command path is routed too — the first
+item in the review's own list.
 
 ### One number left unexplained
 
