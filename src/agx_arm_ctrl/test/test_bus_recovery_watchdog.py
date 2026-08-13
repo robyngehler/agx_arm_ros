@@ -224,3 +224,37 @@ class _RecoveryLogger:
 
     def error(self, *_a, **_k):
         pass
+
+
+def test_a_forced_estop_recovery_survives_the_watchdog_being_disabled():
+    """Two decisions that used to share one switch.
+
+    `bus_recovery_enabled` turns off the *watchdog* — the automatic reaction to
+    a stalled bus. It used to also disable the forced recovery an emergency stop
+    escalates to when it cannot confirm the arm stopped, so an operator who
+    turned off the watchdog silently removed the last resort of the stop path.
+    """
+    node = AgxArmRosNode.__new__(AgxArmRosNode)
+    node.get_logger = lambda: _RecoveryLogger()
+    node._recovery_in_progress = False
+    node.bus_recovery_enabled = False
+    node._force_recovery = True
+    triggered = []
+    node._trigger_recovery = lambda category, reason: (
+        triggered.append(category) or True
+    )
+
+    assert node._should_recover_bus() is True
+    assert triggered == ["forced_estop"]
+    # Consumed once, so it does not re-fire on the next tick.
+    assert node._force_recovery is False
+
+
+def test_the_watchdog_itself_still_honours_its_switch():
+    node = AgxArmRosNode.__new__(AgxArmRosNode)
+    node.get_logger = lambda: _RecoveryLogger()
+    node._recovery_in_progress = False
+    node.bus_recovery_enabled = False
+    node._force_recovery = False
+
+    assert node._should_recover_bus() is False

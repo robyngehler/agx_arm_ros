@@ -208,6 +208,12 @@ class AgxArmRosNode(Node):
         # generation and no sequence, so nothing can establish that it is
         # current. Only one node publishes this topic, and it stamps.
         self.declare_parameter("require_command_stamp", True)
+        # The direct arm-motion topics predate the authority contract: they
+        # carry no commander, no generation and no sequence, so nothing can
+        # establish that such a command is current or that its sender is
+        # entitled to move this arm. Off by default; a development profile
+        # that knowingly wants them says so.
+        self.declare_parameter("allow_legacy_motion_ingress", False)
         self.declare_parameter("auto_enable", True)
         self.declare_parameter("fast_mode", False)
         self.declare_parameter("speed_percent", 100)
@@ -283,6 +289,9 @@ class AgxArmRosNode(Node):
         )
         self.can_port = self.get_parameter("can_port").value
         self.arm_type = self.get_parameter("arm_type").value
+        self.allow_legacy_motion_ingress = bool(
+            self.get_parameter("allow_legacy_motion_ingress").value
+        )
         self.require_command_stamp = bool(
             self.get_parameter("require_command_stamp").value
         )
@@ -1008,6 +1017,35 @@ class AgxArmRosNode(Node):
             )
         return response
 
+    def _legacy_ingress_allowed(self, path: str) -> bool:
+        """Whether an unauthenticated arm-motion topic may still move the arm.
+
+        These topics bypass everything the authority contract establishes: no
+        commander, no device or unit generation, no sequence. A command on them
+        cannot be shown to be current, and its sender cannot be shown to be
+        entitled to move this arm — which is the whole point of admission.
+
+        Effector control is deliberately not covered here. The gripper and hand
+        are separate devices with their own contract (phase 4D); quarantining
+        them through the arm's parameter would be the wrong boundary.
+        """
+        if self.allow_legacy_motion_ingress:
+            return True
+        key = (path, "legacy_ingress")
+        count = self._command_rejections.get(key, 0) + 1
+        self._command_rejections[key] = count
+        now = time.monotonic()
+        last = self._last_rejection_log_monotonic.get(key, 0.0)
+        if now - last >= self._rejection_log_period_s:
+            self._last_rejection_log_monotonic[key] = now
+            self.get_logger().warn(
+                f"{path} is quarantined: it carries no commander and no control "
+                f"generation, so this arm will not move on it "
+                f"[{count} refused so far]. Use the stamped MIT path, or set "
+                "allow_legacy_motion_ingress:=true for a development profile."
+            )
+        return False
+
     def _reject_command(self, path: str, rejection) -> None:
         """Refuse one command at the hardware boundary, audibly but not loudly.
 
@@ -1402,15 +1440,21 @@ class AgxArmRosNode(Node):
         )
 
     def _should_recover_bus(self) -> bool:
-        if not self.bus_recovery_enabled or self._recovery_in_progress:
+        if self._recovery_in_progress:
             return False
-        # Explicit escalation from an unverified emergency stop: bypass the
-        # warm-up and cooldown gates — this is a requested safety recovery.
+        # Explicit escalation from an unverified emergency stop, checked BEFORE
+        # the enable flag. `bus_recovery_enabled` turns off the *watchdog* — the
+        # automatic reaction to a stalled bus — and it used to switch this off
+        # too, so an operator who disabled the watchdog silently disabled the
+        # last resort of an emergency stop that could not confirm the arm
+        # stopped. Those are not the same decision and no longer share a switch.
         if self._force_recovery:
             self._force_recovery = False
             return self._trigger_recovery(
                 "forced_estop", "forced recovery after unverified emergency stop"
             )
+        if not self.bus_recovery_enabled:
+            return False
         # A hand window may have silenced the firmware feedback push on purpose:
         # the arm is holding in CAN control, the side bus is quiet so the hand
         # can win arbitration. That silence is requested, not a stall — but the
@@ -2053,7 +2097,10 @@ class AgxArmRosNode(Node):
             name: self._safe_get_value(msg.effort, idx)
             for idx, name in enumerate(msg.name)
         }
-        self._control_arm_joints(joint_pos)
+        if self._legacy_ingress_allowed("control/joint_states arm follow"):
+            self._control_arm_joints(joint_pos)
+        # Effector control stays: the gripper and hand are separate devices with
+        # their own contract, and the arm's quarantine is the wrong boundary.
         self._control_gripper_joint(joint_pos, joint_effort)
         self._control_hand_joints(joint_pos)
 
@@ -2062,6 +2109,8 @@ class AgxArmRosNode(Node):
 
     def _move_j_callback(self, msg: JointState):
         if not self._check_can_control():
+            return
+        if not self._legacy_ingress_allowed("control/move_j"):
             return
 
         joint_pos = {}
@@ -2078,6 +2127,8 @@ class AgxArmRosNode(Node):
     def _move_p_callback(self, msg: PoseStamped):
         if not self._check_can_control():
             return
+        if not self._legacy_ingress_allowed("control/move_p"):
+            return
 
         pose_cmd = self._create_pose_cmd(msg.pose)
         try:
@@ -2090,6 +2141,8 @@ class AgxArmRosNode(Node):
     def _move_l_callback(self, msg: PoseStamped):
         if not self._check_can_control():
             return
+        if not self._legacy_ingress_allowed("control/move_l"):
+            return
 
         pose_cmd = self._create_pose_cmd(msg.pose)
         try:
@@ -2101,6 +2154,8 @@ class AgxArmRosNode(Node):
 
     def _move_c_callback(self, msg: PoseArray):
         if not self._check_can_control():
+            return
+        if not self._legacy_ingress_allowed("control/move_c"):
             return
         if len(msg.poses) < 3:
             self.get_logger().error(
@@ -2120,6 +2175,8 @@ class AgxArmRosNode(Node):
 
     def _move_js_callback(self, msg: JointState):
         if not self._check_can_control():
+            return
+        if not self._legacy_ingress_allowed("control/move_js"):
             return
 
         joint_pos = {}

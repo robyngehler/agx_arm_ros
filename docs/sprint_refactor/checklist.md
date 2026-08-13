@@ -264,8 +264,10 @@ Routed through the runtime:
       all, so a 1.12 arm ran on the 1.11 protocol, and versions were compared
       as strings. `resolve_nero_firmware` parses numerically and logs the tier,
       which nothing recorded before.
-- [ ] Make forced e-stop recovery independent of the optional normal-recovery
-      setting.
+- [x] Make forced e-stop recovery independent of the optional normal-recovery
+      setting. `bus_recovery_enabled` turns off the *watchdog*; it used to also
+      remove the last resort of an emergency stop that could not confirm the arm
+      stopped. Two decisions, no longer one switch.
 - [x] Make the device authority mandatory rather than fail-open. A namespace
       typo, a QoS mismatch and an old driver are indistinguishable from the
       controller, so absence is now a refusal; the legacy gates survive only in
@@ -273,8 +275,12 @@ Routed through the runtime:
       the same `can_port` as the driver, so a controller cannot be gated by the
       other arm's authority. Verified on hardware: the standard launch still
       streams at 100.0/s.
-- [ ] Disable or quarantine direct legacy arm motion ingress for coordinated
-      hardware profiles.
+- [x] Quarantine the unauthenticated arm-motion paths (`control/move_j|p|l|c|js`
+      and the arm half of the shared `control/joint_states` follow). They carry
+      no commander and no generation, so nothing can establish that a command on
+      them is current or that its sender may move this arm. Off by default;
+      refusals are counted per path and logged rate-limited. Effector control is
+      deliberately untouched — separate devices, separate contract (4D).
 - [ ] Stress-validate MIT streaming plus e-stop, recovery, and enable/disable
       churn.
 - [ ] Confirm one SDK thread per arm with the counter under a **full** stack.
