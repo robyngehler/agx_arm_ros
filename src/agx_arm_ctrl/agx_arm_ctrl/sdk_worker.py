@@ -15,27 +15,35 @@ all SDK traffic to that thread, and any call that still bypasses the worker
 shows up under a different thread name in the same report. That is the Phase 1A
 exit gate, and it is why the worker counts calls itself.
 
-Two lanes, not more:
+Four lanes, in strict priority: ``SAFETY``, ``CONTROL``, ``ACQUISITION``,
+``DIAGNOSTIC`` (see :class:`Lane`). Two were not enough. With everything that is
+not a stop sharing one queue, the 200 Hz acquisition loop had to wait behind
+every setpoint and lost half its rate on hardware — the feedback a control loop
+depends on was competing with status reads on equal terms.
 
-* ``SAFETY`` — emergency stop and its immediate support. Drained before
-  anything else, never coalesced, never dropped for a stale epoch.
-* ``NORMAL`` — everything else, strictly FIFO.
+A "reads first" lane was considered and rejected: reordering a read ahead of a
+queued write breaks the causality the callers rely on. Freshness for streaming
+setpoints is handled by ``replace_key`` instead, which is ordering-preserving
+because it replaces a command that has not started yet.
 
-A third "reads first" lane was considered and rejected: reordering a read ahead
-of a queued write breaks the causality the callers rely on. Freshness for
-streaming setpoints is handled by ``replace_key`` instead, which is ordering-
-preserving because it replaces a command that has not started yet.
+**Exactly one SDK owner at any instant.** The safety lane overtakes queued work;
+nothing preempts a call already running, so the unit of work decides how long a
+stop can be delayed.
 
-**Exactly one SDK owner at any instant, and one SDK call per task.** The
-safety lane overtakes queued work; nothing preempts work already running. Measured on hardware
-(`docs/sprint_refactor/reference/sdk_latency_budget.md`), individual SDK calls
-are almost all sub-millisecond — the worst on the hot path is ``move_mit`` at
-3.32 ms — so a single call is not what threatens the stop path. The driver's
-*composite* operations are: ``_enable_arm`` is a `while not enable()` loop
-bounded only by a 5 s timeout, and it is 48 calls of at most 1.15 ms each.
-Submitted as one task that becomes a 5 s block on an emergency stop; submitted
-as one task per iteration, the safety lane interleaves. Callers keep their loops
-and submit each iteration.
+That unit is neither "one call" nor "one command". Measured on hardware
+(`docs/sprint_refactor/reference/sdk_latency_budget.md`): a MIT setpoint
+submitted as a single task costs 6.4 ms mean and 21 ms worst case — the entire
+stop budget spent inside one queue entry. Submitted as seven independent calls
+instead, two setpoints interleave and the arm holds half of each. So a command
+that is several transmits but one instruction is submitted as a *cycle*
+(:meth:`SdkWorker.submit_cycle`): one entry for queueing, superseding and the
+epoch check, executed one step at a time with the safety lane drained between
+steps.
+
+Retry loops are still not cycles. ``_enable_arm`` is a `while not enable()` loop
+bounded only by a 5 s timeout; it stays on its calling thread and submits each
+iteration, because a cycle runs to completion once started and a 5 s cycle would
+reintroduce exactly the block this structure exists to remove.
 
 The budget that follows: an emergency stop reaches the SDK within 20 ms while
 normal work runs. ``sdk_queue_wait`` and ``sdk.<call>`` are timed separately so
@@ -58,10 +66,35 @@ from typing import Any, Callable, Deque, Dict, Optional
 
 
 class Lane(Enum):
-    """Dispatch priority. Safety work overtakes queued motion, nothing else does."""
+    """Dispatch priority, strictly in this order.
+
+    Four rather than two, because "everything that is not a stop" turned out to
+    contain work with very different claims on the device. Measured on hardware
+    with one lane for all of it: the acquisition loop lost half its rate to the
+    command stream, because a 200 Hz read had to queue behind every setpoint.
+
+    * ``SAFETY`` — emergency stop and its immediate support. Never dropped for a
+      stale epoch, never coalesced, never refused for a full queue.
+    * ``CONTROL`` — active control transmits. The setpoints that are currently
+      moving the device outrank reading it.
+    * ``ACQUISITION`` — the feedback the control loop and the watchdog depend on.
+    * ``DIAGNOSTIC`` — status and one-off reads. Nothing waits on these to keep
+      a device safe or moving.
+
+    Strict priority, so a saturated ``CONTROL`` lane can starve the two below it.
+    That is deliberate — a device that cannot be commanded is worse than one
+    whose diagnostics are late — but it is a property to watch, not a free lunch,
+    and the ordering is only correct while control traffic is bounded.
+    """
 
     SAFETY = "safety"
-    NORMAL = "normal"
+    CONTROL = "control"
+    ACQUISITION = "acquisition"
+    DIAGNOSTIC = "diagnostic"
+
+
+#: Dispatch order. The worker drains each lane fully before looking at the next.
+LANE_ORDER = (Lane.SAFETY, Lane.CONTROL, Lane.ACQUISITION, Lane.DIAGNOSTIC)
 
 
 class CallOutcome(Enum):
@@ -120,6 +153,8 @@ class Call:
         "error",
         "detail",
         "queued_at",
+        "steps",
+        "always",
         "_fn",
         "_done",
     )
@@ -127,10 +162,12 @@ class Call:
     def __init__(
         self,
         name: str,
-        fn: Callable[[], Any],
+        fn: Optional[Callable[[], Any]],
         lane: Lane,
         epoch: Optional[int],
         replace_key: Optional[str],
+        steps: Optional[list] = None,
+        always: Optional[tuple] = None,
     ) -> None:
         self.name = name
         self.lane = lane
@@ -141,8 +178,19 @@ class Call:
         self.error: Optional[BaseException] = None
         self.detail = ""
         self.queued_at = time.monotonic()
+        # A cycle: several SDK calls that are one logical command. Queued,
+        # superseded and epoch-checked as a unit, but executed one step at a
+        # time so the safety lane runs between them. ``always`` closes whatever
+        # the first step opened, and runs even when a step raises.
+        self.steps = steps
+        self.always = always
         self._fn = fn
         self._done = threading.Event()
+
+    @property
+    def is_cycle(self) -> bool:
+        """True when this is several SDK calls executed as one command."""
+        return self.steps is not None
 
     @property
     def executed(self) -> bool:
@@ -225,8 +273,9 @@ class SdkWorker:
 
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
-        self._safety: Deque[Call] = deque()
-        self._normal: Deque[Call] = deque()
+        self._queues: Dict[Lane, Deque[Call]] = {
+            lane: deque() for lane in LANE_ORDER
+        }
         self._by_key: Dict[str, Call] = {}
         self._epoch: Optional[int] = None
         self._running = True
@@ -256,7 +305,7 @@ class SdkWorker:
         name: str,
         fn: Callable[[], Any],
         *,
-        lane: Lane = Lane.NORMAL,
+        lane: Lane = Lane.DIAGNOSTIC,
         epoch: Optional[int] = None,
         replace_key: Optional[str] = None,
     ) -> Call:
@@ -265,8 +314,44 @@ class SdkWorker:
         ``replace_key`` supersedes an identically-keyed call that has not
         started yet — the streaming-setpoint case, where the newest setpoint is
         the only one worth sending.
+
+        The default lane is the lowest one on purpose: work nobody classified
+        must not overtake the control stream on the strength of an omission.
         """
-        call = Call(name, fn, lane, epoch, replace_key)
+        return self._enqueue(Call(name, fn, lane, epoch, replace_key))
+
+    def submit_cycle(
+        self,
+        name: str,
+        steps: list,
+        *,
+        lane: Lane = Lane.CONTROL,
+        epoch: Optional[int] = None,
+        replace_key: Optional[str] = None,
+        always: Optional[tuple] = None,
+    ) -> Call:
+        """Queue several SDK calls as one logical command.
+
+        For a command that is several transmits but one instruction to the
+        device — a MIT setpoint is seven joint frames inside a mode bracket.
+        Submitting it as a single call made the whole thing non-preemptible, and
+        it was measured at 6.4 ms mean and 21 ms worst case, which is the entire
+        emergency-stop budget spent inside one queue entry. Submitting each
+        frame separately would instead let two setpoints interleave and leave
+        the arm holding half of each.
+
+        A cycle is both: **one** entry for queueing, superseding and the epoch
+        check, executed **one step at a time** with the safety lane drained in
+        between. ``steps`` is a list of ``(name, fn)``; ``always`` is one more
+        such pair, run at the end whether or not a step raised, for closing what
+        the first step opened.
+        """
+        return self._enqueue(
+            Call(name, None, lane, epoch, replace_key, steps=list(steps), always=always)
+        )
+
+    def _enqueue(self, call: Call) -> Call:
+        lane = call.lane
 
         # Re-entrant submission from the worker itself would deadlock if it
         # waited. Execution is already serialized on this thread, so run it
@@ -282,30 +367,32 @@ class SdkWorker:
                     CallOutcome.REJECTED, detail=f"{self.device_id} worker is stopped"
                 )
                 return call
-            if lane is Lane.NORMAL and self._is_stale_locked(epoch):
-                self.dropped_stale += 1
-                call._settle(
-                    CallOutcome.DROPPED,
-                    detail=f"epoch {epoch} is behind {self._epoch}",
-                )
-                return call
-            if lane is Lane.NORMAL and len(self._normal) >= self.max_queued:
-                self.rejected_full += 1
-                call._settle(
-                    CallOutcome.REJECTED,
-                    detail=(
-                        f"{self.device_id} queue full "
-                        f"({len(self._normal)}/{self.max_queued})"
-                    ),
-                )
-                return call
-            if replace_key is not None and lane is Lane.NORMAL:
-                self._replace_locked(replace_key)
-                self._by_key[replace_key] = call
-            if lane is Lane.SAFETY:
-                self._safety.append(call)
-            else:
-                self._normal.append(call)
+            # The safety lane is exempt from every refusal below: a stop is
+            # still the right thing to send to a device whose epoch moved on,
+            # and dropping it for a full queue would be the worst possible time.
+            if lane is not Lane.SAFETY:
+                if self._is_stale_locked(call.epoch):
+                    self.dropped_stale += 1
+                    call._settle(
+                        CallOutcome.DROPPED,
+                        detail=f"epoch {call.epoch} is behind {self._epoch}",
+                    )
+                    return call
+                queue = self._queues[lane]
+                if len(queue) >= self.max_queued:
+                    self.rejected_full += 1
+                    call._settle(
+                        CallOutcome.REJECTED,
+                        detail=(
+                            f"{self.device_id} {lane.value} queue full "
+                            f"({len(queue)}/{self.max_queued})"
+                        ),
+                    )
+                    return call
+                if call.replace_key is not None:
+                    self._replace_locked(call.replace_key)
+                    self._by_key[call.replace_key] = call
+            self._queues[lane].append(call)
             self._wake.notify()
         return call
 
@@ -319,7 +406,7 @@ class SdkWorker:
         fn: Callable[[], Any],
         *,
         timeout: float = 1.0,
-        lane: Lane = Lane.NORMAL,
+        lane: Lane = Lane.DIAGNOSTIC,
         epoch: Optional[int] = None,
     ) -> Any:
         """Submit and wait. Convenience for the read paths that need the value."""
@@ -340,7 +427,7 @@ class SdkWorker:
         with self._lock:
             if call.outcome is not CallOutcome.PENDING:
                 return False
-            for queue in (self._safety, self._normal):
+            for queue in self._queues.values():
                 try:
                     queue.remove(call)
                 except ValueError:
@@ -369,14 +456,17 @@ class SdkWorker:
             if self._epoch is not None and epoch < self._epoch:
                 return 0
             self._epoch = epoch
-            keep: Deque[Call] = deque()
-            while self._normal:
-                call = self._normal.popleft()
-                if call.epoch is not None and call.epoch < epoch:
-                    dropped.append(call)
-                else:
-                    keep.append(call)
-            self._normal = keep
+            for lane in LANE_ORDER:
+                if lane is Lane.SAFETY:
+                    continue
+                keep: Deque[Call] = deque()
+                while self._queues[lane]:
+                    call = self._queues[lane].popleft()
+                    if call.epoch is not None and call.epoch < epoch:
+                        dropped.append(call)
+                    else:
+                        keep.append(call)
+                self._queues[lane] = keep
             for call in dropped:
                 if call.replace_key is not None:
                     self._by_key.pop(call.replace_key, None)
@@ -395,8 +485,10 @@ class SdkWorker:
         if previous is None or previous.outcome is not CallOutcome.PENDING:
             return
         try:
-            self._normal.remove(previous)
+            self._queues[previous.lane].remove(previous)
         except ValueError:
+            # Already taken by the worker. A cycle that has started is not
+            # superseded half-way: it finishes, and the newer one follows.
             return
         self.dropped_replaced += 1
         previous._settle(
@@ -443,16 +535,27 @@ class SdkWorker:
 
     # -- execution ------------------------------------------------------
 
+    def _has_work_locked(self) -> bool:
+        return any(self._queues[lane] for lane in LANE_ORDER)
+
+    def _next_call_locked(self) -> Optional[Call]:
+        """Pop the highest-priority queued call. Strict lane order."""
+        for lane in LANE_ORDER:
+            queue = self._queues[lane]
+            if queue:
+                return queue.popleft()
+        return None
+
     def _run(self) -> None:
         while True:
             stale: Optional[Call] = None
             stale_detail = ""
             with self._lock:
                 while self._running and (
-                    self._quiesced or (not self._safety and not self._normal)
+                    self._quiesced or not self._has_work_locked()
                 ):
                     self._wake.wait()
-                if not self._running and not self._safety:
+                if not self._running and not self._queues[Lane.SAFETY]:
                     return
                 if self._quiesced and self._running:
                     # Woken spuriously while quiesced. Shutdown deliberately
@@ -460,10 +563,8 @@ class SdkWorker:
                     # lane must drain even if ownership was handed away.
                     continue
                 self._executing = True
-                if self._safety:
-                    call = self._safety.popleft()
-                else:
-                    call = self._normal.popleft()
+                call = self._next_call_locked()
+                if call.lane is not Lane.SAFETY:
                     if call.replace_key is not None:
                         if self._by_key.get(call.replace_key) is call:
                             del self._by_key[call.replace_key]
@@ -489,11 +590,33 @@ class SdkWorker:
                     self._executing = False
                     self._idle.notify_all()
 
+    def _take_safety_locked(self) -> Optional[Call]:
+        queue = self._queues[Lane.SAFETY]
+        return queue.popleft() if queue else None
+
+    def _drain_safety(self) -> None:
+        """Run whatever is waiting on the safety lane, right now.
+
+        Called between the steps of a cycle. This is what makes the
+        non-preemptible unit one SDK call instead of one whole command: a stop
+        that arrives while a seven-frame setpoint is going out no longer waits
+        for the last frame.
+        """
+        while True:
+            with self._lock:
+                call = self._take_safety_locked()
+            if call is None:
+                return
+            self._execute(call)
+
     def _execute(self, call: Call) -> None:
         if self._metrics is not None:
             self._metrics.record_duration(
                 "sdk_queue_wait", time.monotonic() - call.queued_at
             )
+        if call.is_cycle:
+            self._execute_cycle(call)
+        elif self._metrics is not None:
             self._metrics.record_sdk_call(call.name)
             with self._metrics.time_block(f"sdk.{call.name}"):
                 call._run()
@@ -502,14 +625,66 @@ class SdkWorker:
         if call.outcome is CallOutcome.FAILED and self._logger is not None:
             self._logger.error(f"SDK call {call.name} failed: {call.detail}")
 
+    @staticmethod
+    def _run_step(name: str, fn: Callable[[], Any]) -> None:
+        """Run one step of a cycle.
+
+        Deliberately not instrumented. ``MeasuredSdk`` already counts and times
+        every real SDK call by its own name, and a step named after the call it
+        makes would be recorded twice — which is what a first hardware run
+        showed as 1400 ``move_mit`` per second for 700 frames. The step is a
+        preemption boundary; the cycle as a whole is the timed unit.
+        """
+        fn()
+
+    def _execute_cycle(self, call: Call) -> None:
+        """Run a cycle step by step, letting the safety lane in between.
+
+        The cycle is still atomic against other work on its own lane — no second
+        setpoint interleaves with this one — because it was dequeued as one
+        entry. Only the safety lane is allowed in, which is the whole point.
+        """
+        started = time.monotonic()
+        error: Optional[BaseException] = None
+        try:
+            for step_name, step_fn in call.steps:
+                self._run_step(step_name, step_fn)
+                self._drain_safety()
+        except BaseException as exc:  # noqa: B902 - the SDK raises anything
+            error = exc
+        finally:
+            if call.always is not None:
+                always_name, always_fn = call.always
+                try:
+                    self._run_step(always_name, always_fn)
+                except BaseException as exc:  # noqa: B902
+                    # Closing failed. Report the original cause if there was
+                    # one: it is what explains the state the device is in.
+                    if error is None:
+                        error = exc
+        if self._metrics is not None:
+            self._metrics.record_duration(
+                f"sdk.{call.name}", time.monotonic() - started
+            )
+        if error is not None:
+            call._settle(CallOutcome.FAILED, error=error, detail=repr(error))
+        else:
+            call._settle(CallOutcome.DONE)
+
     # -- shutdown -------------------------------------------------------
 
     def shutdown(self, timeout: float = 2.0) -> None:
         """Stop the worker, dropping whatever was still queued."""
         with self._lock:
             self._running = False
-            pending = list(self._normal)
-            self._normal.clear()
+            pending = []
+            for lane in LANE_ORDER:
+                if lane is Lane.SAFETY:
+                    # Left queued on purpose: the run loop drains the safety
+                    # lane on the way out, so a stop is not stranded by shutdown.
+                    continue
+                pending.extend(self._queues[lane])
+                self._queues[lane].clear()
             self._by_key.clear()
             self._wake.notify_all()
         for call in pending:
@@ -521,7 +696,7 @@ class SdkWorker:
     @property
     def queue_depth(self) -> int:
         with self._lock:
-            return len(self._safety) + len(self._normal)
+            return sum(len(self._queues[lane]) for lane in LANE_ORDER)
 
     @property
     def thread_name(self) -> str:

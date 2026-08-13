@@ -206,16 +206,21 @@ class _CountingArm:
     def __init__(self):
         self.sent = []
         self.sent_from = []
+        # The mode bracket the setpoint cycle opens and must always close.
+        self.bracket = []
+        self.on_send = None
 
     def set_motion_mode(self, _mode):
         pass
 
-    def set_auto_set_motion_mode_enabled(self, _enabled):
-        pass
+    def set_auto_set_motion_mode_enabled(self, enabled):
+        self.bracket.append("close" if enabled else "open")
 
     def move_mit(self, **kwargs):
         self.sent.append(kwargs)
         self.sent_from.append(threading.current_thread().name)
+        if self.on_send is not None:
+            self.on_send(kwargs)
 
 
 def _mit_node(arm):
@@ -357,6 +362,60 @@ def test_only_the_newest_queued_setpoint_is_sent():
 
     assert [frame["p_des"] for frame in arm.sent] == [0.3]
     assert node._sdk.dropped_replaced == 2
+
+
+def test_a_setpoint_is_one_cycle_of_seven_preemptible_frames():
+    """Not one task, and not seven independent submissions.
+
+    One task made a seven-frame setpoint non-preemptible and measured 21 ms
+    worst case on hardware — the whole stop budget in one queue entry. Seven
+    submissions would let the next setpoint interleave with this one. The cycle
+    is one queue entry that yields to the safety lane between frames.
+    """
+    arm = _CountingArm()
+    node = _mit_node(arm)
+    stops = []
+    node._sdk.submit_safety("emergency_stop", lambda: stops.append("early"))
+
+    node._move_mit_callback(_msg(tuple(range(1, 8)), (0.1,) * 7))
+    _drain(node)
+
+    assert [frame["joint_index"] for frame in arm.sent] == list(range(1, 8))
+    assert arm.bracket == ["open", "close"], "the mode bracket must close"
+    # The stop was queued before the setpoint, so strict lane order alone
+    # covers it; what this pins is that the bracket is part of the cycle.
+    assert stops == ["early"]
+
+
+def test_a_stop_reaches_the_arm_between_two_joint_frames():
+    """The preemption point the cycle exists to create."""
+    arm = _CountingArm()
+    node = _mit_node(arm)
+    order = []
+    reached = threading.Event()
+    queued = threading.Event()
+
+    def on_frame(kwargs):
+        order.append(f"joint{kwargs['joint_index']}")
+        if kwargs["joint_index"] == 3:
+            reached.set()
+            queued.wait(2.0)
+
+    arm.on_send = on_frame
+
+    def submit_stop():
+        reached.wait(2.0)
+        node._sdk.submit_safety("emergency_stop", lambda: order.append("STOP"))
+        queued.set()
+
+    stopper = threading.Thread(target=submit_stop)
+    stopper.start()
+    node._move_mit_callback(_msg(tuple(range(1, 8)), (0.1,) * 7))
+    _drain(node)
+    stopper.join(2.0)
+
+    assert order.index("STOP") == order.index("joint3") + 1
+    assert order[-1] == "joint7", "the cycle still finishes after the stop ran"
 
 
 # --- the firmware tier decides the torque bound ------------------------------

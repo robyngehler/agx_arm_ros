@@ -186,10 +186,27 @@ Routed through the runtime:
       and, for the legacy paths, off by default — but a development profile
       that enables them puts a second writer on the session, so the counter
       cannot be read as unconditional until they move.
-- [ ] Measure what the queue in front of every setpoint costs. `sdk_queue_wait`
-      is 0.35 ms mean and 3.71 ms max against a 10 ms control period; the
-      routing trades an immediate write for that wait and the trade is so far
-      argued, not measured.
+- [x] Measure what the queue in front of every setpoint costs — and act on it.
+      The first routing sent the setpoint as one task and hardware refused it:
+      6.4 ms mean and 21.4 ms worst case of non-preemptible work, more than the
+      whole stop budget, while the acquisition loop lost half its rate. The
+      setpoint is now a *cycle* (one queue entry, one frame at a time, safety
+      drained between frames), the worker has four priority lanes instead of
+      two, and acquisition runs on its own justified cadence rather than
+      following the ROS publish rate. Verified on both arms.
+- [ ] Run the L3 stop-latency stress test — still the missing evidence, and the
+      only thing that can establish the 20 ms budget. The longest thing a stop
+      can queue behind is now one `move_mit` (max 10.5 ms right, 5.5 ms left,
+      down from a 21.4 ms setpoint), but stop latency itself has never been
+      measured.
+- [ ] Test the `txqueuelen` hypothesis for the per-frame cost. Both arm buses
+      run at the kernel default of 10 while a setpoint is a burst of seven
+      frames; `activate_duo_can.sh` sets no depth, where the script it replaced
+      set 1000 and documented this exact case. One line to test, and it decides
+      whether frame batching is needed for the 200-250 Hz target.
+- [ ] Correct the inflated SDK call counts recorded earlier in the sprint. Two
+      double-counting defects were found and fixed; durations were never
+      affected, but totals quoted before 2026-08-13 are roughly 2× on reads.
 - [x] Reject stale epoch and out-of-order sequence on the live command path.
       Verified on hardware: an unstamped command, one carrying a superseded
       device generation, and one from another commander are each refused with

@@ -6,6 +6,7 @@ import rclpy
 import math
 import threading
 import subprocess
+from functools import partial
 from typing import NamedTuple, Optional
 from pyAgxArm import create_agx_arm_config, AgxArmFactory, ArmModel, PiperFW, NeroFW
 from rclpy.node import Node
@@ -32,7 +33,7 @@ from agx_arm_ctrl.device_authority import (
 from agx_arm_msgs.srv import ClaimDevice, RequestUnitStop
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
 from agx_arm_ctrl.sdk_worker import (
-    CallNotExecuted, CallOutcome, CallOutcomeUnknown, SdkWorker,
+    CallNotExecuted, CallOutcome, CallOutcomeUnknown, Lane, SdkWorker,
 )
 from agx_arm_msgs.msg import (
     AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, AgxUnitSafety,
@@ -256,6 +257,17 @@ class AgxArmRosNode(Node):
         self.declare_parameter("fast_mode", False)
         self.declare_parameter("speed_percent", 100)
         self.declare_parameter("pub_rate", 200)
+        # How often the arm is actually read. Separate from pub_rate, which is
+        # a ROS publication rate and was never a statement about how fresh the
+        # hardware reading has to be. Tying the two put a 200 Hz read on the
+        # session owner in front of a 100 Hz command stream, and on hardware the
+        # acquisition lost half its rate to it.
+        #
+        # 100 Hz is what the consumers justify: the MIT controller runs at
+        # 100 Hz (C2 targets 200-250 later, at which point this follows it), and
+        # the recovery watchdog decides on feedback_timeout, which is seconds.
+        # 0 means "keep the old behaviour and follow pub_rate".
+        self.declare_parameter("acquisition_rate_hz", 100.0)
         # Phase 0 baseline instrumentation (C6): off unless asked for, so an
         # unmeasured deployment pays nothing.
         self.declare_parameter("runtime_metrics_enabled", False)
@@ -341,6 +353,10 @@ class AgxArmRosNode(Node):
         self.fast_mode = self.get_parameter("fast_mode").value
         self.speed_percent = self.get_parameter("speed_percent").value
         self.pub_rate = self.get_parameter("pub_rate").value
+        acquisition_rate = float(self.get_parameter("acquisition_rate_hz").value)
+        self.acquisition_rate_hz = (
+            acquisition_rate if acquisition_rate > 0.0 else float(self.pub_rate)
+        )
         self.enable_timeout = self.get_parameter("enable_timeout").value
         self.effector_type = self.get_parameter("effector_type").value
         self.tcp_offset = self.get_parameter("tcp_offset").value
@@ -445,7 +461,7 @@ class AgxArmRosNode(Node):
         # 100 % of a core, which stalls the publish loop and the FPS-based
         # is_ok()/hz signals without the CAN bus ever going down. A loop gap this
         # large means the "staleness" the watchdog sees may be local, not the bus.
-        self._loop_overrun_threshold_s = max(2.0 / self.pub_rate, 0.2)
+        self._loop_overrun_threshold_s = max(2.0 / self.acquisition_rate_hz, 0.2)
         self._last_loop_monotonic = 0.0
         self._last_loop_gap_s = 0.0
         self._max_loop_gap_s = 0.0
@@ -496,6 +512,7 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"fast_mode: {self.fast_mode}")
         self.get_logger().info(f"speed_percent: {self.speed_percent}")
         self.get_logger().info(f"pub_rate: {self.pub_rate}")
+        self.get_logger().info(f"acquisition_rate_hz: {self.acquisition_rate_hz}")
         self.get_logger().info(f"enable_timeout: {self.enable_timeout}")
         self.get_logger().info(f"effector_type: {self.effector_type}")
         self.get_logger().info(f"tcp_offset: {self.tcp_offset}")
@@ -1362,7 +1379,11 @@ class AgxArmRosNode(Node):
 
     ### publisher thread
     def _publish_thread(self):
-        rate = self.create_rate(self.pub_rate)
+        # Paced by the acquisition rate, not by pub_rate: this loop's period is
+        # how often the arm is read, and a publication carries one acquisition.
+        # Running it faster than the arm is read would only republish the same
+        # instant under a newer stamp.
+        rate = self.create_rate(self.acquisition_rate_hz)
 
         # publishing loop
         while rclpy.ok():
@@ -1417,6 +1438,7 @@ class AgxArmRosNode(Node):
                     "acquire_feedback_snapshot",
                     self._acquire_feedback_snapshot,
                     timeout=self.feedback_timeout,
+                    lane=Lane.ACQUISITION,
                 )
             except CallOutcomeUnknown as exc:
                 self.get_logger().warn(f"feedback acquisition: {exc}")
@@ -2014,13 +2036,15 @@ class AgxArmRosNode(Node):
         the whole batch costs about what one `move_mit` does. Nothing in it
         retries or waits on the bus.
         """
+        # No record_sdk_call() here: MeasuredSdk wraps the session and counts
+        # every call by name already. Counting again made one read look like
+        # two — 14 motor-state reads per cycle for seven joints — which is a
+        # measurement claiming load that does not exist.
         joint_angles = self.agx_arm.get_joint_angles()
-        self.metrics.record_sdk_call("get_joint_angles")
 
         motor_states = []
         with self.metrics.time_block("motor_state_reads"):
             for joint_index in range(1, self.arm_joint_count + 1):
-                self.metrics.record_sdk_call("get_motor_states")
                 motor_states.append(self.agx_arm.get_motor_states(joint_index))
 
         flange_pose = self.agx_arm.get_flange_pose()
@@ -2474,35 +2498,53 @@ class AgxArmRosNode(Node):
         # thread — so "exactly one SDK owner at any instant" was true for reads
         # and false for commands until here.
         #
-        # One task, not one per call. Bounded is the rule, and this is bounded:
-        # nine sub-millisecond calls, nothing retrying, nothing waiting on the
-        # bus. Splitting it would also be wrong on its own terms — the joints of
-        # one setpoint would interleave with the next message's, and other work
-        # would run inside the auto-mode-ctrl bracket.
+        # Submitted as a *cycle*: one queue entry, executed one frame at a time.
+        # The first version sent it as a single task and hardware showed why
+        # that is wrong — 6.4 ms mean and 21 ms worst case of work nothing can
+        # preempt, which is the whole emergency-stop budget inside one entry.
+        # Seven independent submissions would be wrong the other way: two
+        # setpoints would interleave and leave the arm holding half of each. A
+        # cycle is one instruction to the device and seven preemption points.
         #
         # ``replace_key``: on a streaming path only the newest setpoint is worth
         # sending. A superseded one is dropped while still queued rather than
         # delivered late, which is what keeps a stalled worker from working
         # through a backlog of stale poses.
-        call = self._sdk.submit(
+        steps = [
+            ("mit_mode_bracket", self._open_mit_mode_bracket),
+        ]
+        steps += [
+            (
+                "move_mit",
+                partial(
+                    self._send_mit_joint,
+                    joint_index[i], p_des[i], v_des[i], kp[i], kd[i], torque[i],
+                ),
+            )
+            for i in range(len(joint_index))
+        ]
+        call = self._sdk.submit_cycle(
             "send_mit_setpoint",
-            lambda: self._send_mit_setpoint(
-                joint_index, p_des, v_des, kp, kd, torque
-            ),
+            steps,
+            lane=Lane.CONTROL,
             epoch=self._authority.device_epoch,
             replace_key="move_mit",
+            # Closes the bracket the first step opened, whatever happened in
+            # between. Leaving auto mode-ctrl disabled would silently change how
+            # every later command is framed.
+            always=("set_auto_set_motion_mode_enabled", self._close_mit_mode_bracket),
         )
         if call.outcome is not CallOutcome.PENDING:
-            # submit() settles a stale-epoch drop or a full queue on the spot,
-            # so a settled call here is the guaranteed-not-sent case and only
-            # that. Anything still pending may yet reach the arm and is not
+            # submit_cycle() settles a stale-epoch drop or a full queue on the
+            # spot, so a settled call here is the guaranteed-not-sent case and
+            # only that. Anything still pending may yet reach the arm and is not
             # reported as refused.
             self._reject_command(
                 "move_mit", _StampRejection(call.outcome.value, call.detail)
             )
 
-    def _send_mit_setpoint(self, joint_index, p_des, v_des, kp, kd, torque) -> None:
-        """Write one MIT setpoint. Runs on the SDK worker, as one task.
+    def _open_mit_mode_bracket(self) -> None:
+        """First step of a setpoint cycle. Runs on the SDK worker.
 
         The mode bookkeeping lives here rather than in the callback so the flags
         record what was actually sent, in the order the worker sent it. Set from
@@ -2510,28 +2552,29 @@ class AgxArmRosNode(Node):
         and two queued setpoints would each believe the other had done the mode
         transition.
         """
-        try:
-            # Send ArmMsgModeCtrl once per mode transition, not once per joint.
-            # Without this, 7 redundant mode-ctrl frames are sent per callback at
-            # 100 Hz, which saturates the CAN TX queue (~700 extra frames/sec/arm).
-            if self._current_motion_mode != 'mit':
-                self.agx_arm.set_motion_mode('mit')
-                self._current_motion_mode = 'mit'
-                self.is_mit_mode = True
+        # Send ArmMsgModeCtrl once per mode transition, not once per joint.
+        # Without this, 7 redundant mode-ctrl frames are sent per callback at
+        # 100 Hz, which saturates the CAN TX queue (~700 extra frames/sec/arm).
+        if self._current_motion_mode != 'mit':
+            self.agx_arm.set_motion_mode('mit')
+            self._current_motion_mode = 'mit'
+            self.is_mit_mode = True
+        self.agx_arm.set_auto_set_motion_mode_enabled(False)
 
-            self.agx_arm.set_auto_set_motion_mode_enabled(False)
-            try:
-                for i in range(len(joint_index)):
-                    self.agx_arm.move_mit(
-                        joint_index=joint_index[i],
-                        p_des=p_des[i],
-                        v_des=v_des[i],
-                        kp=kp[i],
-                        kd=kd[i],
-                        t_ff=torque[i],
-                    )
-            finally:
-                self.agx_arm.set_auto_set_motion_mode_enabled(True)
+    def _close_mit_mode_bracket(self) -> None:
+        self.agx_arm.set_auto_set_motion_mode_enabled(True)
+
+    def _send_mit_joint(self, joint_index, p_des, v_des, kp, kd, t_ff) -> None:
+        """One joint frame — the unit a stop can now get in front of."""
+        try:
+            self.agx_arm.move_mit(
+                joint_index=joint_index,
+                p_des=p_des,
+                v_des=v_des,
+                kp=kp,
+                kd=kd,
+                t_ff=t_ff,
+            )
         except Exception as e:
             self._handle_send_failure("move_mit", e)
 

@@ -246,19 +246,122 @@ decide on the publish loop's latest acquisition, refusing when none is younger
 than `feedback_timeout`. That refusal is new behaviour and is not a stop: the
 firmware holds its last setpoint, so it prevents new motion only.
 
-**What is not established.** Validation is L1 — the tests assert which thread
-wrote each frame, that a superseded setpoint never reaches the SDK, and that one
-stamped under a bumped epoch is refused rather than sent. Two things need
-hardware:
+### What the hardware said about that (2026-08-13, right arm, MIT hold)
 
-- **the gate itself**, read off the per-thread counter under a full stack. Until
-  then this section records a code change, not a passed exit gate;
-- **the cost of the queue in front of every setpoint.** A MIT command now waits
-  for the worker instead of writing immediately. `sdk_queue_wait` was measured at
-  0.35 ms mean and 3.71 ms max against a 10 ms control period, so a setpoint can
-  arrive up to a third of a period later than before. That is within one period
-  and expected to be acceptable, but "expected" is not a measurement, and it is
-  the number to take first on the next hardware slot.
+The gate passed and the timing did not.
+
+```
+sdk calls: 34047 (3403/s) from 1 thread(s): sdk-arm_right
+    move_mit[sdk-arm_right]: 6999 (700/s)
+```
+
+The 700 calls/s that were on the subscription thread are on the worker, and the
+MIT rate held at 100.1/s with no rejections. But:
+
+| | idle | under MIT hold |
+| --- | --- | --- |
+| acquisition cycles | 193/s | **93-96/s** against a 200 Hz target |
+| `feedback/joint_states` | — | **84.7/s** |
+| `sdk_queue_wait` mean | 0.34 ms | **2.93 ms** (max 21.2 ms) |
+| `sdk.send_mit_setpoint` | — | mean **6.35 ms**, max **21.38 ms** |
+
+**The stop budget was blown by the routing that was supposed to protect it.**
+`send_mit_setpoint` as a single task is up to 21.4 ms of work nothing preempts —
+more than the whole 20 ms budget, inside one queue entry.
+
+The prediction above was wrong on a specific point: this document argued the
+setpoint was "nine sub-millisecond calls". Measured, `move_mit` is 0.86 ms mean
+and up to 19 ms — seven of them are ~6 ms. The acquisition batch is nine *cached
+reads* costing 0.56 ms in total; a setpoint is seven *CAN transmits*. Treating
+the two as the same kind of bounded work is what produced the wrong call.
+
+### The rework, and what it measured (2026-08-13)
+
+Three changes, all forced by the numbers above:
+
+1. **The setpoint is a cycle, not a task.** One queue entry for the epoch check
+   and the supersede, executed one frame at a time with the safety lane drained
+   between frames. Seven independent submissions would have been the other
+   error: two setpoints interleaving leaves the arm holding half of each.
+2. **Four lanes** — `SAFETY`, `CONTROL`, `ACQUISITION`, `DIAGNOSTIC` — in strict
+   priority. With one lane for everything that is not a stop, a 200 Hz read
+   queued behind every setpoint on equal terms with status polling.
+3. **The acquisition cadence is its own number.** It followed `pub_rate`, which
+   is a ROS publication rate and was never a statement about how fresh a
+   hardware reading must be. It is now `acquisition_rate_hz`, default 100 Hz,
+   justified by the consumers: the MIT controller runs at 100 Hz and the
+   recovery watchdog decides on `feedback_timeout`, which is seconds.
+
+Measured on both arms, MIT hold, metrics on:
+
+| | right (1.06, default tier) | left (1.11, `NeroFW.V111`) |
+| --- | --- | --- |
+| SDK threads | **1** (`sdk-arm_right`) | **1** (`sdk-arm_left`) |
+| `move_mit` | 700/s, mean 0.61 ms, **max 10.48 ms** | 700/s, mean 0.47 ms, **max 5.54 ms** |
+| `sdk.send_mit_setpoint` | 100/s, mean 4.70 ms, max 13.26 ms | 100/s, mean 3.70 ms, max 10.75 ms |
+| `sdk_queue_wait` | mean 1.68 ms, max 29.46 ms | mean 1.97 ms, max 17.78 ms |
+| acquisition cycles | 98/s against a 100 Hz target | 97.5/s |
+| `feedback/joint_states` | 98.8/s | 97.4/s |
+| command rejections | 0 | 0 |
+| CAN errors / drops / bus-off | 0 | 0 |
+
+The behaviour is the same on both protocol tiers, which is what the left arm was
+run to establish.
+
+**The non-preemptible unit is now one `move_mit`** — max 10.48 ms right,
+5.54 ms left — instead of the whole 21.4 ms setpoint.
+
+**The 20 ms budget is still not claimed as restored.** The tail moved but did not
+disappear, and more importantly stop latency has never been measured at all;
+what is measured here is the longest thing a stop can queue behind. The L3
+stop-latency stress test is the evidence, and it has not been run.
+
+### One number left unexplained, now explained
+
+The earlier 2000-cycles-versus-141-delivered gap was not a QoS depth question.
+The loop was not making its configured rate: at a 200 Hz target under MIT load it
+achieved 93-96/s and delivered 84.7/s. At a justified 100 Hz it acquires ~98/s
+and delivers 97-99/s. Production, not delivery, was the difference.
+
+### Two measurement defects found while measuring
+
+Both inflated counts, neither changed behaviour, both are fixed:
+
+- **Step names collided with SDK call names.** A cycle step named `move_mit`
+  was counted by the worker *and* by `MeasuredSdk`, reporting 1400 frames/s for
+  700. Cycle steps are no longer instrumented: the wrapper already counts every
+  real call, and the step is a preemption boundary, not a measurement unit.
+- **The acquisition batch counted its own reads on top of the wrapper**, which
+  is pre-existing and predates the routing work. It reported 14 motor-state
+  reads per cycle for seven joints.
+
+**Earlier totals in this document are inflated by roughly 2× on the read
+counts** — the "4995/s" and "5096/s" figures include the double counting. The
+per-call *durations* are unaffected; only the counts and the totals derived from
+them are wrong. Corrected totals under MIT hold are ~2560/s per arm.
+
+A third caution, not a defect: `count_topic_messages.py` on `/control/move_mit`
+read 75.9/s in one window while the driver processed 1001 setpoints in the same
+10 s. That is subscriber-side loss in the counting script, not a control-rate
+drop — the driver-side task count is the authoritative number for what reached
+the arm.
+
+### Why one `move_mit` costs what it does — a hypothesis, untested
+
+`move_mit` packs one frame and calls `comm.send()`; `_send_msgs` is a plain
+Python loop over the same, so the SDK has **no batched socket write** to reach
+for. The likely cost is not CPU but TX backpressure: `can_nero_right` and
+`can_nero_left` run at `txqueuelen 10`, the kernel default, while a setpoint is
+a burst of seven frames at 100 Hz onto a bus already carrying ~2800 frames/s of
+feedback push. The repo's older `activate_native_can.sh` sets 1000 and documents
+exactly this — "an arm command burst (7 MIT frames per control cycle) can
+overrun it" — but the supported four-bus bring-up, `activate_duo_can.sh`, sets
+no `txqueuelen` at all.
+
+The experiment is one line (`ip link set <iface> txqueuelen 1000`, then re-read
+`sdk.move_mit`) and has **not been run**. If it is the cause, it matters well
+beyond this: the C2 target of 200-250 Hz doubles the burst rate, and batching
+frames per SDK call would then be the deeper fix.
 
 ### One number left unexplained
 

@@ -21,6 +21,7 @@ from agx_arm_ctrl.sdk_worker import (
     CallNotExecuted,
     CallOutcome,
     CallOutcomeUnknown,
+    Lane,
     SdkWorker,
 )
 
@@ -389,3 +390,165 @@ def test_work_queued_while_quiesced_is_still_subject_to_the_epoch_rules():
         assert stale.outcome is CallOutcome.DROPPED
     finally:
         worker.shutdown()
+
+
+# --- lane priority -----------------------------------------------------------
+#
+# Four lanes rather than two, because "everything that is not a stop" contained
+# work with very different claims on the device. Measured on hardware with one
+# lane for all of it, the 200 Hz acquisition loop lost half its rate waiting
+# behind the command stream.
+
+
+def test_lanes_are_served_in_strict_priority_order(worker):
+    gate = _occupy(worker)
+    order = []
+
+    # Submitted in the reverse of the expected order, so passing cannot be luck.
+    worker.submit("status", lambda: order.append("diag"), lane=Lane.DIAGNOSTIC)
+    worker.submit("read", lambda: order.append("acq"), lane=Lane.ACQUISITION)
+    worker.submit("setpoint", lambda: order.append("control"), lane=Lane.CONTROL)
+    last = worker.submit_safety("emergency_stop", lambda: order.append("safety"))
+    gate.set()
+
+    assert last.wait(2.0)
+    while worker.queue_depth:
+        time.sleep(0.01)
+    assert order == ["safety", "control", "acq", "diag"]
+
+
+def test_unclassified_work_cannot_overtake_the_control_stream(worker):
+    """The default lane is the lowest one, so an omission cannot promote work."""
+    gate = _occupy(worker)
+    order = []
+
+    worker.submit("forgot_to_classify", lambda: order.append("default"))
+    worker.submit("setpoint", lambda: order.append("control"), lane=Lane.CONTROL)
+    gate.set()
+
+    while worker.queue_depth:
+        time.sleep(0.01)
+    assert order == ["control", "default"]
+
+
+# --- cycles: one command, several preemption points --------------------------
+
+
+def test_a_stop_runs_between_the_frames_of_a_setpoint(worker):
+    """The reason cycles exist.
+
+    Submitted as a single call, a seven-frame setpoint measured 21 ms of work
+    nothing could preempt — the whole emergency-stop budget inside one queue
+    entry. The stop is submitted from another thread mid-cycle, which is where
+    a real one comes from.
+    """
+    order = []
+    reached_joint2 = threading.Event()
+    stop_queued = threading.Event()
+
+    def frame(index):
+        order.append(f"joint{index}")
+        if index == 2:
+            reached_joint2.set()
+            # Block until a stop has actually been queued from outside, so the
+            # test cannot pass by the cycle simply finishing first.
+            stop_queued.wait(2.0)
+
+    def submit_stop():
+        reached_joint2.wait(2.0)
+        worker.submit_safety("emergency_stop", lambda: order.append("STOP"))
+        stop_queued.set()
+
+    stopper = threading.Thread(target=submit_stop)
+    stopper.start()
+    cycle = worker.submit_cycle(
+        "send_mit_setpoint",
+        [("move_mit", lambda i=i: frame(i)) for i in range(1, 8)],
+        lane=Lane.CONTROL,
+    )
+    assert cycle.wait(3.0)
+    stopper.join(2.0)
+
+    # Between the frames, not after the last one.
+    assert order.index("STOP") == order.index("joint2") + 1
+    assert order[-1] == "joint7"
+
+
+def test_two_setpoints_never_interleave(worker):
+    """The other half of the contract: the arm never holds half of each."""
+    gate = _occupy(worker)
+    order = []
+
+    for cycle_id in ("a", "b"):
+        worker.submit_cycle(
+            "send_mit_setpoint",
+            [("move_mit", lambda c=cycle_id, i=i: order.append((c, i)))
+             for i in range(1, 4)],
+            lane=Lane.CONTROL,
+        )
+    gate.set()
+
+    while worker.queue_depth:
+        time.sleep(0.01)
+    assert [c for c, _ in order] == ["a", "a", "a", "b", "b", "b"]
+
+
+def test_the_closing_step_runs_even_when_a_frame_raises(worker):
+    """A half-open mode bracket would silently reframe every later command."""
+    order = []
+
+    def boom():
+        order.append("joint2")
+        raise RuntimeError("CAN send failed")
+
+    cycle = worker.submit_cycle(
+        "send_mit_setpoint",
+        [
+            ("open", lambda: order.append("open")),
+            ("move_mit", lambda: order.append("joint1")),
+            ("move_mit", boom),
+            ("move_mit", lambda: order.append("joint3")),
+        ],
+        lane=Lane.CONTROL,
+        always=("close", lambda: order.append("close")),
+    )
+    assert cycle.wait(2.0)
+
+    assert order == ["open", "joint1", "joint2", "close"]
+    assert cycle.outcome is CallOutcome.FAILED
+
+
+def test_a_superseded_setpoint_is_dropped_whole(worker):
+    gate = _occupy(worker)
+    sent = []
+
+    first = worker.submit_cycle(
+        "send_mit_setpoint",
+        [("move_mit", lambda i=i: sent.append(("first", i))) for i in range(3)],
+        lane=Lane.CONTROL, replace_key="move_mit",
+    )
+    worker.submit_cycle(
+        "send_mit_setpoint",
+        [("move_mit", lambda i=i: sent.append(("second", i))) for i in range(3)],
+        lane=Lane.CONTROL, replace_key="move_mit",
+    )
+    gate.set()
+
+    while worker.queue_depth:
+        time.sleep(0.01)
+    assert first.outcome is CallOutcome.DROPPED
+    assert {cycle for cycle, _ in sent} == {"second"}, "a frame of the first got out"
+
+
+def test_a_setpoint_from_a_superseded_epoch_sends_no_frame_at_all(worker):
+    worker.set_epoch(4)
+    sent = []
+
+    cycle = worker.submit_cycle(
+        "send_mit_setpoint",
+        [("move_mit", lambda i=i: sent.append(i)) for i in range(7)],
+        lane=Lane.CONTROL, epoch=3,
+    )
+
+    assert cycle.outcome is CallOutcome.DROPPED
+    assert sent == []

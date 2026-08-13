@@ -221,6 +221,15 @@ def generate_launch_description():
         default_value="200",
         description="Feedback publish rate forwarded to agx_arm_ctrl.",
     )
+    runtime_metrics_enabled_arg = DeclareLaunchArgument(
+        "runtime_metrics_enabled",
+        default_value="false",
+        description=(
+            "Forwarded to agx_arm_ctrl: log loop, callback and per-thread SDK "
+            "call counters. This is the bring-up the 'one SDK owner per device' "
+            "claim is measured on, so the switch has to reach it from here."
+        ),
+    )
     enable_timeout_arg = DeclareLaunchArgument(
         "enable_timeout",
         default_value="5.0",
@@ -327,6 +336,7 @@ def generate_launch_description():
             "fast_mode": LaunchConfiguration("fast_mode"),
             "speed_percent": LaunchConfiguration("speed_percent"),
             "pub_rate": LaunchConfiguration("pub_rate"),
+            "runtime_metrics_enabled": LaunchConfiguration("runtime_metrics_enabled"),
             "enable_timeout": LaunchConfiguration("enable_timeout"),
             "tcp_offset": LaunchConfiguration("tcp_offset"),
             "gripper_default_effort": LaunchConfiguration("gripper_default_effort"),
@@ -354,6 +364,7 @@ def generate_launch_description():
             fast_mode_arg,
             speed_percent_arg,
             pub_rate_arg,
+            runtime_metrics_enabled_arg,
             enable_timeout_arg,
             tcp_offset_arg,
             gripper_default_effort_arg,

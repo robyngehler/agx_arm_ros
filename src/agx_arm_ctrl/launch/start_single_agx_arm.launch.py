@@ -124,6 +124,17 @@ def generate_launch_description():
         description='Publishing rate for the AGX Arm node.'
     )
 
+    runtime_metrics_enabled_arg = DeclareLaunchArgument(
+        'runtime_metrics_enabled',
+        default_value='false',
+        description=(
+            'Log loop, callback and per-thread SDK call counters. Off by default '
+            'because it costs CPU on the Jetson; it is how the "one SDK owner per '
+            'device" claim is read on hardware, so it has to be reachable from the '
+            'supported bring-up rather than only by running the node by hand.'
+        )
+    )
+
     enable_timeout_arg = DeclareLaunchArgument(
         'enable_timeout',
         default_value='5.0',
@@ -167,6 +178,7 @@ def generate_launch_description():
         parameters=[{
             'can_port': LaunchConfiguration('can_port'),
             'pub_rate': LaunchConfiguration('pub_rate'),
+            'runtime_metrics_enabled': LaunchConfiguration('runtime_metrics_enabled'),
             'auto_enable': LaunchConfiguration('auto_enable'),
             'fast_mode': LaunchConfiguration('fast_mode'),
             'arm_type': LaunchConfiguration('arm_type'),
@@ -280,6 +292,7 @@ def generate_launch_description():
         fast_mode_arg,
         speed_percent_arg,
         pub_rate_arg,
+        runtime_metrics_enabled_arg,
         enable_timeout_arg,
         tcp_offset_arg,
         gripper_default_effort_arg,
