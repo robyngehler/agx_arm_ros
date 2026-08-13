@@ -19,6 +19,7 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from agx_arm_msgs.srv import ClaimDevice
 from agx_arm_msgs.msg import (
     AgxArmStatus,
     AgxDeviceAuthority,
@@ -138,6 +139,9 @@ class NeroMitControllerNode(Node):
         # coordinated hardware, where two arms publish two authorities.
         self.declare_parameter("expected_device_id", "")
         self.declare_parameter("authority_startup_grace_s", 5.0)
+        # Identity this controller commands under. Empty derives it from the
+        # node name, which is unique per namespace and therefore per arm.
+        self.declare_parameter("commander_id", "")
 
         self.joint_names = list(self.get_parameter("joint_names").value)
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
@@ -178,6 +182,10 @@ class NeroMitControllerNode(Node):
         self.expected_device_id = str(self.get_parameter("expected_device_id").value)
         self.authority_startup_grace_s = max(
             0.0, float(self.get_parameter("authority_startup_grace_s").value)
+        )
+        self.commander_id = (
+            str(self.get_parameter("commander_id").value)
+            or self.get_fully_qualified_name().lstrip("/")
         )
 
         if self.control_rate_hz <= 0.0:
@@ -228,6 +236,10 @@ class NeroMitControllerNode(Node):
         self._last_missing_authority_log = 0.0
         self.foreign_authority_messages = 0
         self.device_capability: Optional[AgxDeviceCapability] = None
+        # Strictly increasing, never reset. The device's watermark resets
+        # with each generation, so a counter that only grows is accepted in
+        # every generation without the two having to agree on a reset point.
+        self._command_sequence = 0
         self.execution_state = ExecutionState.DISABLED
         self.holding_final_point = False
         self.active_goal_handle = None
@@ -273,6 +285,9 @@ class NeroMitControllerNode(Node):
             # still learns an already-open window.
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
             callback_group=self.callback_group,
+        )
+        self._claim_client = self.create_client(
+            ClaimDevice, "claim_device", callback_group=self.callback_group
         )
         self.create_subscription(
             AgxDeviceCapability,
@@ -684,6 +699,54 @@ class NeroMitControllerNode(Node):
                 + ("; aborted the active trajectory" if had_trajectory else "")
             )
 
+    def _stamp(self, cmd: MoveMITMsg) -> None:
+        """Put this controller's identity and the current generations on a command.
+
+        Every published command is stamped, the damped stop and the freedrive
+        hold included: a command that cannot be admitted is a command that does
+        not reach the arm, and the stop paths are exactly the ones that must.
+        """
+        authority = self.device_authority
+        self._command_sequence += 1
+        cmd.owner_id = self.commander_id
+        cmd.sequence = self._command_sequence
+        if authority is not None:
+            cmd.device_epoch = authority.device_epoch
+            cmd.unit_safety_epoch = authority.unit_safety_epoch
+
+    def _claim_device(self, claim: bool) -> None:
+        """Take or give up command of the arm. Never blocks the control loop."""
+        if not self._claim_client.service_is_ready():
+            self.get_logger().warn(
+                f"claim_device is not available; '{self.commander_id}' cannot "
+                f"{'take' if claim else 'give up'} command of the arm and its "
+                "commands will be refused as unowned"
+            )
+            return
+        request = ClaimDevice.Request()
+        request.owner_id = self.commander_id
+        request.claim = claim
+        future = self._claim_client.call_async(request)
+        future.add_done_callback(self._on_claim_result)
+
+    def _on_claim_result(self, future) -> None:
+        try:
+            response = future.result()
+        except Exception as exc:
+            self.get_logger().error(f"claim_device call failed: {exc}")
+            return
+        if response.accepted:
+            self.get_logger().info(response.message)
+        else:
+            self.get_logger().error(
+                f"claim_device refused ({response.reason}): {response.message}"
+            )
+
+    def _commands_this_controller_owns(self) -> bool:
+        """Whether the device is currently held by *this* commander."""
+        authority = self.device_authority
+        return authority is not None and authority.owner_id == self.commander_id
+
     def _authority_blocks_motion(self) -> bool:
         """True when this controller has no standing permission to command.
 
@@ -710,7 +773,22 @@ class NeroMitControllerNode(Node):
                     "that knowingly runs without one."
                 )
             return True
-        return not self.device_authority.motion_ready
+        if not self.device_authority.motion_ready:
+            return True
+        # Readiness is not permission. Streaming while another commander holds
+        # the device would have every command refused at the boundary, which is
+        # a flood, not a control strategy.
+        if not self._commands_this_controller_owns():
+            now = time.monotonic()
+            if now - self._last_missing_authority_log > 5.0:
+                self._last_missing_authority_log = now
+                held = self.device_authority.owner_id or "nobody"
+                self.get_logger().warn(
+                    f"'{self.commander_id}' does not hold this device (held by "
+                    f"{held}); not commanding"
+                )
+            return True
+        return False
 
     def _enter_non_finite_fault(self, detail: str) -> None:
         """Stop commanding on a corrupt control value, and hold the arm.
@@ -759,6 +837,7 @@ class NeroMitControllerNode(Node):
             return
 
         cmd = MoveMITMsg()
+        self._stamp(cmd)
         cmd.joint_index = list(range(1, len(self.joint_names) + 1))
         cmd.p_des = [float(value) for value in positions]
         cmd.v_des = [0.0] * len(self.joint_names)
@@ -908,6 +987,10 @@ class NeroMitControllerNode(Node):
     def _set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
         self.enable_time_monotonic = time.monotonic()
+        # Enabling takes command of the arm, disabling gives it back. Holding a
+        # device this controller is not going to command would lock out whoever
+        # legitimately wants it next.
+        self._claim_device(enabled)
         if enabled:
             if self._has_fresh_feedback():
                 self.hold_reference = self._capture_current_reference()
@@ -1455,6 +1538,7 @@ class NeroMitControllerNode(Node):
                 return
 
             cmd = MoveMITMsg()
+            self._stamp(cmd)
             cmd.joint_index = list(range(1, len(self.joint_names) + 1))
             cmd.p_des = []
             cmd.v_des = []
@@ -1528,6 +1612,7 @@ class NeroMitControllerNode(Node):
                 ]
 
         cmd = MoveMITMsg()
+        self._stamp(cmd)
         cmd.joint_index = list(range(1, joint_count + 1))
         cmd.p_des = [float(value) for value in positions]
         cmd.v_des = [0.0] * joint_count
@@ -1555,6 +1640,7 @@ class NeroMitControllerNode(Node):
         feedforward = self._compute_feedforward(reference)
 
         cmd = MoveMITMsg()
+        self._stamp(cmd)
         cmd.joint_index = list(range(1, len(self.joint_names) + 1))
         cmd.p_des = [float(value) for value in positions]
         cmd.v_des = [0.0] * len(self.joint_names)

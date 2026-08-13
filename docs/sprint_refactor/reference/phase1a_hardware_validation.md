@@ -174,3 +174,24 @@ warning not to assume symmetry. No command is refused at runtime any more,
 which matters because a refused MIT command leaves the firmware holding its
 previous setpoint: under a dual-arm activity that was one arm moving and one
 frozen.
+
+## Command stamp and live admission (added 2026-08-13)
+
+Right arm, unit-safety writer plus driver plus MIT controller.
+
+The controller claims the device on enable (`arm_right claimed by
+'mit_controller' at device generation 2`) and stamps every command it publishes,
+the damped stop and freedrive hold included — a command that cannot be admitted
+is a command that does not reach the arm, and the stop paths are exactly the
+ones that must.
+
+| command published directly onto `control/move_mit` | outcome |
+| --- | --- |
+| unstamped | refused, `not_owner`: `'' is not the commander ('mit_controller')` |
+| right commander, device generation 1 while 2 is current | refused, `stale_device_epoch` |
+| commander `teach_gui`, current generation | refused, `not_owner` |
+
+Throughout, the legitimate stream held **100.2 commands/s with zero
+rejections**, and it kept doing so after a rogue command stamped sequence
+999999 — refusal happens before the sequence is recorded, so a rejected command
+cannot lock out the real commander. That property is now an L1 regression.

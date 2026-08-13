@@ -6,6 +6,7 @@ the device, and a device epoch stays private to its device.
 """
 
 from agx_arm_ctrl.device_authority import (
+    CommandStamp,
     DeviceAuthority,
     DeviceState,
     Reject,
@@ -358,3 +359,33 @@ def test_a_duplicate_from_the_same_writer_is_not_a_conflict():
     assert not observer.observe(writer.snapshot())
     assert observer.conflicts == 0
     assert observer.stopped
+
+
+def test_a_refused_command_does_not_poison_the_sequence_watermark():
+    """A rogue high sequence must not lock out the legitimate commander.
+
+    Verified on hardware 2026-08-13: an unowned command stamped sequence 999999
+    is refused on ownership, and the real stream continues at 100.2/s.
+    """
+    authority, _ = _armed(owner="mit")
+    assert authority.admit(authority.stamp("mit", sequence=5)).accepted
+
+    rogue = CommandStamp(
+        owner_id="teach_gui",
+        device_epoch=authority.device_epoch,
+        unit_safety_epoch=0,
+        sequence=999999,
+    )
+    assert not authority.admit(rogue).accepted
+
+    assert authority.admit(authority.stamp("mit", sequence=6)).accepted
+
+
+def test_an_unstamped_command_is_refused_for_having_no_commander():
+    authority, _ = _armed(owner="mit")
+    blank = CommandStamp(
+        owner_id="", device_epoch=0, unit_safety_epoch=0, sequence=0
+    )
+    verdict = authority.admit(blank)
+    assert not verdict.accepted
+    assert verdict.reason is Reject.NOT_OWNER

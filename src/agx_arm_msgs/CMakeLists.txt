@@ -27,6 +27,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/OmniHandTactileRaw.msg"
   "msg/RobotEvent.msg"
   "msg/MoveMITMsg.msg"
+  "srv/ClaimDevice.srv"
   "srv/RequestUnitStop.srv"
   "action/PerformAction.action"
   "action/PerformActivity.action"

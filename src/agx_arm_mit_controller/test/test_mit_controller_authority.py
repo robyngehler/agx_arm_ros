@@ -26,9 +26,13 @@ def _authority(
     unit_safety_epoch=0,
     reason="test",
     accepts_motion_device=None,
+    owner_id=None,
 ):
     msg = AgxDeviceAuthority()
     msg.device_id = "arm_right"
+    # Readiness is not permission: a snapshot naming no owner means this
+    # controller may not command, so the default names it as the holder.
+    msg.owner_id = _COMMANDER if owner_id is None else owner_id
     msg.state = state
     msg.motion_ready = motion_ready
     msg.device_epoch = device_epoch
@@ -37,9 +41,13 @@ def _authority(
     return msg
 
 
+_COMMANDER = "mit_controller"
+
+
 def _node(require_authority=False):
     rclpy.init()
     node = NeroMitControllerNode()
+    node.commander_id = _COMMANDER
     # Most tests here drive the authority directly, so the requirement is off
     # unless the test is about the requirement itself.
     node.require_device_authority = require_authority

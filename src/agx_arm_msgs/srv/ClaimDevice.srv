@@ -1,0 +1,17 @@
+# Take or give up command of one device.
+#
+# One commander at a time, by design: a second claim is refused rather than
+# queued. Claiming and releasing both advance the device generation, so
+# anything the previous commander had in flight is stale from that moment.
+#
+# The response carries the generations so the new commander can stamp its first
+# command without waiting for the authority topic to catch up.
+
+string owner_id
+bool claim                # true to take command, false to give it up
+---
+bool accepted
+string reason             # structured reject reason, empty when accepted
+uint64 device_epoch
+uint64 unit_safety_epoch
+string message

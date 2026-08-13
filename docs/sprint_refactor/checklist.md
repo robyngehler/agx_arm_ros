@@ -156,7 +156,12 @@ Routed through the runtime:
       still unbounded — and run the L3 stop-latency stress test.
 - [ ] Route all arm SDK calls for one device through the worker, one call per
       task.
-- [ ] Reject stale epoch and out-of-order sequence on the live command path.
+- [x] Reject stale epoch and out-of-order sequence on the live command path.
+      Verified on hardware: an unstamped command, one carrying a superseded
+      device generation, and one from another commander are each refused with
+      their own reason, while the legitimate stream runs at 100.2/s — including
+      after a rogue command stamped sequence 999999, which does not advance the
+      watermark because refusal happens before it.
 - [x] Separate hardware readiness from permission. `motion_ready` says the
       device is ready; `may_command(owner)` answers whether *this* commander
       may stream, using the same checks as admission minus the sequence. Reading
@@ -181,14 +186,17 @@ Routed through the runtime:
       latched generation outlives the writer. A running activity is untouched —
       that is the point of the split — and the L2 graph now includes the writer,
       because a coordinated graph needs one.
-- [ ] Claim ownership for the MIT controller, and switch its gate from
-      `motion_ready` to `may_command`. Until then it gates on readiness, which
-      is unchanged behaviour and safe only because admission is not yet live.
+- [x] Claim ownership for the MIT controller, and gate on ownership as well
+      as readiness. Enabling takes command, disabling gives it back; streaming
+      into a device held by someone else would be a flood of refusals, not a
+      control strategy.
 - [x] Freeze one command stamp for every commandable device — `owner_id`,
       `device_epoch`, `unit_safety_epoch`, `sequence` — before changing any
       ABI, so the migration happens once (`open_questions.md`).
-- [ ] Extend `MoveMITMsg` with that stamp; add `srv/` to `src/agx_arm_msgs`.
-      Producer, consumer, docs and tests migrate in the same change set.
+- [x] Extend `MoveMITMsg` with that stamp, and migrate producer, consumer,
+      docs and tests in the same change set. `ClaimDevice` gives the controller
+      one commander identity; the driver admits on commander, both generations
+      and the sequence.
 - [x] Make the MIT controller consume the authoritative device state instead of
       `feedback/hand_window_active`, and abort on authority loss. It aborts on
       losing motion *and* on any epoch change, because a new epoch means the

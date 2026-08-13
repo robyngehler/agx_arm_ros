@@ -206,6 +206,9 @@ def _mit_node(arm):
     node.mit_limits = NERO_DEFAULT_MIT_LIMITS
     node._command_rejections = {}
     node._estop_latched = False
+    # These exercise the *payload* contract. Admission — commander,
+    # generations, sequence — has its own tests against the authority.
+    node.require_command_stamp = False
     node._last_rejection_log_monotonic = {}
     node._rejection_log_period_s = 0.0
     node._current_motion_mode = "mit"

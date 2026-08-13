@@ -23,12 +23,13 @@ from agx_arm_ctrl.command_validation import (
     validate_mit_command,
 )
 from agx_arm_ctrl.device_authority import (
+    CommandStamp,
     DeviceAuthority,
     DeviceState,
     UnitSafety,
     UnitSafetySnapshot,
 )
-from agx_arm_msgs.srv import RequestUnitStop
+from agx_arm_msgs.srv import ClaimDevice, RequestUnitStop
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
 from agx_arm_msgs.msg import (
     AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, AgxUnitSafety,
@@ -126,6 +127,13 @@ def resolve_nero_firmware(software_version) -> tuple:
     return NeroFW.DEFAULT, f"firmware {text} -> NeroFW.DEFAULT"
 
 
+class _StampRejection(NamedTuple):
+    """Adapts an authority verdict to the rejection-logging shape."""
+
+    reason: str
+    detail: str
+
+
 class StopVerification(NamedTuple):
     """Outcome of checking whether the arm actually came to rest.
 
@@ -196,6 +204,10 @@ class AgxArmRosNode(Node):
         # from the CAN port (can_nero_left -> arm_left), which is the deployed
         # naming; set it explicitly for anything that does not follow it.
         self.declare_parameter("device_id", "")
+        # Fail-closed: an unstamped MIT command carries no commander, no
+        # generation and no sequence, so nothing can establish that it is
+        # current. Only one node publishes this topic, and it stamps.
+        self.declare_parameter("require_command_stamp", True)
         self.declare_parameter("auto_enable", True)
         self.declare_parameter("fast_mode", False)
         self.declare_parameter("speed_percent", 100)
@@ -271,6 +283,9 @@ class AgxArmRosNode(Node):
         )
         self.can_port = self.get_parameter("can_port").value
         self.arm_type = self.get_parameter("arm_type").value
+        self.require_command_stamp = bool(
+            self.get_parameter("require_command_stamp").value
+        )
         self.device_id = (
             self.get_parameter("device_id").value
             or derive_device_id(self.can_port)
@@ -720,6 +735,7 @@ class AgxArmRosNode(Node):
         self.create_service(
             Trigger, "clear_fault_lockout", self._clear_fault_lockout_callback
         )
+        self.create_service(ClaimDevice, "claim_device", self._claim_device_callback)
         if self.is_nero:
             self.create_service(Trigger, "set_normal_mode", self._set_normal_mode_callback)
             self.create_service(Trigger, "set_leader_mode", self._set_leader_mode_callback)
@@ -962,6 +978,33 @@ class AgxArmRosNode(Node):
         # advancing feedback: both are checks, not assumptions, so this rearm
         # is backed by evidence rather than by the absence of a complaint.
         authority.rearm(verified=True, detail=reason)
+
+    def _claim_device_callback(self, request, response):
+        """Take or give up command of this device. One commander at a time."""
+        verdict = (
+            self._authority.claim(request.owner_id)
+            if request.claim
+            else self._authority.release(request.owner_id)
+        )
+        snapshot = self._authority.snapshot()
+        response.accepted = verdict.accepted
+        response.reason = "" if verdict.accepted else verdict.reason.value
+        response.device_epoch = snapshot.device_epoch
+        response.unit_safety_epoch = snapshot.unit_safety_epoch
+        action = "claimed by" if request.claim else "released by"
+        if verdict.accepted:
+            response.message = (
+                f"{self.device_id} {action} '{request.owner_id}' at device "
+                f"generation {snapshot.device_epoch}"
+            )
+            self.get_logger().info(response.message)
+        else:
+            response.message = verdict.detail
+            self.get_logger().warn(
+                f"{action.split()[0]} refused for '{request.owner_id}': "
+                f"{verdict.detail}"
+            )
+        return response
 
     def _reject_command(self, path: str, rejection) -> None:
         """Refuse one command at the hardware boundary, audibly but not loudly.
@@ -2031,6 +2074,25 @@ class AgxArmRosNode(Node):
         # _check_can_control(); MIT is dropped there while a hand window is open.
         if not self._check_can_control():
             return
+
+        # Identity before payload: an out-of-date or unowned command is not
+        # worth range-checking, and admission advances the sequence watermark
+        # only for a command that is otherwise going to be sent.
+        if self.require_command_stamp:
+            verdict = self._authority.admit(
+                CommandStamp(
+                    owner_id=msg.owner_id,
+                    device_epoch=int(msg.device_epoch),
+                    unit_safety_epoch=int(msg.unit_safety_epoch),
+                    sequence=int(msg.sequence),
+                )
+            )
+            if not verdict.accepted:
+                self._reject_command(
+                    "move_mit",
+                    _StampRejection(verdict.reason.value, verdict.detail),
+                )
+                return
 
         # The hardware boundary is the input contract; SDK clamping is a last
         # protection behind it. A rejected message is rejected whole: the
