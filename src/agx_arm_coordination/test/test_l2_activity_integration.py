@@ -207,6 +207,11 @@ def graph(tmp_path_factory):
                 "--ros-args", "-p", f"call_log_path:={call_log}",
             ],
         )
+        # The coordinator refuses new activities while unit safety is not
+        # established, so a coordinated graph now includes its writer. Starting
+        # it before the coordinator means the latched generation is already
+        # there when the coordinator subscribes.
+        g.spawn("unit_safety", ["ros2", "run", "agx_arm_ctrl", "unit_safety"])
         g.spawn(
             "coordinator",
             [

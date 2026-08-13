@@ -25,6 +25,7 @@ The state is two values and a reason:
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -42,6 +43,8 @@ class RejectReason(Enum):
 
     UNIT_BUSY = "unit_busy"
     UNIT_STOPPING = "unit_stopping"
+    UNIT_STOPPED = "unit_stopped"
+    UNIT_SAFETY_UNKNOWN = "unit_safety_unknown"
 
 
 @dataclass(frozen=True)
@@ -69,12 +72,34 @@ class UnitActivity:
     callback cannot both start executing.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        require_unit_safety: bool = True,
+        unit_safety_timeout_s: float = 6.0,
+        clock=time.monotonic,
+    ) -> None:
+        """Guard admission for one unit.
+
+        ``require_unit_safety`` is fail-closed by default: a unit whose safety
+        generation cannot be established is a unit that must not be given new
+        work. Losing the writer mid-run never stops what is already authorised
+        — that is the point of the split — but starting something new commits
+        the unit to motion it could not afterwards invalidate.
+        """
         self._lock = threading.Lock()
         self._activity_id = ""
         self._stopping = False
         self._stop_reason = ""
         self.rejected_count = 0
+
+        self._require_unit_safety = require_unit_safety
+        self._unit_safety_timeout_s = unit_safety_timeout_s
+        self._clock = clock
+        self._unit_safety_epoch = -1
+        self._unit_stopped = False
+        self._unit_safety_reason = ""
+        self._unit_safety_seen_at = None
 
     @property
     def state(self) -> UnitActivityState:
@@ -111,12 +136,61 @@ class UnitActivity:
                 self.rejected_count += 1
             return admission
 
+    def observe_unit_safety(
+        self, *, epoch: int, stopped: bool, reason: str = ""
+    ) -> None:
+        """Record the writer's current generation, and that it is still alive.
+
+        Called for every message including the writer's heartbeat, because the
+        timestamp is the liveness signal: the latched value survives the writer,
+        so a stale value and a live one are otherwise indistinguishable.
+        """
+        with self._lock:
+            self._unit_safety_epoch = int(epoch)
+            self._unit_stopped = bool(stopped)
+            self._unit_safety_reason = reason
+            self._unit_safety_seen_at = self._clock()
+
+    @property
+    def unit_safety_known(self) -> bool:
+        """Whether the unit's safety generation is currently established."""
+        with self._lock:
+            return self._unit_safety_known_locked()
+
+    def _unit_safety_known_locked(self) -> bool:
+        if self._unit_safety_seen_at is None:
+            return False
+        return (
+            self._clock() - self._unit_safety_seen_at
+        ) <= self._unit_safety_timeout_s
+
     def _admission_locked(self, activity_id: str) -> Admission:
         if self._stopping:
             return Admission(
                 False,
                 RejectReason.UNIT_STOPPING,
                 f"coordinator is stopping ({self._stop_reason})",
+            )
+        if self._unit_stopped and self._unit_safety_known_locked():
+            return Admission(
+                False,
+                RejectReason.UNIT_STOPPED,
+                f"unit safety stop is in force at generation "
+                f"{self._unit_safety_epoch} ({self._unit_safety_reason}); "
+                f"'{activity_id}' was not started",
+            )
+        if self._require_unit_safety and not self._unit_safety_known_locked():
+            seen = (
+                "none has ever arrived"
+                if self._unit_safety_seen_at is None
+                else f"the last was {self._clock() - self._unit_safety_seen_at:.1f}s ago"
+            )
+            return Admission(
+                False,
+                RejectReason.UNIT_SAFETY_UNKNOWN,
+                f"unit safety state is not established ({seen}); "
+                f"'{activity_id}' was not started. A running activity is "
+                "unaffected — this refuses new work only",
             )
         if self._activity_id:
             return Admission(

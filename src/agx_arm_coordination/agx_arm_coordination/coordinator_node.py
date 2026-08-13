@@ -43,11 +43,12 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_srvs.srv import Empty, Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.action import PerformActivity, PerformAction
-from agx_arm_msgs.msg import RobotEvent
+from agx_arm_msgs.msg import AgxUnitSafety, RobotEvent
 
 from agx_arm_coordination.arm_executor import (
     ArmConfig,
@@ -299,8 +300,27 @@ class CoordinatorNode(Node):
         self._stop_requested = False
         self._stop_reason = ""
         # One authoritative answer to "may another activity start?". Replaces a
-        # plain running-flag that nothing consulted before dispatching.
-        self._unit_activity = UnitActivity()
+        # plain running-flag that nothing consulted before dispatching. Also
+        # carries the unit-safety liveness rule: losing the safety writer never
+        # stops a running activity, but it must stop a new one from starting.
+        self.declare_parameter("require_unit_safety", True)
+        self.declare_parameter("unit_safety_timeout_s", 6.0)
+        self._unit_activity = UnitActivity(
+            require_unit_safety=bool(
+                self.get_parameter("require_unit_safety").value
+            ),
+            unit_safety_timeout_s=float(
+                self.get_parameter("unit_safety_timeout_s").value
+            ),
+        )
+        # Every message counts as liveness, heartbeat included: the latched
+        # value outlives the writer, so a stale generation and a live one are
+        # otherwise indistinguishable.
+        self.create_subscription(
+            AgxUnitSafety, "/unit_safety", self._unit_safety_callback,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            callback_group=self._cb_group,
+        )
         self._shutdown_event = threading.Event()
         # Arm motion goes through the MoveIt multi-arm slice: anchor->anchor via
         # MoveGroup (collision-aware plan + execute), recorded replay via
@@ -330,6 +350,12 @@ class CoordinatorNode(Node):
             f"activities={self.catalogue.available_activities()}, "
             f"arm_groups={sorted(self.arm_planner.config.groups)}, "
             f"arm_dry_run={self.arm_dry_run}"
+        )
+
+    def _unit_safety_callback(self, msg: AgxUnitSafety) -> None:
+        """Track the unit's safety generation for activity admission."""
+        self._unit_activity.observe_unit_safety(
+            epoch=int(msg.epoch), stopped=bool(msg.stopped), reason=msg.reason
         )
 
     # --- events --------------------------------------------------------------

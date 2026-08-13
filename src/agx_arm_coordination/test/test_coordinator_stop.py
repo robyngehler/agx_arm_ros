@@ -93,6 +93,9 @@ def _coord():
     node._stop_requested = False
     node._stop_reason = ""
     node._unit_activity = UnitActivity()
+    # Admission is fail-closed on unit safety; this test is about the stop
+    # path, so it satisfies that precondition rather than opting out.
+    node._unit_activity.observe_unit_safety(epoch=1, stopped=False, reason='test')
     node._shutdown_event = threading.Event()
     node._open_hand_windows = set()
     return node

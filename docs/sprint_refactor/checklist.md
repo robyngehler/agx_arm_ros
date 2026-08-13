@@ -176,10 +176,11 @@ Routed through the runtime:
       running the right arm still stops itself. See
       `planning/unit_safety_writer_spec.md`.
 - [x] Add the `srv/` directory to `src/agx_arm_msgs` (`RequestUnitStop.srv`).
-- [ ] Refuse a **new top-level activity** while unit safety is unknown — the
-      writer being gone must not stop a running activity but must stop a new one
-      from starting. Adds `unit_safety_unknown` to the coordinator's admission
-      reasons beside `unit_busy` and `unit_stopping`.
+- [x] Refuse a **new top-level activity** while unit safety is unknown. The
+      writer heartbeats, and staleness is the only usable signal because the
+      latched generation outlives the writer. A running activity is untouched —
+      that is the point of the split — and the L2 graph now includes the writer,
+      because a coordinated graph needs one.
 - [ ] Claim ownership for the MIT controller, and switch its gate from
       `motion_ready` to `may_command`. Until then it gates on readiness, which
       is unchanged behaviour and safe only because admission is not yet live.
