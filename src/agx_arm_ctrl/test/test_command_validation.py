@@ -205,6 +205,7 @@ def _mit_node(arm):
     node.arm_joint_limits = dict(JOINT_LIMITS)
     node.mit_limits = NERO_DEFAULT_MIT_LIMITS
     node._command_rejections = {}
+    node._estop_latched = False
     node._last_rejection_log_monotonic = {}
     node._rejection_log_period_s = 0.0
     node._current_motion_mode = "mit"

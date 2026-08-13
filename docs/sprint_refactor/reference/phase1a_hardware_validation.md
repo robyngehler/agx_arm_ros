@@ -69,9 +69,12 @@ Right arm, `feedback/authority`, latched. The full sequence in one session:
 | arm disabled | STANDBY | 4 | 2 | no |
 | arm re-enabled | READY | 5 | 2 | yes |
 
-The emergency stop raised the unit epoch *before* attempting the stop, and the
-device left READY on its own epoch — so a command issued under epoch 1 is stale
-for both reasons. The stop itself reported
+**Superseded 2026-08-13** by the unit-safety writer: the stop no longer raises
+the unit epoch locally. It latches a device fault on the device's own epoch and
+*requests* a generation from the writer. The table above therefore records the
+pre-writer behaviour; the current sequence is in
+`planning/unit_safety_writer_spec.md`. What still holds: the device left READY
+on its own epoch, so a command issued under the previous epoch is stale. The stop itself reported
 `stop=verified — confirmed stopped (peak 0.007 rad/s (dt=24ms))` and did not
 escalate, so the arm stayed energised.
 

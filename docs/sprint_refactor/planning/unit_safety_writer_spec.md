@@ -1,6 +1,6 @@
 # Unit safety: one writer, and what has to change to get there
 
-status: specified, not implemented
+status: implemented 2026-08-13, verified on hardware
 date: 2026-08-13
 closes: correction proposal §6, checklist "unit safety, part 2 of 2"
 
@@ -93,10 +93,29 @@ bookkeeping global.
   unit as stopped. Same reasoning as `require_device_authority`: a missing
   publisher and a wiring error are indistinguishable, and only one of them is a
   configuration anybody chose.
-- **Mid-run**, losing the writer must not stop a running activity — the latched
-  value persists and devices keep operating under the last known generation —
-  but it must block a *rearm*, since nothing can then establish that the unit is
-  safe.
+- **Mid-run**, losing the writer degrades what may *begin*, never what is
+  already authorised:
+
+  ```text
+  writer lost while RUNNING:
+      already-authorised execution     may continue
+      new ownership era                refused
+      rearm                            refused
+      new top-level activity           refused
+  ```
+
+  The first line is why the writer is not on the critical path: killing it must
+  not stop an arm mid-trajectory. The rest is why it still matters — every one
+  of them establishes something new about the unit's safety state, and with no
+  writer there is nothing that can establish it. Starting a fresh activity is
+  the case worth spelling out: it looks harmless because nothing is moving yet,
+  and it is exactly when the system would be committing to motion it cannot
+  invalidate afterwards.
+
+  Enforced in the coordinator's existing one-activity guard
+  (`agx_arm_coordination/unit_activity.py`), which already refuses admission
+  with a structured reason — this adds `unit_safety_unknown` beside
+  `unit_busy` and `unit_stopping`.
 
 ### 6. What this invalidates
 
@@ -111,6 +130,36 @@ requests the unit generation.
 Lands with the command-stamp slice and before admission is enforced, because the
 stamp carries this epoch. Doing it after would mean enforcing a field whose
 value is not comparable across devices.
+
+## What this is not
+
+This writer is a **software** safety generation. It orders and invalidates
+commands inside our own stack; it is not a protective stop in the functional-
+safety sense, and nothing here should be read as one. The independent hardware
+emergency stop is recorded as a separate, longer-lived question in
+`docs/open_questions.md` — it must not depend on ROS, on this writer, or on any
+process in this repository being alive.
+
+## Implemented, and what it looked like on hardware
+
+`agx_arm_ctrl/unit_safety_node.py` is the writer; drivers construct
+`UnitSafety(device_id, writer=False)` and adopt generations from `/unit_safety`.
+
+| step | right arm | left arm |
+| --- | --- | --- |
+| e-stop, **writer not running** | FAULTED, `motion_ready false`, unit epoch 0 | — |
+| e-stop, writer running | FAULTED on its own latch | STOPPED, unit epoch 1, `unit stop: arm_right: emergency stop requested` |
+| `unit_safety/rearm` | still FAULTED — its own latch | READY, unit epoch 2 |
+
+The first row is the design constraint holding: the device stopped itself with
+no writer alive, and the unit generation simply did not advance. The last row is
+the split holding from the other side: a unit rearm does not clear a device's
+own latch.
+
+One nuance worth stating exactly: the left arm returns to READY rather than
+resting in STANDBY, because it never had a device fault — it was stopped only by
+the generation, and `_sync_authority` rearms it against live evidence (enable
+readback plus advancing feedback), not against an assumption.
 
 ## Open decisions
 

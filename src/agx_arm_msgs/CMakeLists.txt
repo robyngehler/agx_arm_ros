@@ -18,6 +18,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AgxArmStatus.msg"
   "msg/AgxDeviceAuthority.msg"
   "msg/AgxDeviceCapability.msg"
+  "msg/AgxUnitSafety.msg"
   "msg/GripperStatus.msg"
   "msg/HandStatus.msg"
   "msg/HandCmd.msg"
@@ -26,6 +27,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/OmniHandTactileRaw.msg"
   "msg/RobotEvent.msg"
   "msg/MoveMITMsg.msg"
+  "srv/RequestUnitStop.srv"
   "action/PerformAction.action"
   "action/PerformActivity.action"
   DEPENDENCIES std_msgs geometry_msgs action_msgs

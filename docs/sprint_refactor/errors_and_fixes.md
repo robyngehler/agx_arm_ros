@@ -536,3 +536,26 @@ changes, which is the interesting part.
   refusals.
 - Still open: synchronized `both_arms` execution must be preflighted against
   both devices as a whole, which is coordinator work.
+
+## 2026-08-13 (found on hardware while splitting device and unit safety)
+
+### A verified emergency stop stopped latching the device
+
+- Symptom: after moving unit-generation allocation out of the driver, an
+  emergency stop set the authority to FAULTED and the arm was back to
+  `state: READY, motion_ready: true` seconds later.
+- Cause: `_sync_authority` is a *derived* mapping that runs every publish cycle
+  at 200 Hz. It rebuilds the state from the driver's gates, so anything the
+  e-stop set directly is overwritten on the next tick. Until this change the
+  local unit stop happened to be the thing that held it, because
+  `_sync_authority` returns early while the unit is stopped. Removing the local
+  stop removed the latch with it, and nothing replaced it: a verified stop left
+  the arm accepting motion.
+- Fix: an explicit `_estop_latched` flag that the derived mapping honours, set
+  by the emergency stop and cleared only by `clear_fault_lockout`. The response
+  message says which latch it cleared.
+- The general shape, worth remembering: **a derived state mapping erases
+  anything set directly.** Whatever must survive it has to be an input to it,
+  not an output written behind its back.
+- Only hardware surfaced this. The unit tests passed throughout, because none
+  of them ran the publish loop after an e-stop — a gap the new regression closes.

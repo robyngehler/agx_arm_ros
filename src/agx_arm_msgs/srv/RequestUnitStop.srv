@@ -1,0 +1,13 @@
+# Ask the unit safety writer to allocate a stop generation.
+#
+# A device never needs this to stop itself — it latches its own fault on its own
+# epoch, unilaterally, and that path must keep working with the writer dead.
+# This is the second, slower half: telling the rest of the unit that a new
+# safety era has begun so commands stamped under the previous one are refused.
+
+string requester      # node or device asking, e.g. "arm_left"
+string reason
+---
+bool accepted
+uint64 epoch          # the generation in force after this call
+string message

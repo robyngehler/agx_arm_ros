@@ -22,10 +22,17 @@ from agx_arm_ctrl.command_validation import (
     positions_outside_joint_limits,
     validate_mit_command,
 )
-from agx_arm_ctrl.device_authority import DeviceAuthority, DeviceState, UnitSafety
+from agx_arm_ctrl.device_authority import (
+    DeviceAuthority,
+    DeviceState,
+    UnitSafety,
+    UnitSafetySnapshot,
+)
+from agx_arm_msgs.srv import RequestUnitStop
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
 from agx_arm_msgs.msg import (
-    AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, GripperStatus,
+    AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, AgxUnitSafety,
+    GripperStatus,
     HandStatus, HandCmd, HandPositionTimeCmd,
     MoveMITMsg
 )
@@ -155,9 +162,11 @@ class AgxArmRosNode(Node):
 
         ### device authority (built before the SDK so a failed connect is
         ### still reported as a state rather than as silence)
-        # Named, so a second allocator on the unit shows up as a counted
-        # contradiction rather than as a silently merged epoch.
-        self._unit_safety = UnitSafety(self.device_id)
+        # An observer: it adopts the writer's generations and refuses to mint
+        # its own. This device still stops itself unilaterally — that is a
+        # device-level fault on its own epoch and needs nobody — but the
+        # unit-wide statement that a new safety era began is one process's job.
+        self._unit_safety = UnitSafety(self.device_id, writer=False)
         self._authority = DeviceAuthority(self.device_id, self._unit_safety)
 
         ### AgxArmFactory
@@ -385,6 +394,12 @@ class AgxArmRosNode(Node):
         # control rate, so the log is rate-limited per reason and carries the
         # suppressed count: flooding the log is itself a CPU problem on this
         # Jetson, and the 0E baseline shows how little headroom there is.
+        # Latched by an emergency stop, cleared only by clear_fault_lockout.
+        # Needed because _sync_authority is a *derived* mapping that runs
+        # every publish cycle: a state the e-stop sets directly is erased on
+        # the next tick unless something in the gates holds it. Until the
+        # unit-safety writer existed, the local unit stop was that latch.
+        self._estop_latched = False
         self._command_rejections = {}
         self._last_rejection_log_monotonic = {}
         self._rejection_log_period_s = 2.0
@@ -629,6 +644,16 @@ class AgxArmRosNode(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._authority.set_on_change(self._publish_authority)
+        # The writer's generations, adopted rather than minted. Latched by the
+        # writer, so a driver starting after it still learns the current era.
+        self.create_subscription(
+            AgxUnitSafety, "/unit_safety", self._unit_safety_callback,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        # Fire-and-forget: stopping this device never waits on this call.
+        self._unit_stop_client = self.create_client(
+            RequestUnitStop, "/unit_safety/request_stop"
+        )
         # Latched and published once: what this arm can encode. Fixed for the
         # session, unlike the authority beside it, and the only way a consumer
         # can check a control envelope against *this* arm's protocol tier
@@ -796,6 +821,52 @@ class AgxArmRosNode(Node):
                 return False
         return True
 
+    def _unit_safety_callback(self, msg: AgxUnitSafety) -> None:
+        """Adopt a generation from the one writer that may allocate them."""
+        adopted = self._unit_safety.observe(
+            UnitSafetySnapshot(
+                epoch=int(msg.epoch),
+                stopped=bool(msg.stopped),
+                reason=msg.reason,
+                writer_id=msg.writer_id,
+            )
+        )
+        if adopted:
+            self.get_logger().warn(
+                f"unit safety generation {msg.epoch} from '{msg.writer_id}': "
+                f"stopped={msg.stopped} ({msg.reason})"
+            )
+        if self._unit_safety.conflicts:
+            self.get_logger().error(
+                "unit safety CONTRADICTION seen "
+                f"({self._unit_safety.conflicts} so far): more than one process "
+                "is allocating generations. The stop is being held; find the "
+                "second writer."
+            )
+
+    def _request_unit_stop(self, reason: str) -> None:
+        """Tell the unit a new safety era began. Never blocks the stop itself.
+
+        The hardware is already being stopped by the caller; this is only the
+        unit-wide bookkeeping. If the writer is absent the device stays stopped
+        on its own epoch, which is the intended degradation — safety local,
+        bookkeeping global — so an unavailable service is a warning, not a
+        failure of the stop.
+        """
+        try:
+            if not self._unit_stop_client.service_is_ready():
+                self.get_logger().warn(
+                    "unit safety writer unavailable; this device is stopped on "
+                    "its own epoch but the unit generation did not advance"
+                )
+                return
+            request = RequestUnitStop.Request()
+            request.requester = self.device_id
+            request.reason = reason
+            self._unit_stop_client.call_async(request)
+        except Exception as exc:
+            self.get_logger().warn(f"requesting a unit stop failed: {exc}")
+
     def _publish_capability(self) -> None:
         """Announce the control envelope this arm's protocol tier can encode."""
         try:
@@ -862,6 +933,11 @@ class AgxArmRosNode(Node):
         authority = self._authority
         if self._unit_safety.stopped:
             # Only a unit rearm leaves this state; nothing below may override it.
+            return
+        if self._estop_latched:
+            # This device stopped itself. It stays refusing motion until an
+            # operator acknowledges, with or without a unit-wide generation.
+            authority.enter_faulted(f"emergency stop latched: {reason}")
             return
         if self._recovery_in_progress:
             authority.enter_recovering(reason)
@@ -980,6 +1056,8 @@ class AgxArmRosNode(Node):
     def _clear_fault_lockout_callback(self, request, response):
         del request
         was_locked = self._fault_lockout
+        was_estopped = self._estop_latched
+        self._estop_latched = False
         self._fault_lockout = False
         self._fault_lockout_logged = False
         self._last_good_feedback_monotonic = time.monotonic()
@@ -987,21 +1065,24 @@ class AgxArmRosNode(Node):
         # This is the operator's "I have looked at it" surface, so it is also
         # what releases a unit stop. It clears the latch; it does not arm the
         # device — that still needs the gates to come back.
-        released_unit_stop = self._unit_safety.stopped
-        if released_unit_stop:
-            self._unit_safety.rearm("fault lockout cleared")
         self._sync_authority("fault lockout cleared")
         response.success = True
-        # Report every latch this released. A verified emergency stop leaves a
-        # unit stop and no fault lockout, so reporting only the lockout said
-        # "nothing was active" about a call that had just rearmed the unit.
+        # This clears *this device's* latch only. The unit stop is the writer's
+        # to release, through unit_safety/rearm — a device clearing a unit-wide
+        # generation is exactly the second-allocator problem this split exists
+        # to remove, so it is reported rather than silently done here.
         cleared = []
+        if was_estopped:
+            cleared.append("emergency stop latch cleared")
         if was_locked:
             cleared.append("fault lockout cleared")
-        if released_unit_stop:
-            cleared.append("unit safety stop released")
+        if self._unit_safety.stopped:
+            cleared.append(
+                "NOTE: a unit safety stop is still in force; call "
+                "unit_safety/rearm to release it"
+            )
         response.message = "; ".join(cleared) or (
-            "nothing to clear: no fault lockout and no unit stop was active"
+            "nothing to clear: no fault lockout was active"
         )
         self.get_logger().warn(response.message)
         return response
@@ -2238,11 +2319,14 @@ class AgxArmRosNode(Node):
         """
         stopped = False
         recovery_requested = False
-        # Raised first, before anything is attempted. An emergency stop is the
-        # case that genuinely invalidates every device at once, and the epoch
-        # bump has to precede the stop attempt so nothing issued during it is
-        # still considered current.
-        self._unit_safety.stop("emergency stop requested")
+        # This device is stopped unilaterally and immediately: a device-level
+        # fault on its own epoch, needing no other process. Whatever was issued
+        # before this point is stale for this device from here on.
+        self._estop_latched = True
+        self._authority.enter_faulted("emergency stop requested")
+        # The unit-wide statement that a new safety era began is the writer's to
+        # make, and is requested without waiting for it.
+        self._request_unit_stop("emergency stop requested")
         # Every stage below is verified in feedback, so an open hand window must
         # not keep that feedback silenced through an emergency stop.
         self._restore_feedback_push("emergency stop")
@@ -2320,8 +2404,8 @@ class AgxArmRosNode(Node):
             # no way to know what is holding it or how to release it.
             response.message = (
                 f"{self.arm_type} stop=verified — confirmed stopped "
-                f"({verification.detail}); unit safety stop is latched, call "
-                "clear_fault_lockout to release it"
+                f"({verification.detail}); this device is latched and refuses "
+                "motion until clear_fault_lockout"
             )
         else:
             response.success = False

@@ -29,6 +29,7 @@ def _node(require_ack=True):
     node.get_logger = lambda: _FakeLogger()
     node.require_fault_ack = require_ack
     node._fault_lockout = False
+    node._estop_latched = False
     node._fault_lockout_logged = False
     node.control_ready = True
     node._control_ready_logged = True

@@ -167,13 +167,19 @@ Routed through the runtime:
       writer that minted them, an observer refuses to mint at all, and an
       equal-generation contradiction is counted with the stop winning rather
       than silently dropped.
-- [ ] Unit safety, part 2 of 2 — **the actual fix**: introduce the single
-      writer. Every driver still mints its own generations, and there is no
-      topic carrying unit safety between processes at all, so `unit_safety_epoch`
-      is currently a per-process counter and two devices' values are unrelated
-      numbers. Specified in `planning/unit_safety_writer_spec.md`; it is a
-      precondition for enforcing the command stamp, since the stamp carries that
-      epoch.
+- [x] Unit safety, part 2 of 2 — **the actual fix**: one writer
+      (`agx_arm_ctrl/unit_safety_node.py`), devices as observers, `AgxUnitSafety`
+      latched on `/unit_safety`, and `RequestUnitStop` so a device can ask for a
+      generation without ever waiting for one. A device still stops itself
+      unilaterally on its own epoch. Verified on hardware: an e-stop on the right
+      arm now stops the left arm through the generation, and with the writer not
+      running the right arm still stops itself. See
+      `planning/unit_safety_writer_spec.md`.
+- [x] Add the `srv/` directory to `src/agx_arm_msgs` (`RequestUnitStop.srv`).
+- [ ] Refuse a **new top-level activity** while unit safety is unknown — the
+      writer being gone must not stop a running activity but must stop a new one
+      from starting. Adds `unit_safety_unknown` to the coordinator's admission
+      reasons beside `unit_busy` and `unit_stopping`.
 - [ ] Claim ownership for the MIT controller, and switch its gate from
       `motion_ready` to `may_command`. Until then it gates on readiness, which
       is unchanged behaviour and safe only because admission is not yet live.
