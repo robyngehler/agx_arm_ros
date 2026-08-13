@@ -230,6 +230,13 @@ class SdkWorker:
         self._by_key: Dict[str, Call] = {}
         self._epoch: Optional[int] = None
         self._running = True
+        # Quiesced: the worker stops dequeuing but keeps accepting
+        # submissions, so a caller does not have to know that ownership has
+        # moved. Work queued meanwhile is subject to the usual epoch rules,
+        # which is what stops it arriving stale after recovery.
+        self._quiesced = False
+        self._executing = False
+        self._idle = threading.Condition(self._lock)
 
         self.dropped_stale = 0
         self.dropped_replaced = 0
@@ -396,6 +403,44 @@ class SdkWorker:
             CallOutcome.DROPPED, detail=f"superseded by a newer {replace_key}"
         )
 
+    # -- ownership ------------------------------------------------------
+
+    def quiesce(self, timeout: float = 5.0) -> bool:
+        """Stop dequeuing and wait for the in-flight call to finish.
+
+        Returns True once this worker is guaranteed to be touching nothing, so
+        another owner — recovery — may take the SDK session. False means a call
+        is still running and ownership must NOT be transferred: two owners on
+        one session is the race the worker exists to remove, and taking it back
+        by force would only move the race.
+
+        Submissions keep being accepted while quiesced. A caller should not
+        have to know that ownership moved, and anything queued here is still
+        subject to the epoch rules, which is what stops it arriving stale on the
+        far side of a recovery.
+        """
+        with self._lock:
+            self._quiesced = True
+            self._wake.notify_all()
+            deadline = time.monotonic() + timeout
+            while self._executing:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._idle.wait(remaining)
+            return True
+
+    def resume(self) -> None:
+        """Take the SDK session back and start dequeuing again."""
+        with self._lock:
+            self._quiesced = False
+            self._wake.notify_all()
+
+    @property
+    def quiesced(self) -> bool:
+        with self._lock:
+            return self._quiesced
+
     # -- execution ------------------------------------------------------
 
     def _run(self) -> None:
@@ -403,10 +448,18 @@ class SdkWorker:
             stale: Optional[Call] = None
             stale_detail = ""
             with self._lock:
-                while self._running and not self._safety and not self._normal:
+                while self._running and (
+                    self._quiesced or (not self._safety and not self._normal)
+                ):
                     self._wake.wait()
                 if not self._running and not self._safety:
                     return
+                if self._quiesced and self._running:
+                    # Woken spuriously while quiesced. Shutdown deliberately
+                    # falls through instead: a stop still queued on the safety
+                    # lane must drain even if ownership was handed away.
+                    continue
+                self._executing = True
                 if self._safety:
                     call = self._safety.popleft()
                 else:
@@ -419,12 +472,22 @@ class SdkWorker:
                         self.dropped_stale += 1
                         stale_detail = f"epoch {call.epoch} is behind {self._epoch}"
                         stale, call = call, None
+                        self._executing = False
+                        self._idle.notify_all()
             if stale is not None:
                 # Settled outside the lock, so a waiter woken by it cannot run
                 # while the queue is held.
                 stale._settle(CallOutcome.DROPPED, detail=stale_detail)
                 continue
-            self._execute(call)
+            try:
+                self._execute(call)
+            finally:
+                # Marks the end of "this worker is touching the SDK". quiesce()
+                # waits on exactly this, because ownership may only move while
+                # no call is in flight.
+                with self._lock:
+                    self._executing = False
+                    self._idle.notify_all()
 
     def _execute(self, call: Call) -> None:
         if self._metrics is not None:

@@ -292,3 +292,100 @@ def test_cancelling_a_call_already_taken_by_the_worker_reports_false(worker):
         release.set()
         call.wait(3.0)
     assert call.outcome is CallOutcome.DONE
+
+
+# --- ownership transfer to recovery ------------------------------------------
+
+def test_quiesce_waits_for_the_call_in_flight_before_handing_ownership_over():
+    """Ownership may only move while nothing is in flight.
+
+    Two owners on one SDK session is the race this worker exists to remove;
+    taking the session back by force would only relocate it.
+    """
+    worker = SdkWorker("arm_left")
+    try:
+        started = threading.Event()
+        release = threading.Event()
+        finished = []
+
+        def slow():
+            started.set()
+            release.wait(3.0)
+            finished.append("done")
+
+        worker.submit("blocking_write", slow)
+        assert started.wait(2.0)
+
+        quiesced = []
+        waiter = threading.Thread(
+            target=lambda: quiesced.append(worker.quiesce(timeout=3.0))
+        )
+        waiter.start()
+        time.sleep(0.2)
+        assert quiesced == [], "quiesce returned while a call was still running"
+
+        release.set()
+        waiter.join(3.0)
+        assert quiesced == [True]
+        assert finished == ["done"]
+    finally:
+        worker.shutdown()
+
+
+def test_quiesce_reports_failure_rather_than_handing_over_a_busy_session():
+    worker = SdkWorker("arm_left")
+    try:
+        release = threading.Event()
+        started = threading.Event()
+
+        def stuck():
+            started.set()
+            release.wait(5.0)
+
+        worker.submit("stuck_call", stuck)
+        assert started.wait(2.0)
+
+        assert worker.quiesce(timeout=0.3) is False
+        release.set()
+    finally:
+        worker.shutdown()
+
+
+def test_a_quiesced_worker_still_accepts_work_but_runs_none_of_it():
+    """A caller should not have to know that ownership moved."""
+    worker = SdkWorker("arm_left")
+    try:
+        assert worker.quiesce(timeout=2.0) is True
+        ran = []
+        call = worker.submit("joint_ctrl", lambda: ran.append("ran"))
+        time.sleep(0.3)
+
+        assert ran == []
+        assert call.outcome is CallOutcome.PENDING
+        assert worker.quiesced is True
+
+        worker.resume()
+        assert call.wait(2.0)
+        assert ran == ["ran"]
+    finally:
+        worker.shutdown()
+
+
+def test_work_queued_while_quiesced_is_still_subject_to_the_epoch_rules():
+    """What stops it arriving stale on the far side of a recovery."""
+    worker = SdkWorker("arm_left")
+    try:
+        worker.set_epoch(1)
+        assert worker.quiesce(timeout=2.0) is True
+        sent = []
+        stale = worker.submit("joint_ctrl", lambda: sent.append("stale"), epoch=1)
+
+        # Recovery bumps the device generation before returning ownership.
+        worker.set_epoch(2)
+        worker.resume()
+        time.sleep(0.3)
+
+        assert sent == []
+        assert stale.outcome is CallOutcome.DROPPED
+    finally:
+        worker.shutdown()
