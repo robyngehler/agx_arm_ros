@@ -31,7 +31,9 @@ from agx_arm_ctrl.device_authority import (
 )
 from agx_arm_msgs.srv import ClaimDevice, RequestUnitStop
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
-from agx_arm_ctrl.sdk_worker import CallNotExecuted, CallOutcomeUnknown, SdkWorker
+from agx_arm_ctrl.sdk_worker import (
+    CallNotExecuted, CallOutcome, CallOutcomeUnknown, SdkWorker,
+)
 from agx_arm_msgs.msg import (
     AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, AgxUnitSafety,
     GripperStatus,
@@ -452,6 +454,14 @@ class AgxArmRosNode(Node):
         # was still live while a starvation-sensitive signal read stale/not-ok.
         self._loop_overrun_suppressions = 0
         self._last_overrun_log_monotonic = 0.0
+        # The most recent acquisition, for the command callbacks. They used to
+        # read the SDK themselves to decide whether the arm may be commanded —
+        # a blocking round trip through the session owner, once per command at
+        # the control rate — while the publish loop was already acquiring the
+        # same values 200 times a second. A snapshot is immutable and replaced
+        # whole, so a reader sees one instant or the previous one, never a mix.
+        self._latest_snapshot = None
+        self._last_stale_ingress_log_monotonic = 0.0
         # Rejected-command bookkeeping. A malformed stream arrives at the
         # control rate, so the log is rate-limited per reason and carries the
         # suppressed count: flooding the log is itself a CPU problem on this
@@ -809,6 +819,22 @@ class AgxArmRosNode(Node):
         value = array[index]
         return default if math.isnan(value) else value
 
+    def _fresh_snapshot(self) -> "FeedbackSnapshot":
+        """Return the last acquisition, or None if it is too old to decide on.
+
+        The bound is ``feedback_timeout``, the same one the recovery watchdog
+        uses: at a 200 Hz loop that is 400 missed cycles, so it does not trip on
+        jitter, only on an acquisition path that has stopped. Returning None
+        there is deliberate — commanding an arm whose feedback nobody is reading
+        is worse than refusing, which is what the old per-command SDK read did.
+        """
+        snapshot = self._latest_snapshot
+        if snapshot is None:
+            return None
+        if time.monotonic() - snapshot.acquired_at > self.feedback_timeout:
+            return None
+        return snapshot
+
     def _check_arm_ready(self, snapshot: "FeedbackSnapshot" = None) -> bool:
         joint_states = (
             snapshot.joint_angles if snapshot is not None else self._sdk_read(
@@ -894,18 +920,47 @@ class AgxArmRosNode(Node):
             # Startup warm-up: ignore incoming control commands until a valid
             # joint state stream is available.
             return False
-        if not self._check_arm_ready():
+        # Decide on the acquisition, not on a read of our own. This check runs
+        # once per command at the control rate; doing its own SDK reads put the
+        # subscription thread in the worker queue 100 times a second for values
+        # the publish loop had already fetched, and the teach-mode read below
+        # went straight to the session, which is the second SDK owner the call
+        # counter was reporting.
+        snapshot = self._fresh_snapshot()
+        if snapshot is None:
+            self._refuse_stale_ingress()
+            return False
+        if not self._check_arm_ready(snapshot):
             self.get_logger().warn("Agx_arm is not connected, cannot control")
             return False
         if not self.enable_flag:
             self.get_logger().warn("Agx_arm is not enabled, cannot control")
             return False
         if not self.is_switch_seamlessly:
-            arm_status = self.agx_arm.get_arm_status()
+            arm_status = snapshot.arm_status
             if arm_status is not None and arm_status.msg.ctrl_mode == self.agx_arm.ARM_STATUS.CtrlMode.TEACHING_MODE:
                 self.get_logger().warn("Agx_arm is in teach mode, cannot control")
                 return False
         return True
+
+    def _refuse_stale_ingress(self) -> None:
+        """Refuse commands because nothing is reading this arm's feedback.
+
+        Rate-limited: the refusal arrives at the control rate, and on this
+        Jetson the logging is itself a measurable load. Worth saying plainly —
+        the firmware holds its last setpoint, so refusing here stops new motion
+        but does not stop motion already commanded. That gap is the independent
+        watchdog's, not this gate's.
+        """
+        now = time.monotonic()
+        if now - self._last_stale_ingress_log_monotonic < self._rejection_log_period_s:
+            return
+        self._last_stale_ingress_log_monotonic = now
+        self.get_logger().error(
+            "arm commands refused: no feedback acquisition within "
+            f"{self.feedback_timeout:.1f} s. The arm holds its last setpoint; "
+            "this gate stops new commands, not motion already running."
+        )
 
     def _unit_safety_callback(self, msg: AgxUnitSafety) -> None:
         """Adopt a generation from the one writer that may allocate them."""
@@ -1376,6 +1431,9 @@ class AgxArmRosNode(Node):
             if snapshot is None:
                 rate.sleep()
                 continue
+            # Published to the command callbacks before anything else is done
+            # with it: they decide on it instead of reading the SDK themselves.
+            self._latest_snapshot = snapshot
 
             try:
                 if self._should_recover_bus(snapshot):
@@ -2400,6 +2458,58 @@ class AgxArmRosNode(Node):
         if outside:
             self._warn_command_limits("move_mit", outside)
 
+        # Copied out of the message: the task outlives this callback, and what
+        # it sends to hardware must not depend on a ROS buffer still being
+        # around and unchanged when it runs.
+        joint_index = tuple(msg.joint_index)
+        p_des = tuple(msg.p_des)
+        v_des = tuple(msg.v_des)
+        kp = tuple(msg.kp)
+        kd = tuple(msg.kd)
+        torque = tuple(msg.torque)
+
+        # The setpoint reaches the arm on the session owner's thread, not on
+        # this one. This was the last hot-path SDK writer outside the worker and
+        # the largest in the system — 700 calls/s measured from the subscription
+        # thread — so "exactly one SDK owner at any instant" was true for reads
+        # and false for commands until here.
+        #
+        # One task, not one per call. Bounded is the rule, and this is bounded:
+        # nine sub-millisecond calls, nothing retrying, nothing waiting on the
+        # bus. Splitting it would also be wrong on its own terms — the joints of
+        # one setpoint would interleave with the next message's, and other work
+        # would run inside the auto-mode-ctrl bracket.
+        #
+        # ``replace_key``: on a streaming path only the newest setpoint is worth
+        # sending. A superseded one is dropped while still queued rather than
+        # delivered late, which is what keeps a stalled worker from working
+        # through a backlog of stale poses.
+        call = self._sdk.submit(
+            "send_mit_setpoint",
+            lambda: self._send_mit_setpoint(
+                joint_index, p_des, v_des, kp, kd, torque
+            ),
+            epoch=self._authority.device_epoch,
+            replace_key="move_mit",
+        )
+        if call.outcome is not CallOutcome.PENDING:
+            # submit() settles a stale-epoch drop or a full queue on the spot,
+            # so a settled call here is the guaranteed-not-sent case and only
+            # that. Anything still pending may yet reach the arm and is not
+            # reported as refused.
+            self._reject_command(
+                "move_mit", _StampRejection(call.outcome.value, call.detail)
+            )
+
+    def _send_mit_setpoint(self, joint_index, p_des, v_des, kp, kd, torque) -> None:
+        """Write one MIT setpoint. Runs on the SDK worker, as one task.
+
+        The mode bookkeeping lives here rather than in the callback so the flags
+        record what was actually sent, in the order the worker sent it. Set from
+        the callback they would describe a frame that may not have gone out yet,
+        and two queued setpoints would each believe the other had done the mode
+        transition.
+        """
         try:
             # Send ArmMsgModeCtrl once per mode transition, not once per joint.
             # Without this, 7 redundant mode-ctrl frames are sent per callback at
@@ -2411,19 +2521,19 @@ class AgxArmRosNode(Node):
 
             self.agx_arm.set_auto_set_motion_mode_enabled(False)
             try:
-                for i in range(len(msg.joint_index)):
+                for i in range(len(joint_index)):
                     self.agx_arm.move_mit(
-                        joint_index=msg.joint_index[i],
-                        p_des=msg.p_des[i],
-                        v_des=msg.v_des[i],
-                        kp=msg.kp[i],
-                        kd=msg.kd[i],
-                        t_ff=msg.torque[i],
+                        joint_index=joint_index[i],
+                        p_des=p_des[i],
+                        v_des=v_des[i],
+                        kp=kp[i],
+                        kd=kd[i],
+                        t_ff=torque[i],
                     )
             finally:
                 self.agx_arm.set_auto_set_motion_mode_enabled(True)
         except Exception as e:
-            self._handle_send_failure("_move_mit_callback", e)
+            self._handle_send_failure("move_mit", e)
 
     ### effector control callbacks
     def _hand_position_time_cmd_callback(self, msg: HandPositionTimeCmd):

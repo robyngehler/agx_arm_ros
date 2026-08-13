@@ -6,6 +6,7 @@ SDK before this guard existed.
 """
 
 import math
+import threading
 
 import pytest
 
@@ -162,8 +163,21 @@ def test_flagging_never_raises_on_input_the_validator_would_have_refused():
 
 # --- the driver actually refuses ---------------------------------------------
 
+from types import SimpleNamespace  # noqa: E402
+
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode  # noqa: E402
+from agx_arm_ctrl.sdk_worker import SdkWorker as _SdkWorker  # noqa: E402
 from agx_arm_msgs.msg import MoveMITMsg  # noqa: E402
+
+
+def _drain(node):
+    """Wait for everything submitted before this call to have run.
+
+    The normal lane is FIFO, so a call that settles after ours proves ours is
+    finished. Cheaper and less fragile than sleeping, and it fails loudly if the
+    worker is wedged instead of silently asserting on an empty list.
+    """
+    node._sdk.call("drain", lambda: None, timeout=2.0)
 
 
 class _FakeLogger:
@@ -182,10 +196,16 @@ class _FakeLogger:
 
 
 class _CountingArm:
-    """Records every MIT frame that made it to the vendor SDK."""
+    """Records every MIT frame that made it to the vendor SDK, and from where.
+
+    The thread name is recorded because "which thread wrote to the SDK" is the
+    property under test, not an implementation detail: it is how the Phase 1A
+    exit gate is read on hardware too, off the per-thread call counter.
+    """
 
     def __init__(self):
         self.sent = []
+        self.sent_from = []
 
     def set_motion_mode(self, _mode):
         pass
@@ -195,11 +215,17 @@ class _CountingArm:
 
     def move_mit(self, **kwargs):
         self.sent.append(kwargs)
+        self.sent_from.append(threading.current_thread().name)
 
 
 def _mit_node(arm):
     node = AgxArmRosNode.__new__(AgxArmRosNode)
     node.agx_arm = arm
+    # The setpoint is written by the session owner now, so the stub needs a
+    # real worker: what these tests assert about `arm.sent` is what came out
+    # the far end of the queue, not what the callback thread did.
+    node._sdk = _SdkWorker("arm_test")
+    node._authority = SimpleNamespace(device_epoch=0)
     node.arm_joint_count = 7
     node.arm_joint_names = list(JOINT_NAMES)
     node.arm_joint_limits = dict(JOINT_LIMITS)
@@ -235,13 +261,29 @@ def test_a_valid_command_reaches_the_sdk():
     arm = _CountingArm()
     node = _mit_node(arm)
     node._move_mit_callback(_msg((1, 2, 3), (0.1, 0.2, 0.3)))
+    _drain(node)
     assert len(arm.sent) == 3
+
+
+def test_the_setpoint_is_written_by_the_session_owner():
+    """Not by the thread the command arrived on — that is the Phase 1A gate.
+
+    The callback returning before the frames exist is the point: the check that
+    used to make this test pass without a drain was reading the effect of a
+    synchronous SDK call from the subscription thread.
+    """
+    arm = _CountingArm()
+    node = _mit_node(arm)
+    node._move_mit_callback(_msg((1, 2, 3), (0.1, 0.2, 0.3)))
+    _drain(node)
+    assert {t for t in arm.sent_from} == {node._sdk.thread_name}
 
 
 def test_a_nan_setpoint_never_reaches_the_sdk():
     arm = _CountingArm()
     node = _mit_node(arm)
     node._move_mit_callback(_msg((1, 2, 3), (0.1, math.nan, 0.3)))
+    _drain(node)
     assert arm.sent == []
     assert node.logger.errors
 
@@ -253,6 +295,7 @@ def test_the_whole_message_is_refused_not_the_bad_joint():
     positions = [0.1] * 7
     positions[6] = 99.0
     node._move_mit_callback(_msg(tuple(range(1, 8)), positions))
+    _drain(node)
     assert arm.sent == []
 
 
@@ -262,6 +305,7 @@ def test_rejections_are_counted_per_reason():
     node._move_mit_callback(_msg((1, 1), (0.1, 0.2)))
     node._move_mit_callback(_msg((1, 1), (0.1, 0.2)))
     node._move_mit_callback(_msg((1, 2), (math.inf, 0.2)))
+    _drain(node)
 
     assert node._command_rejections[("move_mit", "duplicate_joint")] == 2
     assert node._command_rejections[("move_mit", "non_finite")] == 1
@@ -272,10 +316,47 @@ def test_a_position_past_a_joint_limit_is_warned_but_still_sent():
     arm = _CountingArm()
     node = _mit_node(arm)
     node._move_mit_callback(_msg((1, 2), (0.0, 2.0)))
+    _drain(node)
 
     assert len(arm.sent) == 2, "a joint-limit excursion must not freeze the loop"
     assert node.logger.warns
     assert "joint2" in node.logger.warns[-1]
+
+
+def test_a_setpoint_issued_under_a_superseded_epoch_is_refused_not_sent():
+    """A recovery bumps the epoch; work stamped before it must not arrive after.
+
+    The refusal is reported because ``submit`` settles this case on the spot —
+    it is one of the outcomes that *establish* the command never ran, unlike a
+    wait that merely expired.
+    """
+    arm = _CountingArm()
+    node = _mit_node(arm)
+    node._sdk.set_epoch(4)
+    node._authority = SimpleNamespace(device_epoch=3)
+
+    node._move_mit_callback(_msg((1, 2, 3), (0.1, 0.2, 0.3)))
+    _drain(node)
+
+    assert arm.sent == []
+    assert node._command_rejections[("move_mit", "dropped")] == 1
+
+
+def test_only_the_newest_queued_setpoint_is_sent():
+    """A stalled worker must not work through a backlog of stale poses."""
+    arm = _CountingArm()
+    node = _mit_node(arm)
+    release = threading.Event()
+    node._sdk.submit("block", lambda: release.wait(2.0))
+
+    node._move_mit_callback(_msg((1,), (0.1,)))
+    node._move_mit_callback(_msg((1,), (0.2,)))
+    node._move_mit_callback(_msg((1,), (0.3,)))
+    release.set()
+    _drain(node)
+
+    assert [frame["p_des"] for frame in arm.sent] == [0.3]
+    assert node._sdk.dropped_replaced == 2
 
 
 # --- the firmware tier decides the torque bound ------------------------------

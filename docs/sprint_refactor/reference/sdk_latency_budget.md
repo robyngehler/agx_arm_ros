@@ -222,6 +222,44 @@ thread, which is the largest single writer in the system at 700 calls/s. So
 and Phase 1A does not close until the command path is routed too — the first
 item in the review's own list.
 
+### Routing the command path (2026-08-13, not yet measured)
+
+The MIT setpoint is now written by the session owner: `_move_mit_callback`
+validates on its own thread and submits `send_mit_setpoint` — the mode bracket
+plus the per-joint frames — as **one** task, keyed `move_mit` so a superseded
+setpoint is dropped while queued rather than delivered late.
+
+One task rather than nine follows the same rule the acquisition batch settled:
+*bounded*, not literally one call. Nine sub-millisecond calls, no retry, nothing
+waiting on the bus. The measurement that decided it is already in this document
+— a queue hand-off costs 0.35-0.47 ms mean, which is affordable once per cycle
+and was explicitly recorded as *not* affordable eight times over. Nine times per
+MIT message at 100 Hz would be worse than the race it removes. The setpoint is
+also one unit: splitting it would interleave the joints of two messages and run
+other work inside the auto-mode-ctrl bracket.
+
+The ingress gate stopped reading the SDK in the same change. `_check_can_control`
+ran `_check_arm_ready` — a blocking worker round trip — once per command at the
+control rate, and read `get_arm_status` straight off the session for the
+teach-mode check, which was the second owner the counter reported. Both now
+decide on the publish loop's latest acquisition, refusing when none is younger
+than `feedback_timeout`. That refusal is new behaviour and is not a stop: the
+firmware holds its last setpoint, so it prevents new motion only.
+
+**What is not established.** Validation is L1 — the tests assert which thread
+wrote each frame, that a superseded setpoint never reaches the SDK, and that one
+stamped under a bumped epoch is refused rather than sent. Two things need
+hardware:
+
+- **the gate itself**, read off the per-thread counter under a full stack. Until
+  then this section records a code change, not a passed exit gate;
+- **the cost of the queue in front of every setpoint.** A MIT command now waits
+  for the worker instead of writing immediately. `sdk_queue_wait` was measured at
+  0.35 ms mean and 3.71 ms max against a 10 ms control period, so a setpoint can
+  arrive up to a third of a period later than before. That is within one period
+  and expected to be acceptable, but "expected" is not a measurement, and it is
+  the number to take first on the next hardware slot.
+
 ### One number left unexplained
 
 The loop ran 2000 acquisition cycles in 10 s, while a subscriber counted 141.4

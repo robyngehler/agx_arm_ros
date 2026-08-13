@@ -171,8 +171,25 @@ Routed through the runtime:
       times — but it no longer costs the loop.
 - [ ] Run the L3 stop-latency stress test (stop latency under concurrent MIT
       streaming, recovery, and enable churn).
-- [ ] Route all arm SDK calls for one device through the worker, one call per
-      task.
+- [x] Route the **hot path** through the worker. The MIT setpoint is submitted
+      as one bounded task (mode bracket plus the per-joint frames), keyed so a
+      superseded setpoint is dropped while queued instead of delivered late, and
+      stamped with the device epoch so a recovery discards what was issued
+      before it. The ingress gate stopped reading the SDK in the same change —
+      it decides on the publish loop's latest acquisition and refuses when none
+      is fresh, which also closes the case where a command was admitted for an
+      arm whose acquisition loop had stopped. L1 only; see
+      `reference/sdk_latency_budget.md`.
+- [ ] Route the remaining SDK call sites: the service handlers (stop ladder,
+      hand window, enable/disable) and the quarantined legacy motion paths
+      (`move_j|p|l|c|js`, the `control/joint_states` follow). Off the hot path
+      and, for the legacy paths, off by default — but a development profile
+      that enables them puts a second writer on the session, so the counter
+      cannot be read as unconditional until they move.
+- [ ] Measure what the queue in front of every setpoint costs. `sdk_queue_wait`
+      is 0.35 ms mean and 3.71 ms max against a 10 ms control period; the
+      routing trades an immediate write for that wait and the trade is so far
+      argued, not measured.
 - [x] Reject stale epoch and out-of-order sequence on the live command path.
       Verified on hardware: an unstamped command, one carrying a superseded
       device generation, and one from another commander are each refused with

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from std_srvs.srv import Trigger
 
 from agx_arm_ctrl.sdk_worker import SdkWorker as _SdkWorker
-from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
+from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode, FeedbackSnapshot
 
 _CAN_CTRL = 0x01   # active holding mode (verified hold)
 _STANDBY = 0x00    # idle — NOT a hold (e.g. V112 set_normal_mode no-op leaves it here)
@@ -175,10 +175,28 @@ class _FakeArm:
         return self.comm_err
 
 
+def _fresh_snapshot(acquired_at=None, arm_status=None) -> FeedbackSnapshot:
+    """One acquisition, as the publish loop would leave it for the callbacks."""
+    return FeedbackSnapshot(
+        joint_angles=None,
+        motor_states=(),
+        flange_pose=None,
+        tcp_pose=None,
+        arm_status=arm_status,
+        leader_joint_angles=None,
+        is_ok=True,
+        send_error_count=0,
+        acquired_at=time.monotonic() if acquired_at is None else acquired_at,
+    )
+
+
 def _node(arm: _FakeArm) -> AgxArmRosNode:
     node = AgxArmRosNode.__new__(AgxArmRosNode)
     node.get_logger = lambda: _FakeLogger()
     node.agx_arm = arm
+    node._latest_snapshot = None
+    node._last_stale_ingress_log_monotonic = 0.0
+    node._rejection_log_period_s = 2.0
     # The service path reads the SDK through the session owner now, so the
     # stub needs a real worker rather than a direct handle.
     node._sdk = _SdkWorker("arm_test")
@@ -283,13 +301,41 @@ def test_all_arm_ingress_gated_only_by_hand_window():
     node.control_ready = True
     node.enable_flag = True
     node.is_switch_seamlessly = True
-    node._check_arm_ready = lambda: True
+    # The gate decides on the publish loop's last acquisition now, not on an
+    # SDK read of its own, so an otherwise-controllable node needs one.
+    node._latest_snapshot = _fresh_snapshot()
+    node._check_arm_ready = lambda _snapshot=None: True
 
     node._hand_window_active = False
     assert node._check_can_control() is True
 
     node._hand_window_active = True
     assert node._check_can_control() is False
+
+
+def test_arm_ingress_refused_when_nothing_is_acquiring_feedback():
+    """Commanding an arm whose feedback nobody reads is worse than refusing.
+
+    The old gate made its own SDK read per command, so it answered "ready" for
+    an arm whose acquisition loop had stopped entirely.
+    """
+    node = _node(_FakeArm())
+    node.control_ready = True
+    node.enable_flag = True
+    node.is_switch_seamlessly = True
+    node._hand_window_active = False
+    node._check_arm_ready = lambda _snapshot=None: True
+
+    node._latest_snapshot = None
+    assert node._check_can_control() is False
+
+    node._latest_snapshot = _fresh_snapshot(
+        acquired_at=time.monotonic() - node.feedback_timeout - 1.0
+    )
+    assert node._check_can_control() is False
+
+    node._latest_snapshot = _fresh_snapshot()
+    assert node._check_can_control() is True
 
 
 def test_resume_arm_control_reopens_side():

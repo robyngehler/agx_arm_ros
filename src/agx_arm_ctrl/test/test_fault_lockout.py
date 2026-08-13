@@ -9,8 +9,20 @@ a bare instance via __new__ and drive the lockout state machine directly.
 
 from std_srvs.srv import Trigger
 
-from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
+import time
+
+from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode, FeedbackSnapshot
 from agx_arm_ctrl.device_authority import DeviceAuthority, UnitSafety
+
+
+def _acquisition() -> FeedbackSnapshot:
+    """A current acquisition. The ingress gate decides on one instead of
+    reading the SDK per command, so a controllable node has to have one."""
+    return FeedbackSnapshot(
+        joint_angles=None, motor_states=(), flange_pose=None, tcp_pose=None,
+        arm_status=None, leader_joint_angles=None, is_ok=True,
+        send_error_count=0, acquired_at=time.monotonic(),
+    )
 
 
 class _FakeLogger:
@@ -37,6 +49,10 @@ def _node(require_ack=True):
     node._last_good_feedback_monotonic = 0.0
     node._recovery_in_progress = False
     node.enable_flag = True
+    node.feedback_timeout = 2.0
+    node._latest_snapshot = _acquisition()
+    node._last_stale_ingress_log_monotonic = 0.0
+    node._rejection_log_period_s = 2.0
     # The lockout drives the published device authority, so a bare node needs
     # one. No publisher is attached: transitions are recorded, not published.
     node._unit_safety = UnitSafety()
@@ -72,7 +88,7 @@ def test_clear_fault_lockout_releases_motion():
     assert node._fault_lockout is False
     # After clearing, _check_can_control is no longer blocked by the lockout.
     node.control_ready = True
-    node._check_arm_ready = lambda: True
+    node._check_arm_ready = lambda _snapshot=None: True
     node.enable_flag = True
     node.is_switch_seamlessly = True
     assert node._check_can_control() is True
