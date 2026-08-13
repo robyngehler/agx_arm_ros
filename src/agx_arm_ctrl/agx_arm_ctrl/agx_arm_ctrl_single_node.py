@@ -1950,6 +1950,15 @@ class AgxArmRosNode(Node):
             msg.joint_angle_limit.append(angle_limit)
             msg.communication_status_joint.append(comm_status)
 
+        # The raw code was never published before, so no consumer could act on
+        # an arm fault at all. Its bits are what the flags above decode.
+        msg.fault_code = int(getattr(arm_status.msg, "err_code", 0) or 0) & 0xFFFF
+        msg.any_fault = bool(
+            msg.fault_code
+            or any(msg.joint_angle_limit)
+            or any(msg.communication_status_joint)
+        )
+
         self.arm_status_pub.publish(msg)
 
     def _publish_leader_joint_angles(self):

@@ -539,9 +539,11 @@ class NeroMitControllerNode(Node):
             self.leader_mode_active = msg.ctrl_mode == CTRL_MODE_LINKAGE_TEACHING_INPUT_MODE
 
             was_fault_active = self.arm_fault_active
-            self.arm_fault_active = int(msg.err_status) != 0
+            self.arm_fault_active = bool(msg.any_fault)
             self.arm_fault_message = (
-                f"Arm status fault err_status={int(msg.err_status)}"
+                f"Arm reports a fault (code=0x{int(msg.fault_code):04x}, "
+                f"limits={list(msg.joint_angle_limit)}, "
+                f"comms={list(msg.communication_status_joint)})"
                 if self.arm_fault_active
                 else ""
             )

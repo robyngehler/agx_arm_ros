@@ -255,8 +255,12 @@ Routed through the runtime:
       refusing mid-stream would freeze a running impedance loop at its last
       setpoint, and no hardware session has yet shown the controller never
       legitimately crosses a limit.
-- [ ] Replace the unassigned `AgxArmStatus.err_status` with a documented
-      structured error representation.
+- [x] Replace the unassigned `AgxArmStatus.err_status` with a documented
+      structured representation: `fault_code` (the vendor's raw 16-bit code,
+      whose bits the per-joint flags decode) plus `any_fault`, derived once so
+      no consumer re-derives it. The old field published 0 for every arm in
+      every state, so the MIT controller's `arm_fault_active` gate could not
+      fire — coverage in appearance only. It now consumes `any_fault`.
 - [x] Fix the enable readback: a contradicted enable used to warn and return
       success, leaving `enable_flag` stale. The readback now decides both the
       flag and the return value, with a short settle window for a lagging frame.
