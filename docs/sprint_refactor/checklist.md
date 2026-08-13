@@ -161,8 +161,16 @@ Routed through the runtime:
       would turn a 1 ms call into a 5 s block on the stop path. Rule: one SDK
       call per worker task, never a loop. Budget: stop reaches the SDK within
       20 ms under normal load.
-- [ ] Measure `connect`/`disconnect` under a real bus fault — the only calls
-      still unbounded — and run the L3 stop-latency stress test.
+- [x] Measure `connect`/`disconnect` under a real bus fault: `connect` 10 ms,
+      **`disconnect` ~1 s in a single call**. That is why recovery does not
+      share the worker with the safety lane — no task granularity shortens it.
+- [x] Take recovery off the acquisition path. Inline it cost a 13.1 s
+      publish-loop gap; re-provoked with recovery on its own thread there are
+      **no overruns at all** and 2384 authority publications across the fault.
+      The recovery still takes 13.1 s — that is the vendor's `disconnect`, three
+      times — but it no longer costs the loop.
+- [ ] Run the L3 stop-latency stress test (stop latency under concurrent MIT
+      streaming, recovery, and enable churn).
 - [ ] Route all arm SDK calls for one device through the worker, one call per
       task.
 - [x] Reject stale epoch and out-of-order sequence on the live command path.

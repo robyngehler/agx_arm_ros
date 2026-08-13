@@ -135,12 +135,27 @@ below says so explicitly rather than implying a guarantee it cannot keep.
 - Queue wait and SDK execution are already timed separately (`sdk_queue_wait`
   versus `sdk.<call>`), so a budget violation says which of the two caused it.
 
-## What the fault run also showed
+## What the fault run also showed, and what fixing it changed
 
-Not latency, but it frames the routing: the recovery blocked the publish loop
-for **13.1 seconds** (`publish-loop overrun: 13078 ms gap`) and took three
-attempts. Whatever the worker does, that loop is not draining the CAN RX socket
-during it — the coupling Phase 0 recorded as hot path 2, still open.
+The first fault run (2026-08-13, recovery inline) blocked the publish loop for
+**13.1 seconds** — `publish-loop overrun: 13078 ms gap`. Nothing published
+state, nothing drained the CAN RX socket, and nothing accounted for time.
+
+Recovery was moved onto its own thread and the fault was provoked again the same
+day, same interface, same 15 s down:
+
+| | inline recovery | recovery off the loop |
+| --- | --- | --- |
+| publish-loop overruns | 1, **13078 ms** | **none** |
+| authority publications across 75 s spanning the fault | — | **2384 (31.8/s)** |
+| recovery duration | 13.1 s, 3 attempts | 13.1 s, 3 attempts |
+| `disconnect` attributed to | the publish thread | `recovery-arm_right` |
+
+The recovery still takes 13.1 s: three attempts at a `disconnect` measured
+991-998 ms each is the vendor and the hardware, not the scheduling. What changed
+is that it no longer costs the acquisition path — the loop kept publishing at
+31.8/s straight through, and the metrics now attribute the blocking calls to the
+recovery thread by name, which is the ownership split made visible.
 
 The honest-reporting fix from 2026-08-12 held under a real fault:
 `CAN bus recovery verified on attempt 3: feedback advancing, joints enabled:
@@ -165,4 +180,5 @@ command them, recurring on every transport fault.
 - the L3 stress test itself: stop latency under concurrent MIT streaming,
   recovery, and enable churn;
 - enforce the one-call rule in the worker rather than only documenting it;
-- the 13 s publish-loop gap during recovery (Phase 1B).
+- the RX-socket drain itself: the loop now survives recovery, but whether it
+  drains fast enough under a fault is a separate Phase 1B measurement.
