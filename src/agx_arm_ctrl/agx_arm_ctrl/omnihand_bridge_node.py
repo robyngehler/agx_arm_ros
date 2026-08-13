@@ -13,12 +13,25 @@ from typing import Any
 from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory
 import yaml
 
-from agx_arm_msgs.msg import OmniHandStatus, OmniHandTactileRaw
+from agx_arm_ctrl.device_authority import (
+    DeviceAuthority,
+    DeviceState,
+    UnitSafety,
+    UnitSafetySnapshot,
+)
+from agx_arm_msgs.srv import ClaimDevice
+from agx_arm_msgs.msg import (
+    AgxDeviceAuthority,
+    AgxUnitSafety,
+    OmniHandStatus,
+    OmniHandTactileRaw,
+)
 
 from agx_arm_ctrl.motion_registry import arm_sides
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HandModel, get_hand_model
@@ -825,6 +838,23 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("fault_poll_interval_s", 2.0)
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
+        # This device in the authority contract. Note it is *not* the
+        # scheduler's resource name: the coordinator's resource for the left
+        # hand is "left_hand" while its device is "hand_left". Two contracts,
+        # deliberately not derived from one another.
+        self.device_id = f"hand_{self.hand_side}"
+        # NOTE: this hand has no device-level emergency stop of its own.
+        # `control/omnihand/stop` cancels the pending target — it is a
+        # cancel, not a latching stop, and the skill flow relies on that.
+        # So a hand goes STOPPED only through the unit generation, unlike an
+        # arm, which can latch its own. Closing that asymmetry belongs with
+        # the consolidated hand contract (Phase 4D), and is recorded rather
+        # than faked here.
+        # A transport authority: what it owns is this hand's SDK session and
+        # CAN transport, not the semantics of a grasp, which stays with the
+        # skill controller.
+        self._unit_safety = UnitSafety(self.device_id, writer=False)
+        self._authority = DeviceAuthority(self.device_id, self._unit_safety)
         self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
         self.backend_type = str(self.get_parameter("backend_type").value)
         self.pub_rate = float(self.get_parameter("pub_rate").value)
@@ -966,6 +996,16 @@ class OmniHandBridgeNode(Node):
             10,
         )
         self.create_service(Trigger, "control/omnihand/stop", self._stop_callback)
+        self.create_service(ClaimDevice, "claim_device", self._claim_device_callback)
+        self.authority_pub = self.create_publisher(
+            AgxDeviceAuthority, "feedback/authority",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self._authority.set_on_change(self._publish_authority)
+        self.create_subscription(
+            AgxUnitSafety, "/unit_safety", self._unit_safety_callback,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
 
         timer_period = 1.0 / self.pub_rate if self.pub_rate > 0.0 else 0.02
         self.create_timer(timer_period, self._publish_feedback)
@@ -1121,6 +1161,102 @@ class OmniHandBridgeNode(Node):
         if time.monotonic() - pending["last_send_monotonic"] >= self.command_retry_period_s:
             self._send_pending_command()
 
+    _AUTHORITY_STATE_CODES = {
+        DeviceState.OFFLINE: AgxDeviceAuthority.STATE_OFFLINE,
+        DeviceState.STANDBY: AgxDeviceAuthority.STATE_STANDBY,
+        DeviceState.READY: AgxDeviceAuthority.STATE_READY,
+        DeviceState.RECOVERING: AgxDeviceAuthority.STATE_RECOVERING,
+        DeviceState.FAULTED: AgxDeviceAuthority.STATE_FAULTED,
+        DeviceState.STOPPED: AgxDeviceAuthority.STATE_STOPPED,
+    }
+
+    def _publish_authority(self, snapshot) -> None:
+        """Publish one transport-authority transition. Never breaks the caller."""
+        try:
+            msg = AgxDeviceAuthority()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.device_id = snapshot.device_id
+            msg.state = self._AUTHORITY_STATE_CODES[snapshot.state]
+            msg.device_epoch = snapshot.device_epoch
+            msg.unit_safety_epoch = snapshot.unit_safety_epoch
+            msg.unit_stopped = snapshot.unit_stopped
+            msg.motion_ready = snapshot.motion_ready
+            msg.owner_id = snapshot.owner_id
+            msg.reason = snapshot.reason
+            self.authority_pub.publish(msg)
+        except Exception as exc:
+            self.get_logger().error(f"publishing hand authority failed: {exc}")
+
+    def _unit_safety_callback(self, msg: AgxUnitSafety) -> None:
+        """Adopt a generation from the one writer that may allocate them."""
+        if self._unit_safety.observe(
+            UnitSafetySnapshot(
+                epoch=int(msg.epoch),
+                stopped=bool(msg.stopped),
+                reason=msg.reason,
+                writer_id=msg.writer_id,
+            )
+        ):
+            self.get_logger().warn(
+                f"unit safety generation {msg.epoch}: stopped={msg.stopped} "
+                f"({msg.reason})"
+            )
+
+    def _claim_device_callback(self, request, response):
+        """Take or give up the transport session for this hand."""
+        verdict = (
+            self._authority.claim(request.owner_id)
+            if request.claim
+            else self._authority.release(request.owner_id)
+        )
+        snapshot = self._authority.snapshot()
+        response.accepted = verdict.accepted
+        response.reason = "" if verdict.accepted else verdict.reason.value
+        response.device_epoch = snapshot.device_epoch
+        response.unit_safety_epoch = snapshot.unit_safety_epoch
+        response.message = (
+            f"{self.device_id} transport "
+            f"{'claimed by' if request.claim else 'released by'} "
+            f"'{request.owner_id}'"
+            if verdict.accepted
+            else verdict.detail
+        )
+        (self.get_logger().info if verdict.accepted else self.get_logger().warn)(
+            response.message
+        )
+        return response
+
+    def _sync_authority(self, reason: str) -> None:
+        """Map the bridge's gates onto this hand's transport authority.
+
+        Derived, like the arm driver's: these gates are already what the bridge
+        acts on. The epochs are not derived — they come from the authority's own
+        transitions.
+
+        A communication fault maps to STANDBY rather than FAULTED on purpose.
+        The bridge clears it by itself on the next successful call, and FAULTED
+        is for something an operator has to acknowledge; using it for a
+        self-clearing condition would leave a latch nothing here can release.
+        """
+        # Deliberately no local stop latch — see the note in __init__.
+        authority = self._authority
+        if self._unit_safety.stopped:
+            return
+        if authority.state is DeviceState.FAULTED:
+            authority.acknowledge_fault(reason)
+
+        snapshot = self._last_status_snapshot
+        if snapshot is None or not snapshot.connected:
+            authority.go_offline(f"{reason}: hand not connected")
+            return
+        if not snapshot.initialized:
+            authority.go_standby(f"{reason}: hand not initialized")
+            return
+        if snapshot.communication_fault:
+            authority.go_standby(f"{reason}: hand communication fault")
+            return
+        authority.rearm(verified=True, detail=reason)
+
     def _stop_callback(self, request: Trigger.Request, response: Trigger.Response) -> Trigger.Response:
         del request
         # A stop supersedes any in-flight target; never re-send it afterwards,
@@ -1242,6 +1378,7 @@ class OmniHandBridgeNode(Node):
         status_msg.command_attempts = min(
             0xFFFF, int(pending["attempts"]) if pending is not None else 0
         )
+        self._sync_authority("publish tick")
         status_msg.joint_readback_age_s = (
             float(now - self.last_good_joint_read_monotonic)
             if self.last_good_joint_read_monotonic > 0.0

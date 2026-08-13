@@ -357,3 +357,28 @@ def test_a_second_concurrent_activity_is_refused(graph):
         assert "already running" in second.get("message", ""), (
             f"the refused activity gave no reason{context}"
         )
+
+
+def test_each_hand_publishes_its_own_transport_authority(graph):
+    """Four devices, four authorities — the hands are not an afterthought.
+
+    A hand's authority owns its SDK session and CAN transport, not the meaning
+    of a grasp. Until both hands published one, `feedback/hand_window_active`
+    had to stay the controller's fallback signal, and the unit had no way to
+    say that a *hand* was unavailable.
+    """
+    for side in SIDES:
+        topic = f"/{side}_hand/feedback/authority"
+        result = subprocess.run(
+            ["ros2", "topic", "echo", "--once", topic,
+             "agx_arm_msgs/msg/AgxDeviceAuthority"],
+            capture_output=True, text=True, timeout=30.0, env=_l2_env(),
+        )
+        output = result.stdout
+        assert f"device_id: hand_{side}" in output, (
+            f"{topic} did not name its device:\n{output[-800:]}\n"
+            f"--- bridge ---\n{graph.output(f'{side}_bridge')[-1500:]}"
+        )
+        # Latched: a late subscriber gets the current state, not the next change.
+        assert "device_epoch" in output
+        assert "unit_safety_epoch" in output

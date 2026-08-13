@@ -144,7 +144,16 @@ Routed through the runtime:
       driver already acts on — enable readback, feedback readiness, fault
       lockout, recovery, hand window — with the epochs coming from the
       authority's own transitions rather than from those gates.
-- [ ] The two hand transport authorities. Only the arms publish so far.
+- [x] The two hand transport authorities. Each bridge publishes
+      `feedback/authority` for `hand_left`/`hand_right`, observes the unit
+      generation, and offers `claim_device`. They are *transport* authorities:
+      what they own is the hand's SDK session and CAN transport, not the
+      meaning of a grasp, which stays with the skill controller.
+- [ ] Give a hand a device-level stop of its own. `control/omnihand/stop`
+      cancels the pending target — a cancel, not a latching stop, and the skill
+      flow depends on that — so a hand can currently only be stopped through the
+      unit generation, where an arm can latch its own. Belongs with the
+      consolidated hand contract (4D).
 - [x] Measure the per-call SDK latency that the worker's safety lane has to
       queue behind, before routing anything through it
       (`reference/sdk_latency_budget.md`). Individual calls are almost all
