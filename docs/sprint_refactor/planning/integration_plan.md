@@ -10,7 +10,7 @@ Turn the coordination refactor proposal into a migration sequence that can be
 implemented on branch `ROS2_Duo_System_V02_refactor` without building later work on top
 of unsafe ownership assumptions.
 
-This plan is the canonical migration surface. `../coordination_architecture_refactor_proposal.md`
+This plan is the canonical migration surface. `coordination_architecture_refactor_proposal.md`
 is the architectural input; where the two disagree, this plan wins. Proposal
 items that are still relevant but were missing here have been consolidated into
 the phases below (see `Consolidated from the proposal`).

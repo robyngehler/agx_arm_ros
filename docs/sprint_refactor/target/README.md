@@ -92,7 +92,7 @@ afterwards rather than competing for the same hardware and the same files.
 
 ## Working set
 
-- `coordination_architecture_refactor_proposal.md`
+- `planning/coordination_architecture_refactor_proposal.md`
 - `planning/integration_plan.md`
 - `reference/proposal_code_crosscheck.md`
 - `checklist.md`
