@@ -325,3 +325,22 @@ def test_only_an_operator_clears_the_emergency_stop_latch():
 
     node._sync_authority("publish loop")
     assert node._authority.snapshot().motion_ready
+
+
+def test_the_hand_window_reason_is_specific_enough_to_replace_the_boolean():
+    """What the retired `feedback/hand_window_active` used to tell a controller.
+
+    That topic said only "the shared bus is busy". The authority says the same
+    thing plus which device, which generation, and why — so a controller no
+    longer needs a second subscription to learn it, and the MIT controller's
+    hand-window gate could be removed rather than duplicated.
+    """
+    node = _ready_node()
+    node._hand_window_active = True
+    node._sync_authority("publish loop")
+
+    snapshot = node._authority.snapshot()
+    assert not snapshot.motion_ready
+    assert "hand window" in snapshot.reason
+    assert snapshot.device_id == "arm_left"
+    assert snapshot.device_epoch > 0

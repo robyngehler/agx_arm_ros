@@ -223,9 +223,14 @@ Routed through the runtime:
       a named development profile. Validated on hardware:
       100.2/s while holding, 0 in 8 s after an emergency stop, back to 93.8/s
       after the stop was cleared, with no operator step in between.
-- [ ] Retire `feedback/hand_window_active` as a controller input once the hand
-      transport authorities publish. The subscription is still in place as the
-      fallback path.
+- [x] Retire `feedback/hand_window_active` as a controller input. The arm
+      authority already reports an open window as STANDBY with the reason
+      naming it, plus the device, the generation and the owner — strictly more
+      than the boolean said. The subscription, its callback, its state field,
+      the control-loop gate and the now-unreachable `HAND_WINDOW` execution
+      state are gone, and the obsolete test with them; the driver-side mapping
+      is covered where it now lives. The driver still *publishes* the topic for
+      other consumers.
 - [x] Make CAN recovery report what it verified — 0E showed "recovery
       succeeded" for a bus that returned on its own. The re-arm result was
       being discarded; the log line now names feedback and the enable readback
