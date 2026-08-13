@@ -205,6 +205,17 @@ Routed through the runtime:
       version applied the default tier's per-joint torque table to both arms,
       which against the 1.11 arm would have refused legitimate commands on
       joints 5-7 and admitted impossible ones on joints 1-2 (L3, 2026-08-12).
+- [x] Publish each device's control envelope (`AgxDeviceCapability`, latched)
+      and fit the controller's configured limits to *its own* arm before
+      commanding, instead of discovering the mismatch as runtime refusals. A
+      refused MIT command leaves the firmware on its previous setpoint, so
+      under a dual-arm activity the old behaviour meant one arm moving and one
+      frozen. Verified on hardware: `[20]*7` becomes `[16]*7` on the left arm
+      and `[20,20,16,16,8,8,8]` on the right.
+- [ ] Preflight a synchronized `both_arms` execution against **both** devices
+      before either side starts, and fail it as a whole if either cannot encode
+      the requested envelope. Per-arm clamping covers independent operation;
+      this is the coordinated case, and it is coordinator work.
 - [ ] Promote the joint-limit check from flagged to refused. A position past a
       joint's *configured* limit is currently warned and still forwarded:
       refusing mid-stream would freeze a running impedance loop at its last

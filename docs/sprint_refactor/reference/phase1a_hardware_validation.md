@@ -153,3 +153,21 @@ The launch derives `expected_device_id` from the same `can_port` the driver
 uses, so with two arms publishing, a controller cannot be gated by the other
 arm's authority — which would report ready while the device it commands is
 stopped.
+
+## Per-arm control envelope (added 2026-08-13)
+
+One configuration, `torque_limit: [20.0] * 7`, started against each arm in turn.
+Each driver publishes what its own protocol tier can encode, and the controller
+fits its limits to that before commanding:
+
+| arm | tier | published envelope (N·m) | configured 20 N·m becomes |
+| --- | --- | --- | --- |
+| left | `v111` | `[16] * 7` | `[16] * 7` — every joint reduced |
+| right | `default` | `[24, 24, 16, 16, 8, 8, 8]` | `[20, 20, 16, 16, 8, 8, 8]` |
+
+The same configuration therefore means two different things on the two arms —
+which is the point of C8, and why the reduction is logged with an explicit
+warning not to assume symmetry. No command is refused at runtime any more,
+which matters because a refused MIT command leaves the firmware holding its
+previous setpoint: under a dual-arm activity that was one arm moving and one
+frozen.

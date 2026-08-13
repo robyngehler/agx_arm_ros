@@ -25,7 +25,7 @@ from agx_arm_ctrl.command_validation import (
 from agx_arm_ctrl.device_authority import DeviceAuthority, DeviceState, UnitSafety
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
 from agx_arm_msgs.msg import (
-    AgxArmStatus, AgxDeviceAuthority, GripperStatus,
+    AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, GripperStatus,
     HandStatus, HandCmd, HandPositionTimeCmd,
     MoveMITMsg
 )
@@ -629,6 +629,15 @@ class AgxArmRosNode(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._authority.set_on_change(self._publish_authority)
+        # Latched and published once: what this arm can encode. Fixed for the
+        # session, unlike the authority beside it, and the only way a consumer
+        # can check a control envelope against *this* arm's protocol tier
+        # before commanding rather than after being refused (C8).
+        self.capability_pub = self.create_publisher(
+            AgxDeviceCapability, "feedback/capability",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self._publish_capability()
         self.leader_joint_angles_pub = self.create_publisher(
             JointState, "feedback/leader_joint_angles", 1
         )
@@ -786,6 +795,34 @@ class AgxArmRosNode(Node):
                 self.get_logger().warn("Agx_arm is in teach mode, cannot control")
                 return False
         return True
+
+    def _publish_capability(self) -> None:
+        """Announce the control envelope this arm's protocol tier can encode."""
+        try:
+            msg = AgxDeviceCapability()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.device_id = self.device_id
+            msg.protocol_tier = str(self.firmware_tier)
+            msg.firmware_version = str(
+                (self.firmware or {}).get("software_version", "")
+            )
+            msg.joint_count = int(self.arm_joint_count)
+            limits = self.mit_limits
+            msg.max_torque = [
+                float(limits.torque_limit(joint))
+                for joint in range(1, int(self.arm_joint_count) + 1)
+            ]
+            msg.max_position = float(limits.p_des[1])
+            msg.max_velocity = float(limits.v_des[1])
+            msg.max_kp = float(limits.kp[1])
+            msg.max_kd = float(limits.kd[1])
+            self.capability_pub.publish(msg)
+            self.get_logger().info(
+                f"device capability: tier={msg.protocol_tier} "
+                f"torque={msg.max_torque} vel={msg.max_velocity} kp={msg.max_kp}"
+            )
+        except Exception as e:
+            self.get_logger().error(f"publishing device capability failed: {e}")
 
     def _publish_authority(self, snapshot) -> None:
         """Publish one authority transition. Never breaks the caller.

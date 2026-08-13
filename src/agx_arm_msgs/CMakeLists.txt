@@ -17,6 +17,7 @@ find_package(action_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AgxArmStatus.msg"
   "msg/AgxDeviceAuthority.msg"
+  "msg/AgxDeviceCapability.msg"
   "msg/GripperStatus.msg"
   "msg/HandStatus.msg"
   "msg/HandCmd.msg"

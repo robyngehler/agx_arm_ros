@@ -19,7 +19,12 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty, SetBool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from agx_arm_msgs.msg import AgxArmStatus, AgxDeviceAuthority, MoveMITMsg
+from agx_arm_msgs.msg import (
+    AgxArmStatus,
+    AgxDeviceAuthority,
+    AgxDeviceCapability,
+    MoveMITMsg,
+)
 
 from .feedforward_model import CalibrationModel, load_calibration_model
 from .gravity_model import GravityModel, GravityModelError, create_gravity_model
@@ -222,6 +227,7 @@ class NeroMitControllerNode(Node):
         self._authority_started_monotonic = time.monotonic()
         self._last_missing_authority_log = 0.0
         self.foreign_authority_messages = 0
+        self.device_capability: Optional[AgxDeviceCapability] = None
         self.execution_state = ExecutionState.DISABLED
         self.holding_final_point = False
         self.active_goal_handle = None
@@ -265,6 +271,13 @@ class NeroMitControllerNode(Node):
             self._hand_window_callback,
             # Latched by the driver (transient_local): a late-joining controller
             # still learns an already-open window.
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            callback_group=self.callback_group,
+        )
+        self.create_subscription(
+            AgxDeviceCapability,
+            "feedback/capability",
+            self._capability_callback,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
             callback_group=self.callback_group,
         )
@@ -542,6 +555,63 @@ class NeroMitControllerNode(Node):
             if was_fault_active and not self.arm_fault_active and self.enabled and self._has_fresh_feedback():
                 self.hold_reference = self._capture_current_reference()
                 self.holding_final_point = False
+
+    def _capability_callback(self, msg: AgxDeviceCapability) -> None:
+        """Fit this controller's envelope to what its arm can actually encode.
+
+        The two arms of this unit permanently run different protocol tiers and
+        cannot be flashed (C8), so one shared configuration is not necessarily
+        encodable on both. Left unchecked, the difference surfaces as the
+        hardware boundary refusing commands mid-stream — and a refused MIT
+        command leaves the firmware holding its previous setpoint, so under a
+        dual-arm activity one arm would keep moving while the other froze.
+
+        Reducing a ceiling never grants authority it did not have, so the
+        clamp is applied rather than refused: per-arm capability is preserved
+        for independent operation, which is what C8 asks for. Synchronised
+        dual-arm execution is a different question and is preflighted by the
+        coordinator, not here.
+        """
+        if self.expected_device_id and msg.device_id != self.expected_device_id:
+            self.get_logger().error(
+                f"Ignoring capability for '{msg.device_id}': this controller "
+                f"expects '{self.expected_device_id}'"
+            )
+            return
+
+        with self.state_lock:
+            self.device_capability = msg
+            reductions = []
+            joint_count = min(len(self.joint_names), len(msg.max_torque))
+            for index in range(joint_count):
+                bound = float(msg.max_torque[index])
+                if self.torque_limit[index] > bound:
+                    reductions.append(
+                        f"torque[{index}] {self.torque_limit[index]:g}->{bound:g}"
+                    )
+                    self.torque_limit[index] = bound
+            if msg.max_velocity > 0.0:
+                for index in range(len(self.joint_names)):
+                    if self.velocity_limit[index] > msg.max_velocity:
+                        reductions.append(
+                            f"velocity[{index}] "
+                            f"{self.velocity_limit[index]:g}->{msg.max_velocity:g}"
+                        )
+                        self.velocity_limit[index] = float(msg.max_velocity)
+
+        if reductions:
+            self.get_logger().warn(
+                f"Configured limits exceed what '{msg.device_id}' "
+                f"(tier {msg.protocol_tier}, firmware {msg.firmware_version}) can "
+                f"encode; reduced to the device envelope: {', '.join(reductions)}. "
+                "The other arm may run a different tier — do not assume this "
+                "configuration means the same thing on both."
+            )
+        else:
+            self.get_logger().info(
+                f"Configured limits fit '{msg.device_id}' "
+                f"(tier {msg.protocol_tier}, firmware {msg.firmware_version})"
+            )
 
     def _authority_callback(self, msg: AgxDeviceAuthority) -> None:
         """Track the device's authoritative state and abort on losing it.

@@ -45,3 +45,10 @@ Load this rule for ROS2-native questions and decisions.
 - run `colcon test --packages-select ...` from a system-Python ROS shell when relevant tests exist
 - say explicitly when hardware validation could not be run
 - when Python environment drift is part of the issue, use `scripts/colcon_build_system_python.sh` for builds and `scripts/run_in_ros_conda.sh` for optional runtime commands
+- do not use `ros2 topic hz` to answer "did this node stop publishing?". Its output is block-buffered when redirected, so the last seconds are lost when the process is killed, and a shell marker appended to the same file has no defined position relative to those flushes. It produced two confident-looking zeros during Phase 1A, one of which briefly supported a wrong conclusion. Use `scripts/count_topic_messages.py`, which counts over a fixed window and prints once at the end
+- a measurement whose method can fail silently is not evidence. Prefer a tool that reports a number once, over one that streams and may be cut off
+
+## Guarding Untrusted Numbers
+
+- never let a saturating or clamping helper be the first thing that sees an untrusted value. `max(-limit, min(limit, value))` maps NaN and `+inf` onto `limit`, so a corrupt number becomes the *maximum* command and every downstream range check then sees a plausible value. Reject non-finite input first, then saturate
+- a rejected command is not automatically fail-closed: the Nero firmware executes the last setpoint it received indefinitely, so dropping a command mid-stream leaves the previous motion running. A refusal on an active control stream has to be accompanied by a defined stop or hold

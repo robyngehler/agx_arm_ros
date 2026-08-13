@@ -32,6 +32,11 @@ Rules:
   granted on this platform.
 - A result that could not reach the level its claim needs says so, in the commit
   message and in the doc entry.
+- A measurement whose method can fail silently is not evidence. `ros2 topic hz`
+  cannot answer "did it stop publishing?" — its buffered output loses the last
+  seconds when killed. Use `scripts/count_topic_messages.py`, which counts over
+  a fixed window and prints once. This is not hypothetical: it produced two
+  confident zeros during Phase 1A, one supporting a wrong conclusion.
 
 ## Choosing the level
 

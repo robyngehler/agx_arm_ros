@@ -443,3 +443,96 @@ reported the effect anyway. Fixed at L1; neither has run on hardware yet.
   `[24, 24, 16, 16, 8, 8, 8]`, left arm logs `[16] * 7`; a 12 N·m command on
   joint 6 is refused by the right arm against `[-8, 8]`, and a 20 N·m command
   on the same joint is refused by the left arm against `[-16, 16]`.
+
+## 2026-08-13 (the correction slice — defects the Phase 1A work itself introduced)
+
+An external review of commits `c234469..14c6eff` found five real defects. Each
+was verified against the code before being accepted; two were severe. They are
+recorded here because three of them were introduced *by* this sprint's own
+changes, which is the interesting part.
+
+### A NaN became the maximum commanded torque
+
+- Symptom: `clamp(value, limit)` in the MIT controller is
+  `max(-limit, min(limit, value))`. For NaN, `min(limit, nan)` returns `limit`,
+  so `clamp(nan, 8.0) == 8.0` and `clamp(inf, 8.0) == 8.0`.
+- Impact: a corrupt gravity solve, a bad trajectory point or a bad live gain
+  left the controller as **full commanded torque**, and reached the driver as a
+  perfectly plausible number. The hardware-boundary non-finite check added
+  earlier in this sprint could not catch it: by then the value was finite.
+- Fix: `first_non_finite()` checks every control value before any saturation.
+  On a corrupt value the controller holds the measured pose with zero
+  feed-forward torque — not silence, because this firmware executes the last
+  setpoint it received indefinitely, and not the gravity term, because that is
+  the most likely source of the corruption.
+- Rule this generalises to: a saturating helper must never be the first thing
+  that sees untrusted input. Escalated to `.claude/rules/ros2-development.md`.
+
+### Authority loss stopped the stream but not the goal
+
+- Symptom: the authority callback cleared the trajectory and hold state, but the
+  `FollowJointTrajectory` execute loop owns its own buffer and had no authority
+  check.
+- Impact: the goal stayed active until some unrelated condition timed it out,
+  and could still report on a run that had lost permission to command. The claim
+  that an epoch change "aborts in-flight work" was therefore only half true.
+- Fix: the callback latches a structured reason; the action loop consumes it and
+  makes the terminal transition, so the abort happens on the thread that owns
+  the goal rather than from an unrelated callback.
+
+### The authority promised what admission would refuse
+
+- Symptom: `accepts_motion` meant "state is READY", while `admit()` also
+  requires the commander to own the device.
+- Impact: once command stamping goes live, a controller would be told it may
+  stream and then have every command refused with `NO_OWNER`.
+- Fix: the field is now `motion_ready` — hardware readiness, which is what it
+  always was — and `may_command(owner)` answers permission with the same checks
+  as admission minus the sequence. A test pins the two against each other.
+- Not taken: the review's suggestion to fold ownership into `accepts_motion`.
+  Nothing claims ownership yet, so that would have made it permanently false and
+  stopped both arms.
+
+### Two processes could mint the same unit-safety generation
+
+- Symptom: every node ran its own `UnitSafety` writer, and `observe()` ignored
+  equal epochs.
+- Impact: two writers could publish "5, stopped" and "5, rearmed" with no
+  ordering between them, and a receiver could not tell a contradiction from a
+  duplicate.
+- Fix so far: generations carry the writer that minted them, an observer refuses
+  to mint at all, and an equal-generation contradiction is counted with the stop
+  winning. The single writer itself is still open — a device must be able to
+  stop itself without another process being alive, so the target needs the
+  device stop to be a device-level fault while only the writer allocates unit
+  generations.
+
+### Absence of an authority was read as permission
+
+- Symptom: the controller fell back to its legacy gates whenever no authority
+  had ever arrived.
+- Impact: fail-open. A namespace typo, a QoS mismatch and an old driver are
+  indistinguishable from the controller, and only one of them is a
+  configuration anybody chose.
+- Fix: requiring the authority is the default; the legacy gates survive only in
+  a named development profile. The launch derives `expected_device_id` from the
+  same CAN port as the driver, so a controller cannot be gated by the other arm.
+
+### One shared MIT configuration meant two things on two arms
+
+- Symptom: C8 was handled by refusing unencodable commands at the boundary. A
+  `torque_limit` above 16 N·m is accepted by the right arm (default tier) and
+  refused by the left (1.11 tier).
+- Impact: "refuse loudly" is not enough for coordinated execution. A refused MIT
+  command leaves the firmware holding its previous setpoint, so a dual-arm
+  activity would have one arm moving and one frozen.
+- Fix: the driver publishes `AgxDeviceCapability` — the envelope its protocol
+  tier can encode — latched, and the controller fits its configured limits to
+  its own device before commanding. Reducing a ceiling never grants authority it
+  did not have, and per-arm capability is preserved for independent operation.
+- Evidence (L3, 2026-08-13): `torque_limit: [20]*7` against the left arm reduces
+  every joint to 16; against the right arm it keeps 20 on joints 1-2, reduces
+  3-4 to 16 and 5-7 to 8. Same configuration, two correct envelopes, no runtime
+  refusals.
+- Still open: synchronized `both_arms` execution must be preflighted against
+  both devices as a whole, which is coordinator work.

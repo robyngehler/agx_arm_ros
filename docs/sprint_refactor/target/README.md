@@ -1,6 +1,6 @@
 # Sprint Refactor Target
 status: ACTIVE_REFACTOR_ENTRYPOINT
-last_updated: 2026-08-12
+last_updated: 2026-08-13
 branch: ROS2_Duo_System_V02_refactor
 
 Sprint Refactor is the V02 migration surface for the coordination, safety, and
@@ -76,6 +76,11 @@ afterwards rather than competing for the same hardware and the same files.
 - The hardware session also established C8 — the two arms are on different,
   unflashable firmware — and found six defects, all logged in
   `errors_and_fixes.md`.
+- **An external review of the Phase 1A commits was folded in** on 2026-08-13
+  (`planning/refactor_correction_proposal.md`). Five further defects, three of
+  them introduced by this sprint's own changes, including a NaN that became
+  maximum commanded torque. The remaining open items from it are the single
+  unit-safety writer and the synchronized `both_arms` preflight.
 - `tea_pour_left_v1` is the end-to-end regression benchmark for every phase.
 
 ## Deliverables
