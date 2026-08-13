@@ -611,8 +611,13 @@ class SdkWorker:
 
     def _execute(self, call: Call) -> None:
         if self._metrics is not None:
+            # Per lane, not one aggregate. The lanes have opposite expectations:
+            # a diagnostic read waiting behind the control stream is the design
+            # working, while the safety lane's wait *is* the emergency-stop
+            # budget. Averaging them together produced a number that could not
+            # answer either question.
             self._metrics.record_duration(
-                "sdk_queue_wait", time.monotonic() - call.queued_at
+                f"sdk_queue_wait.{call.lane.value}", time.monotonic() - call.queued_at
             )
         if call.is_cycle:
             self._execute_cycle(call)

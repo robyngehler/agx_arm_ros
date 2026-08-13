@@ -7,6 +7,7 @@ SDK before this guard existed.
 
 import math
 import threading
+import time
 
 import pytest
 
@@ -459,3 +460,41 @@ def test_the_tier_lookup_covers_every_tier_the_sdk_ships():
 def test_an_unknown_tier_falls_back_to_the_driver_the_sdk_would_build():
     assert mit_limits_for_tier("v999") is NERO_DEFAULT_MIT_LIMITS
     assert mit_limits_for_tier(None) is NERO_DEFAULT_MIT_LIMITS
+
+
+def test_an_emergency_stop_overtakes_the_queued_setpoints():
+    """What the safety lane is for, at the level the driver uses it.
+
+    The stop's own frames are queued behind three setpoints that are already
+    waiting. Lane order, not queue position, decides what reaches the arm first.
+    """
+    arm = _CountingArm()
+    node = _mit_node(arm)
+    node.feedback_timeout = 2.0
+    release = threading.Event()
+    blocking = threading.Event()
+
+    def blocker():
+        blocking.set()
+        release.wait(2.0)
+
+    # Wait until the worker is provably inside the blocking call. Merely
+    # queueing it is not enough: it sits on the lowest lane, so a setpoint
+    # would overtake it and run before anything else was queued at all.
+    node._sdk.submit("block", blocker)
+    assert blocking.wait(2.0), "worker never picked up the blocking call"
+
+    for _ in range(3):
+        node._move_mit_callback(_msg((1, 2, 3), (0.1, 0.2, 0.3)))
+
+    order = []
+    arm.on_send = lambda kwargs: order.append("stop" if kwargs["kp"] == 0.0 else "setpoint")
+
+    stopper = threading.Thread(target=node._submit_damped_stop_mit)
+    stopper.start()
+    time.sleep(0.05)  # let the stop reach the queue behind the setpoints
+    release.set()
+    stopper.join(3.0)
+    _drain(node)
+
+    assert order[:7] == ["stop"] * 7, f"a setpoint went out before the stop: {order[:9]}"

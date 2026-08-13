@@ -2686,12 +2686,61 @@ class AgxArmRosNode(Node):
             self.get_logger().error(f"Failed to move to home position: {str(e)}")
         return response
 
+    def _sdk_safety(self, name: str, fn, timeout: float = None):
+        """One SDK call on the safety lane, ahead of queued control work.
+
+        For the emergency stop only. Recovery must **not** come through here: it
+        has already quiesced the worker and taken the session, so a submission
+        would wait for a handover that does not complete until recovery ends.
+        Recovery calls the SDK directly because at that moment it is the owner.
+        """
+        return self._sdk.call(
+            name, fn,
+            timeout=self.feedback_timeout if timeout is None else timeout,
+            lane=Lane.SAFETY,
+        )
+
+    def _submit_damped_stop_mit(self, kd: float = 1.0, timeout: float = None):
+        """Send the damped zero on the safety lane, as one cycle.
+
+        This is the first thing an emergency stop puts on the wire while a MIT
+        stream is running, so it is the call the 20 ms budget is about: it has
+        to overtake every setpoint already queued, and it does that by lane
+        rather than by hoping the queue is short.
+        """
+        steps = [(
+            "set_auto_set_motion_mode_enabled",
+            lambda: self.agx_arm.set_auto_set_motion_mode_enabled(False),
+        )]
+        steps += [
+            ("move_mit", partial(self._send_damped_stop_joint, joint_index, kd))
+            for joint_index in range(1, self.arm_joint_count + 1)
+        ]
+        call = self._sdk.submit_cycle(
+            "damped_stop_mit", steps, lane=Lane.SAFETY,
+            always=(
+                "set_auto_set_motion_mode_enabled",
+                lambda: self.agx_arm.set_auto_set_motion_mode_enabled(True),
+            ),
+        )
+        return call.result(self.feedback_timeout if timeout is None else timeout)
+
+    def _send_damped_stop_joint(self, joint_index: int, kd: float) -> None:
+        self.agx_arm.move_mit(
+            joint_index=joint_index, p_des=0.0, v_des=0.0, kp=0.0, kd=kd, t_ff=0.0
+        )
+
     def _send_damped_stop_mit(self, kd: float = 1.0) -> None:
         """Zero-velocity, kp=0, kd-damped MIT command for every joint.
 
         Needs NO feedback, so it works exactly when the readiness checks fail —
         the situation in which the firmware would otherwise keep executing the
         last (possibly moving) MIT command it received.
+
+        Direct, for the caller that owns the session: recovery sends this after
+        quiescing the worker and before tearing the link down. The emergency
+        stop uses :meth:`_submit_damped_stop_mit` instead, because it competes
+        with a live control stream and needs the lane to get in front of it.
         """
         self.agx_arm.set_auto_set_motion_mode_enabled(False)
         try:
@@ -2718,9 +2767,14 @@ class AgxArmRosNode(Node):
     VELOCITY_MIN_SAMPLE_DT_S = 0.01
 
     def _sample_joint_positions(self):
-        """One timestamped joint-position sample, or None when unavailable."""
+        """One timestamped joint-position sample, or None when unavailable.
+
+        On the safety lane: this is how a stop is verified, and a verification
+        read that queues behind the very control stream the stop is trying to
+        end would report "cannot tell" for the wrong reason.
+        """
         try:
-            js = self.agx_arm.get_joint_angles()
+            js = self._sdk_safety("get_joint_angles", self.agx_arm.get_joint_angles)
         except Exception:
             return None
         if js is None:
@@ -2864,32 +2918,36 @@ class AgxArmRosNode(Node):
         # not keep that feedback silenced through an emergency stop.
         self._restore_feedback_push("emergency stop")
         try:
+            # Every stage goes on the safety lane, which is what puts it in
+            # front of the setpoints already queued rather than behind them.
             if self.is_mit_mode or self._current_motion_mode == 'mit':
                 try:
-                    self._send_damped_stop_mit()
+                    self._submit_damped_stop_mit()
                 except Exception as e:
                     self.get_logger().error(f"Damped MIT stop failed: {e}")
 
             js = None
             try:
-                js = self.agx_arm.get_joint_angles()
+                js = self._sdk_safety("get_joint_angles", self.agx_arm.get_joint_angles)
             except Exception:
                 js = None
 
             if js is not None and js.hz > 0:
                 q = list(js.msg)
                 if not self.is_switch_seamlessly:
-                    self.agx_arm.move_js(q)
+                    self._sdk_safety("move_js", partial(self.agx_arm.move_js, q))
                     self.is_mit_mode = True
                     self._current_motion_mode = 'js'
                 else:
-                    self.agx_arm.move_j(q)
+                    self._sdk_safety("move_j", partial(self.agx_arm.move_j, q))
                     self.is_mit_mode = False
                     self._current_motion_mode = 'j'
                 self.get_logger().info(f"Emergency stop command sent to {self.arm_type}")
             else:
                 # No trustworthy pose to hold: hard stop is the only safe option.
-                self.agx_arm.electronic_emergency_stop()
+                self._sdk_safety(
+                    "electronic_emergency_stop", self.agx_arm.electronic_emergency_stop
+                )
                 self.get_logger().warn(
                     "Emergency stop without valid feedback: sent electronic emergency stop"
                 )
@@ -2908,7 +2966,10 @@ class AgxArmRosNode(Node):
                     "escalating to electronic emergency stop"
                 )
                 try:
-                    self.agx_arm.electronic_emergency_stop()
+                    self._sdk_safety(
+                        "electronic_emergency_stop",
+                        self.agx_arm.electronic_emergency_stop,
+                    )
                 except Exception as e:
                     self.get_logger().error(f"electronic_emergency_stop failed: {e}")
                 verification = self._arm_velocities_settled()

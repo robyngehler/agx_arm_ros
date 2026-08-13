@@ -346,7 +346,78 @@ read 75.9/s in one window while the driver processed 1001 setpoints in the same
 drop — the driver-side task count is the authoritative number for what reached
 the arm.
 
-### Why one `move_mit` costs what it does — a hypothesis, untested
+## The stop-latency stress test (2026-08-13, both arms) — the budget is met
+
+Until this run the safety lane had **no users**. The emergency stop made its SDK
+calls straight from the service thread, so it was not ahead of the setpoint
+stream, it was beside it — and the 20 ms budget was a statement about nothing.
+The stop ladder now runs on the safety lane: the damped zero as one cycle, and
+the pose read, the hold and the electronic stop as single calls.
+
+Recovery deliberately does **not** go through the lane. It has already quiesced
+the worker and taken the session, so a submission would wait for a handover that
+does not complete until recovery ends; recovery calls the SDK directly because
+at that moment it is the owner.
+
+Method: driver plus MIT controller holding at the current pose, MIT streaming at
+100 Hz, eight stop cycles three seconds apart. Each cycle is stop → clear the
+fault lockout → re-enable and re-hold, which is also the enable churn the
+checklist asks for. `sdk_queue_wait.safety` is the budget number: how long the
+stop waited behind work already executing. The service round trip is **not** that
+number — it includes up to 0.5 s of feedback verification, which is the stop
+proving itself, not the stop being delayed.
+
+| | right (1.06) | left (1.11) |
+| --- | --- | --- |
+| **`sdk_queue_wait.safety` worst case** | **0.94 ms** | **0.55 ms** |
+| `damped_stop_mit` cycle, 8 frames | 0.75-2.88 ms | 0.56-1.23 ms |
+| stops verified in feedback | **8 / 8** | **8 / 8** |
+| escalations to electronic stop | 0 | 0 |
+| SDK threads, steady state | 1 | 1 |
+| CAN errors / drops / bus-off | 0 | 0 |
+
+**An emergency stop reaches the SDK within 1 ms while a 100 Hz MIT stream is
+running, against a 20 ms budget.** Worst observed from submission to the last
+damped frame on the wire is under 4 ms. The margin comes from the lane, not from
+luck: the stop overtakes queued setpoints by priority rather than by the queue
+happening to be short.
+
+The queue wait is now recorded per lane. One aggregate could not answer this —
+it averaged the safety lane together with diagnostic reads that are *supposed*
+to wait behind the control stream.
+
+### The exit gate, read under the full stack
+
+Every steady-state window reports `from 1 thread(s)`. The one window that
+reports two covers construction: `connect`, `get_firmware`, `enable`,
+`get_joint_enable_status`, `set_speed_percent` and `set_tcp_offset` run in
+`__init__` on `MainThread` before the node serves anything. Those are the only
+calls ever attributed to it — there are no steady-state calls off the worker.
+
+### What the deeper TX queue changed
+
+Both arm buses were raised from the kernel default of 10 to `txqueuelen 1000`
+between runs. Same scenario, right arm:
+
+| | `txqueuelen 10` | `txqueuelen 1000` |
+| --- | --- | --- |
+| `sdk.move_mit` mean | 0.61 ms | **0.38 ms** |
+| `sdk.move_mit` max | 10.48 ms | **5.35 ms** |
+| `sdk.send_mit_setpoint` mean | 4.70 ms | **3.01 ms** |
+| `sdk.send_mit_setpoint` max | 13.26 ms | 10.77 ms |
+
+The hypothesis below holds in part: the deeper queue roughly halves both the mean
+per-frame cost and the tail. It does not remove them — a residual of ~5 ms worst
+case survives, which is arbitration against the arm's own feedback push and no
+queue depth fixes that. For the 200-250 Hz target (C2) that residual is the
+thing to attack, and batching frames per SDK call is the candidate.
+
+**`activate_duo_can.sh` still sets no `txqueuelen`.** These runs used a manual
+`ip link set`, so the supported bring-up does not yet produce the configuration
+these numbers were taken under. That is a bring-up defect, recorded in the
+checklist.
+
+### Why one `move_mit` costs what it does — a hypothesis, partly confirmed
 
 `move_mit` packs one frame and calls `comm.send()`; `_send_msgs` is a plain
 Python loop over the same, so the SDK has **no batched socket write** to reach

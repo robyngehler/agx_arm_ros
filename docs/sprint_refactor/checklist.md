@@ -169,8 +169,13 @@ Routed through the runtime:
       **no overruns at all** and 2384 authority publications across the fault.
       The recovery still takes 13.1 s — that is the vendor's `disconnect`, three
       times — but it no longer costs the loop.
-- [ ] Run the L3 stop-latency stress test (stop latency under concurrent MIT
-      streaming, recovery, and enable churn).
+- [x] Run the L3 stop-latency stress test. **The budget is met**: an emergency
+      stop reaches the SDK in 0.94 ms worst case on the right arm and 0.55 ms on
+      the left, against a 20 ms budget, with a 100 Hz MIT stream running. Eight
+      stop-and-re-enable cycles per arm, 8/8 verified in feedback, no
+      escalations, no CAN errors. This required routing the stop onto the safety
+      lane first — until then the lane had no users and the budget was a
+      statement about nothing.
 - [x] Route the **hot path** through the worker. The MIT setpoint is submitted
       as one bounded task (mode bracket plus the per-joint frames), keyed so a
       superseded setpoint is dropped while queued instead of delivered late, and
@@ -180,8 +185,8 @@ Routed through the runtime:
       is fresh, which also closes the case where a command was admitted for an
       arm whose acquisition loop had stopped. L1 only; see
       `reference/sdk_latency_budget.md`.
-- [ ] Route the remaining SDK call sites: the service handlers (stop ladder,
-      hand window, enable/disable) and the quarantined legacy motion paths
+- [ ] Route the remaining SDK call sites: the hand-window and enable/disable
+      service handlers, and the quarantined legacy motion paths
       (`move_j|p|l|c|js`, the `control/joint_states` follow). Off the hot path
       and, for the legacy paths, off by default — but a development profile
       that enables them puts a second writer on the session, so the counter
@@ -194,16 +199,18 @@ Routed through the runtime:
       drained between frames), the worker has four priority lanes instead of
       two, and acquisition runs on its own justified cadence rather than
       following the ROS publish rate. Verified on both arms.
-- [ ] Run the L3 stop-latency stress test — still the missing evidence, and the
-      only thing that can establish the 20 ms budget. The longest thing a stop
-      can queue behind is now one `move_mit` (max 10.5 ms right, 5.5 ms left,
-      down from a 21.4 ms setpoint), but stop latency itself has never been
-      measured.
-- [ ] Test the `txqueuelen` hypothesis for the per-frame cost. Both arm buses
-      run at the kernel default of 10 while a setpoint is a burst of seven
-      frames; `activate_duo_can.sh` sets no depth, where the script it replaced
-      set 1000 and documented this exact case. One line to test, and it decides
-      whether frame batching is needed for the 200-250 Hz target.
+- [x] Stop latency measured directly rather than inferred from what a stop can
+      queue behind. `sdk_queue_wait` is now recorded per lane, because one
+      aggregate averaged the safety lane together with diagnostic reads that are
+      meant to wait.
+- [x] Test the `txqueuelen` hypothesis. Raising both arm buses from the kernel
+      default of 10 to 1000 roughly halves the per-frame cost (`move_mit` mean
+      0.61 -> 0.38 ms, max 10.5 -> 5.4 ms). It does not remove the tail: ~5 ms
+      worst case survives as arbitration against the arm's own feedback push,
+      which is what to attack for the 200-250 Hz target.
+- [ ] Make `activate_duo_can.sh` set the TX queue depth. The measurements above
+      were taken after a manual `ip link set`, so the supported bring-up does
+      not yet produce the configuration they describe.
 - [ ] Correct the inflated SDK call counts recorded earlier in the sprint. Two
       double-counting defects were found and fixed; durations were never
       affected, but totals quoted before 2026-08-13 are roughly 2× on reads.
@@ -324,9 +331,15 @@ Routed through the runtime:
       them is current or that its sender may move this arm. Off by default;
       refusals are counted per path and logged rate-limited. Effector control is
       deliberately untouched — separate devices, separate contract (4D).
-- [ ] Stress-validate MIT streaming plus e-stop, recovery, and enable/disable
-      churn.
-- [ ] Confirm one SDK thread per arm with the counter under a **full** stack.
+- [x] Stress-validate MIT streaming plus e-stop and enable/disable churn, both
+      arms. Recovery was **not** exercised in the same run: it takes the SDK
+      session off the worker by design, so it is a different regime and its
+      13.1 s window is already measured and declared an exception to the budget.
+- [x] Confirm one SDK thread per arm with the counter under a full stack. Every
+      steady-state window reports one thread on both arms. The only calls ever
+      attributed to `MainThread` are the construction sequence (`connect`,
+      `get_firmware`, `enable`, `set_speed_percent`, `set_tcp_offset`), which
+      runs before the node serves anything.
 
 Exercised on hardware 2026-08-12. The enable readback confirmed on the first
 attempt on both arms, so the stricter check introduces no spurious failures. The

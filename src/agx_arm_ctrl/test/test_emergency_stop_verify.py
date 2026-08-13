@@ -21,6 +21,7 @@ instance via ``__new__`` and drive the pure verification helpers directly.
 from types import SimpleNamespace
 
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
+from agx_arm_ctrl.sdk_worker import SdkWorker as _SdkWorker
 
 
 class _PositionArm:
@@ -57,6 +58,11 @@ def _node(arm) -> AgxArmRosNode:
     node = AgxArmRosNode.__new__(AgxArmRosNode)
     node.arm_joint_count = 7
     node.agx_arm = arm
+    # Stop verification reads the arm on the safety lane now, so it needs the
+    # session owner rather than a direct handle: a verification read queued
+    # behind the control stream would report "cannot tell" for the wrong reason.
+    node._sdk = _SdkWorker("arm_test")
+    node.feedback_timeout = 1.0
     return node
 
 
