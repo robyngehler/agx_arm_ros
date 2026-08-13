@@ -162,17 +162,18 @@ Routed through the runtime:
       may stream, using the same checks as admission minus the sequence. Reading
       one as the other is how a controller gets told yes and then has every
       command refused for want of an owner.
-- [x] Make a second unit-safety allocator detectable: generations carry the
+- [x] Unit safety, part 1 of 2 — **detection only**: make a second allocator
+      detectable: generations carry the
       writer that minted them, an observer refuses to mint at all, and an
       equal-generation contradiction is counted with the stop winning rather
       than silently dropped.
-- [ ] **Introduce the single unit-safety writer.** Every driver is still its
-      own, which is why the contradiction counter exists. A device must be able
-      to stop *itself* without another process being alive, so the target is:
-      the device stop is a device-level fault on its own epoch, and only the
-      writer allocates unit generations, on request. Needs the coordinator side
-      and changes what the 2026-08-12 hardware run validated, so it lands with
-      the stamping slice, not before.
+- [ ] Unit safety, part 2 of 2 — **the actual fix**: introduce the single
+      writer. Every driver still mints its own generations, and there is no
+      topic carrying unit safety between processes at all, so `unit_safety_epoch`
+      is currently a per-process counter and two devices' values are unrelated
+      numbers. Specified in `planning/unit_safety_writer_spec.md`; it is a
+      precondition for enforcing the command stamp, since the stamp carries that
+      epoch.
 - [ ] Claim ownership for the MIT controller, and switch its gate from
       `motion_ready` to `may_command`. Until then it gates on readiness, which
       is unchanged behaviour and safe only because admission is not yet live.
@@ -185,8 +186,9 @@ Routed through the runtime:
       `feedback/hand_window_active`, and abort on authority loss. It aborts on
       losing motion *and* on any epoch change, because a new epoch means the
       in-flight work was issued against a device state that no longer exists.
-      The legacy gates still decide while no authority has ever been published,
-      so a driver without one does not freeze the arm. Validated on hardware:
+      Superseded 2026-08-13: the legacy-gate fallback is no longer the default
+      — a missing authority is now a refusal, and the fallback survives only in
+      a named development profile. Validated on hardware:
       100.2/s while holding, 0 in 8 s after an emergency stop, back to 93.8/s
       after the stop was cleared, with no operator step in between.
 - [ ] Retire `feedback/hand_window_active` as a controller input once the hand
