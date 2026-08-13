@@ -56,9 +56,20 @@ latency during streaming.
 never on the hot path, but it is 30× the next worst thing and would dominate any
 stop queued behind it.
 
-**Not measured.** `connect` and `disconnect` on the recovery path. The Phase 0
-fault test showed multi-second recovery, so they must be treated as unbounded
-until measured.
+**Measured 2026-08-13 under a real bus fault** (`ip link set can_nero_right
+down`, 15 s, then up):
+
+| call | n | mean | max |
+| --- | --- | --- | --- |
+| `connect` | 4 | 8.8 ms | 10.1 ms |
+| **`disconnect`** | 3 | **666 ms** | **1000.2 ms** |
+| `get_firmware` (under fault) | 1 | 175 ms | 175 ms |
+| `enable` | 5 | 0.4 ms | 1.05 ms |
+
+`disconnect` is the finding. **It is a single SDK call that blocks for a
+second**, which is the one thing the earlier conclusion said did not exist — the
+claim that individual calls are almost all sub-millisecond holds for every call
+on the hot path and fails exactly here, on the recovery path.
 
 ## The finding that matters
 
@@ -79,13 +90,27 @@ worker task:
 `enable` was measured as 48 calls of at most 1.15 ms each — the blocking is in
 the loop, not in the call.
 
-## The rule this produces
+## The rules this produces
 
-**The worker's unit of work is one SDK call, never a retry loop.** Composite
+**1. The worker's unit of work is one SDK call, never a retry loop.** Composite
 operations stay on their calling thread and submit each iteration separately, so
 the safety lane interleaves between iterations rather than waiting for the whole
 operation. A loop submitted as a single task converts a 1 ms call into a 5 s
 block on the stop path.
+
+**2. One call per task is necessary but not sufficient.** `disconnect` is one
+call and blocks for a second. Routing recovery through the same worker as the
+safety lane would put a 1 s head-of-line block directly in front of an emergency
+stop, which is thirty times the budget below and is not fixable by splitting
+tasks more finely.
+
+**Therefore recovery does not share the worker with the safety lane.** The
+justification is not convenience: during recovery the link is being torn down,
+so an emergency stop could not reach the hardware through it anyway. What
+protects the arm in that window is the damped MIT zero the driver already sends
+*before* the teardown, and the fault lockout it latches afterwards. That
+sequence, not the queue, is the safety story during recovery — and the budget
+below says so explicitly rather than implying a guarantee it cannot keep.
 
 ## Budget
 
@@ -93,15 +118,30 @@ block on the stop path.
   Derived from the worst hot-path call (`move_mit`, 3.32 ms) plus margin for one
   in-flight call and the queue hand-off. This is the number the L3 stress test
   has to demonstrate.
-- `get_firmware` and the recovery calls are excluded from that budget because
-  they are startup and recovery paths; a stop during recovery is covered by the
-  driver's own damped stop before the link is torn down, not by the queue.
+- **Declared exception: recovery.** `get_firmware` (175 ms) and `disconnect`
+  (1 s) are excluded, because they only run while the link is being torn down
+  and re-established. A stop in that window is covered by the damped MIT zero
+  the driver sends before the teardown and by the fault lockout after it — not
+  by the queue. The exception is stated here so nobody reads the 20 ms as
+  unconditional.
 - Queue wait and SDK execution are already timed separately (`sdk_queue_wait`
   versus `sdk.<call>`), so a budget violation says which of the two caused it.
 
+## What the fault run also showed
+
+Not latency, but it frames the routing: the recovery blocked the publish loop
+for **13.1 seconds** (`publish-loop overrun: 13078 ms gap`) and took three
+attempts. Whatever the worker does, that loop is not draining the CAN RX socket
+during it — the coupling Phase 0 recorded as hot path 2, still open.
+
+The honest-reporting fix from 2026-08-12 held under a real fault:
+`CAN bus recovery verified on attempt 3: feedback advancing, joints enabled:
+confirmed by readback` — feedback and the enable readback named separately,
+rather than the bare "recovery succeeded" the 0E run produced.
+
 ## Still open
 
-- measure `connect` and `disconnect` under a real bus fault;
 - the L3 stress test itself: stop latency under concurrent MIT streaming,
   recovery, and enable churn;
-- enforce the one-call rule in the worker rather than only documenting it.
+- enforce the one-call rule in the worker rather than only documenting it;
+- the 13 s publish-loop gap during recovery (Phase 1B).
