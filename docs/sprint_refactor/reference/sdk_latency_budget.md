@@ -147,6 +147,19 @@ The honest-reporting fix from 2026-08-12 held under a real fault:
 confirmed by readback` — feedback and the enable readback named separately,
 rather than the bare "recovery succeeded" the 0E run produced.
 
+## Accepted limit
+
+The recovery window is not a defect to be closed by better scheduling. A vendor
+call that blocks for a second blocks for a second, and a stack cannot command an
+arm through a link it is tearing down. The mitigation inside the software — the
+damped zero before the teardown, the lockout after — is what there is, and it is
+a mitigation rather than a guarantee.
+
+This is recorded as the concrete, measured requirement for the independent
+hardware watchdog in `docs/open_questions.md`: authority over the devices during
+a window of roughly ten seconds in which this stack is provably unable to
+command them, recurring on every transport fault.
+
 ## Still open
 
 - the L3 stress test itself: stop latency under concurrent MIT streaming,
