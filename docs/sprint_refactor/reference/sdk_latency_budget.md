@@ -1,6 +1,6 @@
 # SDK call latency budget for the serialized worker
 
-date: 2026-08-12
+date: 2026-08-12, extended 2026-08-13 with a real bus fault
 platform: Jetson AGX Orin, right arm (`can_nero_right`, firmware 1.06, default
 protocol tier), driver plus MIT controller holding at the measured pose
 method: `RuntimeMetrics` + `MeasuredSdk`, which wraps the vendor SDK object and
@@ -71,14 +71,16 @@ second**, which is the one thing the earlier conclusion said did not exist — t
 claim that individual calls are almost all sub-millisecond holds for every call
 on the hot path and fails exactly here, on the recovery path.
 
-## The finding that matters
+## The findings that matter
 
 The review framed the risk as "the safety lane cannot preempt a vendor SDK call
-already blocking on the worker thread". Measured, that framing understates one
-thing and overstates another: **individual SDK calls are almost all
-sub-millisecond**, so a single call is not the hazard. The hazard is the
-driver's *composite* operations, which would naturally be submitted as one
-worker task:
+already blocking on the worker thread". Measuring produced two hazards, not one,
+and the first measurement found only the second of them.
+
+**On the hot path, no single call is the hazard.** Every call the running system
+makes is sub-millisecond except `move_mit` at 3.32 ms. What threatens the stop
+path there is the driver's *composite* operations, which would naturally be
+submitted as one worker task:
 
 | operation | what it is | bound |
 | --- | --- | --- |
@@ -89,6 +91,12 @@ worker task:
 
 `enable` was measured as 48 calls of at most 1.15 ms each — the blocking is in
 the loop, not in the call.
+
+**Off the hot path, one call is.** The 2026-08-13 fault run found `disconnect`
+blocking for a full second in a single call. The first measurement missed it
+because it never provoked a fault, and stating "individual calls are almost all
+sub-millisecond" as a general property was therefore an overreach: it is a
+property of the calls a *healthy* system makes.
 
 ## The rules this produces
 
