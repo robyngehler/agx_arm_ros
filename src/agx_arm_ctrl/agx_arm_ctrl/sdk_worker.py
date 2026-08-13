@@ -75,7 +75,26 @@ class CallOutcome(Enum):
 
 
 class CallNotExecuted(RuntimeError):
-    """Raised when a call never reached the hardware, with the reason why."""
+    """The call is **guaranteed** not to have reached the hardware.
+
+    Only raised for outcomes that establish that: dropped for a stale epoch,
+    superseded, or rejected. Never for a waiter running out of patience.
+    """
+
+    def __init__(self, call: "Call", detail: str) -> None:
+        super().__init__(detail)
+        self.call = call
+        self.detail = detail
+
+
+class CallOutcomeUnknown(RuntimeError):
+    """The wait expired. The call may be executing, or may still execute.
+
+    Distinct from :class:`CallNotExecuted` because the difference is the whole
+    point for a side-effecting SDK write: a caller that treats a timeout as "not
+    sent" and resends has just commanded the hardware twice. A timeout is the
+    waiter's experience, not a fact about the call.
+    """
 
     def __init__(self, call: "Call", detail: str) -> None:
         super().__init__(detail)
@@ -137,12 +156,21 @@ class Call:
     def result(self, timeout: Optional[float] = None) -> Any:
         """Return the call's value, or raise what stopped it.
 
-        Raises the SDK's own exception when the call ran and failed, and
-        :class:`CallNotExecuted` when it never ran — a distinction the previous
-        direct-call code could not make.
+        Three outcomes, deliberately not two:
+
+        * the SDK's own exception when the call ran and failed;
+        * :class:`CallNotExecuted` when it is *guaranteed* not to have run;
+        * :class:`CallOutcomeUnknown` when the wait expired, because the call
+          may be executing at that moment or may still execute. Collapsing that
+          into "not executed" is what would let a caller resend a command the
+          hardware is already acting on.
         """
         if not self._done.wait(timeout):
-            raise CallNotExecuted(self, f"{self.name}: timed out after {timeout}s")
+            raise CallOutcomeUnknown(
+                self,
+                f"{self.name}: still pending after {timeout}s — it may be "
+                "executing or may execute later; do not assume it was not sent",
+            )
         if self.outcome is CallOutcome.DONE:
             return self.value
         if self.outcome is CallOutcome.FAILED:
@@ -289,6 +317,36 @@ class SdkWorker:
     ) -> Any:
         """Submit and wait. Convenience for the read paths that need the value."""
         return self.submit(name, fn, lane=lane, epoch=epoch).result(timeout)
+
+    def cancel_if_pending(self, call: Call) -> bool:
+        """Cancel a call **only** while it is still queued.
+
+        Returns True when it is now guaranteed not to run. Returns False when it
+        has started, finished, or already settled — there is no way to unsend an
+        SDK call, and pretending otherwise is how a caller ends up believing the
+        hardware was left untouched.
+
+        This is the honest counterpart to a wait timeout: a timeout says the
+        outcome is unknown, and this is the one operation that can make it
+        known, by removing the call before it ever reaches the SDK.
+        """
+        with self._lock:
+            if call.outcome is not CallOutcome.PENDING:
+                return False
+            for queue in (self._safety, self._normal):
+                try:
+                    queue.remove(call)
+                except ValueError:
+                    continue
+                if call.replace_key is not None:
+                    if self._by_key.get(call.replace_key) is call:
+                        del self._by_key[call.replace_key]
+                break
+            else:
+                # Pending but not in a queue: the worker has already taken it.
+                return False
+        call._settle(CallOutcome.REJECTED, detail="cancelled while queued")
+        return True
 
     # -- epoch ----------------------------------------------------------
 

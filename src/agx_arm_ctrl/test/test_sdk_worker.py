@@ -20,6 +20,7 @@ from agx_arm_ctrl.runtime_metrics import RuntimeMetrics
 from agx_arm_ctrl.sdk_worker import (
     CallNotExecuted,
     CallOutcome,
+    CallOutcomeUnknown,
     SdkWorker,
 )
 
@@ -214,17 +215,6 @@ def test_calls_stay_in_submission_order(worker):
     assert order == list(range(10)) + ["last"]
 
 
-def test_result_reports_a_timeout_as_not_executed(worker):
-    gate = _occupy(worker)
-    queued = worker.submit("joint_ctrl", lambda: "sent")
-    try:
-        with pytest.raises(CallNotExecuted):
-            queued.result(timeout=0.05)
-    finally:
-        gate.set()
-        queued.wait(2.0)
-
-
 def test_queue_depth_drains(worker):
     for _ in range(5):
         worker.submit("noop", lambda: None)
@@ -232,3 +222,73 @@ def test_queue_depth_drains(worker):
     while worker.queue_depth and time.monotonic() < deadline:
         time.sleep(0.01)
     assert worker.queue_depth == 0
+
+
+# --- timeout is not a statement about the hardware ---------------------------
+
+def test_a_wait_timeout_does_not_claim_the_call_was_not_executed(worker):
+    """The distinction that matters for a side-effecting write.
+
+    A caller that reads a timeout as "not sent" and resends has commanded the
+    hardware twice. A timeout is the waiter's experience, not a fact about the
+    call.
+    """
+    gate = _occupy(worker)
+    queued = worker.submit("joint_ctrl", lambda: "sent")
+    try:
+        with pytest.raises(CallOutcomeUnknown) as excinfo:
+            queued.result(timeout=0.05)
+        assert "may execute later" in str(excinfo.value)
+        assert not isinstance(excinfo.value, CallNotExecuted)
+    finally:
+        gate.set()
+        queued.wait(2.0)
+    # And it did in fact execute, which is exactly why the claim would be wrong.
+    assert queued.outcome is CallOutcome.DONE
+
+
+def test_a_dropped_call_still_reports_guaranteed_non_execution(worker):
+    worker.set_epoch(5)
+    call = worker.submit("joint_ctrl", lambda: "sent", epoch=4)
+    with pytest.raises(CallNotExecuted):
+        call.result(timeout=0.1)
+
+
+def test_cancelling_a_queued_call_guarantees_it_will_not_run(worker):
+    gate = _occupy(worker)
+    sent = []
+    call = worker.submit("joint_ctrl", lambda: sent.append("ran"))
+
+    assert worker.cancel_if_pending(call) is True
+    gate.set()
+    assert call.wait(2.0)
+
+    assert sent == []
+    assert call.outcome is CallOutcome.REJECTED
+    with pytest.raises(CallNotExecuted):
+        call.result(timeout=0.1)
+
+
+def test_cancelling_a_finished_call_reports_that_it_could_not(worker):
+    call = worker.submit("joint_ctrl", lambda: "sent")
+    assert call.wait(2.0)
+    assert worker.cancel_if_pending(call) is False
+
+
+def test_cancelling_a_call_already_taken_by_the_worker_reports_false(worker):
+    """There is no way to unsend an SDK call, and this must not pretend."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow():
+        started.set()
+        release.wait(3.0)
+
+    call = worker.submit("blocking_write", slow)
+    assert started.wait(2.0)
+    try:
+        assert worker.cancel_if_pending(call) is False
+    finally:
+        release.set()
+        call.wait(3.0)
+    assert call.outcome is CallOutcome.DONE
