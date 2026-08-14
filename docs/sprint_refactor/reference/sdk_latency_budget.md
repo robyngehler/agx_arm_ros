@@ -457,8 +457,25 @@ command them, recurring on every transport fault.
 
 ## Still open
 
-- the L3 stress test itself: stop latency under concurrent MIT streaming,
-  recovery, and enable churn;
-- enforce the one-call rule in the worker rather than only documenting it;
-- the RX-socket drain itself: the loop now survives recovery, but whether it
-  drains fast enough under a fault is a separate Phase 1B measurement.
+Superseded 2026-08-13: the L3 stress test has been run and the budget is met
+(see the stress-test section above), and "enforce the one-call rule" is no
+longer the right item — the rule itself was wrong. The unit of work is bounded
+work, and for a command that is several transmits but one instruction it is a
+*cycle*, enforced by `submit_cycle` rather than by a call-count check.
+
+What remains:
+
+- **the RX-socket drain under a fault.** The loop now survives recovery without
+  overruns, but whether it drains the socket fast enough while a fault is in
+  progress is a separate measurement, and it belongs to Phase 1B.
+- **the residual per-frame transmit cost.** ~5 ms worst case survives a
+  1000-frame TX queue and is arbitration against the arm's own feedback push.
+  It is not a safety problem at 100 Hz; it is the thing that decides whether the
+  200-250 Hz target (C2) is reachable without batching frames per SDK call.
+- **`activate_duo_can.sh` sets no TX queue depth**, so the supported bring-up
+  does not produce the configuration the numbers above were taken under.
+- **the service handlers and the quarantined legacy motion paths** still hold
+  the session directly. Off the hot path, and the legacy paths are off by
+  default, but a development profile that enables them puts a second writer on
+  the session — so the one-owner property is conditional on the profile, not
+  unconditional.

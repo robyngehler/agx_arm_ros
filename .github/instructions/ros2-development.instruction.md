@@ -40,6 +40,18 @@ Load this instruction for ROS2-native questions and decisions.
 - do not use `ros2 topic hz` to answer "did this node stop publishing?". Its output is block-buffered when redirected, so the last seconds are lost when the process is killed, and a shell marker appended to the same file has no defined position relative to those flushes. It produced two confident-looking zeros during Phase 1A, one of which briefly supported a wrong conclusion. Use `scripts/count_topic_messages.py`, which counts over a fixed window and prints once at the end
 - a measurement whose method can fail silently is not evidence. Prefer a tool that reports a number once, over one that streams and may be cut off
 
+## Reaching A Device's SDK
+
+The arm driver serializes every steady-state SDK call for a device onto one worker thread (`agx_arm_ctrl/sdk_worker.py`). The invariant is **one owner of a device's SDK session at any instant**, and it is read off the per-thread call counter in `RuntimeMetrics` — a call that bypasses the worker shows up under a different thread name.
+
+- do not call `self.agx_arm.*` from a subscription callback, a service handler, or a timer. Submit it to the worker and pick the lane
+- four lanes, strict priority: `SAFETY` (emergency stop) > `CONTROL` (active control transmits) > `ACQUISITION` (feedback the control loop and watchdog need) > `DIAGNOSTIC` (status and one-off reads, the default). The default is the lowest on purpose, so work nobody classified cannot overtake the control stream
+- the unit of work is **bounded** work, not "one SDK call". A fixed batch of cached reads is one task; a retry loop bounded only by a timeout never is, because it converts a 1 ms call into a multi-second block in front of a stop
+- a command that is several transmits but one instruction — a MIT setpoint is seven joint frames inside a mode bracket — is a **cycle** (`submit_cycle`): one queue entry for the epoch check and the supersede, executed one step at a time with the safety lane drained between steps. Sent as a single task it measured 21 ms of non-preemptible work, more than the whole stop budget; sent as seven independent submissions, two setpoints interleave and the arm holds half of each
+- stamp a submission with the device epoch so a recovery discards what was issued before it, and give a streaming setpoint a `replace_key` so a superseded one is dropped while queued rather than delivered late
+- **recovery is the exception.** It quiesces the worker and takes the session, so it calls the SDK directly — at that moment it *is* the owner. Anything routed through the worker during recovery waits for a handover that does not complete until recovery ends
+- a timeout on a submitted call means the outcome is **unknown**, not that the call was not sent. Only a drop, a supersede or a rejection establishes non-execution
+
 ## Guarding Untrusted Numbers
 
 - never let a saturating or clamping helper be the first thing that sees an untrusted value. `max(-limit, min(limit, value))` maps NaN and `+inf` onto `limit`, so a corrupt number becomes the *maximum* command and every downstream range check then sees a plausible value. Reject non-finite input first, then saturate

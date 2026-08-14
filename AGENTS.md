@@ -42,6 +42,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - Each device owns its own CAN bus (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD adapters). Same-side arm and hand motion may run in parallel; the shared-bus hand window is a selectable degraded mode, not normal operation.
 - Use `feedback/omnihand/*` for hand-only diagnostics, status, and debugging.
 - Keep `control/omnihand/joint_trajectory` only as a bridge-specific compatibility surface until a later action or controller contract is finalized.
+- Keep exactly one owner of a device's SDK session at any instant. Steady-state calls go through that device's serialized worker on a declared priority lane (emergency stop, then active control transmits, then control-critical acquisition, then diagnostics); recovery is the one exception, because it takes the session off the worker and is the owner while it runs.
 - Do not extend `HandCmd`, `HandPositionTimeCmd`, or `HandStatus` for OmniHand, and do not add a further OmniHand-only command or status message. The V02 target consolidates them with `GripperStatus` and `OmniHandStatus` into one abstract hand contract that must fit any hand, with statically defined fields.
 
 ## Documentation And Source Rules

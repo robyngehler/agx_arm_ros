@@ -80,6 +80,9 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - treat `src/duo_body_description` as the Duo body staging package for system assembly while keeping
   `src/agx_arm_sim/agx_arm_description` and `src/agx_arm_moveit` as the long-term canonical surfaces
 - keep the OmniHand bridge in `agx_arm_ctrl`
+- keep exactly one owner of a device's SDK session at any instant: steady-state
+  calls go through that device's serialized worker on a declared priority lane,
+  and recovery is the one exception because it takes the session off the worker
 - keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared
   `control/joint_states` is the current hand command flow and is legacy (V02 target: one abstract hand
   command with owner identity, control epoch, and sequence)

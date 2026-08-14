@@ -46,6 +46,12 @@ DBITRATE=5000000
 DSAMPLE_POINT=0.8
 RESTART_MS=100
 ONE_SHOT=on
+# Socket TX ring depth. The kernel default of 10 is smaller than a single MIT
+# setpoint, which is a burst of seven frames at the control rate onto a bus
+# already carrying the arm's own feedback push. Measured on hardware
+# (docs/sprint_refactor/reference/sdk_latency_budget.md): raising it to 1000
+# roughly halves both the mean per-frame transmit cost and its worst case.
+TX_QUEUE_LEN=1000
 # The publish/parse thread can stall under GIL pressure, and nothing drains the
 # RX socket while it does; a small kernel buffer then drops frames. See
 # docs/sprint_refactor/reference/phase0_baseline.md.
@@ -99,8 +105,10 @@ bring_up() {
         fi
         ip link set "$current" name "$target"
     fi
+    ip link set "$target" txqueuelen "$TX_QUEUE_LEN" \
+        || echo "  warning: could not set txqueuelen on '$target'" >&2
     ip link set "$target" up
-    echo "  $target: up on $slot (was $current)"
+    echo "  $target: up on $slot (was $current, txqueuelen=$TX_QUEUE_LEN)"
 }
 
 case "${1:---all}" in
