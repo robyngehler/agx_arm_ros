@@ -196,8 +196,14 @@ single CPU consumer under load.
 
 This confirms hot path 4 in `critical_cpu_paths.md` and makes it far more
 serious than that note assumed: the cost is in blocking request/response
-handling, not in frame volume. Phase 5C's timer split and ownership-gated
-polling should be re-read as the **highest-value** CPU item, not a cleanup.
+handling, not in frame volume. The timer split and ownership-gated polling are
+the **highest-value** CPU item, not a cleanup; that work now lives in phase 2C
+(it was split across 2C and 5C until 2026-08-14).
+
+The four-bus census of 2026-08-13 raised the figure rather than lowering it:
+~160 % of a core **per hand** on a stack where both hands were finally reaching
+their own devices, and within 5 % of that whether the arms were idle or both
+holding MIT at 100 Hz.
 
 **No CAN-level contention was observed**: no drops, no bus-off, and the arm
 buses were unaffected throughout. That is a statement about the wire only — the

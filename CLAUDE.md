@@ -82,15 +82,19 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - keep the OmniHand bridge in `agx_arm_ctrl`
 - keep exactly one owner of a device's SDK session at any instant: steady-state
   calls go through that device's serialized worker on a declared priority lane,
-  and recovery is the one exception because it takes the session off the worker
+  and recovery is the one exception because it takes the session off the worker.
+  This holds for the arms today; the hand bridge has no serialized owner yet
+  (a known gap, closed in phase 2C)
 - keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared
   `control/joint_states` is the current hand command flow and is legacy (V02 target: one abstract hand
   command with owner identity, control epoch, and sequence)
 - the two arms run different, unflashable firmware (right 1.06 default tier, left 1.11 `NeroFW.V111`);
   anything derived from the protocol is per tier, not per robot model, and a measurement names its arm
-- each device owns its own CAN bus (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD
-  adapters); same-side arm and hand motion may run in parallel and the shared-bus hand window is a
-  selectable degraded mode
+- each device owns its own CAN bus: arms on `can_nero_left`/`can_nero_right` (native), hands on
+  `hand_left`/`hand_right` (USB-CAN FD adapters); same-side arm and hand motion may run in parallel
+  and the shared-bus hand window is a selectable degraded mode
+- `<side>_omnihand_controller/follow_joint_trajectory` is the production hand execution path, not a
+  debug surface; `control/omnihand/stop` is a cancel-and-hold, not a latching device stop
 - use repo-owned `agx_arm_msgs` messages for hand diagnostics and tactile payloads, with statically
   defined fields
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment

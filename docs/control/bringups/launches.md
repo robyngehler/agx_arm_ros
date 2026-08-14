@@ -6,13 +6,29 @@ last_updated: 2026-07-19
 How to start the current system. Two steps: bring up the baseline that owns the runtime graph, then
 add the matching tool or demo on top.
 
-Conventions: `can_nero_right` and `can_nero_left` are the native side buses, each carrying its arm
-and its OmniHand. Arms are separated by ROS namespace (`left_arm` and `right_arm`); each driver
+Conventions: **one bus per device.** `can_nero_right` and `can_nero_left` are the native arm buses;
+`hand_right` and `hand_left` are the hands' own USB-CAN FD adapters. Each hand's interface is
+declared in `duo_motion_registry.yaml` and never derived from its arm's `can_port` — a bridge with
+no interface of its own now refuses to start rather than falling back onto the arm bus. (Until
+2026-08-13 a side bus carried both its arm and its OmniHand; that shared topology is still
+selectable as a degraded mode, but it is no longer what a bring-up does by default.)
+Arms are separated by ROS namespace (`left_arm` and `right_arm`); each driver
 publishes unprefixed `joint1..7` inside its namespace. `execution_profile`
 (`src/agx_arm_ctrl/config/execution_profiles.yaml` and `duo_motion_registry.yaml`) is the source of
 truth for slice composition, prefixes, frames, side buses, and gravity URDF derivation.
 
 ## 0. CAN buses
+
+All four buses, matched by physical slot (the two hand adapters are identical hardware, so their
+`canN` indices can swap between boots):
+
+```bash
+sudo bash scripts/activate_duo_can.sh          # all four
+sudo bash scripts/activate_duo_can.sh arms     # or: hands
+bash scripts/activate_duo_can.sh --show        # report state, change nothing
+```
+
+Arms only, by name:
 
 ```bash
 sudo bash scripts/activate_native_can.sh
@@ -20,7 +36,9 @@ sudo bash scripts/activate_native_can.sh
 ip -details link show can_nero_right
 ```
 
-For a shared arm-plus-hand side bus under load, first keep `one-shot on` and deepen the queue:
+`activate_duo_can.sh` sets `txqueuelen 1000` itself. The kernel default of 10 was measured to cost
+roughly double per transmitted frame on an arm bus (`move_mit` 0.61 ms mean falling to 0.38 ms), so
+a bus brought up by hand should be deepened the same way:
 
 ```bash
 TX_QUEUE_LEN=1000 sudo bash scripts/activate_native_can.sh right

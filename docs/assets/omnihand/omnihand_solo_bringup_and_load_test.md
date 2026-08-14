@@ -121,7 +121,8 @@ It exposes the bridge's full ROS surface on its own:
 - subscribes `control/joint_states` (shared) and `control/omnihand/joint_trajectory`
 - publishes `feedback/omnihand/joint_states`, `feedback/omnihand/status`,
   `feedback/omnihand/tactile_raw`
-- service `control/omnihand/stop`
+- service `control/omnihand/stop` — cancels the pending target and holds the current
+  pose. It does not latch: the next command re-arms the hand.
 
 To actually *drive* it, use the exerciser (`ros2 run agx_arm_ctrl omnihand_exerciser`).
 It sends named active-joint poses over the same path MoveIt uses — the per-side

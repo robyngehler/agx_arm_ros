@@ -186,9 +186,10 @@ Tasks:
 
 Current landed surface:
 
+- coordinated execution via the per-side `FollowJointTrajectory` action — the production path
 - shared command input via `control/joint_states`
 - bridge-specific compatibility input via `control/omnihand/joint_trajectory`
-- bridge-local safe stop via `control/omnihand/stop`
+- bridge-local cancel-and-hold via `control/omnihand/stop` (not a latching device stop)
 
 Constraints:
 

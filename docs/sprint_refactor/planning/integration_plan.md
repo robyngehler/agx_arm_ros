@@ -554,6 +554,17 @@ because the 0E baseline made it the largest single CPU consumer in the system:
 73 % for ~2800 f/s. The cost is in how the transport is driven, not in frame
 volume, so this is a correctness-shaped performance problem rather than tuning.
 
+The four-bus census of 2026-08-13 confirmed it on a working stack and made it
+worse than the 0E figure: **~160 % of a core per hand** (319 % for the pair),
+against 25 frames/s on each hand bus, and within 5 % of the same cost whether
+the arms are idle or both are holding MIT at 100 Hz. It is the system's largest
+consumer by a wide margin.
+
+This section owns **all** hand-bridge runtime and transport efficiency work.
+The former phase 5C ("bridge timer split") duplicated it and has been folded in;
+phase 5 keeps only the before/after close-out measurement, and the public hand
+contract stays with 4D.
+
 Arbitration:
 
 - implement the frozen single-goal contract: one commander per hand device,
@@ -561,25 +572,46 @@ Arbitration:
   and `sequence` on the command. No separate lease contract
 - reject stale-epoch and out-of-order hand commands at the bridge boundary
 
+Keep the `FollowJointTrajectory` action as the production execution path
+throughout. It is not a debug surface and is not to be removed to save CPU: it
+has lower measured latency than a direct `HandCmd`, it synchronizes with arm
+trajectories, and it carries the trajectory semantics later motion primitives
+need. Cut the cost of driving the transport, not the capability.
+
 Transport efficiency — profile first, then cut:
 
 - **profile the O12 Pro backend at SDK-call level**: which calls, how many per
   setpoint, how long each blocks. The 115 % figure is process-level; the
   distribution inside it is unmeasured and the fix depends on it
+- **separate ROS publication cost from vendor-SDK polling cost** before cutting
+  either: the same process pays both, and only the mock backend isolates them
 - eliminate the read-before-write round trip in the full-joint command path
+- decouple hand feedback publication from the arm's `pub_rate`: every bringup
+  passes the arm's rate straight into the bridge, so the hand publishes at 200 Hz
+  while its joints change at 20 Hz and status and tactile at 1 Hz
+- publish a new sample on a new readback, with only a low-rate heartbeat where a
+  consumer needs liveness
 - decouple command verification, joint readback, tactile and status into
   separate schedules instead of one shared cadence
 - stop polling entirely while no hand action is active
 - remove the recurring post-grasp hold traffic
 - bound the SDK round trips per commanded setpoint, and record the bound
 
+Ownership, deliberately narrowed after review:
+
+- **a hand still has no serialized SDK owner.** The worker and its four lanes are
+  arm-only; the bridge reaches the SDK from its timer, its subscriptions and its
+  service handlers. Give the hand the same single-owner treatment here rather
+  than deferring it behind the contract work
+
 Exit gate:
 
 - a hardware profile with a missing or wrong hand bus fails at configuration time
 - hand traffic appears only on the hand interfaces
 - same-side arm and hand motion run in parallel in an L3 run without CAN RX drops
-- **measured** hand-bridge CPU reduction against the 115 % baseline, with the
-  per-call profile recorded alongside it
+- **measured** hand-bridge CPU reduction against the 160 %-per-hand census
+  figure, with the per-call profile recorded alongside it
+- the `FollowJointTrajectory` path is functionally unchanged, proven by an L3 run
 - the `shared_per_side` topology still executes an activity when selected
 
 ---
@@ -706,10 +738,12 @@ holds regardless:
 - velocity tolerances stay unavailable until fed from the derived source — the
   firmware value they used is flat zero (see `reference/phase0_baseline.md`)
 
-### 5C. Bridge timer split
+### 5C. Bridge timer split — moved to 2C
 
-- split command verification, tactile, status, and heartbeat work by semantics
-- active polling only during hand ownership; cached or heartbeat status otherwise
+Superseded 2026-08-14. Splitting the bridge's timers by semantics is the same
+work as 2C's transport efficiency, and holding half of it here invited the
+bridge to be optimised twice or not at all. Phase 5 keeps only the before/after
+close-out (5F).
 
 ### 5D. Executor and process policy
 

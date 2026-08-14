@@ -501,21 +501,37 @@ system purely by failing.
 
 ### 2C Hand arbitration and transport efficiency
 
-Moved ahead of the coordinator rewrite: 115 % of a core for 27 frames/s makes
-this the largest measured CPU consumer in the system.
+Moved ahead of the coordinator rewrite: 115 % of a core for 27 frames/s made
+this the largest measured CPU consumer in the system, and the four-bus census
+raised it to ~160 % **per hand**. Owns all hand-bridge runtime work — the former
+phase 5C was folded in here on 2026-08-14 so the bridge is not optimised twice.
+
+Keep the `FollowJointTrajectory` action functionally unchanged throughout: it is
+the production hand path, not a debug surface, and is not to be removed to save
+CPU.
 
 - [ ] Implement the frozen contract: single-goal arbitration plus `owner_id`,
       `device_epoch` and `sequence`; no separate lease.
 - [ ] Reject stale-epoch and out-of-order hand commands at the bridge boundary.
+- [ ] Give the hand a serialized SDK owner. The worker and its four lanes are
+      arm-only; the bridge still calls the SDK from its timer, its subscriptions
+      and its service handlers.
 - [ ] Profile the O12 Pro backend at SDK-call level: which calls, how many per
       setpoint, how long each blocks.
+- [ ] Separate ROS publication cost from vendor-SDK polling cost before cutting
+      either (the mock backend is what isolates them).
 - [ ] Eliminate the read-before-write round trip in the full-joint command path.
+- [ ] Decouple hand feedback publication from the arm's `pub_rate`: every bringup
+      passes the arm's rate into the bridge, so the hand publishes at 200 Hz
+      while its joints change at 20 Hz and status and tactile at 1 Hz.
+- [ ] Publish a new sample on a new readback, with only a low-rate heartbeat
+      where a consumer needs liveness.
 - [ ] Decouple command verification, joint readback, tactile and status into
       separate schedules.
 - [ ] Stop polling entirely while no hand action is active.
 - [ ] Remove the recurring post-grasp hold traffic.
 - [ ] Bound and record the SDK round trips per commanded setpoint.
-- [ ] Measure the hand-bridge CPU reduction against the 115 % baseline.
+- [ ] Measure the hand-bridge CPU reduction against the ~160 %-per-hand census.
 - [ ] Validate parallel same-side arm and hand motion without CAN RX drops.
 - [ ] Verify the `shared_per_side` topology still executes an activity.
 

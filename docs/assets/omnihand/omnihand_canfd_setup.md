@@ -18,14 +18,28 @@ dbitrate 5000000     dsample-point 0.8
 fd on
 ```
 
-For the Duo side bus this is combined with the arm stability flags (`restart-ms 100`,
-`one-shot on`). A CAN FD SocketCAN interface transmits **both** classic frames (to the Nero arm)
-and FD+BRS frames (to the OmniHand), so one side bus carries the arm and its hand:
+For an arm bus this is combined with the arm stability flags (`restart-ms 100`, `one-shot on`).
 
-| Native iface | Side bus name | Carries |
+**Current topology — one bus per device** (since 2026-08-13, `bus_topology: dedicated_per_device`
+in `duo_motion_registry.yaml`). Bring all four up with `scripts/activate_duo_can.sh`:
+
+| Interface | Parent device | Carries |
 |---|---|---|
-| `can0` | `can_nero_right` | right arm (classic) + right OmniHand (FD/BRS) |
-| `can1` | `can_nero_left`  | left arm (classic) + left OmniHand (FD/BRS) |
+| `can_nero_right` | native mttcan `c310000.mttcan` | right arm (classic) |
+| `can_nero_left`  | native mttcan `c320000.mttcan` | left arm (classic) |
+| `hand_right`     | PEAK USB-CAN FD, USB port 1-4.3 | right OmniHand (FD/BRS) |
+| `hand_left`      | PEAK USB-CAN FD, USB port 1-4.4 | left OmniHand (FD/BRS) |
+
+The hand adapters are matched by **physical USB slot**, not by kernel `canN` index: the two are
+identical hardware, so their indices can swap between boots, and a swap would point one hand's
+commands at the other hand.
+
+Superseded reading (before 2026-08-13): a CAN FD interface transmits both classic frames (to the
+Nero arm) and FD+BRS frames (to the OmniHand), so one side bus carried the arm and its hand —
+`can_nero_right` carried the right arm plus the right OmniHand, `can_nero_left` the left pair. That
+remains physically true and is still selectable as the `shared_per_side` degraded mode, but it is no
+longer the topology a bring-up produces. It cost the hand its arbitration under arm load; see the
+window handshake in `../../control/bringups/teach_and_run.md`.
 
 ## Mandatory prerequisite: TDC offset (TDCR)
 

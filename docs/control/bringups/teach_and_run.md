@@ -135,6 +135,11 @@ free-runs without the arm).
 > capture), not from `feedback/leader_joint_angles`. Tune `freedrive_kd` on hardware: raise if the arm
 > drifts/oscillates, lower if it feels sticky.
 
+> **Degraded mode only since 2026-08-13.** Each hand now has its own USB-CAN FD adapter
+> (`hand_left` / `hand_right`), so arm and hand motion run in parallel and none of the window
+> handshake below is exercised by a default bring-up. It still applies when `bus_topology` is set
+> to `shared_per_side`, and the services described here still exist.
+>
 > **Shared arm+hand CAN bus — keep the hand alive.** On the right side the arm and the OmniHand share one
 > physical bus (`can_nero_right`; there are only two mttcan channels, one per arm). The arm firmware pushes
 > feedback autonomously and the MIT controller adds 7 command frames per control cycle; the OmniHand's CANFD
