@@ -34,6 +34,7 @@ from agx_arm_msgs.msg import (
 )
 
 from agx_arm_ctrl.motion_registry import bus_topology, hand_sides
+from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics, name_os_thread
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HandModel, get_hand_model
 
 
@@ -520,8 +521,9 @@ class MockOmniHandBackend:
 
 class SdkOmniHandBackend:
 
-    def __init__(self, hand_side: str, device_id: int, canfd_id: int, cfg_path: str, sdk_python_dir: str = "", can_interface: str = "") -> None:
+    def __init__(self, hand_side: str, device_id: int, canfd_id: int, cfg_path: str, sdk_python_dir: str = "", can_interface: str = "", metrics: RuntimeMetrics | None = None) -> None:
         self.hand_side = hand_side
+        self._metrics = metrics or RuntimeMetrics(enabled=False)
         self.device_id = device_id
         self.canfd_id = canfd_id
         self.cfg_path = cfg_path
@@ -561,10 +563,17 @@ class SdkOmniHandBackend:
             (layout_name, getattr(finger_enum, enum_name))
             for layout_name, enum_name in TACTILE_FINGERS
         ]
-        self.hand = _create_sdk_hand(
-            sdk_class,
-            device_id=device_id,
-            hand_type=hand_type,
+        # Wrapping the session rather than each call site is what makes the
+        # coverage complete: a call nobody thought to measure is still measured,
+        # and that is exactly the one that turns out to dominate. ~150 % of a
+        # core per hand lives behind this object and has never been decomposed.
+        self.hand = MeasuredSdk(
+            _create_sdk_hand(
+                sdk_class,
+                device_id=device_id,
+                hand_type=hand_type,
+            ),
+            self._metrics,
         )
         if hasattr(self.hand, "show_data_details"):
             self.hand.show_data_details(False)
@@ -853,6 +862,13 @@ class OmniHandBridgeNode(Node):
         # until one readback succeeds, instead of hammering at joint_read_rate
         # plus status plus tactile.
         self.declare_parameter("fault_poll_interval_s", 2.0)
+        # Per-SDK-call attribution: which vendor calls, how many a second, how
+        # long each blocks. The bridge's process cost is known and its ROS half
+        # is now measured; this is what decomposes the rest. Off by default
+        # because it costs CPU on the Jetson, and the point is to measure the
+        # bridge, not the instrument.
+        self.declare_parameter("runtime_metrics_enabled", False)
+        self.declare_parameter("runtime_metrics_period_s", 10.0)
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
         # This device in the authority contract. Note it is *not* the
@@ -872,6 +888,10 @@ class OmniHandBridgeNode(Node):
         # skill controller.
         self._unit_safety = UnitSafety(self.device_id, writer=False)
         self._authority = DeviceAuthority(self.device_id, self._unit_safety)
+        self.metrics = RuntimeMetrics(
+            enabled=bool(self.get_parameter("runtime_metrics_enabled").value),
+            report_period_s=float(self.get_parameter("runtime_metrics_period_s").value),
+        )
         self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
         self.backend_type = str(self.get_parameter("backend_type").value)
         self.pub_rate = float(self.get_parameter("pub_rate").value)
@@ -948,6 +968,7 @@ class OmniHandBridgeNode(Node):
                     device_id=self.device_id,
                     sdk_python_dir=self.sdk_python_dir,
                     can_interface=self.can_interface,
+                    metrics=self.metrics,
                 )
             else:
                 self.backend = SdkOmniHandBackend(
@@ -957,6 +978,7 @@ class OmniHandBridgeNode(Node):
                     cfg_path=self.sdk_cfg_path,
                     sdk_python_dir=self.sdk_python_dir,
                     can_interface=self.can_interface,
+                    metrics=self.metrics,
                 )
         else:
             if self.backend_type != "mock":
@@ -997,6 +1019,7 @@ class OmniHandBridgeNode(Node):
         # Publication is gated on new data. These record what was last put on the
         # wire so a tick with nothing new stays silent instead of re-serializing
         # the same three messages.
+        self._tick_thread_named = False
         self._published_read_monotonic = 0.0
         self._last_joint_publish_monotonic = 0.0
         self._last_status_publish_monotonic = 0.0
@@ -1054,6 +1077,12 @@ class OmniHandBridgeNode(Node):
             timer_period = self.joint_read_min_interval_s / 2.0
         else:
             timer_period = 1.0 / self.pub_rate if self.pub_rate > 0.0 else 0.02
+        # Half a tick, so the readback gate rounds to the nearest tick instead of
+        # always rounding up. Bounded by the interval itself so a degenerate
+        # configuration cannot turn the gate into "always read".
+        self._read_gate_tolerance_s = min(
+            timer_period / 2.0, self.joint_read_min_interval_s / 2.0
+        )
         self.create_timer(timer_period, self._feedback_tick)
         if self.command_retry_enabled:
             self.create_timer(self.command_retry_period_s, self._command_retry_tick)
@@ -1358,6 +1387,16 @@ class OmniHandBridgeNode(Node):
         stamp = self.get_clock().now().to_msg()
 
         now = time.monotonic()
+        if not self._tick_thread_named:
+            # Python thread names never reach the kernel, so a per-thread CPU
+            # census would otherwise show this as another copy of the process
+            # name and attribute nothing.
+            name_os_thread(f"hand_{self.hand_side[:4]}_tick")
+            self._tick_thread_named = True
+        if self.metrics.due():
+            report = self.metrics.report()
+            if report:
+                self.get_logger().info(report)
         # Fault backoff: while the backend is faulted, only a slow joint-read
         # probe goes onto the bus; status/tactile reads are skipped entirely and
         # the cached snapshots are republished. A single successful probe clears
@@ -1375,7 +1414,13 @@ class OmniHandBridgeNode(Node):
                     )
 
         read_interval = self._effective_read_interval()
-        if read_interval <= 0.0 or now - self.last_joint_read_monotonic >= read_interval:
+        # Read on the NEAREST tick to the interval, not the first tick strictly
+        # past it. Sampling a period with a discrete timer otherwise rounds up
+        # every time: at a 25 ms tick and a 50 ms interval, a tick landing at
+        # 49 ms is rejected and the read waits for 74 ms — an intended 20 Hz
+        # measured 15.4 Hz on hardware for exactly this reason.
+        read_due_at = read_interval - self._read_gate_tolerance_s
+        if read_interval <= 0.0 or now - self.last_joint_read_monotonic >= read_due_at:
             self.cached_positions = self.backend.read_joint_state()
             self.last_joint_read_monotonic = now
             if not self._backend_faulted():

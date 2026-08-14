@@ -608,3 +608,32 @@ changes, which is the interesting part.
   (only the MIT controller claims, and only its arm), and the command surfaces
   do not check ownership. Closing this is 2C's single-goal arbitration bullet;
   it changes admission behaviour on the production path, so it is its own slice.
+
+### The hand bridge's cost is a vendor busy-wait, not our polling
+
+- Symptom: after the publication fix above, each `omnihand_bridge` still cost
+  ~110 % of a core with its bus carrying 25 frames/s.
+- Cause, measured per thread on hardware (L3, 2026-08-14): each bridge process
+  carries **exactly one thread more than the same bridge on the mock backend**
+  (23 vs 22), and that thread runs at **100.0 % of a core with `wchan=0`** — it
+  never sleeps. It appears when the vendor session is opened, lives in compiled
+  C++ (`agibot_hand_core`, `libomniHandPro25Can.so`), and is reachable from no
+  call site of ours. Our tick thread is 10.9 %; every SDK call we make sums to
+  ~50 ms of wall clock per second, about 5 % of a core.
+- Why nothing found it before: `MeasuredSdk` instruments the calling thread, and
+  a per-process CPU figure attributes the whole sum to the node. Only a
+  per-thread census separates a library's internal thread from the code that
+  opened it. **A cost that belongs to no call site is invisible to call-site
+  profiling, however careful.**
+- Consequence for the plan: phase 2C's transport-efficiency remedies — dropping
+  the read-before-write, polling only under ownership, bounding round trips per
+  setpoint — each divide up the 5 %. They stay worth doing for the CAN bus and
+  for latency. They are not the CPU answer, and 2C now says so.
+- Not fixed, and not fixable from this side. The SDK exposes report *periods*
+  for the device (`set_all_error_report_periods` and siblings) but nothing about
+  its own reader thread. The options are a vendor fix, a patch in the tracked
+  vendor fork under the pinned-SDK constraint, or accepting one core per hand and
+  keeping it off the control cores.
+- Mitigating fact: it is a native thread, so it holds no GIL. It burns a core
+  without starving the Python nodes — both arms held MIT at 100 Hz throughout the
+  measurement, and all four buses ended with zero drops, misses or errors.

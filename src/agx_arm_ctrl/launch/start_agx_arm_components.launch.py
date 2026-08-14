@@ -206,6 +206,16 @@ def generate_launch_description():
         default_value="200",
         description="Publishing rate for the AGX Arm node.",
     )
+    runtime_metrics_enabled_arg = DeclareLaunchArgument(
+        "runtime_metrics_enabled",
+        default_value="false",
+        description=(
+            "Log per-thread SDK call counts and durations in the arm drivers and "
+            "the hand bridges. Off by default because it costs CPU on the Jetson. "
+            "It is how both the one-owner claim and the hand bridge's SDK share "
+            "are read, so it has to be reachable from the supported bring-up."
+        ),
+    )
     enable_timeout_arg = DeclareLaunchArgument(
         "enable_timeout",
         default_value="5.0",
@@ -339,6 +349,7 @@ def generate_launch_description():
             "namespace": LaunchConfiguration("namespace"),
             "can_port": LaunchConfiguration("can_port"),
             "pub_rate": LaunchConfiguration("pub_rate"),
+            "runtime_metrics_enabled": LaunchConfiguration("runtime_metrics_enabled"),
             "auto_enable": LaunchConfiguration("auto_enable"),
             "fast_mode": LaunchConfiguration("fast_mode"),
             "arm_type": LaunchConfiguration("arm_type"),
@@ -387,6 +398,7 @@ def generate_launch_description():
             "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path"),
             "auto_enable": LaunchConfiguration("auto_enable"),
             "pub_rate": LaunchConfiguration("pub_rate"),
+            "runtime_metrics_enabled": LaunchConfiguration("runtime_metrics_enabled"),
             "follow": LaunchConfiguration("follow"),
             "control": "true",
             "use_mit_controller": "true",
@@ -435,6 +447,7 @@ def generate_launch_description():
             "omnihand_sdk_cfg_path": LaunchConfiguration("omnihand_sdk_cfg_path"),
             "auto_enable": LaunchConfiguration("auto_enable"),
             "pub_rate": LaunchConfiguration("pub_rate"),
+            "runtime_metrics_enabled": LaunchConfiguration("runtime_metrics_enabled"),
             "follow": LaunchConfiguration("follow"),
             "use_mit_controller": "true",
             "mit_control_rate_hz": LaunchConfiguration("mit_control_rate_hz"),
@@ -485,6 +498,7 @@ def generate_launch_description():
             "fast_mode": LaunchConfiguration("fast_mode"),
             "speed_percent": LaunchConfiguration("speed_percent"),
             "pub_rate": LaunchConfiguration("pub_rate"),
+            "runtime_metrics_enabled": LaunchConfiguration("runtime_metrics_enabled"),
             "enable_timeout": LaunchConfiguration("enable_timeout"),
             "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
             "feedback_joint_prefix": LaunchConfiguration("feedback_joint_prefix"),
@@ -531,6 +545,7 @@ def generate_launch_description():
         fast_mode_arg,
         speed_percent_arg,
         pub_rate_arg,
+        runtime_metrics_enabled_arg,
         enable_timeout_arg,
         tcp_offset_arg,
         input_joint_prefix_arg,

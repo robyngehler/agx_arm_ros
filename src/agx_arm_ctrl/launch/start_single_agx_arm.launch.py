@@ -266,6 +266,7 @@ def generate_launch_description():
             'sdk_cfg_path': LaunchConfiguration('omnihand_sdk_cfg_path'),
             'pub_rate': LaunchConfiguration('hand_pub_rate'),
             'joint_read_rate': LaunchConfiguration('hand_joint_read_rate'),
+            'runtime_metrics_enabled': LaunchConfiguration('runtime_metrics_enabled'),
             'joint_states_command_topic': LaunchConfiguration('joint_states_command_topic'),
         }.items(),
         condition=IfCondition(

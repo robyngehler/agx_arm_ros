@@ -99,6 +99,16 @@ def generate_launch_description():
         default_value="50.0",
         description="Feedback publish rate in Hz.",
     )
+    runtime_metrics_enabled_arg = DeclareLaunchArgument(
+        "runtime_metrics_enabled",
+        default_value="false",
+        description=(
+            "Log per-SDK-call counts, rates and durations by name and thread. Off "
+            "by default because it costs CPU on the Jetson; it is how the vendor "
+            "SDK's share of the bridge's cost is read, so it has to be reachable "
+            "from the supported bring-up rather than only by hand."
+        ),
+    )
     joint_read_rate_arg = DeclareLaunchArgument(
         "joint_read_rate",
         default_value="20.0",
@@ -164,6 +174,9 @@ def generate_launch_description():
             "can_interface": LaunchConfiguration("can_interface"),
             "pub_rate": ParameterValue(LaunchConfiguration("pub_rate"), value_type=float),
             "joint_read_rate": ParameterValue(LaunchConfiguration("joint_read_rate"), value_type=float),
+            "runtime_metrics_enabled": ParameterValue(
+                LaunchConfiguration("runtime_metrics_enabled"), value_type=bool
+            ),
             "command_retry_enabled": ParameterValue(
                 LaunchConfiguration("command_retry_enabled"), value_type=bool
             ),
@@ -194,6 +207,7 @@ def generate_launch_description():
         sdk_python_dir_arg,
         pub_rate_arg,
         joint_read_rate_arg,
+        runtime_metrics_enabled_arg,
         command_retry_enabled_arg,
         command_retry_max_attempts_arg,
         command_retry_period_s_arg,

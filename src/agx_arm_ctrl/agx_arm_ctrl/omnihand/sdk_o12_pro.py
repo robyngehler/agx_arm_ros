@@ -36,6 +36,7 @@ from agx_arm_ctrl.omnihand_bridge_node import (
     OmniHandStatusSnapshot,
     OmniHandTactileSnapshot,
 )
+from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
 
 
 SDK_STATUS_READ_INTERVAL_S = 1.0
@@ -118,8 +119,10 @@ class O12ProSdkBackend:
         device_id: int = 1,
         sdk_python_dir: str = "",
         can_interface: str = "",
+        metrics: RuntimeMetrics | None = None,
     ) -> None:
         self.model = model
+        self._metrics = metrics or RuntimeMetrics(enabled=False)
         self.hand_side = hand_side
         self.device_id = device_id
         self.backend_name = "vendor_sdk_o12_pro"
@@ -161,7 +164,16 @@ class O12ProSdkBackend:
         ]
 
         # AgibotHandO12 opens the CAN session in its constructor.
-        self.hand = sdk_class(device_id=device_id, hand_type=hand_type)
+        #
+        # Wrapped so every vendor call is counted and timed by name, from the
+        # thread that made it. Wrapping the session rather than each call site is
+        # what makes the coverage complete: the call nobody thought to measure is
+        # the one that turns out to dominate. ~150 % of a core per hand lives
+        # behind this object and has never been decomposed.
+        self.hand = MeasuredSdk(
+            sdk_class(device_id=device_id, hand_type=hand_type),
+            self._metrics,
+        )
         if hasattr(self.hand, "show_data_details"):
             self.hand.show_data_details(False)
 

@@ -560,6 +560,24 @@ against 25 frames/s on each hand bus, and within 5 % of the same cost whether
 the arms are idle or both are holding MIT at 100 Hz. It is the system's largest
 consumer by a wide margin.
 
+**Corrected 2026-08-14, after the cost was finally decomposed on hardware.** Two
+findings change what this section should attack:
+
+1. Roughly a third of it was the bridge publishing three messages at the arm's
+   200 Hz while its data changed at 20 Hz — and the subscribers paid for that
+   too. Fixed: the pair fell to 222 %, and the stack from 814 % to 526 %.
+2. **What remains is not ours.** Each bridge process carries exactly one thread
+   more than the same bridge on the mock backend, and that thread runs at
+   **100.0 % of a core with `wchan=0`** — a poll loop inside the compiled vendor
+   library, holding no GIL and reachable from no call site of ours. Every SDK
+   call we make sums to ~5 % of a core.
+
+So the transport-efficiency items below divide up 5 %, not 100 %. Keep them for
+the bus and for latency; stop treating them as the CPU answer. The CPU answer is
+a vendor question — an SDK setting (none is exposed in its API surface), a patch
+in the tracked vendor fork under C3, or a decision to accept one core per hand
+and keep it off the control cores.
+
 This section owns **all** hand-bridge runtime and transport efficiency work.
 The former phase 5C ("bridge timer split") duplicated it and has been folded in;
 phase 5 keeps only the before/after close-out measurement, and the public hand
@@ -610,8 +628,13 @@ Exit gate:
 - hand traffic appears only on the hand interfaces
 - same-side arm and hand motion run in parallel in an L3 run without CAN RX drops
 - **measured** hand-bridge CPU reduction against the 160 %-per-hand census
-  figure, with the per-call profile recorded alongside it
+  figure, with the per-call profile recorded alongside it — *done 2026-08-14:
+  222 % for the pair, per-call profile in `checklist.md`*
 - the `FollowJointTrajectory` path is functionally unchanged, proven by an L3 run
+  — *done 2026-08-14: two poses through the action on the right hand, both
+  SUCCESS with verified delivery, 0.27 s and 0.90 s*
+- a decision recorded on the vendor spin thread: patched, configured away, or
+  accepted and pinned. One core per hand is not something to leave undescribed
 - the `shared_per_side` topology still executes an activity when selected
 
 ---

@@ -515,6 +515,67 @@ Percent of one core, spinning node, executor included.
   It is the whole remaining target, and it needs the per-SDK-call profile on
   hardware — the split above bounds it but does not decompose it.
 
+### The re-run on hardware, and where the rest of the cost actually is
+
+L3, 2026-08-14, same bring-up and same two scenarios as the 2026-08-13 census.
+Percent of one core; desktop load excluded and reported separately.
+
+| node | before (08-13) | after (08-14) |
+| --- | --- | --- |
+| omnihand_bridge | 319.2 % | **222.4 %** |
+| agx_arm_ctrl_single | 140.1 % | **75.3 %** |
+| rviz2 | 115.9 % | 92.9 % |
+| omnihand_follow_joint_trajectory | 88.1 % | **10.4 %** |
+| agx_arm_mit_controller | 80.1 % | 70.7 % |
+| agx_arm_shared_can_recovery | 35.1 % | 25.8 % |
+| agx_arm_joint_state_merger | 27.2 % | 20.6 % |
+| move_group | 8.6 % | 8.3 % |
+| **total, arms idle** | **814.5 %** | **526.5 %** |
+| **total, both arms MIT 100 Hz** | **882.9 %** | **600.1 %** |
+
+The mock measurement predicted ~74 % saved across the pair, and the stack saved
+**288 %**. The difference is the subscribers: publishing ten times more often
+than the data changed was also charged to everyone reading it. The trajectory
+node fell from 88.1 % to 10.4 % without a line of it being touched, and the arm
+driver nearly halved — it merges hand joints into the combined state, and that
+callback was firing at 200 Hz for 20 Hz of new data.
+
+**Then the per-thread view answered the real question, and the answer was not
+what the plan assumed.** Inside each bridge process:
+
+| thread | cost |
+| --- | --- |
+| one unnamed thread, `wchan=0` (never sleeps) | **100.0 %** |
+| `hand_<side>_tick` — our acquisition, publication and every SDK call we make | 10.9 % |
+| ~21 other threads (DDS, timers) | < 0.5 % total |
+
+A bridge on the mock backend has 22 threads; with the vendor SDK open it has 23.
+**The one extra thread is the one at 100 %.** It appears exactly when the vendor
+session is opened, it is inside compiled C++ (`agibot_hand_core`,
+`libomniHandPro25Can.so`), and it never sleeps — the signature of a poll loop
+with no blocking read.
+
+Our own SDK calls, summed from the per-call profile, come to ~50 ms of wall
+clock per second — about **5 %** of a core:
+
+| call | rate | mean | max |
+| --- | --- | --- | --- |
+| `get_all_active_joint_angles` | 15/s | 2.18 ms | 13.07 ms |
+| `get_tactile_sensor_data` | 5/s | 2.24 ms | 4.44 ms |
+| `get_all_error_reports` | 1/s | 6.83 ms | 17.69 ms |
+| `get_all_{temperature,current}_reports` | 1/s each | ~0.00 ms | 0.01 ms |
+
+So **91 % of a hand bridge's cost is a vendor busy-wait we never call.** Every
+remaining transport-efficiency item below — dropping the read-before-write,
+polling only under ownership, bounding round trips per setpoint — divides up the
+5 %, not the 100 %. They remain worth doing for the CAN bus and for latency;
+they are no longer the CPU answer, and 2C's premise is corrected accordingly.
+
+Being a native thread, it does not hold the GIL: it burns a core without
+starving the Python nodes. Both arms held MIT at 100 Hz throughout, with
+`send_mit_setpoint` at 2.04 ms mean, and all four buses ended the run with zero
+drops, misses or errors.
+
 ### 2B Parallel resource model, handoff derived not configured
 
 - [ ] Derive the scheduler's bus tokens from `bus_topology`; under
