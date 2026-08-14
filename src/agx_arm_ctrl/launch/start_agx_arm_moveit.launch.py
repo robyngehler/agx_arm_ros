@@ -25,6 +25,17 @@ from _multi_arm_runtime import (  # noqa: E402
 from agx_arm_ctrl.execution_profiles import resolve_execution_profile  # noqa: E402
 from agx_arm_ctrl.duo_runtime_contract import validate_duo_both_arms_contract  # noqa: E402
 
+# The hand-bus default is DERIVED from the one declared topology, never typed in
+# here. It used to default to "shared" while the hardware had four buses, so a
+# full bring-up quiesced the arm for every hand motion that did not need it.
+try:
+    from agx_arm_ctrl.motion_registry import handshake_required as _handshake_required
+
+    _DEFAULT_HAND_BUS = "shared" if _handshake_required() else "dedicated"
+except Exception:  # registry unreadable: take the degraded, safe reading
+    _DEFAULT_HAND_BUS = "shared"
+
+
 
 def _bool_string(value: object, default: str) -> str:
     text = str(value).strip() if value is not None else ""
@@ -327,7 +338,7 @@ def generate_launch_description():
             DeclareLaunchArgument("omnihand_type", default_value="left", choices=["left", "right"]),
             DeclareLaunchArgument("launch_omnihand_bridge", default_value="false", choices=["true", "false"]),
             DeclareLaunchArgument(
-                "hand_bus", default_value="shared", choices=["shared", "dedicated"],
+                "hand_bus", default_value=_DEFAULT_HAND_BUS, choices=["shared", "dedicated"],
                 description="shared: arm<->hand window handshake on the shared side bus; "
                 "dedicated: handshake off for parallel arm+hand on a second bus.",
             ),

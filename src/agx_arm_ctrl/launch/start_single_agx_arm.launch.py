@@ -9,6 +9,17 @@ from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 import os
 
+# The hand-bus default is DERIVED from the one declared topology, never typed in
+# here. It used to default to "shared" while the hardware had four buses, so a
+# full bring-up quiesced the arm for every hand motion that did not need it.
+try:
+    from agx_arm_ctrl.motion_registry import handshake_required as _handshake_required
+
+    _DEFAULT_HAND_BUS = "shared" if _handshake_required() else "dedicated"
+except Exception:  # registry unreadable: take the degraded, safe reading
+    _DEFAULT_HAND_BUS = "shared"
+
+
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
 
 def generate_launch_description():
@@ -62,7 +73,7 @@ def generate_launch_description():
 
     hand_bus_arg = DeclareLaunchArgument(
         'hand_bus',
-        default_value='shared',
+        default_value=_DEFAULT_HAND_BUS,
         choices=['shared', 'dedicated'],
         description=(
             'Whether the OmniHand shares the arm side CAN bus (shared) or has '

@@ -21,6 +21,7 @@ if str(MOVEIT_LAUNCH_DIR) not in sys.path:
     sys.path.insert(0, str(MOVEIT_LAUNCH_DIR))
 
 from _multi_arm_runtime import (  # noqa: E402
+
     DEFAULT_PREFIXED_FEEDBACK_TOPIC,
     absolute_topic_for_namespace,
     join_relative_namespaces,
@@ -28,6 +29,16 @@ from _multi_arm_runtime import (  # noqa: E402
     requires_prefixed_feedback,
     resolve_arm_instances,
 )
+
+# The hand-bus default is DERIVED from the one declared topology, never typed in
+# here. It used to default to "shared" while the hardware had four buses, so a
+# full bring-up quiesced the arm for every hand motion that did not need it.
+try:
+    from agx_arm_ctrl.motion_registry import handshake_required as _handshake_required
+
+    _DEFAULT_HAND_BUS = "shared" if _handshake_required() else "dedicated"
+except Exception:  # registry unreadable: take the degraded, safe reading
+    _DEFAULT_HAND_BUS = "shared"
 
 
 os.environ["RCUTILS_COLORIZED_OUTPUT"] = "1"
@@ -302,7 +313,7 @@ def generate_launch_description():
             DeclareLaunchArgument("omnihand_type", default_value="left", choices=["left", "right"]),
             DeclareLaunchArgument("launch_omnihand_bridge", default_value="false", choices=["true", "false"]),
             DeclareLaunchArgument(
-                "hand_bus", default_value="shared", choices=["shared", "dedicated"],
+                "hand_bus", default_value=_DEFAULT_HAND_BUS, choices=["shared", "dedicated"],
                 description="shared: arm<->hand window handshake; dedicated: off (parallel).",
             ),
             DeclareLaunchArgument("omnihand_backend_type", default_value="mock"),

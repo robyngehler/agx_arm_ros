@@ -33,27 +33,32 @@ from agx_arm_msgs.msg import (
     OmniHandTactileRaw,
 )
 
-from agx_arm_ctrl.motion_registry import arm_sides
+from agx_arm_ctrl.motion_registry import bus_topology, hand_sides
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HandModel, get_hand_model
 
 
-# Side -> native SocketCAN interface. The authoritative mapping is the motion
-# registry (duo_motion_registry.yaml arm.sides.<side>.can_port); a tiny built-in
-# fallback only covers the registry being unreadable. The can_interface launch
-# parameter still overrides this per run.
-_FALLBACK_CAN_INTERFACES = {"right": "can_nero_right", "left": "can_nero_left"}
-
-
 def resolve_can_interface(hand_side: str) -> tuple[str, str]:
-    """Return (interface_name, source) for the side from the motion registry."""
+    """Return (interface_name, source) for this hand's OWN bus.
+
+    Read from ``omnihand.sides.<side>.can_port``. It used to come from
+    ``arm.sides.<side>.can_port`` with a built-in fallback to the arm buses,
+    which is how a full four-bus bring-up ran with both hand bridges pointed at
+    the arm interfaces: they timed out continuously, published nothing, and cost
+    290 % of a core doing it. Nothing in the logs said "wrong bus", because from
+    the bridge's point of view it had resolved an interface successfully.
+
+    Returns an empty name rather than guessing. The caller fails closed for a
+    hardware backend; a silently wrong interface is worse than a refusal,
+    because the arm bus will happily accept frames no hand will ever answer.
+    """
     try:
-        side_cfg = arm_sides().get(hand_side, {})
+        side_cfg = hand_sides().get(hand_side, {})
         interface = str(side_cfg.get("can_port", "")).strip()
         if interface:
-            return interface, "duo_motion_registry.yaml"
+            return interface, "duo_motion_registry.yaml omnihand.sides"
     except Exception:
         pass
-    return _FALLBACK_CAN_INTERFACES.get(hand_side, ""), "built-in fallback"
+    return "", "not declared"
 
 
 # The legacy O10 joint set / limits / mirror / tactile map come from the O10 hand
@@ -909,11 +914,15 @@ class OmniHandBridgeNode(Node):
         if self.backend_type == "sdk":
             if not self.can_interface:
                 raise ValueError(
-                    "backend_type=sdk needs a SocketCAN interface. Set 'can_interface' "
-                    f"or add '{self.hand_side}' to config/{CAN_INTERFACE_CONFIG}."
+                    f"backend_type=sdk needs this hand's own SocketCAN interface and "
+                    f"none is declared for side '{self.hand_side}'. Add it under "
+                    "omnihand.sides.<side>.can_port in duo_motion_registry.yaml, or "
+                    "pass can_interface for this run. Refusing rather than falling "
+                    "back to the arm bus, where a hand is never reached."
                 )
             self.get_logger().info(
-                f"OmniHand SocketCAN interface: {self.can_interface} (from {interface_source})"
+                f"OmniHand SocketCAN interface: {self.can_interface} "
+                f"(from {interface_source}; bus topology {bus_topology()})"
             )
             if self.hand_model.name == "o12_pro":
                 # Lazy import: only pull in the agibot_hand SDK when actually

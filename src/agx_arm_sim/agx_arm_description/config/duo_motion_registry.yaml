@@ -15,7 +15,20 @@
 #
 # schema_version bumps when the structure changes; consumers should tolerate
 # additive fields.
-schema_version: 2
+schema_version: 3
+
+# --- Bus topology (C7): one declared fact, not two switches -----------------
+# Every device owns its own CAN interface. Arms are on native controllers, hands
+# on FD-capable USB adapters. Both the hand bridges' interface and whether the
+# arm<->hand window handshake runs are DERIVED from this — reading it as two
+# independent settings is what let a stack come up with the handshake enabled
+# and the hands pointed at the arm buses.
+#
+#   dedicated_per_device : every device has its own bus; arm and hand on one
+#                          side may move in parallel and no handshake is needed.
+#   shared_per_side      : degraded fallback — arm and hand share the side bus,
+#                          so hand motion needs the step-and-settle window.
+bus_topology: dedicated_per_device
 
 # --- Arm (Nero, 7-DoF) -------------------------------------------------------
 arm:
@@ -84,6 +97,20 @@ motion_profiles:
 # mirror, and the tip-to-tip tactile finger map (ROS layout name, vendor EFinger).
 # limit_unit selects how min/max are interpreted (deg are converted to rad on load).
 omnihand:
+  # Per-side runtime binding. `can_port` is the hand's OWN interface: it must
+  # never be derived from the arm's, which silently pointed both bridges at the
+  # arm buses and left them timing out while transmitting nothing.
+  sides:
+    left:
+      namespace: left_arm
+      can_port: hand_left
+      device_id: 1
+      canfd_id: 0
+    right:
+      namespace: right_arm
+      can_port: hand_right
+      device_id: 1
+      canfd_id: 0
   o12_pro:
     sdk_active_joint_count: 12
     limit_unit: deg

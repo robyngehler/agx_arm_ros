@@ -15,6 +15,11 @@
 # (`agx_arm_ctrl/runtime_metrics.py:name_os_thread`); anything still showing the
 # process name is a thread nobody has labelled yet, not an anonymous cost.
 #
+# Processes are selected by their executable, never by matching the whole
+# command line: a `pgrep -f` pattern also matches the measuring shell, and a
+# greedy match across a long command line captures spaces and silently corrupts
+# the columns. That mis-reported one thread as three before it was fixed.
+#
 # Usage: bash scripts/measure_stack_cpu.sh [seconds] [--threads]
 set -uo pipefail
 
@@ -23,55 +28,84 @@ SHOW_THREADS="${2:-}"
 
 TICKS=$(getconf CLK_TCK)
 CORES=$(nproc)
+SELF=$$
 
-# ROS nodes launched from this workspace, plus the coordinator and any vendor
-# bridges. Matched on the install path so a stray editor process cannot join.
+# A ROS node of ours is a process whose argv[1] is an executable installed into
+# this workspace, or a known ROS tool. Shells, pgrep and the sampler itself are
+# excluded by construction rather than by pattern.
 ros_pids() {
-    pgrep -f "install/.*/lib/|ros2 launch|rviz2|move_group|robot_state_publisher" 2>/dev/null \
-        | sort -u
+    local pid comm exe
+    for pid in $(ls /proc | grep -E '^[0-9]+$'); do
+        [ "$pid" = "$SELF" ] && continue
+        [ -r "/proc/$pid/cmdline" ] || continue
+        comm=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+        case "$comm" in
+            bash|sh|dash|pgrep|sleep|awk|sed|grep|ps|top) continue ;;
+        esac
+        exe=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | sed -n 2p)
+        case "$exe" in
+            */agx_arm_ros/install/*|*/opt/ros/*/bin/ros2) echo "$pid" ;;
+            *) case "$comm" in
+                   rviz2|move_group|robot_state_publisher|static_transform*) echo "$pid" ;;
+               esac ;;
+        esac
+    done
+}
+
+PIDS=$(ros_pids)
+[ -z "$PIDS" ] && { echo "no workspace ROS nodes running" >&2; exit 1; }
+
+node_name() {  # pid -> a stable, whitespace-free label
+    local pid="$1" exe
+    exe=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | sed -n 2p)
+    case "$exe" in
+        */bin/ros2) echo "ros2-launch" ;;
+        */*)        basename "$exe" ;;
+        *)          cat "/proc/$pid/comm" 2>/dev/null || echo "pid$pid" ;;
+    esac
 }
 
 snapshot() {
-    for pid in $(ros_pids); do
-        [ -r "/proc/$pid/stat" ] || continue
-        local name
-        name=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null \
-            | grep -oE "[a-z_0-9]+\.launch\.py|lib/[a-z_0-9]+/[a-z_0-9]+|rviz2|move_group" \
-            | tail -1 | sed 's#.*/##')
-        [ -z "$name" ] && name="pid$pid"
+    local pid task
+    for pid in $PIDS; do
+        [ -d "/proc/$pid/task" ] || continue
+        local name; name=$(node_name "$pid")
         for task in /proc/"$pid"/task/*; do
             [ -r "$task/stat" ] || continue
-            echo "$pid:$(basename "$task") $name/$(cat "$task/comm" 2>/dev/null) $(awk '{print $14+$15}' "$task/stat")"
+            echo "$pid:$(basename "$task")|$name|$(cat "$task/comm" 2>/dev/null)|$(awk '{print $14+$15}' "$task/stat")"
         done
     done
 }
 
 echo "=== stack CPU over ${WINDOW}s, ${CORES} cores ==="
-echo "desktop load at start (percent of one core each):"
-ps -eo comm,pcpu --sort=-pcpu | awk 'NR>1 && $2>1.0 && $1 !~ /python3|ros2|rviz/ {printf "  %-16s %5.1f%%\n", $1, $2}' | head -6
+echo "-- non-ROS load at start (percent of one core each; named, not ignored) --"
+ps -eo pid,comm,pcpu --sort=-pcpu | awk -v skip="$(echo $PIDS | tr ' ' ',')" '
+    BEGIN { n=split(skip, a, ","); for (i=1;i<=n;i++) ros[a[i]]=1 }
+    NR>1 && $3>1.0 && !($1 in ros) { printf "   %-18s %5.1f%%\n", $2, $3 }' | head -6
 
 before=$(snapshot)
 sleep "$WINDOW"
 after=$(snapshot)
 
-report=$(join <(echo "$before" | sort) <(echo "$after" | sort) \
-    | awk -v ticks="$TICKS" -v w="$WINDOW" '
-        { delta = $5 - $3; if (delta <= 0) next
-          split($2, parts, "/")
-          core = delta / ticks / w * 100
-          per_node[parts[1]] += core
-          printf "%s\t%s\t%.1f\n", parts[1], parts[2], core }
-        END { for (n in per_node) printf "NODE\t%s\t%.1f\n", n, per_node[n] }')
+joined=$(join -t'|' <(echo "$before" | sort -t'|' -k1,1) <(echo "$after" | sort -t'|' -k1,1) \
+    | awk -F'|' -v ticks="$TICKS" -v w="$WINDOW" '
+        { delta = $7 - $4; if (delta <= 0) next
+          printf "%s|%s|%.2f\n", $2, $3, delta / ticks / w * 100 }')
 
 echo
-echo "per node (percent of ONE core — the ceiling that actually binds):"
-echo "$report" | awk -F'\t' -v cores="$CORES" '$1=="NODE" {printf "  %-34s %7.1f%% of a core  %5.1f%% of machine\n", $2, $3, $3/cores}' | sort -k2 -rn
+echo "-- per node (percent of ONE core: the ceiling that actually binds) --"
+echo "$joined" | awk -F'|' -v cores="$CORES" '
+    { n[$1] += $3 }
+    END { for (k in n) printf "   %-30s %7.1f%% of a core  %5.1f%% of machine\n", k, n[k], n[k]/cores }' \
+    | sort -k2 -rn
 
 if [ "$SHOW_THREADS" = "--threads" ]; then
     echo
-    echo "per thread:"
-    echo "$report" | awk -F'\t' '$1!="NODE" {printf "  %-24s %-18s %7.1f%%\n", $1, $2, $3}' | sort -k3 -rn | head -25
+    echo "-- per thread --"
+    echo "$joined" | awk -F'|' '{ t[$1"  "$2] += $3 }
+        END { for (k in t) printf "   %-46s %7.1f%%\n", k, t[k] }' | sort -k3 -rn | head -22
 fi
 
 echo
-echo "$report" | awk -F'\t' -v cores="$CORES" '$1=="NODE" {s+=$3} END {printf "TOTAL ROS: %.1f%% of a core (%.1f%% of machine)\n", s, s/cores}'
+echo "$joined" | awk -F'|' -v cores="$CORES" '{ s += $3 }
+    END { printf "TOTAL ROS: %.1f%% of a core (%.1f%% of machine)\n", s, s/cores }'

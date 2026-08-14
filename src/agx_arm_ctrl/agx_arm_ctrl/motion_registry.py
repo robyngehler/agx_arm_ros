@@ -61,9 +61,46 @@ def arm_sides() -> dict[str, Any]:
     return load_motion_registry().get("arm", {}).get("sides", {})
 
 
+def hand_sides() -> dict[str, Any]:
+    """Return the omnihand.sides mapping (left/right -> namespace/can_port/ids).
+
+    A hand's interface is its own declared fact. It used to be read off
+    ``arm.sides.<side>.can_port``, which pointed both bridges at the arm buses:
+    they timed out continuously while transmitting nothing, and the failure was
+    invisible until a full-stack bring-up was measured.
+    """
+    return load_motion_registry().get("omnihand", {}).get("sides", {})
+
+
+def bus_topology() -> str:
+    """Return the declared CAN topology (C7).
+
+    One fact, from which both the hands' interfaces and whether the arm<->hand
+    window handshake runs are derived. Defaults to the degraded reading when
+    absent, because assuming parallel operation on an undeclared topology is the
+    unsafe direction: it would command a hand while the arm holds the same bus.
+    """
+    return str(load_motion_registry().get("bus_topology", "shared_per_side")).strip()
+
+
+def handshake_required() -> bool:
+    """True when arm and hand share a bus and hand motion needs the window.
+
+    Derived from the one declared topology rather than configured separately.
+    The two used to be independent: a launch defaulting to the shared-bus
+    handshake while the hardware had four buses meant the arm was quiesced for
+    every hand motion that did not need it — and the reverse combination would
+    command a hand while the arm holds the same bus.
+    """
+    return bus_topology() != "dedicated_per_device"
+
+
 def omnihand_model(name: str) -> dict[str, Any]:
     """Return one omnihand model entry (active_joints, limits, mirror, tactile)."""
-    models = load_motion_registry().get("omnihand", {})
+    section = load_motion_registry().get("omnihand", {})
+    # `sides` is runtime binding, not a hand model; listing it as a known model
+    # would send a caller looking for a joint set that does not exist.
+    models = {k: v for k, v in section.items() if k != "sides"}
     if name not in models:
         raise KeyError(f"unknown omnihand model '{name}'; known: {sorted(models)}")
     return models[name]
@@ -75,4 +112,7 @@ __all__ = [
     "motion_profile",
     "arm_sides",
     "omnihand_model",
+    "hand_sides",
+    "bus_topology",
+    "handshake_required",
 ]

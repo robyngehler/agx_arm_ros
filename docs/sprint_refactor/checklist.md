@@ -429,16 +429,63 @@ hardware.
 
 ### 2A Declare the topology, model the four buses
 
-- [ ] Add `bus_topology` to the registry as the single declared fact (C7) and
-      `omnihand.sides.<side>.can_port`; bump the schema version.
-- [ ] Remove the bridge's derivation of its interface from the arm `can_port`;
-      fail closed for hardware profiles instead of falling back to
-      `can_nero_right`.
+- [x] Add `bus_topology` to the registry as the single declared fact (C7) and
+      `omnihand.sides.<side>.can_port`; schema version bumped to 3.
+- [x] Remove the bridge's derivation of its interface from the arm `can_port`
+      and delete the built-in fallback to the arm buses. A hardware backend now
+      refuses to start without its own declared interface rather than opening
+      the arm's, where no hand ever answers.
+- [x] Derive the hand-bus default from the declared topology instead of typing
+      `shared` into four launch files. The handshake and the interface were two
+      independent settings, and the combination that shipped was the wrong one
+      in both halves.
+- [x] **Live hardware validation of `duo_hand`**, which the docs carried as
+      "validated offline; live hardware validation is still pending". Both hand
+      bridges resolve to `hand_left`/`hand_right`, zero CANFD timeouts, hand
+      feedback at 167/s (right) and 126/s (left), and each device on its own
+      bus: hand buses 25 f/s each, arm buses 2200 f/s RX with 703 f/s TX per arm
+      under a dual MIT hold. No CAN errors on any of the four.
 - [ ] Replace process-global `OMNIHAND_SOCKETCAN_IFACE` selection with explicit
       backend construction.
 - [ ] Adopt `scripts/activate_duo_can.sh` as the supported bring-up and retire
       `activate_native_can.sh` / `omnihand_canfd_activate.sh`.
 - [ ] Rewrite the operational docs bannered in 0A for the four-bus reality.
+
+### 1B/2C measurement: what the full stack actually costs
+
+Measured 2026-08-14 on the real bring-up (`components.launch`, `duo_hand`,
+MoveIt + RViz, both arms, both hands), percent of **one** core — the ceiling
+that binds, because these are GIL-bound Python nodes and a 12-core machine has
+headroom the individual node cannot use. Desktop load was ~20 % of a core
+(browser, editor, shell) and is excluded from these figures.
+
+| node (both sides where applicable) | arms idle | both arms MIT at 100 Hz |
+| --- | --- | --- |
+| **omnihand_bridge** | **319.2 %** | **324.7 %** |
+| agx_arm_ctrl_single | 140.1 % | 182.3 % |
+| rviz2 | 115.9 % | 118.5 % |
+| omnihand_follow_joint_trajectory | 88.1 % | 89.1 % |
+| agx_arm_mit_controller | 80.1 % | 99.7 % |
+| agx_arm_shared_can_recovery | 35.1 % | 33.5 % |
+| agx_arm_joint_state_merger | 27.2 % | 26.7 % |
+| move_group | 8.6 % | 8.3 % |
+| **total** | **814.5 %** (67.9 % of machine) | **882.9 %** (73.6 % of machine) |
+
+Two things this settles:
+
+- **The hand bridges are the system's CPU problem**, at ~160 % of a core each
+  for 25 frames/s on the wire, and they cost the same whether a hand is doing
+  anything or not. That is 2C's target and it is now measured on a working
+  four-bus stack rather than inferred.
+- **The arm driver's acquisition loop is not.** Both acquisition threads
+  together are 5.7 %. An earlier plan to attack the rclpy executor inside the
+  driver was dropped on this evidence: it would have optimised a fifth of a
+  core inside a system spending eight.
+
+An earlier run of the same scenario, before the hand wiring was fixed, is kept
+as a caution: the bridges cost 289.6 % of a core while transmitting **nothing
+at all** on any of the four buses. A node can be the largest consumer in the
+system purely by failing.
 
 ### 2B Parallel resource model, handoff derived not configured
 
