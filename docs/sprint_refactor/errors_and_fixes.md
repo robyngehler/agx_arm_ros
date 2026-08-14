@@ -653,3 +653,34 @@ changes, which is the interesting part.
   X because Y" is a description of an unsolved problem, not of a settled one, and
   is worth re-reading whenever the cost of the workaround shows up in a
   measurement.
+
+### The poll() fix reintroduced the spin under a socket error
+
+- Symptom: none observed — caught by review while planning fault-injection
+  coverage, before it could be hit.
+- Cause: the first version of the vendor patch checked only `poll()`'s return
+  value. `POLLERR`, `POLLHUP` and `POLLNVAL` are reported in `revents` whether or
+  not they were requested, and they do not clear by themselves, so on a
+  persistent socket error `poll()` returns immediately every time, the `read()`
+  fails, and the loop spins exactly as before — **during a bus fault**, which is
+  when the CPU is wanted for recovery rather than least.
+- Fix (`c037b38` on `jetson-orin-socketcan`): `POLLNVAL` ends the loop, since the
+  descriptor is gone; `POLLERR`/`POLLHUP` without `POLLIN` waits out the poll
+  interval before retrying; `POLLIN` wins over a simultaneous error flag, because
+  queued frames would otherwise be discarded while a caller waits for them.
+- L3 evidence, 25 s link-down on `hand_right` under a running bridge: receive
+  thread 0.12 % of a core, in `do_sys_poll` for every sample; process cost fell
+  from 14 % to 6 % because requests fail instead of waiting; fault detected,
+  backoff entered, recovery automatic, feedback back to 20.1/s. Shutdown still
+  completes promptly, which is the property the original blocking-read comment
+  was protecting.
+- **Stated plainly: this run does not exercise the new branches.** A downed CAN
+  link delivers nothing, so `poll()` reaches its timeout and the ordinary path
+  handles it. `POLLERR`/`POLLHUP` need the adapter removed and `POLLNVAL` needs
+  the descriptor closed underneath the thread. The branches are reasoned, not
+  observed, and the docs say so rather than counting the link-down as coverage.
+- Recovery latency worth noting separately: the link was down 25 s and recovery
+  was declared 50 s after the fault, because the probe cadence escalates 5x
+  (2 s to 10 s) after eight failed probes and three clean readbacks are required.
+  That escalation exists to stop a hammering hand congesting a *shared* bus; on
+  per-device buses the reason is largely gone and only the latency remains.

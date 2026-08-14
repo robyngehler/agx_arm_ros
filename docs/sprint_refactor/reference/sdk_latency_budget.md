@@ -465,9 +465,23 @@ work, and for a command that is several transmits but one instruction it is a
 
 What remains:
 
-- **the RX-socket drain under a fault.** The loop now survives recovery without
-  overruns, but whether it drains the socket fast enough while a fault is in
-  progress is a separate measurement, and it belongs to Phase 1B.
+- **the RX-socket drain under a fault** — *for the arms only; the hand side is
+  answered.* On a hand, nothing our code writes drains the socket at all: the
+  vendor SDK's own receive thread does, and until 2026-08-14 it did so by
+  spinning on a non-blocking `read()` at 100 % of a core. It now waits in
+  `poll()`. Measured across a 25 s link-down on `hand_right`: the receive thread
+  stayed at 0.12 % of a core in `do_sys_poll`, the bridge detected the fault,
+  backed off, and recovered on its own, with the feedback rate returning to
+  20.1/s. A downed link produces no frames to buffer, so this measures the fault
+  path and not an overflow; the overflow-capable case (bus up, reader stopped)
+  is still untested. See `errors_and_fixes.md`, 2026-08-14.
+- **recovery lags the bus by roughly the outage.** In that run the link was down
+  25 s and the bridge declared recovery 50 s after the fault — because after
+  eight failed probes the cadence escalates 5x (2 s to 10 s), and three clean
+  readbacks at that cadence take ~30 s. The escalation exists to stop a
+  hammering hand congesting a *shared* arm+hand bus. On the current per-device
+  topology that reasoning is largely gone, and the cost of it is recovery
+  latency. Worth revisiting with the topology, not before.
 - **the residual per-frame transmit cost.** ~5 ms worst case survives a
   1000-frame TX queue and is arbitration against the arm's own feedback push.
   It is not a safety problem at 100 Hz; it is the thing that decides whether the

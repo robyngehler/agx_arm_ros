@@ -6,10 +6,11 @@ component: `src/can_bus_device/socket_can/c_can_bus_device_socket_can.cc`
 affected version: `VERSION` 0.9.0, SocketCAN backend
 platform observed: Jetson AGX Orin (aarch64), Ubuntu 22.04, kernel 5.15.185-tegra
 
-This is the text we sent to Agibot, kept here so the repo records what was
-reported, when, and on what evidence. The fix is carried in our fork
-(`jetson-orin-socketcan`, commit `f43a0e9`) until an upstream release includes
-one.
+This is the text for Agibot, kept here so the repo records what was reported,
+when, and on what evidence. The fix is carried in our fork
+(`jetson-orin-socketcan`, commits `f43a0e9` and `c037b38`) until an upstream
+release includes one. Send both parts together — the second is not a refinement,
+it closes a hole the first one leaves open.
 
 ---
 
@@ -100,6 +101,38 @@ Same hardware, same bring-up, before and after the change:
 Request latency is unchanged, which was the property that had to hold. Both hands
 were exercised through a `FollowJointTrajectory` action with readback-verified
 delivery, four goals, all successful.
+
+## Follow-up: the error flags need handling too
+
+Our first version of this change checked only `poll()`'s return value. That is not
+enough, and the gap is worth carrying into any upstream fix:
+
+`POLLERR`, `POLLHUP` and `POLLNVAL` are reported in `revents` whether or not they
+were requested in `events`, and they do not clear by themselves. On a persistent
+socket error `poll()` therefore returns immediately every time, the `read()`
+fails, and the loop spins exactly as before — during a bus fault, which is when
+the CPU is wanted for recovery rather than least.
+
+```cpp
+if (pfd.revents & POLLNVAL) {
+  return;  /* the descriptor is gone; there is nothing left to receive */
+}
+if ((pfd.revents & (POLLERR | POLLHUP)) && !(pfd.revents & POLLIN)) {
+  std::this_thread::sleep_for(std::chrono::milliseconds(kRecvPollTimeoutMs));
+  continue;
+}
+```
+
+`POLLIN` deliberately wins over a simultaneous error flag: frames may still be
+queued, and discarding them would lose data a caller is already waiting for.
+
+Note for anyone testing this: **taking the CAN link down does not produce these
+flags.** A downed link simply delivers nothing, so `poll()` reaches its timeout
+and the ordinary path handles it. We measured a 25 s outage with the receive
+thread at 0.12 % of a core, sitting in `do_sys_poll` throughout. Producing
+`POLLERR`/`POLLHUP` needs the adapter removed, and `POLLNVAL` needs the
+descriptor closed underneath the thread. Those branches are reasoned, not yet
+observed.
 
 ## Notes for the maintainers
 

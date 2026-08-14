@@ -578,10 +578,24 @@ a vendor question — an SDK setting (none is exposed in its API surface), a pat
 in the tracked vendor fork under C3, or a decision to accept one core per hand
 and keep it off the control cores.
 
-This section owns **all** hand-bridge runtime and transport efficiency work.
-The former phase 5C ("bridge timer split") duplicated it and has been folded in;
-phase 5 keeps only the before/after close-out measurement, and the public hand
-contract stays with 4D.
+**What this phase owns, stated once so it stops being negotiated per slice:**
+
+- **2C owns hand runtime and transport correctness** — cadence, publication,
+  polling, SDK ownership and serialization, command admission at the bridge
+  boundary, and the arbitration that stops two commanders reaching one hand. If
+  a defect is about *how the hand is driven*, it belongs here.
+- **4D owns the public hand contract** — the consolidated abstract hand message,
+  its fields, and the migration off `HandCmd` / `HandPositionTimeCmd` /
+  `HandStatus` / `GripperStatus` / `OmniHandStatus`. If a change alters what a
+  caller outside the hand stack writes or reads, it belongs there.
+- **Phase 3 owns coordinator integration** — event-driven child management and
+  how activities schedule around a hand, not how the hand itself behaves.
+- **Phase 5 owns only the before/after close-out measurement.** The former 5C
+  ("bridge timer split") duplicated this section and has been folded in.
+
+The dividing line is deliberate: 2C may change anything below the bridge's ROS
+surface, and may add admission checks on that surface, but does not redesign the
+surface itself.
 
 Arbitration:
 
