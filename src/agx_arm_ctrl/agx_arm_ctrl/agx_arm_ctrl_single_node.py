@@ -1448,7 +1448,7 @@ class AgxArmRosNode(Node):
         period = 1.0 / float(self.acquisition_rate_hz)
         next_tick = time.monotonic()
 
-        # publishing loop
+        # acquisition loop
         while rclpy.ok():
             # P0 instrumentation: measure how late this iteration is before the
             # recovery check runs, so a stale-feedback trigger can be attributed
@@ -1657,10 +1657,11 @@ class AgxArmRosNode(Node):
         if now - self._last_tx_loss_log <= 5.0:
             return
         self._last_tx_loss_log = now
-        try:
-            last = self.agx_arm.get_last_send_error()
-        except Exception:
-            last = None
+        # Through the session owner like every other read. This one hid until a
+        # provoked fault: it only runs when a send was actually dropped, so the
+        # call counter showed one owner in every healthy window and three the
+        # moment the bus went down.
+        last = self._sdk_read("get_last_send_error", self.agx_arm.get_last_send_error)
         self.get_logger().warn(
             f"silent TX loss: {dropped} send(s) dropped (total {count}) while feedback "
             f"is live (last: {last}); arm commands may not be reaching the firmware. On "

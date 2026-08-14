@@ -377,14 +377,33 @@ assume the two arms are protocol-identical.
       sprint assumed the per-joint SDK reads, then the publish batch; both were
       wrong. Fewer ROS entities or a different executor is the lever, and
       nothing here has attacked it yet.
-- [ ] Measure the RX drain under a provoked fault. **The premise in the earlier
-      version of this item was wrong**: the socket is drained by the vendor
-      SDK's own reader thread (`driver_context._read_loop`), not by our loop, so
-      a stalled publish loop does not by itself stop the drain. What does stop
-      it is recovery, which calls `stop_th()` as part of tearing the link down —
-      so the question is how many frames the kernel buffer loses across a
-      recovery window, and `RMEM_MAX` is the parameter it tests. Needs a
-      `sudo ip link set <iface> down/up`.
+- [x] Measure the RX drain under a provoked fault (right arm, 14.9 s link-down,
+      90 s sampled at 5 Hz). **Zero dropped, zero missed, zero errors, zero
+      bus-off** across the whole window. The feared overflow cannot happen in
+      this fault mode: a down link delivers nothing, so there is nothing to
+      buffer — 2257 f/s before, 0 during, 2232 f/s after. The premise in the
+      earlier version of this item was also wrong: the socket is drained by the
+      vendor SDK's own reader thread (`driver_context._read_loop`), not by our
+      loop, so a stalled publisher does not stop the drain.
+- [x] Re-verify under fault that the acquisition loop survives recovery, now
+      that acquisition and publication are separate threads: "recovery finished
+      after 17.1s; the acquisition loop kept publishing throughout".
+- [x] Close a one-owner violation the healthy-path measurements could not see.
+      `get_last_send_error` was read straight off the session, and it only runs
+      when a send was actually dropped — so every healthy window reported one
+      SDK thread and the fault window reported three. Found by provoking the
+      fault, not by reading the code.
+- [ ] Test the drain in the fault mode that can actually overflow: the bus stays
+      **up** while the reader is stopped or starved, which is what a TX-stall
+      recovery does. The link-down case measured above does not exercise it.
+- [ ] Fix the socket receive buffer, which does not do what the repo believes.
+      `activate_duo_can.sh` raises `net.core.rmem_max` to 4 MB, but that is only
+      a ceiling an application must then request, and `python-can` never calls
+      `setsockopt(SO_RCVBUF)` — so every CAN socket actually gets
+      `net.core.rmem_default`, measured at 208 KB. Commit `e69daa2` ("raise the
+      RX socket buffer so CPU stalls don't drop hand responses") therefore did
+      not take effect. Either raise `rmem_default` too, or set the option in the
+      comm layer under the C3 vendor workflow.
 
 ### 1C One active unit activity — the small guard
 
