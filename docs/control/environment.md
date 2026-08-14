@@ -52,6 +52,13 @@ fails at runtime:
 | TRAC-IK overlay (source build) | `config/trac_ik_overlay.repos` + `scripts/patches/` | `scripts/setup_trac_ik_overlay.sh` |
 | OmniHand vendor SDK (source build) | `vendor/OmniHand-Pro-2025` submodule | `scripts/setup_omnihand_sdk.sh` |
 
+> **A vendor SDK change does not arrive by pulling.** `build/` is gitignored inside the
+> `OmniHand-Pro-2025` submodule, so a pull delivers patched *source* while the `.so` the bridge
+> actually loads stays whatever you built last. After any submodule update that touches the SDK,
+> re-run `scripts/setup_omnihand_sdk.sh` — otherwise the code says one thing and the running system
+> does another, and the difference only shows up as a puzzling measurement. The receive-thread fix of
+> 2026-08-14 (worth ~100 % of a core per hand) is delivered exactly this way.
+
 `requirements.txt` exists because one pip dependency is load-bearing and cannot come from apt:
 Ubuntu 22.04 ships python-can 3.3.2, but the arm's CAN error-recovery path needs the
 python-can ≥ 4.0 exception types. See the comments in `requirements.txt`.
