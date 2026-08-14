@@ -684,3 +684,41 @@ changes, which is the interesting part.
   (2 s to 10 s) after eight failed probes and three clean readbacks are required.
   That escalation exists to stop a hammering hand congesting a *shared* bus; on
   per-device buses the reason is largely gone and only the latency remains.
+
+## 2026-08-14 (found by putting the hand's authority into the production path)
+
+Both defects below were latent for as long as the authority existed. Nothing had
+ever claimed a hand, so no claim was ever refused, and the two paths that only
+run on a refusal had never executed.
+
+### The hand's claim service collided with the arm's
+
+- Symptom: a hand trajectory refused itself with "arm_right is held by
+  'reactive:...'" — naming the *arm* while the test had claimed the *hand*.
+- Cause: the bridge served `claim_device` and the arm driver serves
+  `claim_device`, both in the same per-side namespace, so both resolve to
+  `/<side>_arm/claim_device` and a client silently reaches whichever it
+  discovered first. The trajectory took the arm's authority, left the hand
+  unclaimed, and then failed delivery having sent nothing.
+- Fix: the hand's service is `control/omnihand/claim_device`, next to the rest of
+  its hand-specific surface, exported as `HAND_CLAIM_SERVICE` so no caller can
+  spell it independently. Four services now, one per device.
+- The tell was in the message. A refusal that names the wrong device is worth
+  more than a refusal that just says no, which is why the reasons carry the
+  device id at all.
+
+### A refused claim killed the bridge
+
+- Symptom: after one successful claim, the claim service stopped answering
+  entirely — clients timed out with "did not answer", then "is not available".
+- Cause: `rclpy` caches a logger's severity per **call site** and raises if it
+  changes. `(self.get_logger().info if accepted else self.get_logger().warn)(msg)`
+  is one call site with two severities, so the first refused claim raised out of
+  the service callback and the node died. "Not available" was accurate: by then
+  there was no bridge.
+- Fix: two call sites, plus a regression that refuses a claim and asserts the
+  service answers — the path that had never run.
+- Worth keeping: **the failure looked like a client problem.** A service that
+  stops answering points at the caller, and the investigation went there first.
+  A node that dies on an error path is invisible to every test that only takes
+  the happy path, and this one had no test at all.

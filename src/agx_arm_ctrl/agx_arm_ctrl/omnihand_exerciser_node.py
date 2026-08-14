@@ -66,9 +66,12 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from agx_arm_msgs.srv import ClaimDevice
+
 from agx_arm_ctrl.motion_registry import arm_sides
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HAND_MODELS, get_hand_model
 from agx_arm_ctrl.omnihand_bridge_node import (
+    HAND_CLAIM_SERVICE,
     build_joint_names,
     load_gesture_presets,
     resolve_gesture_presets,
@@ -186,6 +189,12 @@ class OmniHandExerciser(Node):
             self.namespace, "control/omnihand/joint_trajectory"
         )
         self.stop_service = _absolute_name(self.namespace, "control/omnihand/stop")
+        # Only needed by the topic fallback: the action server takes the hand
+        # itself. Declared as the trajectory primitive because that is the
+        # surface this tool publishes on.
+        self.claim_service = _absolute_name(self.namespace, HAND_CLAIM_SERVICE)
+        self.owner_id = f"trajectory:{self.get_name()}"
+        self.claim_client = self.create_client(ClaimDevice, self.claim_service)
 
         self.legacy_publisher = None
         self.trajectory_publisher = None
@@ -280,11 +289,28 @@ class OmniHandExerciser(Node):
                 "bridge is running and that its namespace matches --namespace."
             )
             return
-        self.trajectory_publisher.publish(self._build_trajectory(name, positions))
-        self.get_logger().info(
-            f"pose '{name}' published on '{self.trajectory_topic}' (no action "
-            "server: no arm<->hand window, and delivery is not verified here)"
-        )
+        # The bridge is fail-closed, so the fallback has to own the hand too.
+        # Without this the tool would publish into a refusal and report success:
+        # a topic publish cannot fail, which is precisely why the bridge, not the
+        # topic, is the boundary.
+        claimed, claim_detail = self._call_claim(claim=True)
+        if not claimed:
+            self.get_logger().error(
+                f"pose '{name}' NOT sent: could not take the hand ({claim_detail}). "
+                "Another commander holds it, or the bridge is not up."
+            )
+            return
+        try:
+            self.trajectory_publisher.publish(self._build_trajectory(name, positions))
+            self.get_logger().info(
+                f"pose '{name}' published on '{self.trajectory_topic}' (no action "
+                "server: no arm<->hand window, and delivery is not verified here)"
+            )
+            # The publish is asynchronous; releasing immediately would revoke the
+            # claim before the bridge has taken the message off the wire.
+            self._sleep(self.args.move_s)
+        finally:
+            self._call_claim(claim=False)
 
     def _create_trajectory_publisher(self):
         """Publisher on the topic where a bridge is actually listening.
@@ -342,6 +368,20 @@ class OmniHandExerciser(Node):
         deadline = self.get_clock().now().nanoseconds + int(duration_s * 1e9)
         while rclpy.ok() and self.get_clock().now().nanoseconds < deadline:
             rclpy.spin_once(self, timeout_sec=0.05)
+
+    def _call_claim(self, *, claim: bool) -> tuple[bool, str]:
+        """Take or give up the hand, for the topic fallback path."""
+        if not self.claim_client.wait_for_service(timeout_sec=3.0):
+            return False, f"{self.claim_service} is unavailable"
+        request = ClaimDevice.Request()
+        request.owner_id = self.owner_id
+        request.claim = claim
+        future = self.claim_client.call_async(request)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+        response = future.result()
+        if response is None:
+            return False, f"{self.claim_service} did not return"
+        return bool(response.accepted), response.message or response.reason
 
     def call_stop(self) -> None:
         client = self.create_client(Trigger, self.stop_service)

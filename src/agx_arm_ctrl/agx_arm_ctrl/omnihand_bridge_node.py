@@ -20,6 +20,7 @@ from trajectory_msgs.msg import JointTrajectory
 import yaml
 
 from agx_arm_ctrl.device_authority import (
+    CommandStamp,
     DeviceAuthority,
     DeviceState,
     UnitSafety,
@@ -108,6 +109,49 @@ SDK_LEFT_THUMB_MOTOR2MCP_POLY = [
 ]
 SDK_STATUS_READ_INTERVAL_S = 1.0
 SDK_TACTILE_READ_INTERVAL_S = 1.0
+
+# A hand has two legitimate production motion primitives, and they may never
+# command it at the same time. They are told apart by the surface a command
+# arrives on, because `sensor_msgs/JointState` and `trajectory_msgs/JointTrajectory`
+# carry no sender identity and ROS does not reveal a publisher to a subscriber.
+#
+# So an owner declares its primitive in the owner_id it claims with,
+# `<primitive>:<node_name>`, and the bridge checks the surface against it. The
+# node half is not decoration: it is how a crashed owner is detected, since a
+# claim outlives the process that took it.
+#
+# The limit, stated rather than papered over: surface is a proxy for identity.
+# Anything else publishing on the reactive surface looks like the reactive
+# primitive. Only identity carried *per command* closes that, and the message
+# that can carry it is the consolidated hand contract (phase 4D).
+# A hand's claim service must NOT be called `claim_device`: the arm driver serves
+# that name in the same per-side namespace, so both resolve to the identical
+# `/<side>_arm/claim_device` and a client silently reaches whichever it found
+# first. On hardware that meant a hand trajectory took the ARM's authority, left
+# the hand unclaimed, and then failed delivery having sent nothing — with the
+# refusal naming `arm_right`, which is what gave it away.
+HAND_CLAIM_SERVICE = "control/omnihand/claim_device"
+
+PRIMITIVE_TRAJECTORY = "trajectory"
+PRIMITIVE_REACTIVE = "reactive"
+SURFACE_PRIMITIVES = {
+    "joint_state": PRIMITIVE_REACTIVE,
+    "joint_trajectory": PRIMITIVE_TRAJECTORY,
+}
+
+
+def owner_primitive(owner_id: str) -> str:
+    """The motion primitive an owner_id declares, or "" when it declares none."""
+    primitive, separator, _node = owner_id.partition(":")
+    if not separator:
+        return ""
+    return primitive if primitive in SURFACE_PRIMITIVES.values() else ""
+
+
+def owner_node_name(owner_id: str) -> str:
+    """The node half of a structured owner_id, used to detect a dead owner."""
+    _primitive, separator, node = owner_id.partition(":")
+    return node if separator else ""
 
 
 def build_joint_names(hand_side: str, model: HandModel | None = None) -> list[str]:
@@ -869,6 +913,18 @@ class OmniHandBridgeNode(Node):
         # bridge, not the instrument.
         self.declare_parameter("runtime_metrics_enabled", False)
         self.declare_parameter("runtime_metrics_period_s", 10.0)
+        # Fail-closed command admission. Off only for a rig that deliberately
+        # drives the bridge with no authority layer above it; production and
+        # every supported bring-up leave it on.
+        self.declare_parameter("command_admission_enforced", True)
+        # A claim outlives the process that took it, so a crashed owner would
+        # hold a hand nobody can command. The bridge watches for the owner's node
+        # leaving the graph and revokes after this grace period. Revoking clears
+        # the owner and bumps the device epoch, which is what makes the hand
+        # non-commandable until someone claims it again explicitly — deliberately
+        # not a forced STANDBY, because `_sync_authority` derives the state every
+        # tick and would overwrite anything written behind its back.
+        self.declare_parameter("owner_liveness_grace_s", 3.0)
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
         # This device in the authority contract. Note it is *not* the
@@ -1019,6 +1075,25 @@ class OmniHandBridgeNode(Node):
         # Publication is gated on new data. These record what was last put on the
         # wire so a tick with nothing new stays silent instead of re-serializing
         # the same three messages.
+        self._admission_enforced = bool(
+            self.get_parameter("command_admission_enforced").value
+        )
+        self._owner_liveness_grace_s = max(
+            0.0, float(self.get_parameter("owner_liveness_grace_s").value)
+        )
+        # Per-epoch monotonic sequence. The authority rejects a stamp whose
+        # sequence does not advance, so this is reset whenever the epoch moves —
+        # a new owner starts a fresh sequence rather than inheriting a watermark
+        # it never wrote.
+        self._command_sequence = 0
+        self._sequence_epoch = -1
+        self._owner_missing_since = 0.0
+        self._last_liveness_check = 0.0
+        # Half the grace, so a dead owner is still noticed within it, bounded
+        # below so a small grace cannot turn this back into a per-tick query.
+        self._liveness_check_interval_s = max(0.5, self._owner_liveness_grace_s / 2.0)
+        self._last_refusal = ""
+        self._last_refusal_monotonic = 0.0
         self._tick_thread_named = False
         self._published_read_monotonic = 0.0
         self._last_joint_publish_monotonic = 0.0
@@ -1056,7 +1131,9 @@ class OmniHandBridgeNode(Node):
             10,
         )
         self.create_service(Trigger, "control/omnihand/stop", self._stop_callback)
-        self.create_service(ClaimDevice, "claim_device", self._claim_device_callback)
+        self.create_service(
+            ClaimDevice, HAND_CLAIM_SERVICE, self._claim_device_callback
+        )
         self.authority_pub = self.create_publisher(
             AgxDeviceAuthority, "feedback/authority",
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
@@ -1141,6 +1218,122 @@ class OmniHandBridgeNode(Node):
 
         self._submit_command(target_map, "joint_trajectory")
 
+    def _log_refusal(self, detail: str) -> None:
+        """Say why a command was refused, without a flood.
+
+        A refused stream is usually a stream: a controller that lost the claim
+        keeps publishing at its control rate, and logging each one buries the
+        first, which is the one that says what happened.
+        """
+        now = time.monotonic()
+        if detail == self._last_refusal and now - self._last_refusal_monotonic < 5.0:
+            return
+        self._last_refusal = detail
+        self._last_refusal_monotonic = now
+        self.get_logger().warn(f"refused hand command: {detail}")
+
+    def _check_owner_liveness(self) -> None:
+        """Revoke a claim whose owner is no longer in the graph.
+
+        A claim is state on this side, so a commander that crashes mid-grasp
+        leaves the hand owned by nobody and commandable by no one. Recovering
+        that by hand is not something an operator should have to know about.
+
+        Revoking clears the owner and bumps the device epoch, so a new commander
+        must claim explicitly; nothing is auto-transferred, because inheriting a
+        device whose last commander died is exactly the case where the next one
+        should have to say so.
+        """
+        if not self._admission_enforced or self._owner_liveness_grace_s <= 0.0:
+            return
+        # Rate-limited hard, because `get_node_names_and_namespaces` is a graph
+        # query, not a field read. Running it on every feedback tick starved the
+        # bridge's single-threaded executor badly enough that its own claim
+        # service stopped answering within 5 s — the watchdog took the hand out
+        # of service to check whether the hand was in service.
+        now = time.monotonic()
+        if now - self._last_liveness_check < self._liveness_check_interval_s:
+            return
+        self._last_liveness_check = now
+
+        owner = self._authority.snapshot().owner_id
+        node = owner_node_name(owner)
+        if not node:
+            self._owner_missing_since = 0.0
+            return
+        try:
+            alive = any(name == node for name, _ns in self.get_node_names_and_namespaces())
+        except Exception:
+            return  # graph query failed; never revoke on a missing answer
+        if alive:
+            self._owner_missing_since = 0.0
+            return
+
+        now = time.monotonic()
+        if self._owner_missing_since <= 0.0:
+            self._owner_missing_since = now
+            return
+        if now - self._owner_missing_since < self._owner_liveness_grace_s:
+            return
+
+        self._owner_missing_since = 0.0
+        self.get_logger().error(
+            f"commander '{owner}' left the graph; revoking its claim on "
+            f"{self._authority.device_id}. The hand accepts nothing until a "
+            "new owner "
+            "claims it."
+        )
+        self._authority.revoke(f"owner '{owner}' no longer present")
+        self.pending_command = None
+
+    def _admit_command(self, control_mode: str) -> tuple[bool, str]:
+        """Decide whether a command from this surface may reach the hand.
+
+        Fail-closed: an unclaimed hand executes nothing. That costs a migration —
+        every caller now has to claim — and it is the point. A default-open gate
+        would have left the two-commander race open for exactly the callers
+        nobody remembered to convert, which is the set that causes the incident.
+        """
+        if not self._admission_enforced:
+            return True, ""
+
+        snapshot = self._authority.snapshot()
+        owner = snapshot.owner_id
+        if not owner:
+            return False, (
+                f"{self._authority.device_id} has no commander; claim it before "
+                "commanding "
+                "(claim_device)"
+            )
+
+        if snapshot.device_epoch != self._sequence_epoch:
+            # A new era: ownership changed, or the device rearmed. Start the
+            # sequence again rather than carrying a watermark set by whoever held
+            # it before.
+            self._sequence_epoch = snapshot.device_epoch
+            self._command_sequence = 0
+
+        surface_primitive = SURFACE_PRIMITIVES.get(control_mode, "")
+        declared = owner_primitive(owner)
+        if declared and surface_primitive and declared != surface_primitive:
+            return False, (
+                f"{self._authority.device_id} is held by '{owner}' ({declared}); a "
+                f"{surface_primitive} command may not preempt it"
+            )
+
+        self._command_sequence += 1
+        verdict = self._authority.admit(
+            CommandStamp(
+                owner_id=owner,
+                device_epoch=snapshot.device_epoch,
+                unit_safety_epoch=snapshot.unit_safety_epoch,
+                sequence=self._command_sequence,
+            )
+        )
+        if not verdict.accepted:
+            return False, f"{verdict.reason.value}: {verdict.detail}"
+        return True, ""
+
     def _submit_command(self, target_map: dict[str, float], control_mode: str) -> None:
         """Send a hand target and keep it pending until the readback confirms it.
 
@@ -1148,6 +1341,11 @@ class OmniHandBridgeNode(Node):
         and get dropped silently (one-shot mode), so a single send is unreliable.
         Targets are absolute setpoints, so re-sending the latest one is safe.
         """
+        admitted, refusal = self._admit_command(control_mode)
+        if not admitted:
+            self._log_refusal(refusal)
+            return
+
         self._command_delivery_failed = False
         self.pending_command = {
             "targets": dict(target_map),
@@ -1296,15 +1494,21 @@ class OmniHandBridgeNode(Node):
         response.device_epoch = snapshot.device_epoch
         response.unit_safety_epoch = snapshot.unit_safety_epoch
         response.message = (
-            f"{self.device_id} transport "
+            f"{self._authority.device_id} transport "
             f"{'claimed by' if request.claim else 'released by'} "
             f"'{request.owner_id}'"
             if verdict.accepted
             else verdict.detail
         )
-        (self.get_logger().info if verdict.accepted else self.get_logger().warn)(
-            response.message
-        )
+        # Two call sites on purpose. rclpy caches a logger's severity per call
+        # site and raises if it ever changes, so a single site that logs INFO on
+        # success and WARN on refusal throws the first time a claim is refused —
+        # out of a service callback, killing the node. It survived review because
+        # nothing ever refused a claim until the hand had two commanders.
+        if verdict.accepted:
+            self.get_logger().info(response.message)
+        else:
+            self.get_logger().warn(response.message)
         return response
 
     def _sync_authority(self, reason: str) -> None:
@@ -1482,6 +1686,7 @@ class OmniHandBridgeNode(Node):
         if not self._fault_backoff_active or self._last_status_snapshot is None:
             self._last_status_snapshot = self.backend.read_status()
         self._sync_authority("feedback tick")
+        self._check_owner_liveness()
         self._publish_status_if_due(stamp, now)
 
         if not self._fault_backoff_active or self._last_tactile_snapshot is None:

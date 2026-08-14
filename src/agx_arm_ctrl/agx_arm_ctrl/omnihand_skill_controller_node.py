@@ -44,6 +44,7 @@ from sensor_msgs.msg import JointState
 
 from agx_arm_msgs.action import PerformAction
 from agx_arm_msgs.msg import OmniHandStatus, OmniHandTactileRaw, RobotEvent
+from agx_arm_msgs.srv import ClaimDevice
 
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
 from agx_arm_ctrl.omnihand.skills import (
@@ -64,7 +65,11 @@ from agx_arm_ctrl.omnihand.skills import (
     step_toward,
     within_tolerance,
 )
-from agx_arm_ctrl.omnihand_bridge_node import build_joint_names, resolve_gesture_presets
+from agx_arm_ctrl.omnihand_bridge_node import (
+    HAND_CLAIM_SERVICE,
+    build_joint_names,
+    resolve_gesture_presets,
+)
 
 
 def _skill_config_share_path() -> str:
@@ -130,6 +135,16 @@ class OmniHandSkillController(Node):
 
         callback_group = ReentrantCallbackGroup()
         self.command_pub = self.create_publisher(JointState, command_topic, 10)
+        # The owner_id declares the motion primitive first, then the node: the
+        # bridge tells the two production primitives apart by it, and uses the
+        # node half to notice a commander that died still holding a claim.
+        self.owner_id = f"reactive:{self.get_name()}"
+        self.claim_service_name = HAND_CLAIM_SERVICE
+        self.declare_parameter("claim_timeout_s", 5.0)
+        self.claim_timeout_s = float(self.get_parameter("claim_timeout_s").value)
+        self.claim_client = self.create_client(
+            ClaimDevice, self.claim_service_name, callback_group=callback_group
+        )
         self.event_pub = self.create_publisher(RobotEvent, "events", 10)
 
         self.create_subscription(
@@ -317,15 +332,32 @@ class OmniHandSkillController(Node):
             message=f"skill={skill_name}",
         )
 
-        if skill.motion == MOTION_OPEN:
-            return self._run_open(goal_handle, goal, metadata, skill, result)
-        if skill.motion == MOTION_POSE:
-            return self._run_pose(goal_handle, goal, metadata, skill, result)
-        if skill.motion == MOTION_CLOSE_UNTIL_CONTACT:
-            return self._run_close_until_contact(goal_handle, goal, metadata, skill, result)
-        if skill.motion == MOTION_FREEZE:
-            return self._run_freeze(goal_handle, goal, result)
-        return self._fail(goal_handle, result, f"unhandled motion '{skill.motion}'")
+        # The bridge is fail-closed, so commanding starts by owning the hand.
+        # A refusal here means the trajectory primitive holds it, and the right
+        # answer is to fail the action rather than to interleave with it.
+        claimed, claim_detail = self._claim_hand()
+        if not claimed:
+            return self._fail(
+                goal_handle, result, f"could not take the hand: {claim_detail}"
+            )
+
+        try:
+            if skill.motion == MOTION_OPEN:
+                return self._run_open(goal_handle, goal, metadata, skill, result)
+            if skill.motion == MOTION_POSE:
+                return self._run_pose(goal_handle, goal, metadata, skill, result)
+            if skill.motion == MOTION_CLOSE_UNTIL_CONTACT:
+                return self._run_close_until_contact(goal_handle, goal, metadata, skill, result)
+            if skill.motion == MOTION_FREEZE:
+                return self._run_freeze(goal_handle, goal, result)
+            return self._fail(goal_handle, result, f"unhandled motion '{skill.motion}'")
+        finally:
+            # A grasp that ended holding keeps the hand: the hold IS the reactive
+            # primitive still owning the device, and handing back only to reclaim
+            # for the next hold would open a window where nobody owns a hand that
+            # is physically gripping something. Released on any other exit.
+            if not self._holding:
+                self._release_hand()
 
     def _publish_feedback(self, goal_handle, state: str, progress: float, score: float) -> None:
         feedback = PerformAction.Feedback()
@@ -591,7 +623,41 @@ class OmniHandSkillController(Node):
 
     # --- internal hold + slip monitoring -------------------------------------
 
+    def _claim_hand(self) -> tuple[bool, str]:
+        return self._call_claim(claim=True)
+
+    def _release_hand(self) -> None:
+        accepted, detail = self._call_claim(claim=False)
+        if not accepted:
+            self.get_logger().warn(f"releasing the hand failed: {detail}")
+
+    def _call_claim(self, *, claim: bool) -> tuple[bool, str]:
+        """Take or give up this hand's device authority."""
+        if not self.claim_client.wait_for_service(timeout_sec=self.claim_timeout_s):
+            return False, f"{self.claim_service_name} is not available"
+        request = ClaimDevice.Request()
+        request.owner_id = self.owner_id
+        request.claim = claim
+        future = self.claim_client.call_async(request)
+        deadline = time.monotonic() + self.claim_timeout_s
+        while rclpy.ok() and not future.done():
+            if time.monotonic() > deadline:
+                return False, f"{self.claim_service_name} did not answer"
+            time.sleep(0.02)
+        response = future.result()
+        if response is None:
+            return False, f"{self.claim_service_name} returned nothing"
+        return bool(response.accepted), response.message or response.reason
+
     def _clear_hold(self) -> None:
+        """Drop the internal hold state only.
+
+        Deliberately does NOT release the claim: every caller is a motion that
+        has just claimed the hand and is about to command it, so releasing here
+        would drop the device out from under the command that follows. The claim
+        is released where it was taken — in `_execute`, once the action is over
+        and no hold survives it.
+        """
         with self._lock:
             self._holding = False
             self._hold_target = None

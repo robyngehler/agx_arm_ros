@@ -13,11 +13,12 @@ from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.msg import OmniHandStatus
+from agx_arm_msgs.srv import ClaimDevice
 
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
 # Shared, model-aware joint naming — do NOT keep a second JOINT_SUFFIXES copy here
 # (proposal §6/§11.3): a stale O10 list would flag every Pro-only joint as unknown.
-from agx_arm_ctrl.omnihand_bridge_node import build_joint_names
+from agx_arm_ctrl.omnihand_bridge_node import HAND_CLAIM_SERVICE, build_joint_names
 
 
 def _trajectory_duration_s(msg: JointTrajectory) -> float:
@@ -108,6 +109,14 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         self._cb_group = ReentrantCallbackGroup()
         prepare_name = f"/{arm_ns}/prepare_hand_window" if arm_ns else "prepare_hand_window"
         resume_name = f"/{arm_ns}/resume_arm_control" if arm_ns else "resume_arm_control"
+        # The owner_id declares the motion primitive, then the node. The bridge
+        # tells the two production primitives apart by it, and uses the node half
+        # to notice when a commander has died still holding a claim.
+        self.owner_id = f"trajectory:{self.get_name()}"
+        self.claim_service_name = HAND_CLAIM_SERVICE
+        self.claim_client = self.create_client(
+            ClaimDevice, self.claim_service_name, callback_group=self._cb_group
+        )
         self.prepare_client = self.create_client(
             Trigger, prepare_name, callback_group=self._cb_group
         )
@@ -272,6 +281,32 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             return False, f"{label} returned no response"
         return bool(resp.success), resp.message or ""
 
+    def _claim_hand(self) -> tuple[bool, str]:
+        """Take the hand's device authority for the duration of a goal."""
+        return self._call_claim(claim=True)
+
+    def _release_hand(self) -> None:
+        accepted, detail = self._call_claim(claim=False)
+        if not accepted:
+            self.get_logger().warn(f"releasing the hand failed: {detail}")
+
+    def _call_claim(self, *, claim: bool) -> tuple[bool, str]:
+        if not self.claim_client.wait_for_service(timeout_sec=self.handshake_timeout_s):
+            return False, f"{self.claim_service_name} is not available"
+        request = ClaimDevice.Request()
+        request.owner_id = self.owner_id
+        request.claim = claim
+        future = self.claim_client.call_async(request)
+        deadline = time.monotonic() + self.handshake_timeout_s
+        while rclpy.ok() and not future.done():
+            if time.monotonic() > deadline:
+                return False, f"{self.claim_service_name} did not answer"
+            time.sleep(0.02)
+        response = future.result()
+        if response is None:
+            return False, f"{self.claim_service_name} returned nothing"
+        return bool(response.accepted), response.message or response.reason
+
     def _open_hand_window(self) -> tuple[bool, str]:
         """Quiesce the same-side arm before commanding the hand.
 
@@ -303,11 +338,23 @@ class OmniHandFollowJointTrajectoryBridge(Node):
     def _execute_callback(self, goal_handle):
         trajectory = goal_handle.request.trajectory
         self._validate_trajectory(trajectory)
+        # Own the hand for the trajectory. The bridge is fail-closed: an
+        # unclaimed hand executes nothing, and a hand held by the reactive
+        # primitive refuses a trajectory rather than letting the two interleave.
+        # Taking the claim is therefore part of executing a goal, not setup.
+        claimed, claim_msg = self._claim_hand()
+        if not claimed:
+            goal_handle.abort()
+            return self._failed_result(
+                FollowJointTrajectory.Result.INVALID_GOAL,
+                f"could not take the hand: {claim_msg}",
+            )
         # Own the shared side bus for the whole hand trajectory: quiesce the arm,
         # run, then always reopen it — so MoveIt hand execution is safe under the
         # always-on arm MIT without the caller needing to know the handshake.
         opened, msg = self._open_hand_window()
         if not opened:
+            self._release_hand()
             goal_handle.abort()
             return self._failed_result(
                 FollowJointTrajectory.Result.INVALID_GOAL,
@@ -317,6 +364,10 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             return self._run_trajectory(goal_handle, trajectory)
         finally:
             self._close_hand_window()
+            # Released on every exit, including an abort. A trajectory that ended
+            # has no further claim on the hand, and holding one would block the
+            # reactive primitive behind a goal that is already over.
+            self._release_hand()
 
     def _run_trajectory(self, goal_handle, trajectory):
         self.trajectory_pub.publish(trajectory)

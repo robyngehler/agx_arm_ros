@@ -17,9 +17,18 @@ def bridge_node():
             "-p", "backend_type:=mock",
             "-p", "command_retry_period_s:=0.05",
             "-p", "joint_read_rate:=1000.0",
+            # No graph to look the owner up in: an in-process node is not a
+            # running commander, and the liveness watchdog would revoke it.
+            "-p", "owner_liveness_grace_s:=0.0",
         ]
     )
     node = OmniHandBridgeNode()
+    # The bridge is fail-closed: an unclaimed hand executes nothing, and a hand
+    # that has not yet reported itself connected is not READY. These tests are
+    # about the retry layer, so they bring the device to commandable the way the
+    # runtime does — one feedback tick, then a claim by the reactive primitive.
+    node._feedback_tick()
+    assert node._authority.claim("reactive:test_owner").accepted
     yield node
     node.destroy_node()
     rclpy.shutdown()
@@ -93,9 +102,13 @@ def test_attempt_is_not_spent_without_a_readback_opportunity(bridge_node):
     bridge_node._joint_states_command_callback(_command_msg(bridge_node))
     assert bridge_node.pending_command["attempts"] == 1
 
-    # No _feedback_tick(): no readback has landed since the send.
+    # No _feedback_tick(): no readback has landed since the send. Ageing the
+    # send has to age the last readback with it, or the priming readback the
+    # fixture needed to reach READY would drift to the wrong side of it and
+    # count as evidence this test is asserting does not exist.
     for _ in range(20):
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
+        bridge_node.last_joint_read_monotonic -= 10.0
         bridge_node._command_retry_tick()
 
     assert bridge_node.pending_command is not None

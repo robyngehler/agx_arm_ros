@@ -34,33 +34,6 @@ class _Recorder:
         return len(self.messages)
 
 
-@pytest.fixture()
-def bridge_node():
-    rclpy.init(
-        args=[
-            "--ros-args",
-            "-p", "backend_type:=mock",
-            "-p", "joint_read_rate:=20.0",
-            "-p", "status_heartbeat_rate:=2.0",
-            "-p", "command_retry_period_s:=0.05",
-        ]
-    )
-    node = OmniHandBridgeNode()
-    node.hand_joint_states_pub = _Recorder()
-    node.status_pub = _Recorder()
-    node.tactile_pub = _Recorder()
-    yield node
-    node.destroy_node()
-    rclpy.shutdown()
-
-
-def _command_msg(node: OmniHandBridgeNode, value: float = 0.3) -> JointState:
-    msg = JointState()
-    msg.name = list(node.joint_names[:2])
-    msg.position = [value, value]
-    return msg
-
-
 def _pretend_time_passed(node: OmniHandBridgeNode, seconds: float) -> None:
     """Shift every monotonic marker back, which is what elapsed time does.
 
@@ -77,6 +50,45 @@ def _pretend_time_passed(node: OmniHandBridgeNode, seconds: float) -> None:
         "_last_tactile_publish_monotonic",
     ):
         setattr(node, attr, getattr(node, attr) - seconds)
+
+
+@pytest.fixture()
+def bridge_node():
+    rclpy.init(
+        args=[
+            "--ros-args",
+            "-p", "backend_type:=mock",
+            "-p", "joint_read_rate:=20.0",
+            "-p", "status_heartbeat_rate:=2.0",
+            "-p", "command_retry_period_s:=0.05",
+            # No graph to look the owner up in: an in-process node is not a
+            # running commander, and the liveness watchdog would revoke it.
+            "-p", "owner_liveness_grace_s:=0.0",
+        ]
+    )
+    node = OmniHandBridgeNode()
+    # Fail-closed admission: a hand with no commander executes nothing, and one
+    # that has not reported itself connected is not READY. One tick brings it
+    # there; the claim is what the reactive primitive would take.
+    node._feedback_tick()
+    assert node._authority.claim("reactive:test_owner").accepted
+    node.hand_joint_states_pub = _Recorder()
+    node.status_pub = _Recorder()
+    node.tactile_pub = _Recorder()
+    # That priming tick also consumed a readback and a publication slot. Wind the
+    # bookkeeping back so each test starts from a bridge with something to say,
+    # rather than one that happens to be mid-interval.
+    _pretend_time_passed(node, 10.0)
+    yield node
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+def _command_msg(node: OmniHandBridgeNode, value: float = 0.3) -> JointState:
+    msg = JointState()
+    msg.name = list(node.joint_names[:2])
+    msg.position = [value, value]
+    return msg
 
 
 def test_a_tick_without_a_new_readback_publishes_no_joint_state(bridge_node):
