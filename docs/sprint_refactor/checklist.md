@@ -565,16 +565,58 @@ clock per second — about **5 %** of a core:
 | `get_all_error_reports` | 1/s | 6.83 ms | 17.69 ms |
 | `get_all_{temperature,current}_reports` | 1/s each | ~0.00 ms | 0.01 ms |
 
-So **91 % of a hand bridge's cost is a vendor busy-wait we never call.** Every
+So **91 % of a hand bridge's cost was a vendor busy-wait we never call.** Every
 remaining transport-efficiency item below — dropping the read-before-write,
 polling only under ownership, bounding round trips per setpoint — divides up the
 5 %, not the 100 %. They remain worth doing for the CAN bus and for latency;
 they are no longer the CPU answer, and 2C's premise is corrected accordingly.
 
-Being a native thread, it does not hold the GIL: it burns a core without
-starving the Python nodes. Both arms held MIT at 100 Hz throughout, with
-`send_mit_setpoint` at 2.04 ms mean, and all four buses ended the run with zero
-drops, misses or errors.
+### Fixed in the vendor fork
+
+The source was in our own tracked fork, and the offending line carried its own
+diagnosis. `CanBusDeviceSocketCan::RecvFrame` called `read()` on a **non-blocking**
+socket in a loop with nothing in between:
+
+```cpp
+while (!IsInterruptRequested()) {
+  canfd_frame frame{};
+  int ret = read(fd_sock_, &frame, sizeof(frame));  // 阻塞式会导致线程无法释放
+```
+
+The comment is correct — a blocking read would keep the thread from being
+released at shutdown — but the answer to that is `poll()`, not a spin. A 20 ms
+timeout bounds how long the destructor waits for the join, a frame still wakes
+the thread immediately, and the socket stays non-blocking so a spurious wakeup
+cannot become a blocked read. Committed as `f43a0e9` on `jetson-orin-socketcan`.
+
+Measured after the patch, same bring-up, same hardware:
+
+| | before | after |
+| --- | --- | --- |
+| the receive thread | 100.0 %, `wchan=0` | **0.2 %, `wchan=do_sys_poll`** |
+| one bridge process | 110.6 % | **12.5 %** |
+| both bridges | 222.4 % | **25.3 %** |
+| **stack total, arms idle** | 526.5 % | **399.7 %** |
+| **stack total, both arms MIT 100 Hz** | 600.1 % | **431.3 %** |
+
+Against the 2026-08-13 starting point the whole stack went from **814.5 % to
+399.7 %** of a core with the arms idle, and from 882.9 % to 431.3 % under MIT.
+
+Latency is unchanged, which is the number that had to hold:
+`get_all_active_joint_angles` 2.23 ms mean against 2.18 ms before,
+`get_tactile_sensor_data` 2.15 ms against 2.24 ms. Both hands were driven through
+the `FollowJointTrajectory` action, four goals, all SUCCESS with verified
+delivery. Zero CANFD timeouts and zero drops, misses or errors on all four buses.
+
+One caution on reading the table: only the bridge row is a measurement of the
+thing that changed. Other nodes moved by up to ±25 % between bring-ups while
+doing provably identical work (700 SDK reads/s in every run), so treat their
+per-node deltas as run-to-run variance, not as an effect of this patch. The
+totals and the bridge figures are the load-bearing numbers.
+
+Being a native thread, the spin held no GIL: it burned cores without starving the
+Python nodes. Both arms held MIT at 100 Hz throughout, with `send_mit_setpoint`
+at 2.04 ms mean.
 
 ### 2B Parallel resource model, handoff derived not configured
 

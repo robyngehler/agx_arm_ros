@@ -9,6 +9,7 @@ This directory contains the stable OmniHand-specific documentation surfaces.
 - `omnihand_solo_bringup_and_load_test.md`: isolated bridge and vendor-level validation flow
 - `omnihand_ros_integration_options.md`: stable architecture and ROS-contract decision record
 - `omnihand_wrapper_integration_plan.md`: backend sequencing and wrapper-first rollout plan
+- `omnihand_vendor_socketcan_recv_report.md`: the receive-thread spin reported upstream, with the fix carried in our fork
 
 ## Historical or engineering-reference docs
 

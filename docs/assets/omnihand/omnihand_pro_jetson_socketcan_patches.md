@@ -176,6 +176,52 @@ Make the interface selectable (default `can0`), matching our bridge's
 
 ---
 
+## Patch 5 — same file: wait on the socket instead of spinning on it
+
+`RecvFrame` read the **non-blocking** socket in a loop with nothing in between,
+so an idle bus cost a full core per hand — measured at 100.0 % with `wchan=0`
+while the bus carried 25 frames/s. The comment on that line already named the
+constraint (a blocking read would keep the thread from being released at
+shutdown); `poll()` with a timeout satisfies it without spinning.
+
+**5a.** Add `<poll.h>` and the timeout constant to the includes:
+
+```diff
+ #include <net/if.h>
++#include <poll.h>
+ #include <sys/ioctl.h>
+ #include <sys/socket.h>
+ #include <unistd.h>
++
++static constexpr int kRecvPollTimeoutMs = 20;
+```
+
+**5b.** Wait before reading, in `RecvFrame`:
+
+```diff
+   while (!IsInterruptRequested()) {
++    struct pollfd pfd {};
++    pfd.fd = fd_sock_;
++    pfd.events = POLLIN;
++    const int ready = poll(&pfd, 1, kRecvPollTimeoutMs);
++    if (ready <= 0) {
++      continue; /* timeout or interrupted: re-check the interrupt request */
++    }
++
+     canfd_frame frame{};
+-    int ret = read(fd_sock_, &frame, sizeof(frame));  // read接收阻塞式会导致线程无法释放
++    int ret = read(fd_sock_, &frame, sizeof(frame));
+```
+
+The socket stays non-blocking on purpose, so a spurious wakeup cannot become a
+blocked read. The timeout bounds shutdown, not receive latency: a frame wakes the
+poll immediately, and the measured request round trip is unchanged (2.23 ms mean
+against 2.18 ms). Bridge process cost falls from 110 % of a core to 13 %.
+
+Reported upstream — see `omnihand_vendor_socketcan_recv_report.md`.
+
+---
+
 ## Build on Jetson
 
 > **Build against Python 3.10, not the conda base env.** On this Jetson the

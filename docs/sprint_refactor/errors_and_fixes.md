@@ -637,3 +637,19 @@ changes, which is the interesting part.
 - Mitigating fact: it is a native thread, so it holds no GIL. It burns a core
   without starving the Python nodes — both arms held MIT at 100 Hz throughout the
   measurement, and all four buses ended with zero drops, misses or errors.
+
+  **Fixed 2026-08-14** in the tracked vendor fork (`jetson-orin-socketcan`,
+  `f43a0e9`). `CanBusDeviceSocketCan::RecvFrame` called `read()` on a
+  **non-blocking** socket in a loop with nothing in between; the comment on that
+  line already named the reason — a blocking read would keep the thread from
+  being released at shutdown — but the answer to that is `poll()` with a timeout,
+  not a spin. The receive thread now sleeps in `poll()` at 0.2 % instead of
+  running at 100.0 %, the bridge process falls from 110 % of a core to 13 %, and
+  request latency is unchanged (2.23 ms mean against 2.18 ms). Reported upstream:
+  `docs/assets/omnihand/omnihand_vendor_socketcan_recv_report.md`.
+
+  Worth keeping as a pattern: **the diagnosis was already written in the code, as
+  a comment explaining why the wrong thing was done.** A note saying "we cannot do
+  X because Y" is a description of an unsolved problem, not of a settled one, and
+  is worth re-reading whenever the cost of the workaround shows up in a
+  measurement.
