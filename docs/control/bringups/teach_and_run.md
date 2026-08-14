@@ -204,9 +204,9 @@ free-runs without the arm).
 >   arm firmware push rate is fixed), so lowering it does not reduce CAN traffic — it only makes teach
 >   recording sample staler feedback. Leave it at its default.
 > - **the bridge's `joint_read_rate` IS a bus lever** (unlike the arm's `pub_rate`): every hand joint
->   readback is a real CANFD request/response. It now defaults to 20 Hz, decoupled from the 50 Hz ROS
->   republish of the cached state — 30 fewer request frames per second on the shared bus, still plenty
->   for teach recordings and command verification.
+>   readback is a real CANFD request/response. It defaults to 20 Hz and is now also what paces the
+>   bridge's timer and its feedback rate, so it is the one number that matters for the hand — still
+>   plenty for teach recordings and command verification.
 > - **hand commands are now verified and re-sent by the bridge** (`command_retry_*` parameters,
 >   default 8 attempts every 0.3 s, 0.10 rad tolerance — eventual delivery matters more than the
 >   ~2.4 s worst case): a dropped gesture command ("every 3rd
@@ -220,9 +220,17 @@ free-runs without the arm).
 >   bridge into 2 s polling while the retry timer kept firing at 0.3 s — all 8 attempts burned in 2.4 s
 >   with at most one readback in between, so the target was declared lost inside the very hand window
 >   opened to deliver it.
-> - **`joint_readback_age_s` is the only honest liveness signal for the hand:**
->   `feedback/omnihand/joint_states` is republished from cache at `pub_rate` even while the backend is
->   faulted, so a fresh header stamp says nothing about whether the hand is answering.
+> - **the hand's cadence is its own, and `pub_rate` no longer drives it** (since 2026-08-14). A hand
+>   joint sample is published when a readback lands, status when the state it reports changes (plus a
+>   2 Hz heartbeat), tactile at the rate the sensor is read. `hand_pub_rate` is a ceiling that can
+>   throttle publication further but cannot make it faster; `hand_joint_read_rate` is what actually
+>   sets the feedback rate. Bringups used to forward the arm's 200 Hz into the bridge, which cost
+>   41.5 % of a core against 7.3 % now, measured with no CAN involved.
+> - **`joint_readback_age_s` is the only honest liveness signal for the hand.** It used to be the only
+>   one because `feedback/omnihand/joint_states` was republished from cache at `pub_rate` even while
+>   the backend was faulted, giving stale values a fresh header stamp. That republishing is gone — a
+>   sample now means the hand answered — but keep reading the age field: it is the surface that says
+>   so explicitly, and a fault simply makes the joint stream go quiet.
 > - **MoveIt hand execution waits for delivery, not for the clock:** the per-side
 >   `{left,right}_omnihand_controller/follow_joint_trajectory` bridge keeps the hand window (and the goal)
 >   open until `feedback/omnihand/status` reports the target decided, bounded by `delivery_timeout_s`

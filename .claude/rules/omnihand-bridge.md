@@ -55,6 +55,18 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
   into one abstract hand contract that must fit any hand
 - keep fields statically defined; no runtime-variable structure in control paths
 
+## Cadence Rules
+
+- the hand's cadence is its own. Do not forward the arm's `pub_rate` to the
+  bridge; bringups pass `hand_pub_rate` and `hand_joint_read_rate`
+- publication is driven by new data, never by a timer: a joint sample when a
+  readback lands, status when the state it reports changes (plus a heartbeat),
+  tactile at the rate the sensor is read. `pub_rate` is a ceiling that can
+  throttle publication further, and cannot make anything faster
+- announce a settled command immediately. `FollowJointTrajectory` holds its goal
+  until it sees a status sample stamped after its command, so anything that
+  delays that verdict slows the production hand path
+
 ## Backend Rules
 
 - **a hand has no serialized SDK owner yet.** The one-owner-per-device invariant

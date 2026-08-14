@@ -63,6 +63,15 @@ numbers in the symptom list below.
    The bus-contention argument for bounding this is gone; the CPU and GIL argument is not, and the
    bridges may now poll *while* both arms stream MIT setpoints. Candidate: async/pipelined SDK access,
    poll only under active hand ownership, low idle rate.
+
+   *(Split measured 2026-08-14, `scripts/profile_hand_bridge.py`.)* Of the ~160 %
+   of a core each bridge cost, the ROS side was 41.5 % — because the publish
+   timer ran at the **arm's** 200 Hz while the hand's data changed at 20 Hz, so
+   the executor woke ten times per new sample. Binding publication to new
+   readbacks cut that to 7.3 % and made it flat across `pub_rate`. What remains,
+   ~150 % per hand, is the blocking request/response polling this entry names,
+   and it is now the only candidate left standing. It still needs a per-SDK-call
+   profile on hardware; the mock split bounds it without decomposing it.
 5. **`move_group` + `rviz2`.** The planning-scene monitor logs "complete state of the robot is not yet
    known" on a busy loop until every hand joint is populated, and rviz rendering is heavy. Candidate:
    quantify their share; consider a headless bringup for teach.

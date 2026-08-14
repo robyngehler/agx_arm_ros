@@ -487,6 +487,34 @@ as a caution: the bridges cost 289.6 % of a core while transmitting **nothing
 at all** on any of the four buses. A node can be the largest consumer in the
 system purely by failing.
 
+### 2C: which half of the bridge's cost is which
+
+`~160 % per hand` is a sum. The same process pays for vendor-SDK round trips
+over CANFD *and* for building and publishing three ROS messages every tick, and
+cutting the wrong one wastes the effort. The mock backend separates them: it
+answers every read from a Python list with no I/O, so a mock run is the ROS side
+alone. `scripts/profile_hand_bridge.py` is that measurement, L2, no hardware.
+
+| `pub_rate` passed in | before | after |
+| --- | --- | --- |
+| 200 (what every bring-up passed — the **arm's** rate) | 41.5 % | 7.3 % |
+| 50 (the bridge's own default) | 11.3 % | 7.2 % |
+| 20 (its actual readback rate) | 4.5 % | 6.9 % |
+
+Percent of one core, spinning node, executor included.
+
+- **Publication was never the problem, but the publish *rate* was.** Only 4.3 %
+  of the 41.5 % was the tick body; the rest was the executor waking 200 times a
+  second to run it. The hand's joints change 20 times a second and its status
+  and tactile once, so nine of every ten wakes carried nothing new.
+- **After the fix the figure is flat across `pub_rate`** — that is the result
+  worth keeping. Publication is driven by new readbacks, and the argument can
+  only throttle it further, so passing the arm's cadence is now harmless rather
+  than expensive.
+- **That leaves ~150 % per hand on the vendor SDK and its CANFD round trips.**
+  It is the whole remaining target, and it needs the per-SDK-call profile on
+  hardware — the split above bounds it but does not decompose it.
+
 ### 2B Parallel resource model, handoff derived not configured
 
 - [ ] Derive the scheduler's bus tokens from `bus_topology`; under
@@ -518,14 +546,16 @@ CPU.
       and its service handlers.
 - [ ] Profile the O12 Pro backend at SDK-call level: which calls, how many per
       setpoint, how long each blocks.
-- [ ] Separate ROS publication cost from vendor-SDK polling cost before cutting
-      either (the mock backend is what isolates them).
+- [x] Separate ROS publication cost from vendor-SDK polling cost before cutting
+      either (the mock backend is what isolates them). L2, 2026-08-14: the ROS
+      side is 41.5 % of a core, so ~150 % per hand is the SDK.
 - [ ] Eliminate the read-before-write round trip in the full-joint command path.
-- [ ] Decouple hand feedback publication from the arm's `pub_rate`: every bringup
-      passes the arm's rate into the bridge, so the hand publishes at 200 Hz
-      while its joints change at 20 Hz and status and tactile at 1 Hz.
-- [ ] Publish a new sample on a new readback, with only a low-rate heartbeat
-      where a consumer needs liveness.
+- [x] Decouple hand feedback publication from the arm's `pub_rate`. Bringups pass
+      `hand_pub_rate` / `hand_joint_read_rate`, and `pub_rate` is now a ceiling
+      that cannot drive the timer. 41.5 % -> 7.3 %, and flat across the argument.
+- [x] Publish a new sample on a new readback, with only a low-rate heartbeat
+      where a consumer needs liveness. A settled command is announced the moment
+      it settles, so the trajectory path verifies delivery sooner than before.
 - [ ] Decouple command verification, joint readback, tactile and status into
       separate schedules.
 - [ ] Stop polling entirely while no hand action is active.
