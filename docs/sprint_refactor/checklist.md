@@ -539,8 +539,14 @@ the production hand path, not a debug surface, and is not to be removed to save
 CPU.
 
 - [ ] Implement the frozen contract: single-goal arbitration plus `owner_id`,
-      `device_epoch` and `sequence`; no separate lease.
+      `device_epoch` and `sequence`; no separate lease. **Nothing claims a hand
+      today** — the bridge serves `claim_device` and the authority carries
+      `owner_id`, but only the MIT controller ever claims, and only its arm.
 - [ ] Reject stale-epoch and out-of-order hand commands at the bridge boundary.
+- [ ] Close the two-commander hole: the skill controller's 20 Hz hold republish
+      on `control/joint_states` supersedes an in-flight trajectory target, and
+      the action then reads the hold's verification as its own delivery. See
+      `errors_and_fixes.md`, 2026-08-14.
 - [ ] Give the hand a serialized SDK owner. The worker and its four lanes are
       arm-only; the bridge still calls the SDK from its timer, its subscriptions
       and its service handlers.

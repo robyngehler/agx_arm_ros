@@ -559,3 +559,52 @@ changes, which is the interesting part.
   not an output written behind its back.
 - Only hardware surfaced this. The unit tests passed throughout, because none
   of them ran the publish loop after an e-stop — a gap the new regression closes.
+
+## 2026-08-14 (found while following the refinement proposal into the hand bridge)
+
+### The hand publishes at the arm's rate, ten times faster than it has data
+
+- Symptom: each `omnihand_bridge` cost ~160 % of a core while its bus carried
+  25 frames/s, and cost the same whether a hand was doing anything or not.
+- Cause: `_publish_feedback` rebuilt and published all three feedback messages
+  on every timer tick, and the timer ran at `pub_rate` — which every bringup
+  filled with the **arm's** publish rate by forwarding `pub_rate` into
+  `start_omnihand_bridge.launch.py`. The hand's joints change at
+  `joint_read_rate` (20 Hz) and its status and tactile once a second, so nine of
+  every ten wakes carried nothing new.
+- Measured (`scripts/profile_hand_bridge.py`, mock backend, no CAN): 41.5 % of a
+  core at `pub_rate` 200, of which only 4.3 % was the tick body — the rest was
+  the executor waking 200 times a second to run it.
+- Fix: publication is gated on new data (a joint sample per readback, status on
+  change plus a 2 Hz heartbeat, tactile at its read interval); the timer paces
+  acquisition at twice the readback interval; `pub_rate` is a ceiling that can
+  throttle publication and never drive it; bringups pass `hand_pub_rate` and
+  `hand_joint_read_rate`. Result: 7.3 %, and flat across `pub_rate`.
+- The general shape: **a rate argument that is forwarded rather than chosen
+  belongs to whoever it was chosen for.** 200 Hz is right for an arm whose
+  firmware pushes continuously; it was never a statement about the hand.
+
+### Two commanders write the same hand, and neither knows about the other
+
+- Symptom: not yet observed in a run — found by mapping the command surfaces the
+  proposal asked about. Recorded before it is hit.
+- Evidence: `omnihand_skill_controller_node` commands the hand over the shared
+  `control/joint_states` topic, and republishes the grasp target at 20 Hz for as
+  long as it holds — deliberately outside the coordinator's resource model, so
+  that a hold does not block the side's resources. Meanwhile
+  `omnihand_follow_joint_trajectory` commands the same hand over
+  `control/omnihand/joint_trajectory`. Both land in `_submit_command`, which is
+  latest-wins and keeps exactly one `pending_command`.
+- Consequence, and it is a correctness one rather than a cost one: a hold
+  republish issued while a trajectory goal is in flight replaces that goal's
+  target within ~50 ms, and `_await_delivery` then sees `command_pending` clear
+  when the **hold's** target verifies. The action reports the trajectory
+  delivered when the hand never went there.
+- Also relevant to CPU: every hold republish is a real SDK write plus its
+  verification readback, so a held grasp costs 20 writes/s per hand
+  indefinitely. This is the "recurring post-grasp hold traffic" in phase 2C.
+- Not yet fixed. The hand's `DeviceAuthority` already carries `owner_id` and the
+  bridge already serves `claim_device` — but **nothing ever claims a hand**
+  (only the MIT controller claims, and only its arm), and the command surfaces
+  do not check ownership. Closing this is 2C's single-goal arbitration bullet;
+  it changes admission behaviour on the production path, so it is its own slice.
