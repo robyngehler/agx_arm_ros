@@ -198,3 +198,27 @@ class MeasuredSdk:
     def unwrapped(self):
         """The real SDK object, for identity checks and teardown."""
         return self._inner
+
+
+def name_os_thread(name: str) -> bool:
+    """Give the calling thread an OS-visible name. True when it took effect.
+
+    Python's ``threading.Thread(name=...)`` stays inside the interpreter, so
+    `top -H`, `htop` and `/proc/<pid>/task/*/comm` show every thread under the
+    process name. That makes per-thread CPU unattributable, which is how a
+    CPU question gets answered by assumption instead of by measurement — the
+    mistake this sprint has already made once about the driver's SDK reads.
+
+    Best effort by design: it is instrumentation, and a kernel that refuses the
+    call is not a reason to fail a control node. Linux caps the name at 15
+    bytes plus a terminator, so longer names are truncated rather than rejected.
+    """
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        PR_SET_NAME = 15
+        encoded = name.encode("utf-8")[:15]
+        return libc.prctl(PR_SET_NAME, ctypes.c_char_p(encoded), 0, 0, 0) == 0
+    except Exception:
+        return False

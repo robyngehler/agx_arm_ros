@@ -31,7 +31,7 @@ from agx_arm_ctrl.device_authority import (
     UnitSafetySnapshot,
 )
 from agx_arm_msgs.srv import ClaimDevice, RequestUnitStop
-from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics
+from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics, name_os_thread
 from agx_arm_ctrl.sdk_worker import (
     CallNotExecuted, CallOutcome, CallOutcomeUnknown, Lane, SdkWorker,
 )
@@ -232,8 +232,20 @@ class AgxArmRosNode(Node):
         self._setup_services()
 
         ### publisher thread
-        self.publisher_thread = threading.Thread(target=self._publish_thread)
+        # Two threads, not one. Acquisition owns the arm's cadence — the health
+        # checks, the recovery watchdog and the snapshot the command path
+        # decides on all hang off it — while publication is ROS middleware work
+        # whose cost has nothing to do with how often the hardware must be read.
+        # Coupled, a slow DDS write delayed the next acquisition and with it the
+        # watchdog's next sample.
+        self.publisher_thread = threading.Thread(
+            target=self._acquisition_loop, name="acquisition", daemon=True
+        )
         self.publisher_thread.start()
+        self.publication_thread = threading.Thread(
+            target=self._publication_loop, name="publication", daemon=True
+        )
+        self.publication_thread.start()
 
     ### initialization methods
     def _declare_parameters(self):
@@ -1377,13 +1389,64 @@ class AgxArmRosNode(Node):
         )
         return False
 
-    ### publisher thread
-    def _publish_thread(self):
-        # Paced by the acquisition rate, not by pub_rate: this loop's period is
-        # how often the arm is read, and a publication carries one acquisition.
-        # Running it faster than the arm is read would only republish the same
-        # instant under a newer stamp.
-        rate = self.create_rate(self.acquisition_rate_hz)
+    @staticmethod
+    def _pace(next_tick: float, period_s: float) -> float:
+        """Sleep to the next period boundary on the monotonic clock.
+
+        Deliberately not ``Node.create_rate``. A ROS rate is backed by a timer
+        the executor has to service, so pacing a hardware I/O loop with one
+        makes its cadence depend on ROS middleware load — measured: two rate
+        objects on the single-threaded executor dropped acquisition from 98/s to
+        39/s, which is the coupling this loop split exists to remove.
+
+        A loop that has fallen behind restarts from now rather than firing a
+        burst to catch up: the arm cannot be read retroactively, and a burst
+        would land on the worker as a backlog.
+        """
+        next_tick += period_s
+        delay = next_tick - time.monotonic()
+        if delay > 0.0:
+            time.sleep(delay)
+            return next_tick
+        return time.monotonic()
+
+    ### publication thread
+    def _publication_loop(self):
+        """Publish the latest acquisition. Owns no cadence of its own.
+
+        ``pub_rate`` is a ceiling, not a rate: a snapshot is published once and
+        the loop then waits for a newer one. Publishing faster than the arm is
+        read would only restamp the same instant, and a consumer counting
+        messages would read the duplicate as fresh data.
+        """
+        name_os_thread("publication")
+        period = 1.0 / float(self.pub_rate)
+        next_tick = time.monotonic()
+        published_at = 0.0
+
+        while rclpy.ok():
+            snapshot = self._latest_snapshot
+            if snapshot is not None and snapshot.acquired_at != published_at:
+                published_at = snapshot.acquired_at
+                try:
+                    with self.metrics.time_block("publish_batch"):
+                        self._publish_joint_states(snapshot)
+                        self._publish_pose(snapshot)
+                        self._publish_arm_status(snapshot)
+                        self._publish_effector_status()
+                        self._publish_leader_joint_angles(snapshot)
+                except Exception as exc:
+                    # A publication failure must never stop the arm being read.
+                    self.get_logger().error(f"publish batch failed: {exc}")
+            next_tick = self._pace(next_tick, period)
+
+    ### acquisition thread
+    def _acquisition_loop(self):
+        name_os_thread("acquisition")
+        # Paced by the acquisition rate: this loop's period is how often the arm
+        # is read and how often the recovery watchdog gets a sample.
+        period = 1.0 / float(self.acquisition_rate_hz)
+        next_tick = time.monotonic()
 
         # publishing loop
         while rclpy.ok():
@@ -1401,7 +1464,7 @@ class AgxArmRosNode(Node):
                     if now - self._last_overrun_log_monotonic > 5.0:
                         self._last_overrun_log_monotonic = now
                         self.get_logger().warn(
-                            "publish-loop overrun: "
+                            "acquisition-loop overrun: "
                             f"{self._last_loop_gap_s * 1000:.0f} ms gap "
                             f"(> {self._loop_overrun_threshold_s * 1000:.0f} ms; "
                             f"count={self._loop_overrun_count}, "
@@ -1420,7 +1483,7 @@ class AgxArmRosNode(Node):
                 # published state and nothing drained the CAN RX socket.
                 self._publish_authority(self._authority.snapshot())
                 self._publish_fault_lockout()
-                rate.sleep()
+                next_tick = self._pace(next_tick, period)
                 continue
 
             # Acquire first, decide second — one worker request per cycle.
@@ -1451,7 +1514,7 @@ class AgxArmRosNode(Node):
                 snapshot = None
 
             if snapshot is None:
-                rate.sleep()
+                next_tick = self._pace(next_tick, period)
                 continue
             # Published to the command callbacks before anything else is done
             # with it: they decide on it instead of reading the SDK themselves.
@@ -1460,7 +1523,7 @@ class AgxArmRosNode(Node):
             try:
                 if self._should_recover_bus(snapshot):
                     self._request_recovery()
-                    rate.sleep()
+                    next_tick = self._pace(next_tick, period)
                     continue
             except Exception as e:
                 self.get_logger().error(f"bus recovery check failed: {e}")
@@ -1485,17 +1548,14 @@ class AgxArmRosNode(Node):
                 # false-trigger on that intentional silence.
                 self._last_good_feedback_monotonic = time.monotonic()
 
-            with self.metrics.time_block("publish_batch"):
-                self._publish_joint_states(snapshot)
-                self._publish_pose(snapshot)
-                self._publish_arm_status(snapshot)
-                self._publish_effector_status()
-                self._publish_leader_joint_angles(snapshot)
+            # The publication thread picks the snapshot up from here. This loop
+            # does not wait for it: the arm's read cadence is not the ROS
+            # middleware's to set.
             if self.metrics.due():
                 report = self.metrics.report()
                 if report:
                     self.get_logger().info(report)
-            rate.sleep()
+            next_tick = self._pace(next_tick, period)
 
     ### bus recovery (P1)
     @staticmethod

@@ -64,6 +64,12 @@ from collections import deque
 from enum import Enum
 from typing import Any, Callable, Deque, Dict, Optional
 
+try:  # instrumentation only; the worker must run without it
+    from agx_arm_ctrl.runtime_metrics import name_os_thread as _name_os_thread
+except Exception:  # pragma: no cover
+    def _name_os_thread(_name):
+        return False
+
 
 class Lane(Enum):
     """Dispatch priority, strictly in this order.
@@ -547,6 +553,7 @@ class SdkWorker:
         return None
 
     def _run(self) -> None:
+        _name_os_thread(self._thread.name)
         while True:
             stale: Optional[Call] = None
             stale_detail = ""

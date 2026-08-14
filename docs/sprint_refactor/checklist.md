@@ -350,13 +350,41 @@ assume the two arms are protocol-identical.
 
 ### 1B Feedback snapshot and driver CPU reduction
 
-- [ ] Separate acquisition cadence from publication cadence; one immutable
-      snapshot per cycle, no SDK getters in callbacks.
-- [ ] Target the whole publish batch, not only the per-joint reads (measured at
-      ~10 % of it).
-- [ ] Ensure a stalled loop cannot stop draining the RX socket (0E: one 10 s gap).
-- [ ] Measure the arm-driver CPU improvement against the 0E baseline (71.6 % of
-      a core at rest, 1.10 ms mean batch against a 5 ms period).
+- [x] Separate acquisition cadence from publication cadence. Two threads: the
+      arm's read cadence is `acquisition_rate_hz` (100 Hz, justified by the
+      consumers), and publication takes the latest snapshot with `pub_rate` as a
+      ceiling rather than a rate — a snapshot is published once and the loop
+      waits for a newer one. One immutable snapshot per cycle, and the command
+      path decides on it instead of reading the SDK itself.
+- [x] Pace both loops on the monotonic clock, not on `Node.create_rate`. A ROS
+      rate is a timer the executor services, so pacing a hardware I/O loop with
+      one makes its cadence depend on ROS middleware load: two rate objects on
+      the single-threaded executor dropped acquisition from 98/s to **39/s** and
+      cost the setpoint path its timing. Found by measuring the split, not by
+      reasoning about it.
+- [x] Make per-thread CPU attributable at all (`name_os_thread`,
+      `scripts/measure_thread_cpu.sh`). Python thread names never reach the OS,
+      so every thread showed up under the process name and "which thread is
+      burning CPU" could only be guessed.
+- [x] Measure the arm-driver CPU against the 0E baseline. At rest **50.6 % of a
+      core** (4.2 % of the machine) against 0E's 71.6 %; under MIT hold 98.0 %
+      of a core (8.2 % of the machine), acquisition 99.7/s, publish batch
+      99.3/s, zero loop overruns. The comparison is not like-for-like — 0E ran
+      a 200 Hz coupled loop and no MIT — so it is a direction, not a delta.
+- [ ] **Reduce what the measurement actually named.** The largest single
+      consumer is the rclpy executor thread: 23.4 % at rest, 26.3 % under load,
+      against 3.6 % for the acquisition loop and 14.5 % for publication. The
+      sprint assumed the per-joint SDK reads, then the publish batch; both were
+      wrong. Fewer ROS entities or a different executor is the lever, and
+      nothing here has attacked it yet.
+- [ ] Measure the RX drain under a provoked fault. **The premise in the earlier
+      version of this item was wrong**: the socket is drained by the vendor
+      SDK's own reader thread (`driver_context._read_loop`), not by our loop, so
+      a stalled publish loop does not by itself stop the drain. What does stop
+      it is recovery, which calls `stop_th()` as part of tearing the link down —
+      so the question is how many frames the kernel buffer loses across a
+      recovery window, and `RMEM_MAX` is the parameter it tests. Needs a
+      `sudo ip link set <iface> down/up`.
 
 ### 1C One active unit activity — the small guard
 
