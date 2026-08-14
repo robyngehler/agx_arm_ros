@@ -38,7 +38,7 @@ def test_command_verifies_and_clears_pending(bridge_node):
     assert bridge_node.pending_command["attempts"] == 1
 
     # mock backend applies targets instantly; a fresh readback verifies them
-    bridge_node._publish_feedback()
+    bridge_node._feedback_tick()
     bridge_node._command_retry_tick()
 
     assert bridge_node.pending_command is None
@@ -67,7 +67,7 @@ def test_failed_sends_retry_until_attempts_exhausted(bridge_node):
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
         # An attempt is only spent once a readback could have judged the last
         # send, so the poll has to run for the retry loop to advance.
-        bridge_node._publish_feedback()
+        bridge_node._feedback_tick()
         bridge_node._command_retry_tick()
         if bridge_node.pending_command is not None:
             assert bridge_node.pending_command["attempts"] == expected_attempts
@@ -75,7 +75,7 @@ def test_failed_sends_retry_until_attempts_exhausted(bridge_node):
     # exhausted: one more tick gives up instead of re-sending forever
     if bridge_node.pending_command is not None:
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
-        bridge_node._publish_feedback()
+        bridge_node._feedback_tick()
         bridge_node._command_retry_tick()
     assert bridge_node.pending_command is None
     assert bridge_node._command_delivery_failed is True
@@ -93,7 +93,7 @@ def test_attempt_is_not_spent_without_a_readback_opportunity(bridge_node):
     bridge_node._joint_states_command_callback(_command_msg(bridge_node))
     assert bridge_node.pending_command["attempts"] == 1
 
-    # No _publish_feedback(): no readback has landed since the send.
+    # No _feedback_tick(): no readback has landed since the send.
     for _ in range(20):
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
         bridge_node._command_retry_tick()
@@ -133,7 +133,7 @@ def test_unverified_target_retries_then_gives_up(bridge_node):
     attempts_seen = []
     while bridge_node.pending_command is not None:
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
-        bridge_node._publish_feedback()
+        bridge_node._feedback_tick()
         attempts_seen.append(bridge_node.pending_command["attempts"])
         bridge_node._command_retry_tick()
         # backend caches the commanded target optimistically; force the
@@ -159,9 +159,9 @@ def test_joint_read_rate_throttles_backend_polling(bridge_node):
     # starts near 0 after boot, so `last = 0.0` alone is not reliably stale)
     bridge_node.last_joint_read_monotonic = time.monotonic() - 7200.0
 
-    bridge_node._publish_feedback()  # stale -> reads
-    bridge_node._publish_feedback()  # within the 1 h window -> cached
-    bridge_node._publish_feedback()
+    bridge_node._feedback_tick()  # stale -> reads
+    bridge_node._feedback_tick()  # within the 1 h window -> cached
+    bridge_node._feedback_tick()
 
     assert len(read_calls) == 1
 
@@ -189,6 +189,6 @@ def test_no_joint_state_published_before_first_successful_readback(bridge_node):
     bridge_node.last_good_joint_read_monotonic = 0.0
     bridge_node.hand_joint_states_pub.publish = published.append
 
-    bridge_node._publish_feedback()
+    bridge_node._feedback_tick()
 
     assert published == []

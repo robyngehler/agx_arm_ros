@@ -135,6 +135,24 @@ def generate_launch_description():
         description='Publishing rate for the AGX Arm node.'
     )
 
+    # The hand's cadence is its own. Forwarding the arm's pub_rate into the
+    # bridge made the hand publish three messages 200 times a second while its
+    # joints changed 20 times and its status and tactile once — 41.5 % of a core
+    # against 4.5 %, measured on the mock backend with no CAN involved.
+    hand_pub_rate_arg = DeclareLaunchArgument(
+        'hand_pub_rate',
+        default_value='50.0',
+        description='Ceiling on OmniHand feedback publication in Hz. Publication is '
+                    'driven by new readbacks, so this only throttles it further.'
+    )
+
+    hand_joint_read_rate_arg = DeclareLaunchArgument(
+        'hand_joint_read_rate',
+        default_value='20.0',
+        description='OmniHand SDK joint readback rate in Hz. Each poll is a real CAN '
+                    'request, and it is what actually sets the hand feedback rate.'
+    )
+
     runtime_metrics_enabled_arg = DeclareLaunchArgument(
         'runtime_metrics_enabled',
         default_value='false',
@@ -246,7 +264,8 @@ def generate_launch_description():
             'device_id': LaunchConfiguration('omnihand_device_id'),
             'canfd_id': LaunchConfiguration('omnihand_canfd_id'),
             'sdk_cfg_path': LaunchConfiguration('omnihand_sdk_cfg_path'),
-            'pub_rate': LaunchConfiguration('pub_rate'),
+            'pub_rate': LaunchConfiguration('hand_pub_rate'),
+            'joint_read_rate': LaunchConfiguration('hand_joint_read_rate'),
             'joint_states_command_topic': LaunchConfiguration('joint_states_command_topic'),
         }.items(),
         condition=IfCondition(
@@ -303,6 +322,8 @@ def generate_launch_description():
         fast_mode_arg,
         speed_percent_arg,
         pub_rate_arg,
+        hand_pub_rate_arg,
+        hand_joint_read_rate_arg,
         runtime_metrics_enabled_arg,
         enable_timeout_arg,
         tcp_offset_arg,

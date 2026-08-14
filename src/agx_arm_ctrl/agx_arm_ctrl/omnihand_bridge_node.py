@@ -811,7 +811,19 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("omnihand_type", "right")
         self.declare_parameter("hand_model", DEFAULT_HAND_MODEL)
         self.declare_parameter("backend_type", "mock")
+        # A CEILING on publication, not the rate anything runs at. It used to
+        # drive the one timer that did everything, and every bringup passes the
+        # ARM's pub_rate (200) into it — so the hand published three messages
+        # 200 times a second while its joints changed 20 times and its status and
+        # tactile once. Measured cost of that mistake: 41.5 % of a core against
+        # 4.5 % at 20 Hz, on the mock backend where no CAN is involved at all.
+        # Publication is now driven by new data; this only throttles it further.
         self.declare_parameter("pub_rate", 50.0)
+        # Status carries the command-delivery verdict the FollowJointTrajectory
+        # action waits on, so it is published the moment that verdict changes.
+        # This is the floor underneath it: what a consumer gets when nothing is
+        # happening, keeping joint_readback_age_s and liveness observable.
+        self.declare_parameter("status_heartbeat_rate", 2.0)
         # Hand joint readback is a real CAN request per poll; on the shared
         # arm+hand bus this competes with the 50 Hz MIT command stream, so the
         # SDK poll rate is decoupled from the ROS publish rate. <= 0 polls on
@@ -863,6 +875,7 @@ class OmniHandBridgeNode(Node):
         self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
         self.backend_type = str(self.get_parameter("backend_type").value)
         self.pub_rate = float(self.get_parameter("pub_rate").value)
+        self.status_heartbeat_rate = float(self.get_parameter("status_heartbeat_rate").value)
         self.joint_read_rate = float(self.get_parameter("joint_read_rate").value)
         self.command_retry_enabled = bool(self.get_parameter("command_retry_enabled").value)
         self.command_retry_max_attempts = max(
@@ -981,6 +994,21 @@ class OmniHandBridgeNode(Node):
         self.joint_read_min_interval_s = (
             1.0 / self.joint_read_rate if self.joint_read_rate > 0.0 else 0.0
         )
+        # Publication is gated on new data. These record what was last put on the
+        # wire so a tick with nothing new stays silent instead of re-serializing
+        # the same three messages.
+        self._published_read_monotonic = 0.0
+        self._last_joint_publish_monotonic = 0.0
+        self._last_status_publish_monotonic = 0.0
+        self._last_status_signature: tuple | None = None
+        self._last_tactile_publish_monotonic = 0.0
+        self._publish_min_interval_s = 1.0 / self.pub_rate if self.pub_rate > 0.0 else 0.0
+        self._status_heartbeat_period_s = (
+            1.0 / self.status_heartbeat_rate if self.status_heartbeat_rate > 0.0 else 0.0
+        )
+        # Tactile cannot change faster than the SDK is read, so publishing faster
+        # only re-serializes the same array.
+        self._tactile_publish_interval_s = SDK_TACTILE_READ_INTERVAL_S
 
         self.hand_joint_states_pub = self.create_publisher(
             JointState, "feedback/omnihand/joint_states", 10
@@ -1016,8 +1044,17 @@ class OmniHandBridgeNode(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
 
-        timer_period = 1.0 / self.pub_rate if self.pub_rate > 0.0 else 0.02
-        self.create_timer(timer_period, self._publish_feedback)
+        # The timer paces ACQUISITION, which is the only thing here with a real
+        # periodic need; publication rides along when there is something new.
+        # Oversampled 2x against the readback interval on purpose: with a timer
+        # period equal to the interval, ordinary jitter makes roughly every other
+        # tick miss the `now - last >= interval` gate and the effective readback
+        # rate lands nearer 13 Hz than the 20 Hz that was asked for.
+        if self.joint_read_min_interval_s > 0.0:
+            timer_period = self.joint_read_min_interval_s / 2.0
+        else:
+            timer_period = 1.0 / self.pub_rate if self.pub_rate > 0.0 else 0.02
+        self.create_timer(timer_period, self._feedback_tick)
         if self.command_retry_enabled:
             self.create_timer(self.command_retry_period_s, self._command_retry_tick)
 
@@ -1092,6 +1129,7 @@ class OmniHandBridgeNode(Node):
         self._send_pending_command()
         if not self.command_retry_enabled:
             self.pending_command = None
+        self._publish_command_verdict()
 
     def _send_pending_command(self) -> None:
         pending = self.pending_command
@@ -1143,6 +1181,7 @@ class OmniHandBridgeNode(Node):
                     f"{pending['attempts']} attempts"
                 )
             self.pending_command = None
+            self._publish_command_verdict()
             return
 
         # An attempt may only be spent once the previous send actually had a
@@ -1165,10 +1204,14 @@ class OmniHandBridgeNode(Node):
             )
             self._command_delivery_failed = True
             self.pending_command = None
+            self._publish_command_verdict()
             return
 
         if time.monotonic() - pending["last_send_monotonic"] >= self.command_retry_period_s:
             self._send_pending_command()
+            # A send can itself exhaust the budget and settle the command; the
+            # signature gate makes a repeated verdict a no-op.
+            self._publish_command_verdict()
 
     _AUTHORITY_STATE_CODES = {
         DeviceState.OFFLINE: AgxDeviceAuthority.STATE_OFFLINE,
@@ -1273,6 +1316,7 @@ class OmniHandBridgeNode(Node):
         self.pending_command = None
         self._command_delivery_failed = False
         self.backend.stop()
+        self._publish_command_verdict()
         response.success = True
         response.message = f"OmniHand {self.backend.backend_name} stop requested"
         return response
@@ -1301,7 +1345,16 @@ class OmniHandBridgeNode(Node):
             )
         return read_interval
 
-    def _publish_feedback(self) -> None:
+    def _feedback_tick(self) -> None:
+        """Acquire what is due, then publish only what is new.
+
+        These were one action for as long as the bridge existed: every timer tick
+        rebuilt and published all three messages regardless of whether anything
+        had changed. Since the tick ran at the arm's publish rate, that meant 600
+        messages a second carrying 20 joint samples and 1 status sample — and the
+        executor waking 200 times a second to do it, which is where nearly all of
+        the cost was.
+        """
         stamp = self.get_clock().now().to_msg()
 
         now = time.monotonic()
@@ -1362,60 +1415,119 @@ class OmniHandBridgeNode(Node):
         # successful SDK readback. MoveIt otherwise latches that fake pose as
         # the current hand state and plans from it, which later fails execute
         # validation once the real readback arrives.
-        if self.last_good_joint_read_monotonic > 0.0:
+        #
+        # Beyond that, a joint sample goes out when the hand answered, not when a
+        # timer fired. Republishing the cache gave every sample a fresh header
+        # stamp while the values were minutes old under a fault — the reason
+        # consumers have to check `joint_readback_age_s` on the status surface
+        # instead of trusting the stamp.
+        if (
+            self.last_good_joint_read_monotonic > 0.0
+            and self.last_joint_read_monotonic > self._published_read_monotonic
+            and now - self._last_joint_publish_monotonic >= self._publish_min_interval_s
+        ):
             joint_state = JointState()
             joint_state.header.stamp = stamp
             joint_state.name = list(self.joint_names)
             joint_state.position = list(self.cached_positions)
             self.hand_joint_states_pub.publish(joint_state)
+            self._published_read_monotonic = self.last_joint_read_monotonic
+            self._last_joint_publish_monotonic = now
 
         if not self._fault_backoff_active or self._last_status_snapshot is None:
             self._last_status_snapshot = self.backend.read_status()
-        status_snapshot = self._last_status_snapshot
+        self._sync_authority("feedback tick")
+        self._publish_status_if_due(stamp, now)
+
+        if not self._fault_backoff_active or self._last_tactile_snapshot is None:
+            self._last_tactile_snapshot = self.backend.read_tactile()
+        if now - self._last_tactile_publish_monotonic >= self._tactile_publish_interval_s:
+            tactile_snapshot = self._last_tactile_snapshot
+            tactile_msg = OmniHandTactileRaw()
+            tactile_msg.header.stamp = stamp
+            tactile_msg.hand_side = self.hand_side
+            tactile_msg.backend_name = tactile_snapshot.backend_name
+            tactile_msg.layout_name = tactile_snapshot.layout_name
+            tactile_msg.values = tactile_snapshot.values
+            self.tactile_pub.publish(tactile_msg)
+            self._last_tactile_publish_monotonic = now
+
+    def _status_signature(self, snapshot: OmniHandStatusSnapshot) -> tuple:
+        """What has to change before a status message is worth sending.
+
+        Deliberately excludes `joint_readback_age_s`: it advances every tick by
+        construction, so including it would make every status "changed" and undo
+        the gate. The heartbeat is what keeps it current.
+        """
+        pending = self.pending_command
+        return (
+            snapshot.control_mode,
+            snapshot.connected,
+            snapshot.initialized,
+            snapshot.communication_fault,
+            snapshot.status_text,
+            pending is not None,
+            int(pending["attempts"]) if pending is not None else 0,
+            self._command_delivery_failed,
+        )
+
+    def _publish_status_if_due(self, stamp, now: float) -> None:
+        snapshot = self._last_status_snapshot
+        if snapshot is None:
+            return
+        signature = self._status_signature(snapshot)
+        heartbeat_due = (
+            self._status_heartbeat_period_s > 0.0
+            and now - self._last_status_publish_monotonic >= self._status_heartbeat_period_s
+        )
+        if signature == self._last_status_signature and not heartbeat_due:
+            return
+
         status_msg = OmniHandStatus()
         status_msg.header.stamp = stamp
         status_msg.hand_side = self.hand_side
-        status_msg.backend_name = status_snapshot.backend_name
-        status_msg.control_mode = status_snapshot.control_mode
-        status_msg.connected = status_snapshot.connected
-        status_msg.initialized = status_snapshot.initialized
-        status_msg.is_mock = status_snapshot.is_mock
-        status_msg.communication_fault = status_snapshot.communication_fault
+        status_msg.backend_name = snapshot.backend_name
+        status_msg.control_mode = snapshot.control_mode
+        status_msg.connected = snapshot.connected
+        status_msg.initialized = snapshot.initialized
+        status_msg.is_mock = snapshot.is_mock
+        status_msg.communication_fault = snapshot.communication_fault
         pending = self.pending_command
         status_msg.command_pending = pending is not None
         status_msg.command_delivery_failed = self._command_delivery_failed
         status_msg.command_attempts = min(
             0xFFFF, int(pending["attempts"]) if pending is not None else 0
         )
-        self._sync_authority("publish tick")
         status_msg.joint_readback_age_s = (
             float(now - self.last_good_joint_read_monotonic)
             if self.last_good_joint_read_monotonic > 0.0
             else -1.0
         )
-        status_msg.active_joint_temperatures_c = status_snapshot.active_joint_temperatures_c
-        status_msg.active_joint_currents_a = status_snapshot.active_joint_currents_a
-        status_msg.active_joint_stalled = status_snapshot.active_joint_stalled
-        status_msg.active_joint_over_temperature = status_snapshot.active_joint_over_temperature
-        status_msg.active_joint_over_current = status_snapshot.active_joint_over_current
-        status_msg.status_text = status_snapshot.status_text
-        if self.pending_command is not None:
+        status_msg.active_joint_temperatures_c = snapshot.active_joint_temperatures_c
+        status_msg.active_joint_currents_a = snapshot.active_joint_currents_a
+        status_msg.active_joint_stalled = snapshot.active_joint_stalled
+        status_msg.active_joint_over_temperature = snapshot.active_joint_over_temperature
+        status_msg.active_joint_over_current = snapshot.active_joint_over_current
+        status_msg.status_text = snapshot.status_text
+        if pending is not None:
             status_msg.status_text += (
-                f"; command_retry {self.pending_command['attempts']}"
+                f"; command_retry {pending['attempts']}"
                 f"/{self.command_retry_max_attempts} pending"
             )
         self.status_pub.publish(status_msg)
+        self._last_status_signature = signature
+        self._last_status_publish_monotonic = now
 
-        if not self._fault_backoff_active or self._last_tactile_snapshot is None:
-            self._last_tactile_snapshot = self.backend.read_tactile()
-        tactile_snapshot = self._last_tactile_snapshot
-        tactile_msg = OmniHandTactileRaw()
-        tactile_msg.header.stamp = stamp
-        tactile_msg.hand_side = self.hand_side
-        tactile_msg.backend_name = tactile_snapshot.backend_name
-        tactile_msg.layout_name = tactile_snapshot.layout_name
-        tactile_msg.values = tactile_snapshot.values
-        self.tactile_pub.publish(tactile_msg)
+    def _publish_command_verdict(self) -> None:
+        """Announce a settled command immediately, without waiting for a tick.
+
+        `FollowJointTrajectory` holds its goal — and, on a shared bus, the arm's
+        quiesce window — until it sees a status sample published *after* the
+        command saying the target is no longer pending. Emitting that here makes
+        the verdict reach it in the retry tick that decided it, which is sooner
+        than the old fixed cadence delivered it.
+        """
+        self._publish_status_if_due(self.get_clock().now().to_msg(), time.monotonic())
 
 
 def main(args: list[str] | None = None) -> None:
