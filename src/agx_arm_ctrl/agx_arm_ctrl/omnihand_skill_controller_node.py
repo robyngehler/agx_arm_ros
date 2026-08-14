@@ -154,7 +154,18 @@ class OmniHandSkillController(Node):
             callback_group=callback_group,
         )
 
-        hold_period = 1.0 / self.defaults.control_rate_hz if self.defaults.control_rate_hz > 0 else 0.05
+        # The hold tick WATCHES a grasp; it does not command one. It used to
+        # republish the grasp target at the control rate, which made this node a
+        # second commander of a device the trajectory action also commands — and
+        # since the bridge keeps exactly one pending target, a hold republish
+        # could replace an in-flight trajectory target and let that goal read the
+        # hold's verification as its own delivery.
+        #
+        # Its rate follows the tactile publication, not the control rate: contact
+        # is what it looks at, and a faster tick only re-reads the same sample.
+        self.declare_parameter("hold_monitor_rate_hz", 5.0)
+        monitor_rate = float(self.get_parameter("hold_monitor_rate_hz").value)
+        hold_period = 1.0 / monitor_rate if monitor_rate > 0.0 else 0.2
         self.create_timer(hold_period, self._hold_tick, callback_group=callback_group)
 
         self.action_server = ActionServer(
@@ -598,8 +609,13 @@ class OmniHandSkillController(Node):
             on_contact_loss = self._hold_on_contact_loss
             already_warned = self._hold_warned
 
-        # Keep the grasp pose commanded so the bridge maintains the hold.
-        self._publish_command(target)
+        # Deliberately does NOT re-command the target. The grasp pose was sent
+        # once when the grasp was confirmed, and the bridge holds a command
+        # pending until a readback verifies it — so re-sending was a second,
+        # unverified retry loop layered on top of a verified one, on a different
+        # topic, for as long as the grasp lasted. The hand's own controllers keep
+        # the commanded position; nothing here needs to restate it.
+        del target
 
         if confirmed <= 0.0 or not sensors:
             return  # no calibrated baseline to compare slip against
