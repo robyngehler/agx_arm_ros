@@ -67,7 +67,8 @@ Use these when a task benefits from a narrower persona:
 - keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared `control/joint_states` is the current hand command flow and is legacy (V02 target: one abstract hand command with owner identity, control epoch, and sequence)
 - the two arms run different, unflashable firmware (right 1.06 default tier, left 1.11 `NeroFW.V111`); anything derived from the protocol is per tier, not per robot model, and a measurement names its arm
 - each device owns its own CAN bus: arms on `can_nero_left`/`can_nero_right` (native), hands on `hand_left`/`hand_right` (USB-CAN FD adapters); same-side arm and hand motion may run in parallel and the shared-bus hand window is a selectable degraded mode
-- `<side>_omnihand_controller/follow_joint_trajectory` is the production hand execution path, not a debug surface; `control/omnihand/stop` is a cancel-and-hold, not a latching device stop
+- a hand has two production motion primitives — trajectory execution (`<side>_omnihand_controller/follow_joint_trajectory`) and reactive contact-seeking motion (the skill controller) — and exactly one owner at a time. Both claim `control/omnihand/claim_device` before commanding; the bridge is fail-closed, so an unclaimed hand executes nothing
+- `control/omnihand/stop` is a cancel-and-hold, not a latching device stop
 - use repo-owned `agx_arm_msgs` messages for OmniHand-specific diagnostics and tactile payloads
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
 - use `.github/instructions/ros2-development.instruction.md` for ROS2-native questions and value-capture decisions

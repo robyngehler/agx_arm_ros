@@ -93,8 +93,12 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - each device owns its own CAN bus: arms on `can_nero_left`/`can_nero_right` (native), hands on
   `hand_left`/`hand_right` (USB-CAN FD adapters); same-side arm and hand motion may run in parallel
   and the shared-bus hand window is a selectable degraded mode
-- `<side>_omnihand_controller/follow_joint_trajectory` is the production hand execution path, not a
-  debug surface; `control/omnihand/stop` is a cancel-and-hold, not a latching device stop
+- a hand has two production motion primitives — trajectory execution
+  (`<side>_omnihand_controller/follow_joint_trajectory`) and reactive
+  contact-seeking motion (the skill controller) — and exactly one owner at a
+  time. Both claim `control/omnihand/claim_device` before commanding; the bridge
+  is fail-closed, so an unclaimed hand executes nothing
+- `control/omnihand/stop` is a cancel-and-hold, not a latching device stop
 - use repo-owned `agx_arm_msgs` messages for hand diagnostics and tactile payloads, with statically
   defined fields
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment

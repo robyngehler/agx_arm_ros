@@ -26,7 +26,10 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 - resolve each hand's SocketCAN interface from its own registry entry, never from the arm's `can_port`, and select it through explicit backend construction rather than the process-global `OMNIHAND_SOCKETCAN_IFACE`
 - keep combined `feedback/joint_states` as the canonical follow-mode state
 - publish hand-only debug and diagnostics under `feedback/omnihand/*`
-- `<side>_omnihand_controller/follow_joint_trajectory` is the **production** hand execution path, not a debug or development surface: lower measured latency than a direct `HandCmd`, synchronization with arm trajectories, and the trajectory semantics later motion primitives need. Do not remove it to save CPU
+- a hand has **two** production motion primitives, and they may never command it at once: `<side>_omnihand_controller/follow_joint_trajectory` is the primary **trajectory-execution** path (lower measured latency than a direct `HandCmd`, synchronizes with arm trajectories, carries the semantics later motion primitives need — do not remove it to save CPU), and reactive **contact-seeking** motion (the skill controller) is the second, ending where the tactile sensor says rather than where the clock does, so it cannot be decomposed into trajectory goals
+- exclusivity comes from **device authority, not topic separation**. Both primitives claim `control/omnihand/claim_device` (never plain `claim_device` — the arm driver owns that name in the same namespace) and release afterwards. The bridge is fail-closed: an unclaimed hand executes nothing
+- an owner declares itself as `<primitive>:<node>`: the primitive half tells a trajectory command from a reactive one, the node half is how a commander that died still holding a claim is noticed
+- claim and release advance the device epoch, so a command issued under the previous owner cannot execute after the handover. A grasp that ends holding keeps the claim
 - keep `control/omnihand/joint_trajectory` as a bridge-specific compatibility surface while the longer-term action or controller contract is still open
 - `control/omnihand/stop` **cancels** the pending target and holds the current pose. It is not a latching device stop: a hand re-arms on the next command, and only the unit generation can latch it STOPPED. Do not describe it as an emergency stop or rely on it to keep a hand down
 
