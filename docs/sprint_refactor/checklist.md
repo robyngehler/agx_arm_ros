@@ -671,14 +671,20 @@ CPU.
       never enters the hold state, so the physical grasp-to-hold run still owes
       this. See `errors_and_fixes.md`, 2026-08-14 entry "Two commanders write the
       same hand, and neither knows about the other".
-- [ ] Give the hand a designed, non-fragile serialized SDK owner. The bridge
-      currently reaches its SDK from one thread by accident of `rclpy.spin`
-      (single-threaded executor, L3 attribution: `1 thread(s): MainThread`), but
-      the property is incidental. Latent risk: one edit to a `MultiThreadedExecutor`
-      ends it silently, and sibling nodes in `agx_arm_ctrl` already use one. No
-      priority lanes exist: a stop queues behind ordinary work. Deferred to a later
-      phase pending lane implementation. See AGENTS.md section "ROS Contract Rules"
-      and `errors_and_fixes.md` 2026-08-14.
+- [x] Give the hand a designed, non-fragile serialized SDK owner. Landed
+      2026-08-15: the bridge owns an `SdkWorker` with the same four lanes as the
+      arms, and acquisition runs on its own paced thread so no SDK call is
+      reachable from a callback. The property is no longer an accident of
+      `rclpy.spin`, and a stop no longer queues behind ordinary work.
+      **L3, right hand, 2026-08-15** (`scripts/measure_hand_executor_latency.py`,
+      numbers in `reference/sdk_latency_budget.md`): SDK work multiplied tenfold
+      to saturate a core, and the stop service still answered in ~2 ms while
+      `sdk_queue_wait.safety` stayed under 1.9 ms across 150 stops — against
+      5321 diagnostic submissions in the same window. One SDK caller
+      (`sdk-hand_right`) in every steady-state window, at every rate.
+      Remaining: the safety-lane wait is bounded by the call in flight, and the
+      worst single call on this hand is 36.9 ms, above the arms' 20 ms budget.
+      Recorded in `open_questions.md`; the hand has no declared stop budget yet.
 - [x] Profile the O12 Pro backend at SDK-call level: which calls, how many per
       setpoint, how long each blocks. L3, 2026-08-14: vendor SDK calls sum to
       ~5 % of a core (`get_all_active_joint_angles` 15/s at 2.18 ms mean,

@@ -172,3 +172,23 @@ is reserved for them.
   any code, config, or measurement that assumes the two arms are
   protocol-identical is a defect. A measurement taken on one arm names which
   one.
+
+## Opened 2026-08-15 (hardware)
+
+- **The hand has no declared stop budget.** The arms have one — a stop reaches
+  the SDK within 20 ms — derived from the longest thing it can queue behind and
+  demonstrated on both arms. The hand now has the same lane mechanism and
+  measures better in practice (safety-lane wait under 1.9 ms across 150 stops at
+  a saturated read rate), but the *bound* is the longest single call the vendor
+  SDK can be inside, and on the O12 Pro that is **36.9 ms** (`read_tactile`).
+  That is above the arms' number, and no budget has been declared for the hand
+  to be measured against.
+
+  Two things have to be decided rather than assumed. First, whether a hand stop
+  needs an arm-grade bound at all: it is a cancel-and-hold, not a unit emergency
+  stop, and only the unit generation can latch a hand STOPPED. Second, whether
+  the 37 ms tactile read belongs on the same worker as the stop — it is a
+  diagnostic read on the lowest lane, and if the bound matters it is cheaper to
+  make that call shorter or rarer than to add a second session owner.
+
+  Numbers in `reference/sdk_latency_budget.md`, section "The hand's worker".

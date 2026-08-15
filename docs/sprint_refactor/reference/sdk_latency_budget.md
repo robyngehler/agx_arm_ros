@@ -1,6 +1,8 @@
 # SDK call latency budget for the serialized worker
 
-date: 2026-08-12, extended 2026-08-13 with a real bus fault
+date: 2026-08-12, extended 2026-08-13 with a real bus fault, extended
+2026-08-15 with the hand's worker (see "The hand's worker" below — the
+sections before it are all about an arm)
 platform: Jetson AGX Orin, right arm (`can_nero_right`, firmware 1.06, default
 protocol tier), driver plus MIT controller holding at the measured pose
 method: `RuntimeMetrics` + `MeasuredSdk`, which wraps the vendor SDK object and
@@ -441,6 +443,99 @@ The loop ran 2000 acquisition cycles in 10 s, while a subscriber counted 141.4
 subscriber's is 50, so delivery rather than production is the likely difference
 — but `ros2 topic info --verbose` reports the depth as UNKNOWN here, so this is
 untested and recorded as open rather than explained away.
+
+## The hand's worker, measured on hardware (2026-08-15, right hand)
+
+The hand bridge got the same treatment as the arms: one serialized worker per
+device, four lanes, acquisition on its own paced thread. Everything above this
+section is about an arm. This section is the hand, and it had to answer a
+different question, because the hand's failure was never a race — it was that
+**the bridge stopped answering.** A status read costs 11 ms on this hand and a
+tactile read has been measured at 37 ms; sitting on a single-threaded executor,
+that is time the node cannot answer its own claim or stop service.
+
+platform: Jetson AGX Orin, right OmniHand Pro 2025 (O12) on `hand_right`, its own
+PEAK USB-CAN FD adapter, `backend_type=sdk`
+method: `scripts/measure_hand_executor_latency.py` — it claims the hand as a real
+commander, times the claim and stop services from send to response, sends one
+command to the pose the hand already holds, and reads the per-thread and
+per-lane numbers out of the bridge's own `RuntimeMetrics`.
+
+### The design question, asked so the hardware can answer it
+
+The test does not need a second build of the old code. It multiplies the SDK
+work per second and asks whether service latency follows:
+
+> With reads on the executor it must — every read is time the executor is not
+> answering. With reads on the worker it must not.
+
+| `joint_read_rate` | 20 Hz | 100 Hz | 200 Hz |
+| --- | --- | --- | --- |
+| bridge CPU | 17.1 % of a core | 61.1 % | **97.1 %** |
+| claim service, median | 3.8 ms | 5.6 ms | 7.2 ms |
+| claim service, p95 | 5.4 ms | 7.6 ms | 12.1 ms |
+| stop service, median | 1.9 ms | 1.6 ms | 2.2 ms |
+| stop service, max | 3.5 ms | 4.1 ms | 5.1 ms |
+| SDK callers, steady state | **1** | **1** | **1** |
+
+**SDK work rises tenfold, the process saturates a core, and the stop service
+still answers in about 2 ms.** The claim service roughly doubles, which is CPU
+contention rather than blocking: at 200 Hz the worker thread and the executor are
+competing for one core's worth of GIL, and the curve is nowhere near the tenfold
+it would be if the reads were still on the executor.
+
+The claim maxima (20-27 ms) show up at *every* rate, including the lightest one
+where the worker is idle 83 % of the time. They are not SDK load; they are the
+probe and the DDS round trip, and they are recorded rather than explained.
+
+### The stop, which is the number that matters
+
+Two separate things, and conflating them would flatter the result:
+
+- **the service round trip** is when the caller is told the stop was accepted.
+  The handler submits on the safety lane and returns without waiting, so this is
+  a measurement of the executor.
+- **`sdk_queue_wait.safety`** is when the stop actually reaches the SDK.
+
+| | 20 Hz | 100 Hz | 200 Hz | 200 Hz, 120 stops |
+| --- | --- | --- | --- | --- |
+| stops sampled | 10 | 10 | 10 | **120** |
+| safety-lane wait, mean | 1.18 ms | 0.82 ms | 0.91 ms | 0.89 ms |
+| safety-lane wait, **max** | 1.59 ms | 1.36 ms | **1.03 ms** | **1.86 ms** |
+| diagnostic submissions in the same window | 398 | 1960 | 3660 | 5321 |
+
+**A stop reaches the hand's SDK within 1.9 ms while the diagnostic lane is
+pushing over five thousand submissions past it.** The wait does not grow with the
+queue — it gets marginally *shorter* at higher load — which is the lane doing its
+job: the stop overtakes everything queued, so only the call already executing is
+ahead of it.
+
+### The bound that sampling does not establish
+
+The measured 1.86 ms worst case is what 150 stops happened to land on. The real
+bound is the longest single SDK call the worker can be inside, and on this hand
+that is **36.9 ms** (`read_tactile`, observed in an idle 5 s window; the sweep
+runs saw 13 ms). Nothing preempts a call in flight, so a stop issued at the wrong
+instant waits that long.
+
+That is above the arms' 20 ms budget, and the hand has no declared budget of its
+own. It is recorded as open rather than resolved: a hand stop is a cancel-and-hold
+rather than a unit emergency stop, so the consequence is different, but "different"
+is not "measured". See `open_questions.md`.
+
+### Two things the run settled in passing
+
+**The read rate is now what it says.** The bridge asked for 20 Hz and delivered
+exactly 20.0/s (100 reads per 5 s metrics window, twice). It used to measure
+15.4 Hz, because acquisition rode the publish timer and re-decided per tick
+whether a read was due; the acquisition loop is paced at the interval now, so a
+cycle *is* a read.
+
+**One caller, per rate, in steady state.** Every window after the first reports
+`from 1 thread(s): sdk-hand_right`. The first window legitimately names two — the
+backend is constructed on `MainThread` before the worker exists — which is why
+the harness discards it rather than averaging a known-benign second caller
+together with a real one.
 
 ## Accepted limit
 
