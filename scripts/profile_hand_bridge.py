@@ -14,8 +14,7 @@ What it reports:
 
   * process CPU of a real spinning bridge on mock, per `pub_rate` — the whole
     ROS side including the executor;
-  * wall-clock cost of one full `_feedback_tick` — acquisition and all three
-    publications — and what that implies at a given rate;
+  * wall-clock cost of one acquisition plus one publication — and what that implies at a given rate;
   * the cumulative-time breakdown inside the tick, so the split between message
     construction, list copying, authority sync and rclpy publish is visible
     rather than assumed.
@@ -159,11 +158,13 @@ def main() -> int:
     # Warm up: first calls pay one-off import and allocation costs that would
     # otherwise be charged to the steady-state figure.
     for _ in range(200):
-        node._feedback_tick()
+        node._acquire_once()
+        node._publication_tick()
 
     start = time.perf_counter()
     for _ in range(args.ticks):
-        node._feedback_tick()
+        node._acquire_once()
+        node._publication_tick()
     elapsed = time.perf_counter() - start
 
     per_tick_ms = elapsed / args.ticks * 1000.0
@@ -181,7 +182,8 @@ def main() -> int:
     profiler = cProfile.Profile()
     profiler.enable()
     for _ in range(args.ticks):
-        node._feedback_tick()
+        node._acquire_once()
+        node._publication_tick()
     profiler.disable()
 
     stream = io.StringIO()

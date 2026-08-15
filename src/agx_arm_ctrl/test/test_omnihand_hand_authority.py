@@ -29,6 +29,18 @@ REACTIVE_OWNER = "reactive:omnihand_skill_controller"
 TRAJECTORY_OWNER = "trajectory:omnihand_follow_joint_trajectory"
 
 
+def _cycle(node) -> None:
+    """One acquisition plus one publication.
+
+    They used to be a single timer callback. Acquisition now runs on its own
+    thread so no SDK call sits on the ROS executor, so a test that wants both
+    halves asks for both — and a test about publication alone does not call the
+    acquiring half.
+    """
+    node._acquire_once()
+    node._publication_tick()
+
+
 @pytest.fixture()
 def bridge_node():
     rclpy.init(
@@ -42,7 +54,7 @@ def bridge_node():
         ]
     )
     node = OmniHandBridgeNode()
-    node._feedback_tick()  # reach READY the way the runtime does
+    _cycle(node)  # reach READY the way the runtime does
     yield node
     node.destroy_node()
     rclpy.shutdown()

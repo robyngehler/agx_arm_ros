@@ -7,6 +7,7 @@ from importlib import import_module
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 from typing import Any
 
@@ -36,6 +37,7 @@ from agx_arm_msgs.msg import (
 
 from agx_arm_ctrl.motion_registry import bus_topology, hand_sides
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics, name_os_thread
+from agx_arm_ctrl.sdk_worker import CallOutcome, Lane, SdkWorker
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HandModel, get_hand_model
 
 
@@ -1086,6 +1088,10 @@ class OmniHandBridgeNode(Node):
         # Publication is gated on new data. These record what was last put on the
         # wire so a tick with nothing new stays silent instead of re-serializing
         # the same three messages.
+        # Generous against the measured worst case (a status read peaked at
+        # 17.7 ms) but bounded, so a wedged SDK call cannot stall acquisition
+        # for ever.
+        self._sdk_read_timeout_s = 2.0
         self._admission_enforced = bool(
             self.get_parameter("command_admission_enforced").value
         )
@@ -1171,7 +1177,32 @@ class OmniHandBridgeNode(Node):
         self._read_gate_tolerance_s = min(
             timer_period / 2.0, self.joint_read_min_interval_s / 2.0
         )
-        self.create_timer(timer_period, self._feedback_tick)
+
+        # One owner for this hand's SDK session.
+        #
+        # The calls were already serialized, but only because the bridge spins
+        # single-threaded. That is an accident: one edit to a
+        # MultiThreadedExecutor ends it silently, and both sibling nodes in this
+        # package already use one. It also bought nothing. A stop queued behind
+        # whatever the executor was doing, and a blocking read sat on the
+        # executor thread, so a 17 ms status read stopped the node answering its
+        # own claim service. That was observed as a service "not answering".
+        self._sdk = SdkWorker(
+            self._authority.device_id, metrics=self.metrics, logger=self.get_logger()
+        )
+        # Guards the acquisition results the publication timer reads. The
+        # acquisition thread writes them; the executor only reads.
+        self._snapshot_lock = threading.Lock()
+        self._acquisition_stop = threading.Event()
+        self._acquisition_thread = threading.Thread(
+            target=self._acquisition_loop,
+            name=f"hand-acq-{self.hand_side}",
+            daemon=True,
+        )
+        self._acquisition_thread.start()
+
+        # Publication only. No SDK call reaches the executor from here.
+        self.create_timer(timer_period, self._publication_tick)
         if self.command_retry_enabled:
             self.create_timer(self.command_retry_period_s, self._command_retry_tick)
 
@@ -1376,8 +1407,23 @@ class OmniHandBridgeNode(Node):
 
         pending["attempts"] += 1
         pending["last_send_monotonic"] = time.monotonic()
+        targets = dict(pending["targets"])
+        mode = pending["control_mode"]
+        # CONTROL lane, superseding, and deliberately NOT waited on. A newer
+        # target makes an older queued one pointless, and delivering it late
+        # would move the hand back; the epoch stamp drops whatever a previous
+        # owner had queued. Waiting for the result here would put SDK latency
+        # back onto the executor, which is what this whole path exists to avoid,
+        # so the verdict is picked up by the retry tick instead.
+        pending["call"] = self._sdk.submit(
+            "apply_joint_targets",
+            lambda: self.backend.apply_joint_targets(targets, mode),
+            lane=Lane.CONTROL,
+            epoch=self._authority.snapshot().device_epoch,
+            replace_key="hand_target",
+        )
         try:
-            self.backend.apply_joint_targets(pending["targets"], pending["control_mode"])
+            self._raise_if_send_failed(pending)
         except (ValueError, RuntimeError) as exc:
             attempts_left = pending["attempts"] < self.command_retry_max_attempts
             if self.command_retry_enabled and attempts_left:
@@ -1392,6 +1438,21 @@ class OmniHandBridgeNode(Node):
                 )
                 self._command_delivery_failed = True
                 self.pending_command = None
+
+    def _raise_if_send_failed(self, pending: dict) -> None:
+        """Re-raise a send that the worker has already finished and failed.
+
+        The submit does not block, so the failure surfaces one tick later. A call
+        still PENDING is not a failure and not a success — it is in flight, and
+        saying anything about the hand on that basis would be a guess.
+        """
+        call = pending.get("call")
+        if call is None:
+            return
+        if call.outcome is CallOutcome.FAILED and call.error is not None:
+            raise RuntimeError(str(call.error))
+        if call.outcome in (CallOutcome.DROPPED, CallOutcome.REJECTED):
+            raise ValueError(f"hand command {call.outcome.value}: {call.detail}")
 
     def _pending_command_verified(self, pending: dict[str, Any]) -> bool:
         if self.backend.communication_fault:
@@ -1411,6 +1472,22 @@ class OmniHandBridgeNode(Node):
         pending = self.pending_command
         if pending is None:
             return
+
+        # The previous send was submitted, not awaited. This is where its verdict
+        # arrives.
+        try:
+            self._raise_if_send_failed(pending)
+        except (ValueError, RuntimeError) as exc:
+            attempts_left = pending["attempts"] < self.command_retry_max_attempts
+            if not (self.command_retry_enabled and attempts_left):
+                self.get_logger().warn(
+                    f"OmniHand {pending['control_mode']} command failed: {exc}"
+                )
+                self._command_delivery_failed = True
+                self.pending_command = None
+                self._publish_command_verdict()
+                return
+            pending["call"] = None
 
         if self._pending_command_verified(pending):
             if pending["attempts"] > 1:
@@ -1507,7 +1584,7 @@ class OmniHandBridgeNode(Node):
         self.pending_command = None
         self._command_delivery_failed = False
         try:
-            self.backend.stop()
+            self._sdk.submit_safety("stop", self.backend.stop)
         except Exception as exc:
             self.get_logger().error(
                 f"unit stop reached {self._authority.device_id} but stopping the "
@@ -1585,7 +1662,11 @@ class OmniHandBridgeNode(Node):
         # and do not report the superseded target as a delivery failure.
         self.pending_command = None
         self._command_delivery_failed = False
-        self.backend.stop()
+        # SAFETY lane: ahead of everything queued, including a control transmit
+        # that has not started. Not awaited — the caller gets the acknowledgement,
+        # and blocking a service handler on the SDK is what used to stop this node
+        # answering at all.
+        self._sdk.submit_safety("stop", self.backend.stop)
         self._publish_command_verdict()
         response.success = True
         response.message = f"OmniHand {self.backend.backend_name} stop requested"
@@ -1615,29 +1696,74 @@ class OmniHandBridgeNode(Node):
             )
         return read_interval
 
-    def _feedback_tick(self) -> None:
-        """Acquire what is due, then publish only what is new.
+    def shutdown(self) -> None:
+        """Stop acquisition before the node goes away."""
+        self._acquisition_stop.set()
+        thread = getattr(self, "_acquisition_thread", None)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
 
-        These were one action for as long as the bridge existed: every timer tick
-        rebuilt and published all three messages regardless of whether anything
-        had changed. Since the tick ran at the arm's publish rate, that meant 600
-        messages a second carrying 20 joint samples and 1 status sample — and the
-        executor waking 200 times a second to do it, which is where nearly all of
-        the cost was.
+    def destroy_node(self) -> bool:
+        """Never outlive the node with a thread that still touches it.
+
+        The acquisition thread holds a reference to this node and to its logger.
+        Left running past destruction it keeps calling into a dead context, which
+        shows up as unrelated teardown errors elsewhere — it surfaced first as
+        tests that passed alone and failed together.
         """
-        stamp = self.get_clock().now().to_msg()
+        self.shutdown()
+        return super().destroy_node()
 
+    def _sdk_read(self, name: str, fn, *, lane: Lane = Lane.ACQUISITION):
+        """Run one SDK read on the worker and wait for it, off the executor.
+
+        Blocking here is fine and deliberate: this is the acquisition thread, and
+        waiting on the worker is how it stays in step with the hand. What must
+        never block is the executor, which is why no SDK call is reachable from a
+        subscription, a service handler or the publication timer any more.
+
+        Returns None when the call did not produce a value. A read that timed out
+        has an unknown outcome — it may still be in flight — so the caller keeps
+        the previous sample rather than inventing one.
+        """
+        try:
+            return self._sdk.call(name, fn, timeout=self._sdk_read_timeout_s, lane=lane)
+        except Exception as exc:
+            self.get_logger().warn(f"hand SDK read '{name}' did not complete: {exc}")
+            return None
+
+    def _acquisition_loop(self) -> None:
+        """Pace SDK reads on their own thread, off the ROS executor.
+
+        Monotonic, without burst catch-up: after a slow read the next one is due
+        one interval from now, not immediately. A rate loop that repays missed
+        ticks turns a hiccup into a burst on the bus.
+        """
+        name_os_thread(f"hand_{self.hand_side[:4]}_acq")
+        next_tick = time.monotonic()
+        while not self._acquisition_stop.is_set():
+            period = self._effective_read_interval() or 0.05
+            next_tick = self._pace(next_tick, period)
+            if self._acquisition_stop.is_set():
+                break
+            try:
+                self._acquire_once()
+            except Exception as exc:  # never let one bad read end acquisition
+                self.get_logger().error(f"hand acquisition cycle failed: {exc}")
+
+    @staticmethod
+    def _pace(next_tick: float, period_s: float) -> float:
         now = time.monotonic()
-        if not self._tick_thread_named:
-            # Python thread names never reach the kernel, so a per-thread CPU
-            # census would otherwise show this as another copy of the process
-            # name and attribute nothing.
-            name_os_thread(f"hand_{self.hand_side[:4]}_tick")
-            self._tick_thread_named = True
-        if self.metrics.due():
-            report = self.metrics.report()
-            if report:
-                self.get_logger().info(report)
+        if next_tick <= now:
+            next_tick = now + period_s
+        else:
+            time.sleep(next_tick - now)
+            next_tick += period_s
+        return next_tick
+
+    def _acquire_once(self) -> None:
+        """One acquisition cycle: reads go through the worker, results to state."""
+        now = time.monotonic()
         # Fault backoff: while the backend is faulted, only a slow joint-read
         # probe goes onto the bus; status/tactile reads are skipped entirely and
         # the cached snapshots are republished. A single successful probe clears
@@ -1654,16 +1780,16 @@ class OmniHandBridgeNode(Node):
                         f"{self._fault_recovery_streak_needed} consecutive readbacks succeed"
                     )
 
-        read_interval = self._effective_read_interval()
-        # Read on the NEAREST tick to the interval, not the first tick strictly
-        # past it. Sampling a period with a discrete timer otherwise rounds up
-        # every time: at a 25 ms tick and a 50 ms interval, a tick landing at
-        # 49 ms is rejected and the read waits for 74 ms — an intended 20 Hz
-        # measured 15.4 Hz on hardware for exactly this reason.
-        read_due_at = read_interval - self._read_gate_tolerance_s
-        if read_interval <= 0.0 or now - self.last_joint_read_monotonic >= read_due_at:
-            self.cached_positions = self.backend.read_joint_state()
-            self.last_joint_read_monotonic = now
+        # No gate here any more. The loop is already paced at the read interval,
+        # so a tick IS the read. The old gate existed because acquisition rode on
+        # the publish timer and had to decide per tick whether it was due; that
+        # rounding is what made an intended 20 Hz measure 15.4 Hz.
+        positions = self._sdk_read("read_joint_state", self.backend.read_joint_state)
+        if positions is not None:
+            with self._snapshot_lock:
+                self.cached_positions = positions
+        self.last_joint_read_monotonic = now
+        if positions is not None:
             if not self._backend_faulted():
                 self.last_good_joint_read_monotonic = now
             if self._fault_backoff_active:
@@ -1697,6 +1823,37 @@ class OmniHandBridgeNode(Node):
                             "readbacks); normal SDK polling resumed"
                         )
 
+        if not self._fault_backoff_active or self._last_status_snapshot is None:
+            status = self._sdk_read(
+                "read_status", self.backend.read_status, lane=Lane.DIAGNOSTIC
+            )
+            if status is not None:
+                with self._snapshot_lock:
+                    self._last_status_snapshot = status
+
+        if not self._fault_backoff_active or self._last_tactile_snapshot is None:
+            tactile = self._sdk_read(
+                "read_tactile", self.backend.read_tactile, lane=Lane.DIAGNOSTIC
+            )
+            if tactile is not None:
+                with self._snapshot_lock:
+                    self._last_tactile_snapshot = tactile
+
+    def _publication_tick(self) -> None:
+        """Publish from the acquired snapshot. Reaches no SDK."""
+        stamp = self.get_clock().now().to_msg()
+        now = time.monotonic()
+        if not self._tick_thread_named:
+            # Python thread names never reach the kernel, so a per-thread CPU
+            # census would otherwise show this as another copy of the process
+            # name and attribute nothing.
+            name_os_thread(f"hand_{self.hand_side[:4]}_pub")
+            self._tick_thread_named = True
+        if self.metrics.due():
+            report = self.metrics.report()
+            if report:
+                self.get_logger().info(report)
+
         # Do not publish a fabricated zero/default hand pose before the first
         # successful SDK readback. MoveIt otherwise latches that fake pose as
         # the current hand state and plans from it, which later fails execute
@@ -1704,30 +1861,28 @@ class OmniHandBridgeNode(Node):
         #
         # Beyond that, a joint sample goes out when the hand answered, not when a
         # timer fired. Republishing the cache gave every sample a fresh header
-        # stamp while the values were minutes old under a fault — the reason
-        # consumers have to check `joint_readback_age_s` on the status surface
-        # instead of trusting the stamp.
+        # stamp while the values were minutes old under a fault.
+        with self._snapshot_lock:
+            positions = list(self.cached_positions)
+            acquired_at = self.last_joint_read_monotonic
+            good_at = self.last_good_joint_read_monotonic
         if (
-            self.last_good_joint_read_monotonic > 0.0
-            and self.last_joint_read_monotonic > self._published_read_monotonic
+            good_at > 0.0
+            and acquired_at > self._published_read_monotonic
             and now - self._last_joint_publish_monotonic >= self._publish_min_interval_s
         ):
             joint_state = JointState()
             joint_state.header.stamp = stamp
             joint_state.name = list(self.joint_names)
-            joint_state.position = list(self.cached_positions)
+            joint_state.position = positions
             self.hand_joint_states_pub.publish(joint_state)
-            self._published_read_monotonic = self.last_joint_read_monotonic
+            self._published_read_monotonic = acquired_at
             self._last_joint_publish_monotonic = now
 
-        if not self._fault_backoff_active or self._last_status_snapshot is None:
-            self._last_status_snapshot = self.backend.read_status()
-        self._sync_authority("feedback tick")
+        self._sync_authority("publication tick")
         self._check_owner_liveness()
         self._publish_status_if_due(stamp, now)
 
-        if not self._fault_backoff_active or self._last_tactile_snapshot is None:
-            self._last_tactile_snapshot = self.backend.read_tactile()
         if now - self._last_tactile_publish_monotonic >= self._tactile_publish_interval_s:
             tactile_snapshot = self._last_tactile_snapshot
             tactile_msg = OmniHandTactileRaw()
@@ -1820,12 +1975,15 @@ class OmniHandBridgeNode(Node):
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
 
+    node = None
     try:
         node = OmniHandBridgeNode()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
+        if node is not None:
+            node.shutdown()
         if rclpy.ok():
             rclpy.shutdown()
 

@@ -32,6 +32,18 @@ class _MovingHand:
         return list(self.measured)
 
 
+def _cycle(node) -> None:
+    """One acquisition plus one publication.
+
+    They used to be a single timer callback. Acquisition now runs on its own
+    thread so no SDK call sits on the ROS executor, so a test that wants both
+    halves asks for both — and a test about publication alone does not call the
+    acquiring half.
+    """
+    node._acquire_once()
+    node._publication_tick()
+
+
 @pytest.fixture()
 def bridge_node():
     rclpy.init(
@@ -42,7 +54,7 @@ def bridge_node():
         ]
     )
     node = OmniHandBridgeNode()
-    node._feedback_tick()
+    _cycle(node)
     yield node
     node.destroy_node()
     rclpy.shutdown()

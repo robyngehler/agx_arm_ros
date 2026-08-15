@@ -34,6 +34,11 @@ class _Recorder:
         return len(self.messages)
 
 
+def _acquire(node) -> None:
+    """One acquisition cycle, as the acquisition thread would run it."""
+    node._acquire_once()
+
+
 def _pretend_time_passed(node: OmniHandBridgeNode, seconds: float) -> None:
     """Shift every monotonic marker back, which is what elapsed time does.
 
@@ -70,7 +75,8 @@ def bridge_node():
     # Fail-closed admission: a hand with no commander executes nothing, and one
     # that has not reported itself connected is not READY. One tick brings it
     # there; the claim is what the reactive primitive would take.
-    node._feedback_tick()
+    node._acquire_once()
+    node._publication_tick()
     assert node._authority.claim("reactive:test_owner").accepted
     node.hand_joint_states_pub = _Recorder()
     node.status_pub = _Recorder()
@@ -91,24 +97,27 @@ def _command_msg(node: OmniHandBridgeNode, value: float = 0.3) -> JointState:
     return msg
 
 
-def test_a_tick_without_a_new_readback_publishes_no_joint_state(bridge_node):
-    bridge_node._feedback_tick()
+def test_a_publication_tick_without_a_new_readback_says_nothing(bridge_node):
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
     assert len(bridge_node.hand_joint_states_pub) == 1
 
-    # Ticks inside the readback interval have nothing new to say. Republishing
-    # here is what gave a stale cache a fresh header stamp.
+    # Publication ticks with no acquisition between them have nothing new to
+    # say. Republishing here is what gave a stale cache a fresh header stamp.
     for _ in range(20):
-        bridge_node._feedback_tick()
+        bridge_node._publication_tick()
 
     assert len(bridge_node.hand_joint_states_pub) == 1
 
 
 def test_a_new_readback_publishes_exactly_one_joint_state(bridge_node):
-    bridge_node._feedback_tick()
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
     published = len(bridge_node.hand_joint_states_pub)
 
-    _pretend_time_passed(bridge_node, 0.06)  # past the 20 Hz readback interval
-    bridge_node._feedback_tick()
+    _pretend_time_passed(bridge_node, 0.06)
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
 
     assert len(bridge_node.hand_joint_states_pub) == published + 1
 
@@ -116,17 +125,19 @@ def test_a_new_readback_publishes_exactly_one_joint_state(bridge_node):
 def test_the_publish_ceiling_throttles_below_the_readback_rate(bridge_node):
     """`pub_rate` is a ceiling: it can throttle publication, never drive it."""
     bridge_node._publish_min_interval_s = 1.0  # 1 Hz ceiling
-    bridge_node._feedback_tick()
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
     published = len(bridge_node.hand_joint_states_pub)
 
     _pretend_time_passed(bridge_node, 0.06)
-    bridge_node._feedback_tick()
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
 
     assert len(bridge_node.hand_joint_states_pub) == published
 
 
 def test_a_settled_command_is_announced_without_waiting_for_a_tick(bridge_node):
-    bridge_node._feedback_tick()
+    bridge_node._publication_tick()
     before = len(bridge_node.status_pub)
 
     bridge_node._joint_states_command_callback(_command_msg(bridge_node))
@@ -138,7 +149,7 @@ def test_a_settled_command_is_announced_without_waiting_for_a_tick(bridge_node):
 
     pending_announced = len(bridge_node.status_pub)
     _pretend_time_passed(bridge_node, 0.06)
-    bridge_node._feedback_tick()           # readback lands, verifying the target
+    _acquire(bridge_node)                  # readback lands, verifying the target
     bridge_node._command_retry_tick()      # verdict: delivered
 
     assert bridge_node.pending_command is None
@@ -147,33 +158,34 @@ def test_a_settled_command_is_announced_without_waiting_for_a_tick(bridge_node):
 
 
 def test_status_is_not_republished_while_nothing_changes(bridge_node):
-    bridge_node._feedback_tick()
+    bridge_node._publication_tick()
     published = len(bridge_node.status_pub)
 
     # Well inside the 2 Hz heartbeat, with no command and no fault.
     for _ in range(20):
-        bridge_node._feedback_tick()
+        bridge_node._publication_tick()
 
     assert len(bridge_node.status_pub) == published
 
 
 def test_the_heartbeat_still_publishes_status_when_nothing_changes(bridge_node):
-    bridge_node._feedback_tick()
+    bridge_node._publication_tick()
     published = len(bridge_node.status_pub)
 
     bridge_node._last_status_publish_monotonic = time.monotonic() - 10.0
-    bridge_node._feedback_tick()
+    bridge_node._publication_tick()
 
     assert len(bridge_node.status_pub) == published + 1
 
 
 def test_tactile_is_published_at_its_read_interval_not_every_tick(bridge_node):
-    bridge_node._feedback_tick()
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
     published = len(bridge_node.tactile_pub)
     assert published == 1
 
     for _ in range(50):
-        bridge_node._feedback_tick()
+        bridge_node._publication_tick()
 
     assert len(bridge_node.tactile_pub) == published
 

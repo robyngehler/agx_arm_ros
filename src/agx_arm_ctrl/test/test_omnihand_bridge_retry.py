@@ -9,6 +9,18 @@ from sensor_msgs.msg import JointState
 from agx_arm_ctrl.omnihand_bridge_node import OmniHandBridgeNode
 
 
+def _cycle(node) -> None:
+    """One acquisition plus one publication.
+
+    They used to be a single timer callback. Acquisition now runs on its own
+    thread so no SDK call sits on the ROS executor, so a test that wants both
+    halves asks for both — and a test about publication alone simply does not
+    call the acquiring half.
+    """
+    node._acquire_once()
+    node._publication_tick()
+
+
 @pytest.fixture()
 def bridge_node():
     rclpy.init(
@@ -27,11 +39,23 @@ def bridge_node():
     # that has not yet reported itself connected is not READY. These tests are
     # about the retry layer, so they bring the device to commandable the way the
     # runtime does — one feedback tick, then a claim by the reactive primitive.
-    node._feedback_tick()
+    _cycle(node)
     assert node._authority.claim("reactive:test_owner").accepted
     yield node
     node.destroy_node()
     rclpy.shutdown()
+
+
+def _await_send(node, timeout: float = 2.0) -> None:
+    """Block until the worker has finished the submitted command."""
+    pending = node.pending_command
+    call = pending.get("call") if pending else None
+    if call is None:
+        return
+    try:
+        call.result(timeout)
+    except Exception:
+        pass
 
 
 def _command_msg(node: OmniHandBridgeNode, value: float = 0.3) -> JointState:
@@ -47,7 +71,7 @@ def test_command_verifies_and_clears_pending(bridge_node):
     assert bridge_node.pending_command["attempts"] == 1
 
     # mock backend applies targets instantly; a fresh readback verifies them
-    bridge_node._feedback_tick()
+    _cycle(bridge_node)
     bridge_node._command_retry_tick()
 
     assert bridge_node.pending_command is None
@@ -76,7 +100,7 @@ def test_failed_sends_retry_until_attempts_exhausted(bridge_node):
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
         # An attempt is only spent once a readback could have judged the last
         # send, so the poll has to run for the retry loop to advance.
-        bridge_node._feedback_tick()
+        _cycle(bridge_node)
         bridge_node._command_retry_tick()
         if bridge_node.pending_command is not None:
             assert bridge_node.pending_command["attempts"] == expected_attempts
@@ -84,7 +108,7 @@ def test_failed_sends_retry_until_attempts_exhausted(bridge_node):
     # exhausted: one more tick gives up instead of re-sending forever
     if bridge_node.pending_command is not None:
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
-        bridge_node._feedback_tick()
+        _cycle(bridge_node)
         bridge_node._command_retry_tick()
     assert bridge_node.pending_command is None
     assert bridge_node._command_delivery_failed is True
@@ -102,7 +126,7 @@ def test_attempt_is_not_spent_without_a_readback_opportunity(bridge_node):
     bridge_node._joint_states_command_callback(_command_msg(bridge_node))
     assert bridge_node.pending_command["attempts"] == 1
 
-    # No _feedback_tick(): no readback has landed since the send. Ageing the
+    # No acquisition: no readback has landed since the send. Ageing the
     # send has to age the last readback with it, or the priming readback the
     # fixture needed to reach READY would drift to the wrong side of it and
     # count as evidence this test is asserting does not exist.
@@ -138,45 +162,44 @@ def test_pending_command_keeps_the_probe_at_retry_cadence_under_fault_backoff(
 
 
 def test_unverified_target_retries_then_gives_up(bridge_node):
-    bridge_node._joint_states_command_callback(_command_msg(bridge_node))
+    """Fingers blocked by contact: the command lands, the hand never arrives."""
 
-    # feedback never reaches the target (e.g. fingers blocked by contact)
+    def blocked_apply(target_map, control_mode):
+        # Accepted by the device, but the pose does not change — the mock's own
+        # apply would move `positions` to the target, which is the one thing this
+        # test needs not to happen.
+        return len(target_map)
+
+    bridge_node.backend.apply_joint_targets = blocked_apply
     bridge_node.backend.positions = [99.0] * len(bridge_node.joint_names)
+
+    bridge_node._joint_states_command_callback(_command_msg(bridge_node))
 
     attempts_seen = []
     while bridge_node.pending_command is not None:
+        _await_send(bridge_node)
         bridge_node.pending_command["last_send_monotonic"] -= 10.0
-        bridge_node._feedback_tick()
+        _cycle(bridge_node)
         attempts_seen.append(bridge_node.pending_command["attempts"])
         bridge_node._command_retry_tick()
-        # backend caches the commanded target optimistically; force the
-        # "still not there" readback again for the next round
-        bridge_node.backend.positions = [99.0] * len(bridge_node.joint_names)
 
     assert max(attempts_seen) == bridge_node.command_retry_max_attempts
+    assert bridge_node._command_delivery_failed is True
 
 
-def test_joint_read_rate_throttles_backend_polling(bridge_node):
-    read_calls = []
-    original_read = bridge_node.backend.read_joint_state
+def test_joint_read_rate_sets_the_acquisition_interval(bridge_node):
+    """The rate is honoured by pacing the loop, not by gating each cycle.
 
-    def counting_read():
-        read_calls.append(1)
-        return original_read()
-
-    import time
-
-    bridge_node.backend.read_joint_state = counting_read
+    It used to be a gate inside the tick, because acquisition rode on the publish
+    timer and had to decide per tick whether it was due. That rounding is what
+    made an intended 20 Hz measure 15.4 Hz. The loop now sleeps the interval, so
+    a cycle IS a read and the interval is what the loop asks for.
+    """
     bridge_node.joint_read_min_interval_s = 3600.0
-    # force the first poll to be due regardless of system uptime (monotonic
-    # starts near 0 after boot, so `last = 0.0` alone is not reliably stale)
-    bridge_node.last_joint_read_monotonic = time.monotonic() - 7200.0
+    bridge_node._fault_backoff_active = False
+    bridge_node.pending_command = None
 
-    bridge_node._feedback_tick()  # stale -> reads
-    bridge_node._feedback_tick()  # within the 1 h window -> cached
-    bridge_node._feedback_tick()
-
-    assert len(read_calls) == 1
+    assert bridge_node._effective_read_interval() == 3600.0
 
 
 def test_no_joint_state_published_before_first_successful_readback(bridge_node):
@@ -202,6 +225,6 @@ def test_no_joint_state_published_before_first_successful_readback(bridge_node):
     bridge_node.last_good_joint_read_monotonic = 0.0
     bridge_node.hand_joint_states_pub.publish = published.append
 
-    bridge_node._feedback_tick()
+    _cycle(bridge_node)
 
     assert published == []
