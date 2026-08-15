@@ -21,8 +21,14 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 - [x] Freeze the open decisions: wrappers as degraded mode, hardware slot for
       the safety checks, instrumentation form, refactor-before-demo priority.
 - [x] Freeze the remaining contract decisions: no separate hand lease, epoch in
-      `MoveMITMsg`, in-phase message migration, MoveIt hand FJT debug-only,
+      `MoveMITMsg`, in-phase message migration, MoveIt hand FJT as production path,
       degraded-mode removal reviewed at Phase 5 close-out.
+      
+      Superseded 2026-08-14: the hand's two production motion primitives
+      (trajectory execution and reactive contact-seeking) enforce single-commander
+      arbitration through device authority, so the earlier "FJT debug-only" reading
+      contradicted the design and is replaced by "FJT is the primary trajectory-execution path"
+      per AGENTS.md.
 
 ## Phase 0 - Hygiene, harness, safety baseline
 
@@ -641,24 +647,45 @@ Keep the `FollowJointTrajectory` action functionally unchanged throughout: it is
 the production hand path, not a debug surface, and is not to be removed to save
 CPU.
 
-- [ ] Implement the frozen contract: single-goal arbitration plus `owner_id`,
-      `device_epoch` and `sequence`; no separate lease. **Nothing claims a hand
-      today** — the bridge serves `claim_device` and the authority carries
-      `owner_id`, but only the MIT controller ever claims, and only its arm.
+- [x] Implement the frozen contract: single-goal arbitration plus `owner_id`,
+      `device_epoch` and `sequence`; no separate lease. **Both motion primitives
+      claim `control/omnihand/claim_device` before commanding** — trajectory
+      execution and reactive contact-seeking each claim and release on their own,
+      advancing the device epoch. The bridge is fail-closed: an unclaimed hand
+      executes nothing. Fixed 2026-08-14, validated on hardware (L3): trajectory
+      on a free hand SUCCESS; a trajectory refused while the reactive owner held,
+      naming `hand_right`; release advancing the epoch 4 -> 5; the trajectory
+      succeeding again. A refusal naming `arm_<side>` was the *symptom* of the
+      claim-service collision, not evidence of success — see `errors_and_fixes.md`,
+      2026-08-14 entry "The hand's claim service collided with the arm's".
 - [ ] Reject stale-epoch and out-of-order hand commands at the bridge boundary.
-- [ ] Close the two-commander hole: the skill controller's 20 Hz hold republish
-      on `control/joint_states` supersedes an in-flight trajectory target, and
-      the action then reads the hold's verification as its own delivery. See
-      `errors_and_fixes.md`, 2026-08-14.
-- [ ] Give the hand a serialized SDK owner. Corrected 2026-08-14: the bridge
-      already reaches its SDK from **one** thread (it spins single-threaded, and
-      the L3 attribution recorded `1 thread(s): MainThread`). What is missing is
-      that the property is incidental rather than designed — one edit to a
-      `MultiThreadedExecutor` ends it silently, and both sibling nodes in this
-      package already use one — and that there are no lanes, so a stop queues
-      behind ordinary work and a 17 ms status read blocks the claim service.
-- [ ] Profile the O12 Pro backend at SDK-call level: which calls, how many per
-      setpoint, how long each blocks.
+      The admission logic exists and runs, but it cannot reject on these grounds
+      today: a `JointState` or `JointTrajectory` carries no epoch and no
+      sequence, so the bridge builds the stamp from its *own* current epoch and
+      its own counter. Those two checks therefore always pass. Closing this needs
+      identity carried per command, which is the consolidated hand contract (4D).
+      Ownership and surface are what reject a command today.
+- [x] Close the two-commander hole: the skill controller's grasp hold no longer
+      republishes at 20 Hz after the grasp succeeds. It monitors contact only.
+      L1 and L2 only (2026-08-14) — **not** exercised on hardware: the L2 activity
+      never enters the hold state, so the physical grasp-to-hold run still owes
+      this. See `errors_and_fixes.md`, 2026-08-14 entry "Two commanders write the
+      same hand, and neither knows about the other".
+- [ ] Give the hand a designed, non-fragile serialized SDK owner. The bridge
+      currently reaches its SDK from one thread by accident of `rclpy.spin`
+      (single-threaded executor, L3 attribution: `1 thread(s): MainThread`), but
+      the property is incidental. Latent risk: one edit to a `MultiThreadedExecutor`
+      ends it silently, and sibling nodes in `agx_arm_ctrl` already use one. No
+      priority lanes exist: a stop queues behind ordinary work. Deferred to a later
+      phase pending lane implementation. See AGENTS.md section "ROS Contract Rules"
+      and `errors_and_fixes.md` 2026-08-14.
+- [x] Profile the O12 Pro backend at SDK-call level: which calls, how many per
+      setpoint, how long each blocks. L3, 2026-08-14: vendor SDK calls sum to
+      ~5 % of a core (`get_all_active_joint_angles` 15/s at 2.18 ms mean,
+      `get_tactile_sensor_data` 5/s at 2.24 ms mean,
+      `get_all_error_reports` 1/s at 6.83 ms mean). Remaining ~150 % is a vendor
+      busy-wait thread, fixed 2026-08-14 by patching the tracked fork to use
+      `poll()` instead of a spin loop.
 - [x] Separate ROS publication cost from vendor-SDK polling cost before cutting
       either (the mock backend is what isolates them). L2, 2026-08-14: the ROS
       side is 41.5 % of a core, so ~150 % per hand is the SDK.
@@ -672,9 +699,21 @@ CPU.
 - [ ] Decouple command verification, joint readback, tactile and status into
       separate schedules.
 - [ ] Stop polling entirely while no hand action is active.
-- [ ] Remove the recurring post-grasp hold traffic.
-- [ ] Bound and record the SDK round trips per commanded setpoint.
-- [ ] Measure the hand-bridge CPU reduction against the ~160 %-per-hand census.
+- [x] Remove the recurring post-grasp hold traffic. The skill controller's grasp
+      hold no longer republishes at 20 Hz after completion; it monitors contact
+      only. L1 and L2, 2026-08-14 — the traffic is gone from the code and pinned
+      by tests, but no hardware run has entered the hold state yet, so the
+      measured saving on the bus is still owed.
+- [ ] Bound and record the SDK round trips per commanded setpoint. The per-call
+      profile (above) records the *rates* the bridge produces at rest, which is
+      not the same as a bound per commanded setpoint. A retry can still spend up
+      to 8 sends plus their verification readbacks on one target. Recording the
+      steady-state rate does not close this.
+- [x] Measure the hand-bridge CPU reduction against the ~160 %-per-hand census.
+      Measured 2026-08-14: omnihand_bridge fell from 319.2 % (pair) to 222.4 %
+      (pair) after pub-rate fix, then to 25.3 % (pair) after vendor SDK spin
+      thread patch in the tracked fork. Stack baseline improved from 814.5 % to
+      399.7 % idle (both arms) and from 882.9 % to 431.3 % under dual MIT 100 Hz.
 - [ ] Validate parallel same-side arm and hand motion without CAN RX drops.
 - [ ] Verify the `shared_per_side` topology still executes an activity.
 

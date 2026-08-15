@@ -115,9 +115,17 @@ implements it.
   (`agx_arm_ctrl`, `agx_arm_mit_demos`); there are no external consumers, so no
   deprecation window is needed beyond the phase. The 1-DoF AGX gripper is the
   degenerate case that validates the abstraction rather than an exception to it.
-- **The MoveIt hand FJT path is debug and development only**, non-default in
-  coordinated production profiles. Rationale: two command sources for one device
-  contradict single-commander arbitration.
+- **The hand has two production motion primitives: trajectory execution and
+  reactive contact-seeking.** Both claim `control/omnihand/claim_device` before
+  commanding and enforce single-commander arbitration through device authority.
+  What rejects a command today is ownership and the surface it arrived on; the
+  epoch and sequence checks exist but cannot fire on a topic command, which
+  carries neither. That needs per-command identity (4D). The earlier "FJT is debug-only"
+  reading contradicted the design. Superseded 2026-08-14: both primitives are
+  production, and exclusive ownership closes the two-commander hole. See
+  AGENTS.md "ROS Contract Rules", the refinement proposal "remove claims that
+  hand FJT is debug/development-only", and the `errors_and_fixes.md` 2026-08-14
+  entries on hand claim services and two-commander elimination.
 - **The degraded step-and-settle mode has no removal date yet.** It is retained
   while a single-bus fallback remains physically possible, and its removal is
   reviewed at the Phase 5 close-out against the measured four-bus evidence. No

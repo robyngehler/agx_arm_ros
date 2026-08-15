@@ -706,7 +706,14 @@ Exit gate:
 - generate MoveIt simple-controller-manager config, resource claims,
   joint-state merger inputs, and launch parameter dictionaries from the manifest
 - quarantine the legacy standalone `moveit_controllers.yaml`
-- keep the MoveIt hand FJT path non-default in coordinated production profiles
+- the hand FJT path (`<side>_omnihand_controller/follow_joint_trajectory`) is the
+  primary trajectory-execution primitive and is available in MoveIt profiles;
+  reactive contact-seeking motion is the second legitimate production primitive.
+  Superseded 2026-08-14: the earlier "non-default in production" reading contradicted
+  the dual-primitive design. Both primitives enforce single-commander arbitration
+  through device authority (exclusive ownership via `control/omnihand/claim_device`),
+  so FJT is neither a debug surface nor optional. See AGENTS.md "ROS Contract Rules"
+  and the refinement proposal "remove claims that hand FJT is debug/development-only".
 
 ### 4D. Hand contract consolidation
 
