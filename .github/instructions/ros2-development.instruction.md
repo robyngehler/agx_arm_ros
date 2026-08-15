@@ -52,6 +52,15 @@ The arm driver serializes every steady-state SDK call for a device onto one work
 - **recovery is the exception.** It quiesces the worker and takes the session, so it calls the SDK directly — at that moment it *is* the owner. Anything routed through the worker during recovery waits for a handover that does not complete until recovery ends
 - a timeout on a submitted call means the outcome is **unknown**, not that the call was not sent. Only a drop, a supersede or a rejection establishes non-execution
 
+## A Node Owns The Threads It Starts
+
+`rclpy` joins nothing. `destroy_node()` and `rclpy.shutdown()` both return while a thread the node started is still running, and `daemon=True` does not help — it only stops the *process* from hanging at exit, which is a different moment.
+
+- stop and join the thread in an overridden `destroy_node()`, not only in `main()`. `main` is not the path a test, a composed launch, or a node that fails during construction takes
+- the thread holds the node, its logger and its backend, so an orphaned one keeps calling into a destroyed context. It does not fail where the bug is: it fails in whatever runs next. **The signature is a suite where every test passes alone and fails together** — that is how the hand bridge's acquisition thread was found
+- name the thread after the device it serves (`hand-acq-right`), because per-thread call attribution is how the one-owner invariant is read, and `Thread-3` proves nothing
+- a test that drives such a node by hand calls the loop body (`_acquire_once`), never the loop. The thread belongs to the runtime; the test wants one deterministic cycle
+
 ## Guarding Untrusted Numbers
 
 - never let a saturating or clamping helper be the first thing that sees an untrusted value. `max(-limit, min(limit, value))` maps NaN and `+inf` onto `limit`, so a corrupt number becomes the *maximum* command and every downstream range check then sees a plausible value. Reject non-finite input first, then saturate
