@@ -1,10 +1,11 @@
 """Minimal reader for the duo motion registry (single source of truth).
 
 The registry lives in agx_arm_description/config/duo_motion_registry.yaml. The
-coordinator's arm executor only needs the per-group joint names from it (canonical
-Nero joints side-prefixed per the group's motion profile), so this reader derives
-exactly that and nothing else; the full registry surface lives in
-agx_arm_ctrl.motion_registry and agx_arm_moveit._multi_arm_runtime.
+coordinator needs two things from it: the per-group joint names (canonical Nero
+joints side-prefixed per the group's motion profile) and the declared CAN
+topology, which decides whether same-side arm and hand are one schedulable
+resource or two. The full registry surface lives in agx_arm_ctrl.motion_registry
+and agx_arm_moveit._multi_arm_runtime.
 """
 
 from __future__ import annotations
@@ -71,4 +72,30 @@ def group_joint_names(group_name: str) -> tuple[str, ...]:
     return tuple(names)
 
 
-__all__ = ["load_motion_registry", "moveit_group", "group_joint_names"]
+def bus_topology() -> str:
+    """Return the declared CAN topology (C7).
+
+    Defaults to the degraded reading when absent. Assuming parallel operation on
+    an undeclared topology is the unsafe direction: it would schedule a hand
+    action while the arm still holds the same bus.
+    """
+    return str(load_motion_registry().get("bus_topology", "shared_per_side")).strip()
+
+
+def handshake_required() -> bool:
+    """True when arm and hand share a bus, so hand motion needs the arm quiesced.
+
+    Derived from the one declared topology rather than configured separately, so
+    a stack cannot come up with the handoff enabled on hardware that does not
+    need it — or, worse, disabled on hardware that does.
+    """
+    return bus_topology() != "dedicated_per_device"
+
+
+__all__ = [
+    "load_motion_registry",
+    "moveit_group",
+    "group_joint_names",
+    "bus_topology",
+    "handshake_required",
+]

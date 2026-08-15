@@ -626,15 +626,40 @@ at 2.04 ms mean.
 
 ### 2B Parallel resource model, handoff derived not configured
 
-- [ ] Derive the scheduler's bus tokens from `bus_topology`; under
+Code-complete 2026-08-15. **The parallelism itself is not yet demonstrated on
+hardware** — the scheduler will now emit a same-side arm and hand batch together,
+and no run has done it. That is the open 2C item "validate parallel same-side arm
+and hand motion without CAN RX drops", and it is the acceptance evidence for this
+section too.
+
+- [x] Derive the scheduler's bus tokens from `bus_topology`; under
       `dedicated_per_device`, `<side>_arm` and `<side>_hand` stop sharing one.
-- [ ] Derive `handoff_enabled` from the same value; nothing reads it directly.
-- [ ] Remove the MIT stand-down on `feedback/hand_window_active`.
-- [ ] Keep `prepare_hand_window` / `resume_arm_control` only as the
-      `shared_per_side` implementation.
-- [ ] Fix the stale TX-loss warning that blames "hand-frame arbitration loss on
-      the shared bus".
-- [ ] Add tests for the newly reachable interleavings.
+      `graph_model.robot_units(topology)` returns one of two tables and the
+      coordinator passes it to the `Scheduler`. An unknown topology reads as
+      shared: a value nobody recognised is not a licence to run a hand beside
+      its arm.
+- [x] Derive `handoff_enabled` from the same value; nothing reads it directly.
+      The coordinator's `handoff_enabled` and the FJT node's `handshake_enabled`
+      both default to `handshake_required()`. The hardcoded `True` mattered:
+      anything starting those nodes outside the launch files — a test double, a
+      bare `ros2 run`, a measurement harness — quiesced an arm for a hand that
+      has its own bus, silently.
+- [x] Remove the MIT stand-down on `feedback/hand_window_active`. Done earlier
+      in 1A: the MIT controller acts on `AgxDeviceAuthority`, which distinguishes
+      a deliberate quiescence from a fault, a stop, or the device changing hands.
+      The driver still publishes the boolean and nothing subscribes to it.
+- [x] Keep `prepare_hand_window` / `resume_arm_control` only as the
+      `shared_per_side` implementation. True by derivation now rather than by
+      convention — both callers default off on the declared topology.
+- [x] Fix the stale TX-loss warning that blames "hand-frame arbitration loss on
+      the shared bus". It now names the right suspect per topology: on a
+      dedicated bus nothing else transmits, so the same counter means the arm's
+      own link, and sending an operator to look at the hand would be wrong.
+- [x] Add tests for the newly reachable interleavings. L1: a hand no longer
+      conflicts with its own arm, `both_arms` no longer blocks a hand, an
+      unknown topology still serializes, a `Scheduler` given no table still
+      serializes, and a dedicated-bus scheduler dispatches a same-side arm and
+      hand in one batch. L2 activity harness unchanged and green.
 
 ### 2C Hand arbitration and transport efficiency
 

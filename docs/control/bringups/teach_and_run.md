@@ -248,11 +248,15 @@ free-runs without the arm).
 >   signal the MoveIt bridge uses, instead of a fixed `--hand-settle-sec` dwell (which could close the
 >   window mid-retry). `--hand-delivery-timeout-sec` (default 4 s) bounds the wait; the fixed dwell remains
 >   the fallback when no bridge status is present (mock/older bridge).
-> - **the whole handshake is switchable for a dedicated hand bus.** On the shared bus it is mandatory;
->   with a second CAN line for the hand it is pure overhead. `hand_bus:=dedicated` (components → moveit /
->   multi-arm launches) turns the FJT handshake off so arm MIT and the hand run in parallel; the teach
->   manager takes `--no-hand-window`. Default `hand_bus:=shared` keeps the handshake. Point the hand's
->   `can_interface` at the dedicated bus when selecting `dedicated`.
+> - **the whole handshake follows the declared bus topology, and is no longer defaulted by hand.**
+>   On a shared bus it is mandatory; with a second CAN line for the hand it is pure overhead.
+>   `bus_topology` in `duo_motion_registry.yaml` is the one declared fact: it sets the `hand_bus`
+>   default in every launch file, the `handshake_enabled` default in the FJT node, the
+>   `handoff_enabled` default in the coordinator, and whether the scheduler treats a side's arm and
+>   hand as one resource or two. **This robot declares `dedicated_per_device`, so the handshake is
+>   off by default and arm MIT runs beside its own hand.** `hand_bus:=shared` selects the degraded
+>   mode explicitly; the teach manager still takes `--no-hand-window`. A hand's `can_interface` comes
+>   from `omnihand.sides.<side>.can_port` and no longer falls back to an arm bus.
 
 ### 2. Run the teach manager
 

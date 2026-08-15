@@ -61,7 +61,12 @@ from agx_arm_coordination.arm_executor import (
     merge_arm_plans,
 )
 from agx_arm_coordination.graph_loader import ActivityCatalogue
-from agx_arm_coordination.graph_model import ACTIONTYPE_TRAJECTORY, Scheduler
+from agx_arm_coordination.graph_model import (
+    ACTIONTYPE_TRAJECTORY,
+    Scheduler,
+    robot_units,
+)
+from agx_arm_coordination.motion_registry import bus_topology, handshake_required
 from agx_arm_coordination.performer import KIND_ARM, KIND_HAND, RoutingError, route
 from agx_arm_coordination.unit_activity import UnitActivity
 
@@ -205,13 +210,17 @@ class CoordinatorNode(Node):
         # Driver-side step-and-settle handoff services, per arm side. Before a
         # hand action runs on a shared side bus the arm is quiesced into a
         # verified hold (prepare_hand_window) and reopened afterwards
-        # (resume_arm_control), so the hand actually owns the bus.
+        # (resume_arm_control), so the hand actually owns the bus. On a
+        # dedicated-per-device topology there is nothing to hand off.
         self.declare_parameter("arm_service_template", "/{side}_arm")
         # MIT controller namespace per side, used only by the safe-stop path
         # (cancel_trajectory + hold_current).
         self.declare_parameter("mit_controller_template", "/{side}_arm/mit_controller")
         self.declare_parameter("stop_service_timeout_sec", 3.0)
-        self.declare_parameter("handoff_enabled", True)
+        # Derived, not configured: the same declared topology decides the
+        # resource table below. Two independent switches is how a stack came up
+        # quiescing an arm for every hand motion that did not need it.
+        self.declare_parameter("handoff_enabled", handshake_required())
         self.declare_parameter("handoff_timeout_sec", 5.0)
         self.declare_parameter("arm_dry_run", False)
         self.declare_parameter("poll_period_sec", 0.05)
@@ -236,6 +245,10 @@ class CoordinatorNode(Node):
         self.mit_controller_template = str(self.get_parameter("mit_controller_template").value)
         self.stop_service_timeout = float(self.get_parameter("stop_service_timeout_sec").value)
         self.handoff_enabled = bool(self.get_parameter("handoff_enabled").value)
+        # One declared fact behind both: whether same-side arm and hand are one
+        # schedulable resource, and whether a hand action has to quiesce the arm.
+        self.bus_topology = bus_topology()
+        self.robot_units = robot_units(self.bus_topology)
         self.handoff_timeout = float(self.get_parameter("handoff_timeout_sec").value)
         self.arm_dry_run = bool(self.get_parameter("arm_dry_run").value)
         self.poll_period = float(self.get_parameter("poll_period_sec").value)
@@ -349,7 +362,14 @@ class CoordinatorNode(Node):
             f"Coordinator up: config_dir={config_dir}, "
             f"activities={self.catalogue.available_activities()}, "
             f"arm_groups={sorted(self.arm_planner.config.groups)}, "
-            f"arm_dry_run={self.arm_dry_run}"
+            f"arm_dry_run={self.arm_dry_run}, "
+            # Named at startup because it silently changes what may run at once:
+            # under dedicated_per_device a hand action no longer waits for its
+            # own arm, and no other line of output would say so.
+            f"bus_topology={self.bus_topology} "
+            f"(same-side arm and hand "
+            f"{'serialized' if self.handoff_enabled else 'may overlap'}, "
+            f"arm handoff {'on' if self.handoff_enabled else 'off'})"
         )
 
     def _unit_safety_callback(self, msg: AgxUnitSafety) -> None:
@@ -843,7 +863,7 @@ class CoordinatorNode(Node):
             return result
 
         graph = self.catalogue.get_activity_plan(activity_id)
-        scheduler = Scheduler(graph, self.catalogue.actions)
+        scheduler = Scheduler(graph, self.catalogue.actions, self.robot_units)
         total = len(graph.nodes)
         result.total_nodes = total
         self.get_logger().info(f"running activity '{activity_id}' ({total} nodes)")

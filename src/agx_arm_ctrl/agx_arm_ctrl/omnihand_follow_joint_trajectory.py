@@ -15,6 +15,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from agx_arm_msgs.msg import OmniHandStatus
 from agx_arm_msgs.srv import ClaimDevice
 
+from agx_arm_ctrl.motion_registry import handshake_required
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
 # Shared, model-aware joint naming — do NOT keep a second JOINT_SUFFIXES copy here
 # (proposal §6/§11.3): a stale O10 list would flag every Pro-only joint as unknown.
@@ -64,7 +65,13 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         # Step-and-settle handshake: quiesce the same-side arm into a verified
         # hold for the duration of a hand trajectory so MoveIt hand execution
         # owns the shared side bus instead of losing arbitration under arm MIT.
-        self.declare_parameter("handshake_enabled", True)
+        #
+        # Only the shared-bus topology needs it, and the default is derived from
+        # the declared one rather than typed here. Hardcoded `True` meant that
+        # anything starting this node outside the launch files — a test double, a
+        # bare `ros2 run`, a measurement harness — quiesced an arm for a hand on
+        # its own bus, and did it silently.
+        self.declare_parameter("handshake_enabled", handshake_required())
         self.declare_parameter("arm_service_ns", "")
         self.declare_parameter("handshake_timeout_s", 5.0)
 

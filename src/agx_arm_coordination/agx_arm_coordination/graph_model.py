@@ -16,9 +16,11 @@ Model:
   edges; nodes sharing a ``sync_flag`` form a barrier group.
 - **resources**: each ``robot_id`` occupies a set of physical units; two actions
   conflict when their unit sets intersect. ``both_arms`` occupies both per-arm
-  units, so it conflicts with ``left_arm`` and ``right_arm``. Each side's arm and
-  hand also share one physical CAN bus (``left_can_bus`` / ``right_can_bus``), so
-  same-side arm and hand actions conflict too (graph doc §Resources).
+  units, so it conflicts with ``left_arm`` and ``right_arm``. Whether a side's
+  arm and hand also conflict is **derived from the declared CAN topology**, not
+  fixed here: on ``dedicated_per_device`` every device owns its bus and
+  same-side arm and hand motion may overlap; on ``shared_per_side`` they hold
+  one ``<side>_can_bus`` token and are serialized (graph doc §Resources).
 """
 
 from __future__ import annotations
@@ -27,14 +29,18 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+TOPOLOGY_DEDICATED = "dedicated_per_device"
+TOPOLOGY_SHARED = "shared_per_side"
+
 # robot_id -> set of physical units it occupies. Intersection => resource
-# conflict. Each side's arm and hand share ONE physical CAN bus (only two mttcan
-# channels, one per arm), so same-side arm and hand actions conflict on the shared
-# ``*_can_bus`` unit and are never scheduled concurrently — this encodes the
-# Step-and-Settle rule that the arm owns the side bus and the hand only gets
-# explicit windows (docs/sprint6/planning/shared_can_step_and_settle_integration_plan.md
-# §1.7, §4). both_arms holds both per-arm units and both side buses.
-ROBOT_UNITS: dict[str, frozenset[str]] = {
+# conflict. Both tables give a side's arm and hand a bus token; what differs is
+# whether it is the SAME token.
+#
+# Shared: two mttcan channels, one per side, and the hand rides the arm's. The
+# side bus is one unit, so same-side arm and hand are never scheduled
+# concurrently — the Step-and-Settle rule, where the arm owns the bus and the
+# hand only gets explicit windows.
+ROBOT_UNITS_SHARED: dict[str, frozenset[str]] = {
     "left_arm": frozenset({"left_arm", "left_can_bus"}),
     "right_arm": frozenset({"right_arm", "right_can_bus"}),
     "both_arms": frozenset(
@@ -43,6 +49,38 @@ ROBOT_UNITS: dict[str, frozenset[str]] = {
     "left_hand": frozenset({"left_hand", "left_can_bus"}),
     "right_hand": frozenset({"right_hand", "right_can_bus"}),
 }
+
+# Dedicated: four buses, one per device. The arm and the hand of one side hold
+# different tokens, so they no longer conflict and may run in parallel. The
+# tokens are kept rather than dropped, because they still serialize a device
+# against itself and against ``both_arms``.
+ROBOT_UNITS_DEDICATED: dict[str, frozenset[str]] = {
+    "left_arm": frozenset({"left_arm", "left_arm_bus"}),
+    "right_arm": frozenset({"right_arm", "right_arm_bus"}),
+    "both_arms": frozenset(
+        {"left_arm", "right_arm", "left_arm_bus", "right_arm_bus"}
+    ),
+    "left_hand": frozenset({"left_hand", "left_hand_bus"}),
+    "right_hand": frozenset({"right_hand", "right_hand_bus"}),
+}
+
+# The conservative reading is the default everywhere the topology is not stated.
+# Scheduling a hand action while the arm still holds the same bus is the failure
+# this table exists to prevent, so an unstated topology must not unlock it.
+ROBOT_UNITS: dict[str, frozenset[str]] = ROBOT_UNITS_SHARED
+
+
+def robot_units(topology: str) -> dict[str, frozenset[str]]:
+    """Resource table for a declared CAN topology.
+
+    Anything other than ``dedicated_per_device`` — including an unknown value —
+    reads as shared. A topology nobody recognised is not a licence to run a hand
+    beside its arm.
+    """
+    if topology == TOPOLOGY_DEDICATED:
+        return ROBOT_UNITS_DEDICATED
+    return ROBOT_UNITS_SHARED
+
 
 ACTIONTYPE_GRIPPER = "Gripper"
 ACTIONTYPE_TRAJECTORY = "Trajectory"
@@ -53,14 +91,18 @@ class GraphError(ValueError):
     """Raised when an activity graph or catalogue is structurally invalid."""
 
 
-def units_for(robot_id: str) -> frozenset[str]:
+def units_for(
+    robot_id: str, units: dict[str, frozenset[str]] | None = None
+) -> frozenset[str]:
     """Physical units a robot_id occupies (empty set for an unknown id)."""
-    return ROBOT_UNITS.get(robot_id, frozenset())
+    return (units if units is not None else ROBOT_UNITS).get(robot_id, frozenset())
 
 
-def conflicts(robot_a: str, robot_b: str) -> bool:
+def conflicts(
+    robot_a: str, robot_b: str, units: dict[str, frozenset[str]] | None = None
+) -> bool:
     """True when two robot_ids cannot run simultaneously (shared units)."""
-    return bool(units_for(robot_a) & units_for(robot_b))
+    return bool(units_for(robot_a, units) & units_for(robot_b, units))
 
 
 @dataclass(frozen=True)
@@ -226,11 +268,22 @@ class Scheduler:
 
     Pure state machine: the coordinator feeds it ``completed`` and ``running``
     sets and asks for the next batch to dispatch. It never blocks or sleeps.
+
+    ``units`` is the resource table, which the caller derives from the declared
+    CAN topology. It is a constructor argument rather than a module lookup so
+    this stays testable without a registry on disk — and so a caller that never
+    thought about the topology gets the serializing table, not the parallel one.
     """
 
-    def __init__(self, graph: ActivityGraph, catalogue: dict[str, Action]) -> None:
+    def __init__(
+        self,
+        graph: ActivityGraph,
+        catalogue: dict[str, Action],
+        units: dict[str, frozenset[str]] | None = None,
+    ) -> None:
         self.graph = graph
         self.catalogue = catalogue
+        self.units = units if units is not None else ROBOT_UNITS
 
     def _node_ready(self, action_no: int, completed: set[int]) -> bool:
         return all(pred in completed for pred in self.graph.predecessors(action_no))
@@ -275,12 +328,12 @@ class Scheduler:
         for action_no in sorted(running):
             node = self.graph.nodes.get(action_no)
             if node:
-                held |= units_for(self.catalogue[node.action_id].robot_id)
+                held |= units_for(self.catalogue[node.action_id].robot_id, self.units)
 
         batch: list[DispatchItem] = []
         for node in sorted(eligible, key=lambda n: n.action_no):
             robot = self.catalogue[node.action_id].robot_id
-            node_units = units_for(robot)
+            node_units = units_for(robot, self.units)
             if node_units & held:
                 continue
             held |= node_units

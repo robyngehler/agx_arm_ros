@@ -1,10 +1,13 @@
 """Unit tests for the ROS-free graph model, validation, and scheduler."""
 
 from agx_arm_coordination.graph_model import (
+    ROBOT_UNITS_DEDICATED,
+    ROBOT_UNITS_SHARED,
     Scheduler,
     conflicts,
     parse_activity,
     parse_catalogue,
+    robot_units,
     units_for,
     validate_activity,
 )
@@ -36,14 +39,71 @@ def test_both_arms_conflicts_with_each_per_arm():
 
 
 def test_same_side_arm_and_hand_share_can_bus():
-    # Each side's arm and hand share one physical CAN bus, so they conflict and
-    # cannot run concurrently (Step-and-Settle: the arm owns the side bus, the
-    # hand only gets explicit windows). Opposite sides stay independent.
+    # The default table is the shared one: each side's arm and hand hold one
+    # physical CAN bus, so they conflict and cannot run concurrently
+    # (Step-and-Settle: the arm owns the side bus, the hand only gets explicit
+    # windows). Opposite sides stay independent.
     assert conflicts("right_arm", "right_hand")
     assert conflicts("left_arm", "left_hand")
     assert not conflicts("right_arm", "left_hand")
     assert not conflicts("left_arm", "right_hand")
     assert conflicts("both_arms", "right_hand")
+
+
+# --- the topology decides the resource model ---------------------------------
+
+def test_a_dedicated_bus_frees_a_hand_from_its_own_arm():
+    """The whole point of four buses: a hand no longer waits for its arm."""
+    units = robot_units("dedicated_per_device")
+
+    assert not conflicts("right_arm", "right_hand", units)
+    assert not conflicts("left_arm", "left_hand", units)
+    # A device is still serialized against itself, and both_arms still takes
+    # both arms — only the arm/hand coupling is gone.
+    assert conflicts("both_arms", "left_arm", units)
+    assert conflicts("both_arms", "right_arm", units)
+    assert not conflicts("left_hand", "right_hand", units)
+
+
+def test_both_arms_no_longer_blocks_a_hand_on_dedicated_buses():
+    """Under the shared table it did, because it held both side buses."""
+    units = robot_units("dedicated_per_device")
+
+    assert conflicts("both_arms", "right_hand", ROBOT_UNITS_SHARED)
+    assert not conflicts("both_arms", "right_hand", units)
+
+
+def test_an_unknown_topology_reads_as_shared():
+    """The conservative direction. Parallel operation is never the fallback."""
+    assert robot_units("shared_per_side") is ROBOT_UNITS_SHARED
+    assert robot_units("") is ROBOT_UNITS_SHARED
+    assert robot_units("four_buses_probably") is ROBOT_UNITS_SHARED
+    assert robot_units("dedicated_per_device") is ROBOT_UNITS_DEDICATED
+
+
+def test_a_scheduler_given_no_table_serializes():
+    """A caller that never thought about the topology must not get parallelism."""
+    graph = _activity(
+        [{"action_no": 10, "action_id": "left_arm_move"},
+         {"action_no": 20, "action_id": "left_hand_open"}],
+        [],
+    )
+
+    assert [i.action_no for i in Scheduler(graph, CATALOGUE).next_batch(set(), set())] == [10]
+
+
+def test_a_scheduler_on_dedicated_buses_runs_arm_and_hand_together():
+    """The interleaving 2B makes reachable, and nothing else pins it."""
+    graph = _activity(
+        [{"action_no": 10, "action_id": "left_arm_move"},
+         {"action_no": 20, "action_id": "left_hand_open"}],
+        [],
+    )
+    sched = Scheduler(graph, CATALOGUE, ROBOT_UNITS_DEDICATED)
+
+    assert {i.action_no for i in sched.next_batch(set(), set())} == {10, 20}
+    # And a hand action still starts while the same side's arm is already running.
+    assert [i.action_no for i in sched.next_batch(set(), {10})] == [20]
 
 
 def test_units_for_unknown_is_empty():

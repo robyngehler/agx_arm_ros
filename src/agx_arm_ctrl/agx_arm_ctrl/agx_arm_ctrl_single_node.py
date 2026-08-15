@@ -42,6 +42,7 @@ from agx_arm_msgs.msg import (
     MoveMITMsg
 )
 from agx_arm_ctrl.effector import AgxGripperWrapper, Revo2Wrapper
+from agx_arm_ctrl.motion_registry import handshake_required
 from agx_arm_ctrl import nero_can_push
 
 GRIPPER_JOINT_NAME = "gripper"
@@ -1640,10 +1641,16 @@ class AgxArmRosNode(Node):
     def _surface_silent_tx_loss(self, snapshot: "FeedbackSnapshot") -> None:
         """Log commands the SDK dropped silently while feedback looked healthy.
 
-        On the shared bus this is usually the hand losing arbitration, not a dead
-        arm, so it is surfaced (not turned into a heavyweight recovery): a rising
-        forked send-error count while RX keeps flowing is the only evidence that
-        arm commands are being dropped (plan section 1.3.2).
+        A rising send-error count while RX keeps flowing is the only evidence
+        that arm commands are being dropped, so it is surfaced rather than turned
+        into a heavyweight recovery (plan section 1.3.2).
+
+        **What it means depends on the bus topology, and the message says which.**
+        On a shared side bus this is usually the hand losing arbitration — common,
+        expected, not a dead arm. On the dedicated-per-device topology nothing
+        else transmits on this bus, so the same counter means something is wrong
+        with the arm's own link. Telling an operator to look at the hand there
+        would send them to the wrong device.
         """
         if snapshot is None or snapshot.send_error_count < 0:
             return
@@ -1662,10 +1669,17 @@ class AgxArmRosNode(Node):
         # call counter showed one owner in every healthy window and three the
         # moment the bus went down.
         last = self._sdk_read("get_last_send_error", self.agx_arm.get_last_send_error)
+        cause = (
+            "On the shared side bus this is usually hand-frame arbitration loss, "
+            "not a dead arm."
+            if handshake_required()
+            else "This arm owns its bus, so nothing else is competing for it: "
+            "suspect the link, the transceiver or the firmware, not the hand."
+        )
         self.get_logger().warn(
             f"silent TX loss: {dropped} send(s) dropped (total {count}) while feedback "
-            f"is live (last: {last}); arm commands may not be reaching the firmware. On "
-            "the shared bus this is usually hand-frame arbitration loss, not a dead arm."
+            f"is live (last: {last}); arm commands may not be reaching the firmware. "
+            f"{cause}"
         )
 
     def _should_recover_bus(self, snapshot: "FeedbackSnapshot" = None) -> bool:
