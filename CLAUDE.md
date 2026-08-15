@@ -83,8 +83,9 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - keep exactly one owner of a device's SDK session at any instant: steady-state
   calls go through that device's serialized worker on a declared priority lane,
   and recovery is the one exception because it takes the session off the worker.
-  This holds for the arms today; the hand bridge has no serialized owner yet
-  (a known gap, closed in phase 2C)
+  This holds for the arms today. A hand reaches its SDK from one thread only
+  because the bridge spins single-threaded — an accident, not an invariant, and
+  with no lane priority, so a stop waits behind ordinary work (phase 2C)
 - keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared
   `control/joint_states` is the current hand command flow and is legacy (V02 target: one abstract hand
   command with owner identity, control epoch, and sequence)

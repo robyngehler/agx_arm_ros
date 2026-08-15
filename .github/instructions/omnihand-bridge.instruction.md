@@ -47,7 +47,7 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 
 ## Backend Rules
 
-- **a hand has no serialized SDK owner yet.** The one-owner-per-device invariant and the four priority lanes (`sdk_worker.py`) are implemented for the *arms* only; the bridge still reaches the hand SDK straight from its timer, its subscriptions, and its service handlers. Treat that as a known gap being closed in phase 2C, not as a pattern to copy into new code
+- **a hand has no serialized SDK owner yet**, and the reason is subtler than it looks. Its timer, subscriptions and service handlers all reach the SDK directly, but they run on one thread because the bridge uses `rclpy.spin`, so the measured attribution really is a single thread. What is missing is not serialization — it is that the property is incidental (one edit to a `MultiThreadedExecutor` silently ends it, and two sibling nodes in this package already use one) and that there are no lanes, so a stop waits behind whatever the executor is doing and a 17 ms status read blocks the claim service. Closed in phase 2C
 - keep the SDK or vendor transport below ROS
 - treat vendor ROS topics as backend input references only, not as the public repo contract
 - keep the mock backend and real backend behind the same repo-owned bridge surface when possible

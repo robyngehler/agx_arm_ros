@@ -650,9 +650,13 @@ CPU.
       on `control/joint_states` supersedes an in-flight trajectory target, and
       the action then reads the hold's verification as its own delivery. See
       `errors_and_fixes.md`, 2026-08-14.
-- [ ] Give the hand a serialized SDK owner. The worker and its four lanes are
-      arm-only; the bridge still calls the SDK from its timer, its subscriptions
-      and its service handlers.
+- [ ] Give the hand a serialized SDK owner. Corrected 2026-08-14: the bridge
+      already reaches its SDK from **one** thread (it spins single-threaded, and
+      the L3 attribution recorded `1 thread(s): MainThread`). What is missing is
+      that the property is incidental rather than designed — one edit to a
+      `MultiThreadedExecutor` ends it silently, and both sibling nodes in this
+      package already use one — and that there are no lanes, so a stop queues
+      behind ordinary work and a 17 ms status read blocks the claim service.
 - [ ] Profile the O12 Pro backend at SDK-call level: which calls, how many per
       setpoint, how long each blocks.
 - [x] Separate ROS publication cost from vendor-SDK polling cost before cutting
