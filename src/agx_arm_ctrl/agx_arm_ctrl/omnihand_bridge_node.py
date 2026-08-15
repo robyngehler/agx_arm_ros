@@ -747,8 +747,19 @@ class SdkOmniHandBackend:
         self.apply_joint_targets(target_map, "joint_trajectory")
 
     def stop(self) -> None:
+        """Cancel the pending target and hold where the hand ACTUALLY is.
+
+        The pose is taken from a fresh readback, not from the cached one. The
+        cache holds the last *commanded* target: apply_joint_targets writes it
+        optimistically, before the hand has moved. Commanding that back is not a
+        stop, it re-sends the destination the hand is already travelling to.
+
+        Whether that happened used to depend on timing. A readback between the
+        command and the stop overwrote the cache and the hand held its position;
+        without one, it kept closing.
+        """
         try:
-            hold_positions = self._current_active_joint_targets()
+            hold_positions = self.read_joint_state()
             self.hand.set_all_active_joint_angles(hold_positions)
             self.positions = list(hold_positions)
             self.control_mode = "stopped"
@@ -1468,18 +1479,44 @@ class OmniHandBridgeNode(Node):
 
     def _unit_safety_callback(self, msg: AgxUnitSafety) -> None:
         """Adopt a generation from the one writer that may allocate them."""
-        if self._unit_safety.observe(
+        adopted = self._unit_safety.observe(
             UnitSafetySnapshot(
                 epoch=int(msg.epoch),
                 stopped=bool(msg.stopped),
                 reason=msg.reason,
                 writer_id=msg.writer_id,
             )
-        ):
+        )
+        if adopted:
             self.get_logger().warn(
                 f"unit safety generation {msg.epoch}: stopped={msg.stopped} "
                 f"({msg.reason})"
             )
+        if not msg.stopped:
+            return
+
+        # Stop the hardware, do not just close the gate. The authority goes
+        # STOPPED and refuses further commands, but a target already delivered
+        # keeps executing: this hand drives to a position on its own once it has
+        # accepted one. Without this, a unit stop during a closing grasp left the
+        # hand closing.
+        #
+        # Unlike an arm, a hand has no local e-stop that would already have
+        # stopped the hardware before the unit generation arrived, so the unit
+        # stop is the only signal there is.
+        self.pending_command = None
+        self._command_delivery_failed = False
+        try:
+            self.backend.stop()
+        except Exception as exc:
+            self.get_logger().error(
+                f"unit stop reached {self._authority.device_id} but stopping the "
+                f"hand failed: {exc}"
+            )
+            return
+        self.get_logger().warn(
+            f"unit stop: {self._authority.device_id} holding its measured pose"
+        )
 
     def _claim_device_callback(self, request, response):
         """Take or give up the transport session for this hand."""

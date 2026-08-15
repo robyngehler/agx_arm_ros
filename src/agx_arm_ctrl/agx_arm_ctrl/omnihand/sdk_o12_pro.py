@@ -252,8 +252,19 @@ class O12ProSdkBackend:
         self.apply_joint_targets(target_map, "joint_trajectory")
 
     def stop(self) -> None:
+        """Cancel the pending target and hold where the hand ACTUALLY is.
+
+        The pose is taken from a fresh readback, not from the cached one. The
+        cache holds the last *commanded* target: apply_joint_targets writes it
+        optimistically, before the hand has moved. Commanding that back is not a
+        stop, it re-sends the destination the hand is already travelling to.
+
+        Whether that happened used to depend on timing. A readback between the
+        command and the stop overwrote the cache and the hand held its position;
+        without one, it kept closing.
+        """
         try:
-            hold_positions = self._current_active_joint_targets()
+            hold_positions = self.read_joint_state()
             self.hand.set_all_active_joint_angles(hold_positions)
             self.positions = list(hold_positions)
             self.control_mode = "stopped"
