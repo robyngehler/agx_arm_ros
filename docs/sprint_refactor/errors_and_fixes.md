@@ -722,3 +722,64 @@ run on a refusal had never executed.
   stops answering points at the caller, and the investigation went there first.
   A node that dies on an error path is invisible to every test that only takes
   the happy path, and this one had no test at all.
+
+## 2026-08-15 (found by grasping a real object with the reactive primitive)
+
+### Tactile was published once a second, which is exactly when the grasp gives up
+
+- Symptom: every reactive grasp on hardware failed before moving a finger, with
+  `tactile stale (1.01s > 1.0s)`. Three consecutive runs, `state=FAILED`,
+  `contact_score=0.000`.
+- Cause: the bridge read and published tactile at `SDK_TACTILE_READ_INTERVAL_S`
+  = 1.0 s, and the skill controller rejects a reading older than
+  `tactile_stale_sec` = 1.0 s. The publication interval *was* the staleness
+  limit, so a sample was at the limit the moment it arrived.
+- Why it was invisible before: until the publication rework the bridge
+  republished the cached tactile snapshot on every timer tick, so the message
+  arrived with a fresh header stamp while carrying values up to a second old.
+  The consumer measured arrival, not content, and read fresh. **The staleness
+  check was passing on a lie**; making publication honest is what exposed it.
+- Deeper cause: tactile was classified once, as a diagnostic. It is a diagnostic
+  to everyone except the reactive primitive, whose whole definition is that it
+  ends where the sensor says rather than where the clock does. For that owner it
+  is control-critical acquisition.
+- Fix: tactile has two cadences and two lanes, chosen by **who holds the hand**.
+  With no owner or a trajectory owner it stays a 1 Hz diagnostic on the
+  `DIAGNOSTIC` lane. While the reactive primitive holds the device it runs at
+  the acquisition rate on the `ACQUISITION` lane. Measured on the right hand:
+
+  | owner | tactile published | bridge CPU |
+  | --- | --- | --- |
+  | none | 1.0/s | 14.5 % of a core |
+  | trajectory | 1.0/s | 14.2 % |
+  | **reactive** | **20.0/s** | **26.8 %** |
+  | released again | 1.0/s | 14.6 % |
+
+  The cost of contact-seeking is +12 % of a core and it is paid only while
+  something is waiting on the sensor.
+
+### The same rounding bug, in the gate I had just written
+
+- Symptom: the reactive cadence was configured at 20 Hz and the bridge's own
+  call counter reported roughly half that.
+- Cause: a `now - last >= interval` gate inside a loop already paced at that
+  same interval. Ordinary jitter makes cycles miss it. This is the third time
+  this pattern has cost rate in this repository — it made a 20 Hz joint readback
+  measure 15.4 Hz, which is why the acquisition loop was changed from gating to
+  pacing in the first place, and I reintroduced it one function away from the
+  comment that says so.
+- Fix: an interval at or below the loop period means every cycle; a slower
+  cadence is compared with half a period of tolerance. `read_tactile` now runs
+  at 20/s under a reactive owner, confirmed by the bridge's own per-call counter.
+
+### A pricing script that stopped listening and blamed the bridge
+
+- Symptom: the same reactive cadence measured 6.5/s at the subscriber while the
+  bridge's own counter said 20/s.
+- Cause: the script sampled process CPU with `time.sleep(window)`. It was not
+  spinning during the window, so it was not receiving, and it reported its own
+  deafness as the publication rate. Sampling across a window the probe *spends
+  spinning* gives 19.9/s.
+- Rule this reinforces: a measurement whose method can fail silently is not
+  evidence. The bridge-side call counter and the subscriber-side count disagreed,
+  and the disagreement was the signal — one number alone would have been believed.

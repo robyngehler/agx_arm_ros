@@ -53,6 +53,7 @@ def _pretend_time_passed(node: OmniHandBridgeNode, seconds: float) -> None:
         "_last_joint_publish_monotonic",
         "_last_status_publish_monotonic",
         "_last_tactile_publish_monotonic",
+        "_last_tactile_acquire_monotonic",
     ):
         setattr(node, attr, getattr(node, attr) - seconds)
 
@@ -178,7 +179,7 @@ def test_the_heartbeat_still_publishes_status_when_nothing_changes(bridge_node):
     assert len(bridge_node.status_pub) == published + 1
 
 
-def test_tactile_is_published_at_its_read_interval_not_every_tick(bridge_node):
+def test_tactile_is_published_on_a_new_sample_not_every_tick(bridge_node):
     _acquire(bridge_node)
     bridge_node._publication_tick()
     published = len(bridge_node.tactile_pub)
@@ -188,6 +189,40 @@ def test_tactile_is_published_at_its_read_interval_not_every_tick(bridge_node):
         bridge_node._publication_tick()
 
     assert len(bridge_node.tactile_pub) == published
+
+
+def test_a_reactive_owner_gets_tactile_at_the_reactive_rate(bridge_node):
+    """Contact-seeking motion ends where this sensor says, so it cannot wait.
+
+    Regression for the hardware run of 2026-08-15: tactile was read and
+    published once a second, and the skill controller rejects a reading older
+    than one second, so every reactive grasp failed with `tactile stale` before
+    it moved a finger.
+    """
+    bridge_node.tactile_read_interval_s = 1.0
+    bridge_node.tactile_reactive_interval_s = 0.05
+
+    # 0.1 s since the last sample: two reactive intervals, a tenth of a
+    # diagnostic one. The same elapsed time has to answer differently.
+    def age_the_last_sample() -> None:
+        bridge_node._last_tactile_acquire_monotonic = time.monotonic() - 0.1
+
+    # A trajectory owner is not waiting on contact: the slow cadence stands.
+    bridge_node._authority.release("reactive:test_owner")
+    assert bridge_node._authority.claim("trajectory:test_owner").accepted
+    age_the_last_sample()
+    before = len(bridge_node.tactile_pub)
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
+    assert len(bridge_node.tactile_pub) == before
+
+    # The reactive primitive is.
+    bridge_node._authority.release("trajectory:test_owner")
+    assert bridge_node._authority.claim("reactive:test_owner").accepted
+    age_the_last_sample()
+    _acquire(bridge_node)
+    bridge_node._publication_tick()
+    assert len(bridge_node.tactile_pub) == before + 1
 
 
 def test_the_timer_is_paced_by_acquisition_not_by_the_publish_ceiling():

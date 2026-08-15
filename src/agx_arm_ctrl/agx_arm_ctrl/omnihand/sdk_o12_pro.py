@@ -145,6 +145,11 @@ class O12ProSdkBackend:
         self._active_joint_min, self._active_joint_max = model.joint_limits(hand_side)
         self._last_status_read_s = 0.0
         self._last_tactile_read_s = 0.0
+        # How often the vendor tactile sample is actually refreshed. A
+        # diagnostic cadence by default; the bridge raises it while a
+        # reactive owner holds the hand, because contact-seeking motion
+        # ends where this sensor says and cannot wait a second to hear it.
+        self.tactile_read_interval_s = SDK_TACTILE_READ_INTERVAL_S
         self._extra_fault_text = ""
 
         # The vendor SocketCAN backend reads the interface ONLY from this env var.
@@ -342,7 +347,7 @@ class O12ProSdkBackend:
 
     def read_tactile(self) -> OmniHandTactileSnapshot:
         now = time.monotonic()
-        if now - self._last_tactile_read_s >= SDK_TACTILE_READ_INTERVAL_S:
+        if now - self._last_tactile_read_s >= self.tactile_read_interval_s:
             tactile_values: list[float] = []
             supported_finger_entries: list[tuple[str, Any]] = []
             for layout_name, finger_value in self._tactile_finger_entries:

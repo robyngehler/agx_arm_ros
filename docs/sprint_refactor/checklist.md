@@ -683,6 +683,13 @@ CPU.
       succeeding again. A refusal naming `arm_<side>` was the *symptom* of the
       claim-service collision, not evidence of success — see `errors_and_fixes.md`,
       2026-08-14 entry "The hand's claim service collided with the arm's".
+      **Re-run end to end on a physical grasp, 2026-08-15**
+      (`scripts/l3_hand_handover_run.py`): contact stopped the motion at
+      score 1536 against a threshold of 4; a trajectory goal issued during the
+      hold was refused naming `hand_right` and its reactive owner; the release
+      advanced the epoch 4 -> 5; the trajectory then took the free hand and
+      succeeded; and a stop during a moving trajectory left 0.0008 rad of
+      motion over the following two seconds. Six claims, none skipped.
 - [ ] Reject stale-epoch and out-of-order hand commands at the bridge boundary.
       The admission logic exists and runs, but it cannot reject on these grounds
       today: a `JointState` or `JointTrajectory` carries no epoch and no
@@ -692,10 +699,11 @@ CPU.
       Ownership and surface are what reject a command today.
 - [x] Close the two-commander hole: the skill controller's grasp hold no longer
       republishes at 20 Hz after the grasp succeeds. It monitors contact only.
-      L1 and L2 only (2026-08-14) — **not** exercised on hardware: the L2 activity
-      never enters the hold state, so the physical grasp-to-hold run still owes
-      this. See `errors_and_fixes.md`, 2026-08-14 entry "Two commanders write the
-      same hand, and neither knows about the other".
+      **L3, 2026-08-15, right hand on a real object** — the physical run this
+      item was waiting for. A confirmed grasp entered `GRASP_HOLDING` and the
+      command topic carried **0 messages over the next 5 s**, with 0.06 rad of
+      pose drift. See `errors_and_fixes.md`, 2026-08-14 entry "Two commanders
+      write the same hand, and neither knows about the other".
 - [x] Give the hand a designed, non-fragile serialized SDK owner. Landed
       2026-08-15: the bridge owns an `SdkWorker` with the same four lanes as the
       arms, and acquisition runs on its own paced thread so no SDK call is
@@ -732,9 +740,8 @@ CPU.
 - [ ] Stop polling entirely while no hand action is active.
 - [x] Remove the recurring post-grasp hold traffic. The skill controller's grasp
       hold no longer republishes at 20 Hz after completion; it monitors contact
-      only. L1 and L2, 2026-08-14 — the traffic is gone from the code and pinned
-      by tests, but no hardware run has entered the hold state yet, so the
-      measured saving on the bus is still owed.
+      only. **Measured on hardware 2026-08-15**: 0 command messages across a 5 s
+      hold on a real grasp, where the old behaviour would have sent 100.
 - [ ] Bound and record the SDK round trips per commanded setpoint. The per-call
       profile (above) records the *rates* the bridge produces at rest, which is
       not the same as a bound per commanded setpoint. A retry can still spend up

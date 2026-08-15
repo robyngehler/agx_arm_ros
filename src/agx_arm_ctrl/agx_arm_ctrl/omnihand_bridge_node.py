@@ -600,6 +600,11 @@ class SdkOmniHandBackend:
         self._saw_padded_vectors = False
         self._last_status_read_s = 0.0
         self._last_tactile_read_s = 0.0
+        # How often the vendor tactile sample is actually refreshed. A
+        # diagnostic cadence by default; the bridge raises it while a
+        # reactive owner holds the hand, because contact-seeking motion
+        # ends where this sensor says and cannot wait a second to hear it.
+        self.tactile_read_interval_s = SDK_TACTILE_READ_INTERVAL_S
         self._temperature_reports_supported = False
         self._current_reports_supported = False
 
@@ -844,7 +849,7 @@ class SdkOmniHandBackend:
 
     def read_tactile(self) -> OmniHandTactileSnapshot:
         now = time.monotonic()
-        if now - self._last_tactile_read_s >= SDK_TACTILE_READ_INTERVAL_S:
+        if now - self._last_tactile_read_s >= self.tactile_read_interval_s:
             tactile_values: list[float] = []
             supported_finger_entries: list[tuple[str, Any]] = []
             for layout_name, finger_value in self._tactile_finger_entries:
@@ -896,6 +901,13 @@ class OmniHandBridgeNode(Node):
         # every publish tick (legacy behavior).
         self.declare_parameter("joint_read_rate", 20.0)
         self.declare_parameter("tactile_sample_count", 32)
+        # Tactile has two cadences because it serves two different consumers.
+        # As diagnostics it is a once-a-second sample nobody is waiting for. To
+        # the reactive primitive it is the signal that ENDS the motion — a hand
+        # closing at 20 Hz cannot act on a reading up to a second old, and the
+        # skill controller rejects one that is (`tactile_stale_sec`).
+        self.declare_parameter("tactile_read_rate", 1.0)
+        self.declare_parameter("tactile_reactive_read_rate", 20.0)
         self.declare_parameter("joint_states_command_topic", "control/joint_states")
         self.declare_parameter("device_id", 1)
         self.declare_parameter("canfd_id", 0)
@@ -996,6 +1008,12 @@ class OmniHandBridgeNode(Node):
         self._last_status_snapshot: OmniHandStatusSnapshot | None = None
         self._last_tactile_snapshot: OmniHandTactileSnapshot | None = None
         self.tactile_sample_count = int(self.get_parameter("tactile_sample_count").value)
+        tactile_rate = float(self.get_parameter("tactile_read_rate").value)
+        self.tactile_read_interval_s = 1.0 / tactile_rate if tactile_rate > 0.0 else 0.0
+        reactive_rate = float(self.get_parameter("tactile_reactive_read_rate").value)
+        self.tactile_reactive_interval_s = (
+            1.0 / reactive_rate if reactive_rate > 0.0 else 0.0
+        )
         self.joint_states_command_topic = str(
             self.get_parameter("joint_states_command_topic").value
         )
@@ -1123,7 +1141,13 @@ class OmniHandBridgeNode(Node):
         )
         # Tactile cannot change faster than the SDK is read, so publishing faster
         # only re-serializes the same array.
-        self._tactile_publish_interval_s = SDK_TACTILE_READ_INTERVAL_S
+        # Tactile is published when a new sample lands, like the joints, rather
+        # than on a fixed interval. The interval was equal to the read interval,
+        # so at the diagnostic cadence a consumer saw every message arrive
+        # exactly one staleness limit after the last one.
+        self._tactile_acquired_monotonic = 0.0
+        self._published_tactile_monotonic = 0.0
+        self._last_tactile_acquire_monotonic = 0.0
 
         self.hand_joint_states_pub = self.create_publisher(
             JointState, "feedback/omnihand/joint_states", 10
@@ -1672,6 +1696,17 @@ class OmniHandBridgeNode(Node):
         response.message = f"OmniHand {self.backend.backend_name} stop requested"
         return response
 
+    def _reactive_owner_holds(self) -> bool:
+        """True while the contact-seeking primitive owns this hand.
+
+        The bridge already knows which primitive claimed it, so the cost of a
+        fast tactile read is paid only when something is actually waiting on the
+        sensor. A standing 20 Hz read is five vendor SDK calls per cycle on the
+        O12 — about a fifth of a core, permanently, for a signal nobody reads
+        between grasps.
+        """
+        return owner_primitive(self._authority.snapshot().owner_id) == PRIMITIVE_REACTIVE
+
     def _backend_faulted(self) -> bool:
         return bool(getattr(self.backend, "communication_fault", False))
 
@@ -1831,13 +1866,39 @@ class OmniHandBridgeNode(Node):
                 with self._snapshot_lock:
                     self._last_status_snapshot = status
 
-        if not self._fault_backoff_active or self._last_tactile_snapshot is None:
+        # Tactile: cadence and lane both depend on who holds the hand. For the
+        # reactive primitive this is control-critical acquisition; for anyone
+        # else it is a diagnostic nobody is waiting on.
+        reactive = self._reactive_owner_holds()
+        interval = (
+            self.tactile_reactive_interval_s if reactive else self.tactile_read_interval_s
+        )
+        # A gate at or below the loop period is not a gate, it is a rounding
+        # error: ordinary jitter makes cycles miss `now - last >= interval` and
+        # the effective rate collapses. Measured 2026-08-15 — a 20 Hz reactive
+        # tactile rate on a 20 Hz loop delivered 6.5 Hz. The joint readback lost
+        # 20 Hz to 15.4 Hz the same way before the loop was paced instead of
+        # gated. So: at or under one period means every cycle, and a slower
+        # cadence is compared with half a period of tolerance.
+        period = self._effective_read_interval()
+        due = interval <= period or (
+            now - self._last_tactile_acquire_monotonic >= interval - 0.5 * period
+        )
+        if due and (not self._fault_backoff_active or self._last_tactile_snapshot is None):
+            self._last_tactile_acquire_monotonic = now
+            # The backend caches the vendor sample behind the same interval, so
+            # raising the cadence here without raising it there would re-serve
+            # the stale one and change nothing.
+            self.backend.tactile_read_interval_s = interval
             tactile = self._sdk_read(
-                "read_tactile", self.backend.read_tactile, lane=Lane.DIAGNOSTIC
+                "read_tactile",
+                self.backend.read_tactile,
+                lane=Lane.ACQUISITION if reactive else Lane.DIAGNOSTIC,
             )
             if tactile is not None:
                 with self._snapshot_lock:
                     self._last_tactile_snapshot = tactile
+                    self._tactile_acquired_monotonic = now
 
     def _publication_tick(self) -> None:
         """Publish from the acquired snapshot. Reaches no SDK."""
@@ -1883,7 +1944,8 @@ class OmniHandBridgeNode(Node):
         self._check_owner_liveness()
         self._publish_status_if_due(stamp, now)
 
-        if now - self._last_tactile_publish_monotonic >= self._tactile_publish_interval_s:
+        if self._tactile_acquired_monotonic > self._published_tactile_monotonic:
+            self._published_tactile_monotonic = self._tactile_acquired_monotonic
             tactile_snapshot = self._last_tactile_snapshot
             tactile_msg = OmniHandTactileRaw()
             tactile_msg.header.stamp = stamp
