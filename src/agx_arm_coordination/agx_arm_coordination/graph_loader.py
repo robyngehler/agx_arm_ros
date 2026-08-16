@@ -38,14 +38,25 @@ from agx_arm_coordination.graph_model import (
 class ActivityCatalogue:
     """In-process YAML catalogue exposing the db_bridge-style contract."""
 
-    def __init__(self, actions: dict[str, Action], activities_dir: Path) -> None:
+    def __init__(
+        self,
+        actions: dict[str, Action],
+        activities_dir: Path,
+        units: dict[str, frozenset[str]],
+    ) -> None:
         self._actions = actions
         self._activities_dir = activities_dir
+        # The resource table of the topology this runtime is configured for.
+        # Required, because validating against a different one than the
+        # scheduler uses gives two answers about one machine.
+        self._units = units
 
     # --- construction --------------------------------------------------------
 
     @classmethod
-    def from_config_dir(cls, config_dir: str | Path) -> "ActivityCatalogue":
+    def from_config_dir(
+        cls, config_dir: str | Path, units: dict[str, frozenset[str]]
+    ) -> "ActivityCatalogue":
         config_dir = Path(config_dir)
         catalogue_path = config_dir / "catalogue.yaml"
         data = yaml.safe_load(catalogue_path.read_text(encoding="utf-8")) or {}
@@ -61,7 +72,11 @@ class ActivityCatalogue:
                     f"{clashes}; action_ids are a single flat namespace"
                 )
             actions.update(extra)
-        return cls(actions=actions, activities_dir=config_dir / "activities")
+        return cls(
+            actions=actions,
+            activities_dir=config_dir / "activities",
+            units=units,
+        )
 
     # --- db_bridge-style contract -------------------------------------------
 
@@ -93,7 +108,7 @@ class ActivityCatalogue:
             graph = self.get_activity_plan(activity_id)
         except KeyError as exc:
             return [str(exc)]
-        return validate_activity(graph, self._actions)
+        return validate_activity(graph, self._actions, self._units)
 
     # --- introspection -------------------------------------------------------
 

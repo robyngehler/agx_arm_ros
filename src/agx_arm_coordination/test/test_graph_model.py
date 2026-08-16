@@ -19,6 +19,7 @@ CATALOGUE = parse_catalogue({
         "right_hand_open": {"actiontype_id": "Gripper", "robot_id": "right_hand"},
         "both_arms_move": {"actiontype_id": "Trajectory", "robot_id": "both_arms"},
         "left_arm_move": {"actiontype_id": "Trajectory", "robot_id": "left_arm"},
+        "right_arm_move": {"actiontype_id": "Trajectory", "robot_id": "right_arm"},
     }
 })
 
@@ -118,12 +119,12 @@ def test_valid_activity_has_no_problems():
          {"action_no": 20, "action_id": "both_arms_move"}],
         [[10, 20]],
     )
-    assert validate_activity(graph, CATALOGUE) == []
+    assert validate_activity(graph, CATALOGUE, ROBOT_UNITS_SHARED) == []
 
 
 def test_unknown_action_is_flagged():
     graph = _activity([{"action_no": 10, "action_id": "ghost"}], [])
-    problems = validate_activity(graph, CATALOGUE)
+    problems = validate_activity(graph, CATALOGUE, ROBOT_UNITS_SHARED)
     assert any("ghost" in p for p in problems)
 
 
@@ -133,7 +134,7 @@ def test_cycle_is_flagged():
          {"action_no": 20, "action_id": "right_hand_open"}],
         [[10, 20], [20, 10]],
     )
-    assert any("cyclic" in p for p in validate_activity(graph, CATALOGUE))
+    assert any("cyclic" in p for p in validate_activity(graph, CATALOGUE, ROBOT_UNITS_SHARED))
 
 
 def test_sync_group_resource_conflict_is_flagged():
@@ -143,7 +144,8 @@ def test_sync_group_resource_conflict_is_flagged():
          {"action_no": 11, "action_id": "left_arm_move", "sync_flag": 1}],
         [],
     )
-    assert any("cannot run in parallel" in p for p in validate_activity(graph, CATALOGUE))
+    problems = validate_activity(graph, CATALOGUE, ROBOT_UNITS_SHARED)
+    assert any("cannot run in parallel" in p for p in problems)
 
 
 # --- scheduler ---------------------------------------------------------------
@@ -202,3 +204,111 @@ def test_scheduler_respects_predecessors():
     assert sched.next_batch(set(), {10}) == []
     assert [i.action_no for i in sched.next_batch({10}, set())] == [20]
     assert sched.is_complete({10, 20})
+
+
+# --- validation and scheduling must read the same topology -------------------
+
+def test_a_synced_arm_and_hand_are_valid_on_dedicated_buses():
+    """Validation used to reject what the scheduler would happily have run.
+
+    Under ``dedicated_per_device`` a side's arm and hand hold different bus
+    tokens, so synchronizing them is exactly the parallelism the four-bus
+    rewiring was for. Validation defaulted to the shared table and called it a
+    resource conflict, so the activity was refused before the scheduler — which
+    was configured for dedicated buses — ever saw it.
+    """
+    for side in ("left", "right"):
+        graph = _activity(
+            [{"action_no": 10, "action_id": f"{side}_arm_move", "sync_flag": 5},
+             {"action_no": 11, "action_id": f"{side}_hand_open", "sync_flag": 5}],
+            [],
+        )
+        assert validate_activity(graph, CATALOGUE, ROBOT_UNITS_DEDICATED) == [], (
+            f"{side} arm+hand rejected on dedicated buses"
+        )
+
+
+def test_a_synced_arm_and_hand_are_a_conflict_on_a_shared_side_bus():
+    """The same activity, the other wiring: one bus, so the barrier is a lie."""
+    for side in ("left", "right"):
+        graph = _activity(
+            [{"action_no": 10, "action_id": f"{side}_arm_move", "sync_flag": 5},
+             {"action_no": 11, "action_id": f"{side}_hand_open", "sync_flag": 5}],
+            [],
+        )
+        problems = validate_activity(graph, CATALOGUE, ROBOT_UNITS_SHARED)
+        assert any("cannot run in parallel" in p for p in problems), (
+            f"{side} arm+hand accepted on a shared side bus"
+        )
+
+
+# --- sync groups are admitted whole or not at all ----------------------------
+
+def test_an_independent_action_cannot_half_release_a_sync_group():
+    """The defect: greedy per-action admission split a synchronization barrier.
+
+    ``A`` (independent, left arm) and the synced pair ``B``/``C`` are all ready.
+    Admitting one action at a time let ``A`` take the left arm, skip ``B`` for
+    conflicting, and dispatch ``C`` alone — half a barrier.
+    """
+    graph = _activity(
+        [{"action_no": 10, "action_id": "left_arm_move"},
+         {"action_no": 20, "action_id": "left_arm_move", "sync_flag": 5},
+         {"action_no": 21, "action_id": "right_hand_open", "sync_flag": 5}],
+        [],
+    )
+    sched = Scheduler(graph, CATALOGUE, ROBOT_UNITS_DEDICATED)
+    batch = {i.action_no for i in sched.next_batch(set(), set())}
+
+    assert 21 not in batch or 20 in batch, (
+        "a sync group member was dispatched without the rest of its group"
+    )
+    assert batch == {10}, batch
+
+    # Once the independent action finishes, the whole group goes together.
+    assert {i.action_no for i in sched.next_batch({10}, set())} == {20, 21}
+
+
+def test_two_sync_groups_competing_for_one_device_admit_one_whole_group():
+    graph = _activity(
+        [{"action_no": 10, "action_id": "left_arm_move", "sync_flag": 1},
+         {"action_no": 11, "action_id": "right_hand_open", "sync_flag": 1},
+         {"action_no": 20, "action_id": "left_arm_move", "sync_flag": 2},
+         {"action_no": 21, "action_id": "left_hand_open", "sync_flag": 2}],
+        [],
+    )
+    sched = Scheduler(graph, CATALOGUE, ROBOT_UNITS_DEDICATED)
+    batch = {i.action_no for i in sched.next_batch(set(), set())}
+
+    # Both groups want the left arm, so exactly one of them runs — whole.
+    assert batch == {10, 11}, batch
+    assert {i.action_no for i in sched.next_batch({10, 11}, set())} == {20, 21}
+
+
+def test_a_sync_group_blocked_by_a_running_action_admits_none_of_itself():
+    graph = _activity(
+        [{"action_no": 10, "action_id": "left_arm_move"},
+         {"action_no": 20, "action_id": "left_arm_move", "sync_flag": 7},
+         {"action_no": 21, "action_id": "right_hand_open", "sync_flag": 7}],
+        [],
+    )
+    sched = Scheduler(graph, CATALOGUE, ROBOT_UNITS_DEDICATED)
+
+    assert sched.next_batch(set(), {10}) == [], (
+        "the free member of a blocked sync group was dispatched on its own"
+    )
+
+
+def test_a_sync_group_that_contends_with_itself_is_never_admitted():
+    """validate_activity rejects this; the scheduler must not run it anyway."""
+    graph = _activity(
+        [{"action_no": 10, "action_id": "both_arms_move", "sync_flag": 3},
+         {"action_no": 11, "action_id": "left_arm_move", "sync_flag": 3}],
+        [],
+    )
+    sched = Scheduler(graph, CATALOGUE, ROBOT_UNITS_DEDICATED)
+
+    assert sched.next_batch(set(), set()) == [], (
+        "a self-conflicting sync group was dispatched, putting two commanders "
+        "on one device"
+    )

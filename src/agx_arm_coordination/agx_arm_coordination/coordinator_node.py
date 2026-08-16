@@ -260,7 +260,7 @@ class CoordinatorNode(Node):
             max(float(self.get_parameter("recorded_approach_scaling").value), 1e-3), 1.0
         )
 
-        self.catalogue = ActivityCatalogue.from_config_dir(config_dir)
+        self.catalogue = ActivityCatalogue.from_config_dir(config_dir, self.robot_units)
         arm_config_path = config_dir / "arm_config.yaml"
         self.arm_planner = ArmTrajectoryPlanner(ArmConfig.from_file(arm_config_path))
 
@@ -729,10 +729,18 @@ class CoordinatorNode(Node):
         """Turn a scheduler batch into children, merging synced per-arm pairs.
 
         Two separate goals to move_group serialize, so per-arm Trajectory actions
-        that share a ``sync_flag`` are merged into one ``both_arms`` goal here (a
-        single MoveIt trajectory = genuine time-sync). Anything not mergeable
-        (mixed kinds, a hand in the group, uneven coverage, not taught) falls back
-        to independent dispatch — identical to the previous behaviour.
+        sharing a ``sync_flag`` must become one ``both_arms`` goal — a single
+        MoveIt trajectory is the only genuine time-sync available here.
+
+        **Merge or fail.** If two arm trajectories are synchronized and cannot be
+        merged, this raises rather than dispatching them independently. The old
+        fallback was silent and produced the opposite of what was asked for: two
+        serialized arm motions presented as a synchronized pair, with nothing in
+        the log to say the synchronization had been dropped.
+
+        Members that were never mergeable in the first place — a hand beside an
+        arm, a single-member group — are dispatched independently, which is not a
+        downgrade: on dedicated buses those devices genuinely run in parallel.
         """
         by_flag: dict[int, list] = {}
         singles: list = []
@@ -743,20 +751,42 @@ class CoordinatorNode(Node):
                 singles.append(item)
 
         children: list[_Child] = []
-        for members in by_flag.values():
-            merged = None
-            if len(members) >= 2:
-                merged = self._try_merge_sync_group(members, activity_id)
-            if merged is not None:
+        for flag in sorted(by_flag):
+            members = by_flag[flag]
+            arm_traj = [m for m in members if self._is_arm_trajectory(m.action_id)]
+            if len(arm_traj) >= 2:
+                merged = self._try_merge_sync_group(arm_traj, activity_id)
+                if merged is None:
+                    names = ", ".join(m.action_id for m in arm_traj)
+                    raise DispatchError(
+                        f"sync_flag {flag}: arm trajectories [{names}] are "
+                        "synchronized but could not be merged into one both_arms "
+                        "goal. Dispatching them separately would serialize them "
+                        "and silently drop the synchronization, so the activity "
+                        "fails instead"
+                    )
                 children.append(merged)
+                rest = [m for m in members if m not in arm_traj]
             else:
-                children.extend(
-                    self._dispatch(m.action_no, m.action_id, activity_id) for m in members
-                )
+                rest = members
+            children.extend(
+                self._dispatch(m.action_no, m.action_id, activity_id) for m in rest
+            )
         children.extend(
             self._dispatch(m.action_no, m.action_id, activity_id) for m in singles
         )
         return children
+
+    def _is_arm_trajectory(self, action_id: str) -> bool:
+        """True for a per-arm Trajectory action — the only mergeable shape."""
+        try:
+            action = self.catalogue.get_action_detail(action_id)
+        except KeyError:
+            return False
+        return (
+            action.actiontype_id == ACTIONTYPE_TRAJECTORY
+            and action.robot_id in ("left_arm", "right_arm")
+        )
 
     def _try_merge_sync_group(self, members, activity_id) -> _Child | None:
         """Merge a synced left_arm+right_arm Trajectory pair into one both_arms goal.

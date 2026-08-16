@@ -69,6 +69,11 @@ ROBOT_UNITS_DEDICATED: dict[str, frozenset[str]] = {
 # this table exists to prevent, so an unstated topology must not unlock it.
 ROBOT_UNITS: dict[str, frozenset[str]] = ROBOT_UNITS_SHARED
 
+# Which robot ids exist is a property of the machine, not of how it is wired.
+# Both tables carry the same keys; checking membership against one of them made
+# a naming check look like a topology decision.
+VALID_ROBOT_IDS: frozenset[str] = frozenset(ROBOT_UNITS_SHARED)
+
 
 def robot_units(topology: str) -> dict[str, frozenset[str]]:
     """Resource table for a declared CAN topology.
@@ -120,10 +125,10 @@ class Action:
                 f"action '{self.action_id}': actiontype_id '{self.actiontype_id}' "
                 f"invalid; expected one of {VALID_ACTIONTYPES}"
             )
-        if self.robot_id not in ROBOT_UNITS:
+        if self.robot_id not in VALID_ROBOT_IDS:
             raise GraphError(
                 f"action '{self.action_id}': unknown robot_id '{self.robot_id}'; "
-                f"expected one of {sorted(ROBOT_UNITS)}"
+                f"expected one of {sorted(VALID_ROBOT_IDS)}"
             )
 
 
@@ -192,12 +197,24 @@ def parse_activity(activity_id: str, data: dict[str, Any]) -> ActivityGraph:
 
 # --- validation --------------------------------------------------------------
 
-def validate_activity(graph: ActivityGraph, catalogue: dict[str, Action]) -> list[str]:
+def validate_activity(
+    graph: ActivityGraph,
+    catalogue: dict[str, Action],
+    units: dict[str, frozenset[str]],
+) -> list[str]:
     """Return a list of problems; empty list means the activity is runnable.
 
     Checks: every node's action_id exists in the catalogue; every edge references
     existing nodes; the graph is acyclic; and each sync group is internally
     resource-consistent (its members can actually run in parallel).
+
+    ``units`` is the resource table of the topology the activity will actually
+    run under, and it is **required**. It used to default to the shared-bus
+    table while the scheduler used the configured one, so the two disagreed
+    about the same machine: under ``dedicated_per_device`` a synchronized
+    ``left_arm + left_hand`` pair was rejected here as sharing a bus, while the
+    scheduler would have run it in parallel quite happily. Whichever table is
+    right, validation and scheduling have to be reading the same one.
     """
     problems: list[str] = []
 
@@ -226,7 +243,9 @@ def validate_activity(graph: ActivityGraph, catalogue: dict[str, Action]) -> lis
                 a, b = graph.nodes[a_no], graph.nodes[b_no]
                 act_a = catalogue.get(a.action_id)
                 act_b = catalogue.get(b.action_id)
-                if act_a and act_b and conflicts(act_a.robot_id, act_b.robot_id):
+                if act_a and act_b and conflicts(
+                    act_a.robot_id, act_b.robot_id, units
+                ):
                     problems.append(
                         f"sync_flag {flag}: actions {a.action_id} and {b.action_id} "
                         f"share resources ({act_a.robot_id}/{act_b.robot_id}) and "
@@ -322,26 +341,62 @@ class Scheduler:
                     continue
             eligible.append(node)
 
-        # Resource serialization: greedily admit in deterministic action_no order;
-        # skip anything that conflicts with running or already-admitted units.
+        # Resource admission. The unit of admission is a *synchronization
+        # group*, not an action: a group is admitted whole or not at all.
+        #
+        # Admitting members one at a time looked equivalent and was not. With an
+        # independent left_arm action competing against a synced
+        # left_arm + right_arm pair, the independent one takes the left arm, the
+        # pair's left member is skipped for conflicting, and its right member is
+        # dispatched alone — half a barrier, which is the one outcome sync_flag
+        # exists to forbid. The group is what has to fit, so the group is what
+        # gets tested against the held units.
         held: set[str] = set()
         for action_no in sorted(running):
             node = self.graph.nodes.get(action_no)
             if node:
                 held |= units_for(self.catalogue[node.action_id].robot_id, self.units)
 
+        singles: list[list[GraphNode]] = []
+        by_flag: dict[int, list[GraphNode]] = {}
+        for node in eligible:
+            if node.sync_flag:
+                by_flag.setdefault(node.sync_flag, []).append(node)
+            else:
+                singles.append([node])
+
+        # Deterministic order, and a group sorts by its lowest member so the
+        # ordering does not depend on dict iteration.
+        candidates = singles + list(by_flag.values())
+        candidates.sort(key=lambda members: min(m.action_no for m in members))
+
         batch: list[DispatchItem] = []
-        for node in sorted(eligible, key=lambda n: n.action_no):
-            robot = self.catalogue[node.action_id].robot_id
-            node_units = units_for(robot, self.units)
-            if node_units & held:
+        for members in candidates:
+            member_units = [
+                units_for(self.catalogue[m.action_id].robot_id, self.units)
+                for m in members
+            ]
+            group_units: set[str] = set()
+            self_conflict = False
+            for unit_set in member_units:
+                if unit_set & group_units:
+                    # Members of one group contend with each other, so the
+                    # barrier can never be satisfied. validate_activity rejects
+                    # this before it runs; if it arrives anyway, stalling is the
+                    # honest outcome — admitting the group would put two
+                    # commanders on one device.
+                    self_conflict = True
+                    break
+                group_units |= unit_set
+            if self_conflict or (group_units & held):
                 continue
-            held |= node_units
-            batch.append(
-                DispatchItem(
-                    action_no=node.action_no,
-                    action_id=node.action_id,
-                    sync_flag=node.sync_flag,
+            held |= group_units
+            for node in sorted(members, key=lambda n: n.action_no):
+                batch.append(
+                    DispatchItem(
+                        action_no=node.action_no,
+                        action_id=node.action_id,
+                        sync_flag=node.sync_flag,
+                    )
                 )
-            )
         return batch
