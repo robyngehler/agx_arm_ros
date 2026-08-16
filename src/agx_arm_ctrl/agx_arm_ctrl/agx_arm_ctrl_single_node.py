@@ -927,6 +927,26 @@ class AgxArmRosNode(Node):
         except Exception:
             return None
 
+    def _sdk_write(self, name: str, fn, *, lane: Lane = Lane.CONTROL, timeout=None):
+        """One bounded SDK write, through the owner of the session.
+
+        The counterpart to :meth:`_sdk_read`, and deliberately not as forgiving:
+        a read that did not happen reads as "not ready", but a mode change that
+        did not land must never read as success. Failures propagate to the
+        service handler that asked for it.
+
+        Service callbacks used to call the vendor SDK straight from the executor
+        thread. Being on a different thread from the worker, a mode change could
+        interleave with a MIT setpoint cycle mid-bracket — the arm ends up in a
+        mode neither caller believes it is in, and the evidence is a motion that
+        was framed wrongly rather than an error anyone sees.
+        """
+        return self._sdk.call(
+            name, fn,
+            timeout=self.feedback_timeout if timeout is None else timeout,
+            lane=lane,
+        )
+
     def _check_can_control(self) -> bool:
         if self._fault_lockout:
             # After a bus recovery the node holds an explicit fault lockout and
@@ -1344,7 +1364,7 @@ class AgxArmRosNode(Node):
         start_time = time.time()
 
         while True:
-            status = self.agx_arm.get_arm_status()
+            status = self._sdk_read("get_arm_status", self.agx_arm.get_arm_status)
             if status is not None and status.msg.motion_status == self.agx_arm.ARM_STATUS.MotionStatus.REACH_TARGET_POS_SUCCESSFULLY:
                 return True
             
@@ -1370,7 +1390,11 @@ class AgxArmRosNode(Node):
         deadline = start_time + timeout
         action_name = "enable" if enable else "disable"
 
-        while not (self.agx_arm.enable() if enable else self.agx_arm.disable()):
+        while not self._sdk_write(
+            action_name,
+            (lambda: self.agx_arm.enable()) if enable
+            else (lambda: self.agx_arm.disable()),
+        ):
             if time.time() > deadline:
                 self.get_logger().error(
                     f"Timeout waiting for arm to {action_name} after {timeout} seconds"
@@ -2755,15 +2779,18 @@ class AgxArmRosNode(Node):
                 self.get_logger().warn("Agx_arm is not enabled, cannot move to home position")
             else:
                 if not self.is_switch_seamlessly:
-                    arm_status = self.agx_arm.get_arm_status()
+                    arm_status = self._sdk_read(
+                        "get_arm_status", self.agx_arm.get_arm_status
+                    )
                     if arm_status is not None and arm_status.msg.ctrl_mode == self.agx_arm.ARM_STATUS.CtrlMode.TEACHING_MODE:
                         self.get_logger().warn("Agx_arm is in teach mode, cannot move to home position")
                         return response
                     
+                home = [0] * self.arm_joint_count
                 if self.is_mit_mode:
-                    self.agx_arm.move_js([0] * self.arm_joint_count)
+                    self._sdk_write("move_js", lambda: self.agx_arm.move_js(home))
                 else:
-                    self.agx_arm.move_j([0] * self.arm_joint_count)
+                    self._sdk_write("move_j", lambda: self.agx_arm.move_j(home))
                 if self._wait_motion_done():
                     self.get_logger().info("Agx_arm moved to home position successfully")
         except Exception as e:
@@ -3118,21 +3145,30 @@ class AgxArmRosNode(Node):
 
     def _exit_teach_mode_callback(self, request, response):
         try:
-            arm_status = self.agx_arm.get_arm_status()
+            arm_status = self._sdk_read(
+                "get_arm_status", self.agx_arm.get_arm_status
+            )
             if not self.is_piper:
                 self.get_logger().warn("exit teach mode just piper series supported")
                 return response
 
             if arm_status is not None and arm_status.msg.ctrl_mode == self.agx_arm.ARM_STATUS.CtrlMode.TEACHING_MODE:
-                self.agx_arm.move_js([0] * self.arm_joint_count)
+                home = [0] * self.arm_joint_count
+                self._sdk_write("move_js", lambda: self.agx_arm.move_js(home))
                 time.sleep(2)
-                self.agx_arm.electronic_emergency_stop()
-                self.agx_arm.move_j([0] * self.arm_joint_count)
+                # Safety lane: this is a stop, and it must not queue behind the
+                # motion this same sequence just issued.
+                self._sdk_write(
+                    "electronic_emergency_stop",
+                    self.agx_arm.electronic_emergency_stop,
+                    lane=Lane.SAFETY,
+                )
+                self._sdk_write("move_j", lambda: self.agx_arm.move_j(home))
                 time.sleep(0.3)
-                self.agx_arm.reset()
+                self._sdk_write("reset", self.agx_arm.reset)
                 time.sleep(0.5)
                 self._enable_arm(True)
-                self.agx_arm.move_j([0] * self.arm_joint_count)
+                self._sdk_write("move_j", lambda: self.agx_arm.move_j(home))
                 self.get_logger().info("Exited teach mode successfully")
             else:
                 self.get_logger().info("Agx_arm is not in teach mode")
@@ -3156,7 +3192,7 @@ class AgxArmRosNode(Node):
                 response.message = "Agx_arm is not enabled"
                 return response
 
-            self.agx_arm.set_normal_mode()
+            self._sdk_write("set_normal_mode", self.agx_arm.set_normal_mode)
             self.is_mit_mode = False
             self._leader_mode_active = False
             self._current_motion_mode = None
@@ -3239,11 +3275,14 @@ class AgxArmRosNode(Node):
         confirmed out of MIT, the last move-mode read, and how many sends it
         took (useful evidence of how lossy the bus was during the handoff).
         """
-        self.agx_arm.set_auto_set_motion_mode_enabled(True)
+        self._sdk_write(
+            "set_auto_set_motion_mode_enabled",
+            lambda: self.agx_arm.set_auto_set_motion_mode_enabled(True),
+        )
         deadline = time.monotonic() + self.hand_window_hold_assert_s
         attempts = 0
         while True:
-            self.agx_arm.move_j(hold_pose)
+            self._sdk_write("move_j", lambda: self.agx_arm.move_j(hold_pose))
             self._current_motion_mode = 'j'
             attempts += 1
             time.sleep(self.hand_window_hold_poll_s)
@@ -3265,7 +3304,7 @@ class AgxArmRosNode(Node):
 
     def _arm_status_msg(self):
         try:
-            status = self.agx_arm.get_arm_status()
+            status = self._sdk_read("get_arm_status", self.agx_arm.get_arm_status)
         except Exception:
             return None
         if status is None:
@@ -3275,7 +3314,7 @@ class AgxArmRosNode(Node):
     def _capture_hold_pose(self):
         """Current joint pose from trustworthy live feedback, or None."""
         try:
-            js = self.agx_arm.get_joint_angles()
+            js = self._sdk_read("get_joint_angles", self.agx_arm.get_joint_angles)
         except Exception:
             return None
         alive = js is not None and (
@@ -3456,7 +3495,7 @@ class AgxArmRosNode(Node):
         try:
             if self.is_mit_mode or self._current_motion_mode == 'mit':
                 self._send_damped_stop_mit()
-            self.agx_arm.set_normal_mode()
+            self._sdk_write("set_normal_mode", self.agx_arm.set_normal_mode)
             self.is_mit_mode = False
             self._leader_mode_active = False
             self._current_motion_mode = None
@@ -3605,7 +3644,7 @@ class AgxArmRosNode(Node):
                 response.message = "Agx_arm is not enabled"
                 return response
 
-            self.agx_arm.set_leader_mode()
+            self._sdk_write("set_leader_mode", self.agx_arm.set_leader_mode)
             self.is_mit_mode = False
             self._leader_mode_active = True
             self._current_motion_mode = None

@@ -5,12 +5,25 @@ recovery defects already fixed in this sprint: an action that cannot verify its
 own effect used to report the effect anyway.
 """
 
+import pytest
 from pyAgxArm import NeroFW
 
 from agx_arm_ctrl.agx_arm_ctrl_single_node import (
     AgxArmRosNode,
     resolve_nero_firmware,
 )
+from agx_arm_ctrl.sdk_worker import SdkWorker
+
+
+_WORKERS: list[SdkWorker] = []
+
+
+@pytest.fixture(autouse=True)
+def _shut_down_workers():
+    """Every worker a test starts is joined again, so none leak into the next."""
+    yield
+    while _WORKERS:
+        _WORKERS.pop().shutdown()
 
 
 class _FakeLogger:
@@ -66,6 +79,11 @@ def _node(arm, *, enable_flag=False) -> AgxArmRosNode:
     node.enable_flag = enable_flag
     node.logger = _FakeLogger()
     node.get_logger = lambda: node.logger
+    # Enable/disable reaches the SDK through the worker like every other
+    # steady-state call, so the unit under test needs a real one.
+    node._sdk = SdkWorker("arm_test")
+    node.feedback_timeout = 2.0
+    _WORKERS.append(node._sdk)
     return node
 
 
