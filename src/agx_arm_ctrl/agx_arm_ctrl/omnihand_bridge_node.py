@@ -1586,6 +1586,8 @@ class OmniHandBridgeNode(Node):
                 stopped=bool(msg.stopped),
                 reason=msg.reason,
                 writer_id=msg.writer_id,
+                incarnation=msg.writer_incarnation,
+                started_ns=int(msg.writer_started_ns),
             )
         )
         if adopted:

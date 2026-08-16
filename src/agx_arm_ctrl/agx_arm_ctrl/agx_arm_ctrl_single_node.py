@@ -1000,12 +1000,21 @@ class AgxArmRosNode(Node):
                 stopped=bool(msg.stopped),
                 reason=msg.reason,
                 writer_id=msg.writer_id,
+                incarnation=msg.writer_incarnation,
+                started_ns=int(msg.writer_started_ns),
             )
         )
         if adopted:
             self.get_logger().warn(
                 f"unit safety generation {msg.epoch} from '{msg.writer_id}': "
                 f"stopped={msg.stopped} ({msg.reason})"
+            )
+        if self._unit_safety.incarnation_changes:
+            self.get_logger().error(
+                "unit safety writer RESTARTED "
+                f"({self._unit_safety.incarnation_changes} so far): this device "
+                "is holding a stop because the new writer cannot vouch for what "
+                "happened while it was down. An explicit rearm clears it."
             )
         if self._unit_safety.conflicts:
             self.get_logger().error(

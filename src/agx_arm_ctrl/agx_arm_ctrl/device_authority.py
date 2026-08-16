@@ -113,12 +113,26 @@ class UnitSafetySnapshot:
     "5, stopped", another "5, rearmed" — and a receiver that only compares
     numbers cannot tell that it is looking at a contradiction rather than a
     duplicate.
+
+    ``incarnation`` and ``started_ns`` identify one *run* of the writer.
+    Generations are only comparable inside a single incarnation: a restarted
+    writer counts from zero again, so an epoch alone cannot order two messages
+    that came from different runs. ``started_ns`` is what orders the
+    incarnations themselves, so a straggler published by a writer that has since
+    died cannot be mistaken for news.
     """
 
     epoch: int
     stopped: bool
     reason: str
     writer_id: str = ""
+    incarnation: str = ""
+    started_ns: int = 0
+
+    @property
+    def order_key(self) -> tuple:
+        """Total order over published states: incarnation first, then epoch."""
+        return (self.started_ns, self.epoch)
 
 
 @dataclass(frozen=True)
@@ -185,21 +199,40 @@ class UnitSafety:
     ``docs/sprint_refactor/open_questions.md``.
     """
 
-    def __init__(self, writer_id: str = "", *, writer: bool = True) -> None:
+    def __init__(
+        self,
+        writer_id: str = "",
+        *,
+        writer: bool = True,
+        incarnation: str = "",
+        started_ns: int = 0,
+    ) -> None:
         """Create a unit-safety view.
 
         ``writer=False`` makes this a pure observer: it adopts what the
         authoritative writer publishes and refuses to mint generations of its
         own. Exactly one process on a unit may be the writer — see the class
         docstring for why a second one is not merely redundant.
+
+        ``incarnation`` and ``started_ns`` identify this run of the writer and
+        travel with every generation it allocates. An observer leaves them empty
+        and takes them from whatever it adopts.
         """
         self._lock = threading.Lock()
         self._writer_id = writer_id
         self._writer = writer
+        self._incarnation = incarnation
+        self._started_ns = started_ns
+        # Who allocated the generation currently held. For a writer that is
+        # itself; for an observer it is whoever published what it adopted, which
+        # is not the same thing and must not be reported as if it were.
+        self._source_writer_id = writer_id if writer else ""
+        self._seen_any = writer
         self._epoch = 0
         self._stopped = False
         self._reason = "init"
         self.conflicts = 0
+        self.incarnation_changes = 0
         self._listeners: List[Callable[[UnitSafetySnapshot], None]] = []
 
     def snapshot(self) -> UnitSafetySnapshot:
@@ -211,7 +244,9 @@ class UnitSafety:
             epoch=self._epoch,
             stopped=self._stopped,
             reason=self._reason,
-            writer_id=self._writer_id,
+            writer_id=self._source_writer_id,
+            incarnation=self._incarnation,
+            started_ns=self._started_ns,
         )
 
     def add_listener(
@@ -243,15 +278,50 @@ class UnitSafety:
     def observe(self, snapshot: UnitSafetySnapshot) -> bool:
         """Adopt unit safety state seen from another process.
 
-        Returns True when the snapshot moved this process forward. An older or
-        equal epoch is ignored rather than applied, so out-of-order delivery
-        cannot resurrect a cleared stop or drop a live one.
+        Returns True when the snapshot moved this process forward.
+
+        Ordering is per incarnation. Inside one run of the writer an older or
+        equal epoch is ignored, so out-of-order delivery cannot resurrect a
+        cleared stop or drop a live one. Across runs the epoch means nothing —
+        a restarted writer counts from zero — so incarnations are ordered by
+        when the writer started, and a **new incarnation fails closed**: the
+        unit is held stopped until that writer explicitly rearms it.
+
+        That is deliberately not "reconstruct the old counter". An observer
+        cannot know what happened while the writer was down, and guessing that
+        nothing did is the one answer that can silently re-enable motion.
         """
         with self._lock:
+            same_incarnation = snapshot.incarnation == self._incarnation
+
+            if not same_incarnation and self._seen_any:
+                # A different run of the writer. Anything older than the
+                # incarnation we already follow is a straggler from a writer
+                # that has since died, and adopting it would walk the unit
+                # backwards into a safety era that has already ended.
+                if snapshot.started_ns < self._started_ns:
+                    return False
+                self.incarnation_changes += 1
+                self._incarnation = snapshot.incarnation
+                self._started_ns = snapshot.started_ns
+                self._source_writer_id = snapshot.writer_id
+                self._epoch = snapshot.epoch
+                self._stopped = True
+                self._reason = (
+                    f"unit-safety writer restarted (incarnation "
+                    f"'{snapshot.incarnation}' from '{snapshot.writer_id}'); "
+                    "holding the stop until an explicit rearm"
+                )
+                current = self._snapshot_locked()
+                listeners = list(self._listeners)
+                self._notify(listeners, current)
+                return True
+
             contradiction = (
-                snapshot.epoch == self._epoch
+                same_incarnation
+                and snapshot.epoch == self._epoch
                 and snapshot.stopped != self._stopped
-                and snapshot.writer_id != self._writer_id
+                and snapshot.writer_id != self._source_writer_id
             )
             if contradiction:
                 # One generation, two meanings, two allocators. No ordering
@@ -265,12 +335,17 @@ class UnitSafety:
                     f"conflicting unit-safety generation {snapshot.epoch} from "
                     f"'{snapshot.writer_id}'; holding the stop"
                 )
-            elif snapshot.epoch <= self._epoch:
+            elif self._seen_any and snapshot.epoch <= self._epoch:
                 return False
             else:
+                # First observation, or a forward step inside this incarnation.
+                self._incarnation = snapshot.incarnation
+                self._started_ns = snapshot.started_ns
+                self._source_writer_id = snapshot.writer_id
                 self._epoch = snapshot.epoch
                 self._stopped = snapshot.stopped
                 self._reason = snapshot.reason
+            self._seen_any = True
             current = self._snapshot_locked()
             listeners = list(self._listeners)
         self._notify(listeners, current)

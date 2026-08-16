@@ -23,6 +23,9 @@ open question in `docs/open_questions.md` and nothing here addresses it.
 
 from __future__ import annotations
 
+import time
+import uuid
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
@@ -48,11 +51,21 @@ class UnitSafetyNode(Node):
         self.declare_parameter("heartbeat_period_s", 2.0)
 
         self.writer_id = str(self.get_parameter("writer_id").value)
+        # One identity per run of this process. Observers order incarnations by
+        # start time and fail closed when they see a new one, which is what
+        # makes a restart survivable: this node cannot know what happened while
+        # it was down, so it must not present itself as a continuation.
+        self.incarnation = uuid.uuid4().hex
+        self.started_ns = time.time_ns()
         heartbeat_period_s = max(
             0.0, float(self.get_parameter("heartbeat_period_s").value)
         )
 
-        self._safety = UnitSafety(self.writer_id)
+        self._safety = UnitSafety(
+            self.writer_id,
+            incarnation=self.incarnation,
+            started_ns=self.started_ns,
+        )
 
         self._publisher = self.create_publisher(
             AgxUnitSafety,
@@ -71,8 +84,10 @@ class UnitSafetyNode(Node):
 
         self._publish(self._safety.snapshot())
         self.get_logger().info(
-            f"Unit safety writer '{self.writer_id}' up; this allocates the only "
-            "unit_safety_epoch on this unit"
+            f"Unit safety writer '{self.writer_id}' up as incarnation "
+            f"'{self.incarnation}'; this allocates the only unit_safety_epoch on "
+            "this unit. Observers that already followed an earlier incarnation "
+            "hold a stop until an explicit rearm."
         )
 
     # -- publication ----------------------------------------------------
@@ -85,6 +100,8 @@ class UnitSafetyNode(Node):
             msg.stopped = snapshot.stopped
             msg.reason = snapshot.reason
             msg.writer_id = snapshot.writer_id
+            msg.writer_incarnation = snapshot.incarnation
+            msg.writer_started_ns = snapshot.started_ns
             self._publisher.publish(msg)
         except Exception as exc:
             self.get_logger().error(f"publishing unit safety failed: {exc}")
@@ -129,13 +146,16 @@ class UnitSafetyNode(Node):
         return response
 
     def _rearm(self, request, response):
-        """Clear the unit stop. Operator surface, never automatic."""
-        del request
-        if not self._safety.stopped:
-            response.success = True
-            response.message = "no unit stop was in force"
-            return response
+        """Declare the unit armed. Operator surface, never automatic.
 
+        This always allocates a generation, even when this process does not
+        believe a stop is in force. After a restart it is exactly the case where
+        the writer thinks nothing is wrong that matters: observers that followed
+        the previous incarnation are holding a stop this process has no record
+        of, and only a new generation from this writer can clear them. Returning
+        "nothing to do" here would strand them stopped for good.
+        """
+        del request
         snapshot = self._safety.rearm("operator rearm")
         response.success = True
         response.message = f"unit rearmed at generation {snapshot.epoch}"

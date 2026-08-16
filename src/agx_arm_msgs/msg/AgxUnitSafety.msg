@@ -21,3 +21,15 @@ uint64 epoch          # advances on every transition, the stop and the rearm ali
 bool stopped
 string reason
 string writer_id      # the process that allocated this generation
+
+# One *run* of the writer. Epochs are only comparable inside a single
+# incarnation, because a restarted writer counts from zero again: without this,
+# an observer that had reached generation 5 silently discards everything a
+# restarted writer publishes until it climbs back past 5.
+#
+# writer_started_ns orders the incarnations themselves, so a message from a
+# writer that has since died cannot be mistaken for news. Adopting a new
+# incarnation fails closed — the unit is held stopped until that writer
+# explicitly rearms it.
+string writer_incarnation
+uint64 writer_started_ns
