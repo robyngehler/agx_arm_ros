@@ -3627,6 +3627,25 @@ class AgxArmRosNode(Node):
         return response
 
 
+    def shutdown(self) -> None:
+        """Stop the SDK worker this node owns. Idempotent.
+
+        The worker was never shut down: its thread is a daemon, so a process
+        exit disposed of it and hid the omission. Anything that destroys the
+        node without exiting — a test, a repeated bringup, a composed process —
+        kept a thread holding this device's SDK session, which is precisely the
+        one-owner invariant the worker exists to provide.
+        """
+        worker = getattr(self, "_sdk", None)
+        if worker is not None:
+            worker.shutdown()
+
+    def destroy_node(self) -> bool:
+        """Release the SDK session before the node goes away."""
+        self.shutdown()
+        return super().destroy_node()
+
+
 def main(args=None):
     rclpy.init(args=args)
 
@@ -3644,6 +3663,10 @@ def main(args=None):
         if node is not None:
             try:
                 node._restore_feedback_push("node shutdown")
+            except Exception:
+                pass
+            try:
+                node.destroy_node()
             except Exception:
                 pass
         if rclpy.ok():

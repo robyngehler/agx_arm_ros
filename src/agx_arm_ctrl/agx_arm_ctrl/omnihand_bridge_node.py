@@ -1734,11 +1734,23 @@ class OmniHandBridgeNode(Node):
         return read_interval
 
     def shutdown(self) -> None:
-        """Stop acquisition before the node goes away."""
+        """Stop every thread this node started, in dependency order.
+
+        Producers first, then the worker they submit to: stopping the worker
+        while acquisition is still running would leave that thread waiting on
+        calls that can no longer be executed. Idempotent, because teardown
+        arrives by more than one path.
+        """
         self._acquisition_stop.set()
         thread = getattr(self, "_acquisition_thread", None)
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
+        # Only after its producer is gone. Previously this was never called at
+        # all: the worker thread outlived the node, and being a daemon it was
+        # invisible until something kept the process alive.
+        worker = getattr(self, "_sdk", None)
+        if worker is not None:
+            worker.shutdown()
 
     def destroy_node(self) -> bool:
         """Never outlive the node with a thread that still touches it.

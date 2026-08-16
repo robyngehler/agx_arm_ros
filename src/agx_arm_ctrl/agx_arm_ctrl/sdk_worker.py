@@ -686,7 +686,13 @@ class SdkWorker:
     # -- shutdown -------------------------------------------------------
 
     def shutdown(self, timeout: float = 2.0) -> None:
-        """Stop the worker, dropping whatever was still queued."""
+        """Stop the worker, dropping whatever was still queued.
+
+        Idempotent: a node may be torn down through more than one path, and
+        shutting down twice must not raise or block. The thread is a daemon, so
+        a process exit hides a missing shutdown — but a test, a repeated
+        bringup, or a composed node does not exit, and there the leak is real.
+        """
         with self._lock:
             self._running = False
             pending = []
@@ -713,3 +719,8 @@ class SdkWorker:
     @property
     def thread_name(self) -> str:
         return self._thread.name
+
+    @property
+    def is_alive(self) -> bool:
+        """Whether the worker thread is still running. Read by teardown tests."""
+        return self._thread.is_alive()
