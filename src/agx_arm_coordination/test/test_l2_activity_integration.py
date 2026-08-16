@@ -220,7 +220,6 @@ def graph(tmp_path_factory):
                 # Hands-only activity, so the arm path is never planned; dry run
                 # keeps MoveIt out of the harness entirely.
                 "-p", "arm_dry_run:=true",
-                "-p", "handoff_enabled:=true",
             ],
         )
 
@@ -278,35 +277,35 @@ def test_activity_completes_on_mock_backend(graph):
     )
 
 
-def test_hand_window_is_bracketed_per_side(graph):
-    """Every hand action is bracketed by prepare/resume on its own side.
+def test_no_hand_window_is_opened_on_dedicated_buses(graph):
+    """A hand on its own bus does not make its arm stand down.
 
-    This is the ordering the four-bus topology makes optional (constraint C1):
-    once arm and hand no longer share a bus, the bracket becomes degraded-mode
-    behaviour. Pinning it here means phase 2B has to change this test
-    deliberately rather than silently drop the guarantee.
+    This test used to assert the opposite, and said so: the bracket was pinned
+    "so phase 2B has to change this test deliberately rather than silently drop
+    the guarantee". This is that deliberate change. With the registry declaring
+    ``dedicated_per_device``, quiescing an arm for a hand that shares no bus with
+    it is exactly the cost C1 exists to remove, so the bracket must be absent.
+
+    The bracket itself is still the contract under ``shared_per_side`` and is
+    covered at L1 in ``test_coordinator_handoff.py``, which drives the state
+    machine directly instead of depending on the declared topology. It cannot be
+    exercised here any more: the harness used to force it on with
+    ``handoff_enabled:=true`` against a dedicated registry, which is the
+    contradictory configuration the runtime now refuses to start with.
     """
     calls = [
         line.strip()
         for line in graph.call_log.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert calls, "the arm double recorded no calls at all"
 
     for side in SIDES:
         side_calls = [c for c in calls if c.startswith(f"{side}:")]
-        prepares = side_calls.count(f"{side}:prepare_hand_window")
-        resumes = side_calls.count(f"{side}:resume_arm_control")
-        assert prepares > 0, f"no prepare_hand_window for {side}: {calls}"
-        assert prepares == resumes, (
-            f"{side} left a hand window open: {prepares} prepare(s) vs "
-            f"{resumes} resume(s) — {side_calls}"
+        assert f"{side}:prepare_hand_window" not in side_calls, (
+            f"{side} quiesced its arm for a hand on a dedicated bus: {side_calls}"
         )
-        assert side_calls[0] == f"{side}:prepare_hand_window", (
-            f"{side} did something before opening its window: {side_calls}"
-        )
-        assert side_calls[-1] == f"{side}:resume_arm_control", (
-            f"{side} did not end on resume_arm_control: {side_calls}"
+        assert f"{side}:resume_arm_control" not in side_calls, (
+            f"{side} reopened a window it never opened: {side_calls}"
         )
 
 

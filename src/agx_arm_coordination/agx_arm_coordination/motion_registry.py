@@ -92,10 +92,32 @@ def handshake_required() -> bool:
     return bus_topology() != "dedicated_per_device"
 
 
+def assert_matches_topology(parameter_name: str, configured: bool) -> bool:
+    """Fail startup when a handshake parameter contradicts the declared topology.
+
+    The topology is one declared fact (C7). These parameters survive only as
+    compatibility inputs, so an override that disagrees with the registry is not
+    a preference — it is two truths about one wiring loom, and the failure it
+    produces shows up as motion that serializes for no reason or a hand
+    commanding a bus the arm still holds. Neither is visible until it matters,
+    so the contradiction is refused here instead.
+    """
+    required = handshake_required()
+    if configured != required:
+        raise ValueError(
+            f"{parameter_name}={configured} contradicts bus_topology="
+            f"'{bus_topology()}', which requires {parameter_name}={required}. "
+            "The topology is the single source of truth: change bus_topology in "
+            "duo_motion_registry.yaml rather than overriding this parameter."
+        )
+    return required
+
+
 __all__ = [
     "load_motion_registry",
     "moveit_group",
     "group_joint_names",
     "bus_topology",
     "handshake_required",
+    "assert_matches_topology",
 ]

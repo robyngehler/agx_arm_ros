@@ -15,7 +15,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from agx_arm_msgs.msg import OmniHandStatus
 from agx_arm_msgs.srv import ClaimDevice
 
-from agx_arm_ctrl.motion_registry import handshake_required
+from agx_arm_ctrl.motion_registry import assert_matches_topology, handshake_required
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
 # Shared, model-aware joint naming — do NOT keep a second JOINT_SUFFIXES copy here
 # (proposal §6/§11.3): a stale O10 list would flag every Pro-only joint as unknown.
@@ -93,7 +93,12 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         self.readback_max_age_s = max(
             0.0, float(self.get_parameter("readback_max_age_s").value)
         )
-        self.handshake_enabled = bool(self.get_parameter("handshake_enabled").value)
+        # Compatibility input only; a launch that passes hand_bus:=shared on a
+        # dedicated registry is refused here rather than quiescing an arm that
+        # shares no bus with this hand.
+        self.handshake_enabled = assert_matches_topology(
+            "handshake_enabled", bool(self.get_parameter("handshake_enabled").value)
+        )
         self.handshake_timeout_s = float(self.get_parameter("handshake_timeout_s").value)
         arm_ns = str(self.get_parameter("arm_service_ns").value).strip("/")
 

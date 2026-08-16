@@ -312,3 +312,30 @@ def test_a_sync_group_that_contends_with_itself_is_never_admitted():
         "a self-conflicting sync group was dispatched, putting two commanders "
         "on one device"
     )
+
+
+# --- the topology is one declared fact (C7) ----------------------------------
+
+def test_a_handoff_override_that_contradicts_the_topology_is_refused():
+    """Deriving the default narrowed the gap; it did not close it.
+
+    Both parameters remained settable, so a run could still declare dedicated
+    buses in the registry and hand-quiescing in a launch argument, which is two
+    truths about one wiring loom.
+    """
+    import pytest
+
+    from agx_arm_coordination.motion_registry import (
+        assert_matches_topology,
+        handshake_required,
+    )
+
+    required = handshake_required()
+
+    # Agreeing with the topology is accepted and returns the derived value.
+    assert assert_matches_topology("handoff_enabled", required) is required
+
+    with pytest.raises(ValueError) as exc:
+        assert_matches_topology("handoff_enabled", not required)
+    assert "bus_topology" in str(exc.value)
+    assert "single source of truth" in str(exc.value)

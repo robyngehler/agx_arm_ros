@@ -66,7 +66,11 @@ from agx_arm_coordination.graph_model import (
     Scheduler,
     robot_units,
 )
-from agx_arm_coordination.motion_registry import bus_topology, handshake_required
+from agx_arm_coordination.motion_registry import (
+    assert_matches_topology,
+    bus_topology,
+    handshake_required,
+)
 from agx_arm_coordination.performer import KIND_ARM, KIND_HAND, RoutingError, route
 from agx_arm_coordination.unit_activity import UnitActivity
 
@@ -244,7 +248,11 @@ class CoordinatorNode(Node):
         self.arm_service_template = str(self.get_parameter("arm_service_template").value)
         self.mit_controller_template = str(self.get_parameter("mit_controller_template").value)
         self.stop_service_timeout = float(self.get_parameter("stop_service_timeout_sec").value)
-        self.handoff_enabled = bool(self.get_parameter("handoff_enabled").value)
+        # Compatibility input only. A value that disagrees with the declared
+        # topology is refused rather than obeyed — see assert_matches_topology.
+        self.handoff_enabled = assert_matches_topology(
+            "handoff_enabled", bool(self.get_parameter("handoff_enabled").value)
+        )
         # One declared fact behind both: whether same-side arm and hand are one
         # schedulable resource, and whether a hand action has to quiesce the arm.
         self.bus_topology = bus_topology()
