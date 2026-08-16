@@ -31,12 +31,12 @@ except where a `Superseded` note says otherwise.
 - Symptom: the current hand window verifies arm hold and attempts feedback-push
   silence, but the hand stack can still continue publishing and polling after a
   grasp action reports success.
-- Current evidence:
-  `src/agx_arm_ctrl/agx_arm_ctrl/agx_arm_ctrl_single_node.py` exposes
+- Evidence at the time:
+  `src/agx_arm_ctrl/agx_arm_ctrl/agx_arm_ctrl_single_node.py` exposed
   `prepare_hand_window` and `resume_arm_control`, while
-  `src/agx_arm_ctrl/agx_arm_ctrl/omnihand_skill_controller_node.py` keeps an
-  internal hold timer that republishes the grasp target, and
-  `src/agx_arm_ctrl/agx_arm_ctrl/omnihand_bridge_node.py` maintains independent
+  `src/agx_arm_ctrl/agx_arm_ctrl/omnihand_skill_controller_node.py` kept an
+  internal hold timer that republished the grasp target, and
+  `src/agx_arm_ctrl/agx_arm_ctrl/omnihand_bridge_node.py` maintained independent
   publication, readback, and retry timers.
 - Impact: the coordinator can believe the side bus has returned to the arm while
   the hand stack still emits CAN traffic.
@@ -50,6 +50,16 @@ except where a `Superseded` note says otherwise.
 - Interim rule (revised): same-side arm and hand motion may now run in parallel;
   hand polling and hold traffic must still be justified by active hand ownership
   because CPU is the remaining shared resource.
+- **Recurring hold traffic closed 2026-08-15 (L3).** The skill controller's hold
+  no longer republishes the grasp target; it monitors contact only. Measured on
+  the right hand on a real grasp: **0 command messages across a 5 s hold**, where
+  the old behaviour would have sent 100. `prepare_hand_window` /
+  `resume_arm_control` survive only as the `shared_per_side` implementation and
+  default off on the declared topology.
+- Still open from this entry: the bridge's cadences are decoupled from the arm's
+  `pub_rate` but not yet split by semantics (command verification, joint
+  readback, tactile, status), and polling does not stop while no hand action is
+  active. Both are tracked in the Phase 2C checklist.
 - Planned fix surface: per-device bus modelling and hand ownership in
   `agx_arm_ctrl` plus the registry (integration plan Phase 2).
 

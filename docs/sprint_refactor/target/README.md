@@ -31,9 +31,10 @@ architectural input; where they disagree, the plan wins.
 
 Defined in `planning/integration_plan.md`:
 
-- **C1** one CAN bus per device (arms `can0`/`can1` native, hands `can2`/`can3`
-  on USB-CAN FD adapters); same-side arm and hand motion may run in parallel and
-  step-and-settle is demoted to a degraded-topology fallback
+- **C1** one CAN bus per device (arms `can_nero_left`/`can_nero_right` native,
+  hands `hand_left`/`hand_right` on USB-CAN FD adapters); same-side arm and hand
+  motion may run in parallel and step-and-settle is demoted to a
+  degraded-topology fallback
 - **C2** MIT control rate is a requirement (>= 100 Hz, target 200-250 Hz), so CPU
   savings must come from per-tick cost
 - **C3** the pinned `vendor/pyAgxArm` submodule is the execution path; vendor

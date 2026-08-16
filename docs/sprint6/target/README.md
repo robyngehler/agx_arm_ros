@@ -10,7 +10,8 @@ Sprint 6 is the coordinated dual-arm plus dual-hand task layer.
 > `docs/sprint_refactor/planning/integration_plan.md`.
 >
 > Two premises of this sprint have changed. Each device now has its own CAN bus
-> (arms `can0`/`can1`, hands `can2`/`can3` on USB-CAN FD adapters), so the
+> (arms `can_nero_left`/`can_nero_right`, hands `hand_left`/`hand_right` on
+> USB-CAN FD adapters), so the
 > **step-and-settle and hand-window planning notes here are superseded** —
 > same-side arm and hand motion runs in parallel and step-and-settle is a
 > selectable degraded mode. The hand message surface is also being consolidated

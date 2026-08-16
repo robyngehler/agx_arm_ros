@@ -638,12 +638,20 @@ section too.
       coordinator passes it to the `Scheduler`. An unknown topology reads as
       shared: a value nobody recognised is not a licence to run a hand beside
       its arm.
-- [x] Derive `handoff_enabled` from the same value; nothing reads it directly.
-      The coordinator's `handoff_enabled` and the FJT node's `handshake_enabled`
-      both default to `handshake_required()`. The hardcoded `True` mattered:
-      anything starting those nodes outside the launch files — a test double, a
-      bare `ros2 run`, a measurement harness — quiesced an arm for a hand that
-      has its own bus, silently.
+- [x] Derive the *defaults* of `handoff_enabled` and `handshake_enabled` from
+      the same value. The coordinator's `handoff_enabled` and the FJT node's
+      `handshake_enabled` both default to `handshake_required()`. The hardcoded
+      `True` mattered: anything starting those nodes outside the launch files — a
+      test double, a bare `ros2 run`, a measurement harness — quiesced an arm for
+      a hand that has its own bus, silently.
+- [ ] **C7 exit condition, still open:** remove the independent overrides. Both
+      remain declared ROS parameters, so a run can still set
+      `handoff_enabled:=true` against a `dedicated_per_device` registry and
+      re-create the two-truths gap C7 exists to close (`test_l2_activity_integration.py`
+      does exactly that today, deliberately). Deriving the default narrows the
+      blast radius; it does not make the topology one fact. Either drop the
+      parameters and read `handshake_required()` at the point of use, or keep
+      them and validate an override against the declared topology at startup.
 - [x] Remove the MIT stand-down on `feedback/hand_window_active`. Done earlier
       in 1A: the MIT controller acts on `AgxDeviceAuthority`, which distinguishes
       a deliberate quiescence from a fault, a stop, or the device changing hands.
@@ -778,13 +786,24 @@ The exclusivity guard landed in 1C; this is the conversion itself.
 - [ ] Generate MoveIt controller config, joint-state merger inputs, and launch
       parameter dictionaries from the resolved manifest.
 - [ ] Move coordinator resource claims to manifest-driven data.
-- [ ] Keep the MoveIt hand FJT path non-default in coordinated production
-      profiles.
+- [ ] Keep hand `FollowJointTrajectory` available as the primary
+      trajectory-execution primitive in production MoveIt profiles, alongside
+      reactive contact-seeking motion as the second production primitive. Both
+      paths arbitrate through device authority.
+
+      Superseded 2026-08-14: this item previously read "keep the MoveIt hand FJT
+      path non-default in coordinated production profiles", which contradicts the
+      canonical plan's dual-primitive design. FJT is neither debug-only nor
+      optional.
 - [ ] Remove or quarantine the legacy unprefixed `moveit_controllers.yaml`.
 - [ ] Consolidate `HandCmd`, `HandPositionTimeCmd`, `HandStatus`,
       `GripperStatus`, and `OmniHandStatus` into one abstract hand contract per
       C5, with a caller migration note (4D).
-- [ ] Carry owner identity, control epoch, and sequence in hand commands.
+- [ ] Carry the command authority stamp — `owner_id`, `device_epoch`,
+      `unit_safety_epoch`, `sequence` — on hand commands. The standard
+      `sensor_msgs/JointState` and `trajectory_msgs/JointTrajectory` messages are
+      **not** modified: the target is a repo-owned internal hand command that
+      carries standard motion content plus the stamp.
 - [ ] Validate joint values at the bridge; remove SDK read-before-write; reject
       partial commands without a valid cache.
 - [ ] Distinguish `commanded`, `delivery_verified`, and `contact_confirmed`
@@ -802,8 +821,9 @@ The exclusivity guard landed in 1C; this is the conversion itself.
       the same assumption about the arm driver's SDK reads was measured wrong.
 - [ ] Then reduce whatever the decomposition names, so the rate can rise toward
       200-250 Hz (C2).
-- [ ] Split OmniHand bridge timers by command verification, tactile, and status
-      semantics.
+- Bridge cadence and transport work moved to Phase 2C on 2026-08-14, so the
+  timer split is tracked there and not here. Phase 5 retains only executor and
+  process policy plus the close-out measurement.
 - [ ] Bound executor thread counts and keep each vendor SDK session in its own
       process.
 - [ ] Remove duplicate hand-joint aggregation from arm driver output.
@@ -816,9 +836,20 @@ The exclusivity guard landed in 1C; this is the conversion itself.
 
 ## Every phase
 
-- [ ] `tea_pour_left_v1` still runs after the phase closes.
-- [ ] L1 and L2 pass before any hardware run; L3 evidence recorded or its absence
-      stated explicitly.
+- [ ] L1 and L2 pass before the phase closes — the mandatory per-phase software
+      regression gates.
+- [ ] L3 evidence recorded wherever the phase claims hardware behaviour, or its
+      absence stated explicitly.
+
+`tea_pour_left_v1` is **not** a per-phase gate during the migration. It becomes
+one again only after the post-refactor command contract is frozen and the demo
+has been re-taught against it; until then the L2 activity harness is the standing
+regression net (see 0B, where the criteria are deferred by the same decision).
+
+Superseded 2026-08-14: this section previously required that `tea_pour_left_v1`
+still run after each phase closed, which contradicted the deferral recorded in
+0B. The demo is taught against command contracts this refactor is changing, so
+re-running it per phase would have measured the teach data, not the phase.
 
 ## Documentation follow-through
 

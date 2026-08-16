@@ -1,7 +1,8 @@
 # Tea Pour Demo (`tea_pour_left_v1`) — Runbook
 
 > **Superseded in part — V02 refactor.** Each device now has its own CAN bus
-> (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD adapters), so
+> (arms `can_nero_left`/`can_nero_right` native, hands `hand_left`/`hand_right`
+> on USB-CAN FD adapters), so
 > same-side arm and hand motion may run in parallel and the shared-bus hand
 > window is a selectable degraded mode, not normal operation. This page still
 > describes the **current code**, which resolves the hand interface from the arm

@@ -12,8 +12,8 @@ Phase 0 CPU / loop-duration / SDK-call instrumentation before acting.
 
 ## What changed since this note was written
 
-- **Each device now has its own CAN bus** (arms on native `can0`/`can1`, hands on FD-capable USB
-  adapters `can2`/`can3`). Bus contention is no longer the reason to bound hand traffic — CPU is. And
+- **Each device now has its own CAN bus** (arms on native `can_nero_left`/`can_nero_right`, hands on
+  FD-capable USB adapters `hand_left`/`hand_right`). Bus contention is no longer the reason to bound hand traffic — CPU is. And
   because arm and hand may now run *in parallel*, the peak CPU load this note describes is reached more
   often, not less. The RX overflow below was host-side socket overflow caused by CPU starvation, so it
   remains a live risk under the new topology.

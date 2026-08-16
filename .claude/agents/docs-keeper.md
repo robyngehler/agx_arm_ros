@@ -56,15 +56,18 @@ edit source code or tests.
    open question, not a silent edit.
 
 6. **Repository-wide consistency audit.** Run this as one pass, not per file.
-   The current lock is the six binding constraints in
+   The current lock is the eight binding constraints **C1-C8** in
    `docs/sprint_refactor/planning/integration_plan.md`, which is canonical over
    the proposal beside it. Flag any active, non-bannered file that disagrees:
 
    - **Bus topology (C1):** text presenting the shared side bus or
      step-and-settle as normal operation, or asserting that same-side arm and
-     hand motion are mutually exclusive. Each device owns its own CAN interface
-     (arms `can0`/`can1` native, hands `can2`/`can3` on USB-CAN FD adapters);
-     step-and-settle is a selectable degraded mode.
+     hand motion are mutually exclusive. Each device owns its own CAN interface;
+     name them by their stable runtime names — arms `can_nero_left` /
+     `can_nero_right` (native), hands `hand_left` / `hand_right` (USB-CAN FD
+     adapters) — not by kernel enumeration (`can0`..`can3`), which is a bring-up
+     detail that belongs only where the kernel interface is literally meant.
+     `shared_per_side` is a selectable degraded compatibility mode.
    - **Control rate (C2):** the MIT loop described as 50 Hz, or any proposal to
      lower the control rate as a CPU lever. The rate is a requirement:
      >= 100 Hz, target 200-250 Hz.
@@ -80,6 +83,31 @@ edit source code or tests.
      hand-specific command or status message. The target is one abstract hand
      contract carrying joint count and tactile layout as data, so it fits `o10`,
      `o12_pro`, and the 1-DoF gripper alike.
+   - **Instrumentation form (C6):** a measurement recorded without the form C6
+     requires — the level it was taken at, the interface or device it names, and
+     the script or capture that produced it.
+   - **Bus topology is one fact (C7):** `handoff_enabled`, `handshake_enabled`,
+     and the scheduler's resource claims must all derive from the declared
+     `bus_topology`. Flag any text presenting them as independently configurable
+     truths, and any claim that C7 is closed while the overrides survive as
+     settable parameters.
+   - **Protocol tiers (C8):** a value derived from the Nero protocol — range,
+     frame encoding, status enum, torque bound — stated per robot model rather
+     than per firmware tier, or a measurement that does not name the arm it came
+     from. Right is 1.06 (default tier), left is 1.11 (`NeroFW.V111`), and this
+     is permanent.
+   - **Hand SDK ownership:** any claim that a hand lacks an `SdkWorker`, that its
+     SDK is serialized only by `rclpy.spin` or a single-threaded executor, or
+     that serialized hand ownership is future work. Each hand bridge has owned a
+     worker with four lanes since 2026-08-15.
+   - **Hand motion primitives:** `FollowJointTrajectory` described as debug-only,
+     non-default, optional, or removable. It is the primary trajectory-execution
+     primitive; reactive contact-seeking motion is the second production
+     primitive; both arbitrate through device authority.
+   - **Deferred gates staying deferred:** a demo gate recorded as deferred —
+     `tea_pour_left_v1` above all — reintroduced through a generic `Every phase`
+     or per-phase section. L1/L2 are the standing software gates during the
+     migration; L3 is required wherever hardware behaviour is claimed.
    - **Sprint pointers:** any agent-layer file still naming `docs/sprint6/` as
      the current implementation focus.
    - **Configuration duplication:** canonical joint lists, side prefixes, CAN

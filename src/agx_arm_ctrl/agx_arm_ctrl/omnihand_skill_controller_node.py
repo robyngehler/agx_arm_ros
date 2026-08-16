@@ -6,8 +6,22 @@ This node (one per side, launched as ``/left_hand/omnihand_skill_controller`` /
 motion confirmed by tactile feedback, and holds/releases according to policy.
 It is the bottom of the coordinator stack.
 
-Contract (see docs/sprint6/planning/hand_skill_backend_mapping.md):
+Contract. The active architecture reference is the refactor contract —
+``docs/sprint_refactor/planning/integration_plan.md`` (phase 2C, hand
+arbitration) and ``AGENTS.md`` "ROS Contract Rules"; the ``skill_name ->
+backend motion`` mapping design is
+``docs/sprint6/planning/hand_skill_backend_mapping.md``.
 
+- this is one of the hand's **two** production motion primitives. Reactive
+  contact-seeking motion (here) and trajectory execution
+  (``<side>_omnihand_controller/follow_joint_trajectory``) are mutually
+  exclusive, and what makes them so is device authority, not topic separation.
+  Neither is a debug surface.
+- the controller **claims the hand before commanding it** via
+  ``control/omnihand/claim_device``, declaring itself ``<primitive>:<node>``,
+  and releases afterwards. The bridge is fail-closed: an unclaimed hand executes
+  nothing. Claim and release advance the device epoch, so a command from the
+  previous owner cannot execute after a handover.
 - the public layer carries only ``skill_name``; the ``skill_name -> backend
   motion + target preset`` mapping lives in ``config/omnihand_skills.yaml`` and
   in :mod:`agx_arm_ctrl.omnihand.skills`. Swapping the vendor mapping must not
@@ -18,9 +32,11 @@ Contract (see docs/sprint6/planning/hand_skill_backend_mapping.md):
   OmniHand bridge over the shared ``control/joint_states`` topic and consumes
   ``feedback/omnihand/{tactile_raw,status,joint_states}`` — so it works against
   both the mock and the SDK backend, per the bridge contract.
-- after a confirmed grasp the controller holds INTERNALLY (a background timer
-  republishes the grasp target and watches for slip); hold is not a coordinator
-  action, so it never blocks arm+hand resources on the same side bus.
+- a confirmed grasp holds INTERNALLY and **keeps the claim** — the hold *is* this
+  primitive still owning the device. Hold monitoring watches contact and does
+  **not** periodically republish the grasp target; republishing made this node a
+  second commander of a device the trajectory action also commands. Hold is not a
+  coordinator action, so it never blocks arm+hand resources.
 
 Transport: hand skills ride on ``agx_arm_msgs/action/PerformAction`` (no
 dedicated HandSkill.action). The goal's ``metadata_json`` carries

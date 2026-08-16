@@ -35,7 +35,9 @@ OmniHand 集成、协调执行以及相关文档。
 
 ## 最短正确路径
 
-1. 克隆仓库并同步 submodule：`git clone -b ros2 --recurse-submodules ...`
+1. 克隆仓库并同步 submodule。`ros2` 是稳定公开分支，下面的示例克隆的就是它：
+   `git clone -b ros2 --recurse-submodules ...`
+   当前 V02 重构在 `ROS2_Duo_System_V02_refactor` 上进行；按分支相关的重构文档操作时请显式检出该分支。
 2. 安装系统与 ROS 依赖：`bash ./scripts/agx_arm_install_deps.sh`
 3. 使用系统 Python wrapper 编译：`bash ./scripts/colcon_build_system_python.sh`
 4. 如需 Conda 运行环境：`bash ./scripts/setup_agx_arm_runtime_env.sh`
@@ -53,5 +55,9 @@ OmniHand 集成、协调执行以及相关文档。
 ## 运行提示
 
 - 实际 bringup 与脚本矩阵以 `docs/control/bringups/launches.md` 为准
-- teach/replay 与共享 CAN 运行注意事项以 `docs/control/bringups/teach_and_run.md` 为准
-- 当前共享 arm-plus-hand CAN 仍有已知风险，见 `docs/errors_and_fixes.md`
+- teach/replay 工作流以 `docs/control/bringups/teach_and_run.md` 为准
+- 正常拓扑（`dedicated_per_device`）是每个设备独占一条 CAN 总线：机械臂用原生
+  `can_nero_left` / `can_nero_right`，手用 USB-CAN FD 适配器上的 `hand_left` / `hand_right`。
+  同侧机械臂与手可以并行运动
+- 共享 arm-plus-hand CAN（`shared_per_side`）只是可选的降级兼容模式，不是正常架构；
+  其已知风险见 `docs/errors_and_fixes.md`

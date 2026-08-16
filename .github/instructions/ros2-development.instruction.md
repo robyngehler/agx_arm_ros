@@ -11,7 +11,7 @@ Load this instruction for ROS2-native questions and decisions.
 - keep the public ROS surface agx_arm-centric
 - reuse the current owning packages before creating a new ROS2 surface
 - when the task is multi-arm or multi-hand bringup, make description and launch surfaces arm-count-aware from the start
-- keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared `control/joint_states` is the current hand command flow and is legacy, since the V02 target is one abstract hand command with owner identity, control epoch, and sequence (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D)
+- keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared `control/joint_states` is the current hand command flow and is legacy, since the V02 target is one repo-owned abstract hand command carrying the authority stamp `owner_id`, `device_epoch`, `unit_safety_epoch`, and `sequence` (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D). The standard ROS messages are external types and stay untouched
 - keep hand-only diagnostics under `feedback/omnihand/*`
 - use standard ROS messages first and extend `agx_arm_msgs` only for repo-owned semantics
 - do not treat vendor ROS packages or vendor topics as the public repo contract

@@ -159,13 +159,30 @@ class UnitSafety:
     **Exactly one process on a unit may be the writer.** A second writer is not
     redundancy: both allocate from their own counter, so the unit ends up with
     one generation number carrying two meanings — "5, stopped" from one and
-    "5, rearmed" from the other — and no receiver can order them. Observers
-    adopt what the writer publishes and refuse to mint generations; a device
-    that needs a unit stop asks the writer for one.
+    "5, rearmed" from the other — and no receiver can order them.
 
-    Until a single writer exists in the running system, every driver is still
-    its own writer. That is why :meth:`observe` counts contradictions rather
-    than ignoring them: the symptom has to be visible while the gap is open.
+    That writer exists as a running process:
+    :mod:`agx_arm_ctrl.unit_safety_node`. Device processes construct this with
+    ``writer=False`` and are observers — they adopt what the writer publishes and
+    refuse to mint generations. A device that needs a unit stop asks the writer
+    for one over ``RequestUnitStop``.
+
+    Being an observer does not make a device dependent on the writer to stop
+    itself. Local device-stop remains unilateral and independent, so losing the
+    writer cannot prevent a device from stopping; what needs the writer is only
+    the *unit-wide* statement that a new safety era has begun.
+
+    :meth:`observe` still counts contradictions rather than ignoring them,
+    because a second writer can be introduced by misconfiguration and the symptom
+    has to stay visible if it is.
+
+    **Open, not solved: writer restart and epoch continuity.** Generations are
+    held in memory and start at 0, while :meth:`observe` ignores any epoch at or
+    below the one it already holds. A restarted writer therefore republishes
+    generations that observers have already passed, and they are dropped until it
+    climbs back above the highest epoch seen — during which the unit cannot be
+    told that a new safety era began. Nothing here closes that; see
+    ``docs/sprint_refactor/open_questions.md``.
     """
 
     def __init__(self, writer_id: str = "", *, writer: bool = True) -> None:

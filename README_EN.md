@@ -36,7 +36,10 @@ now live under `docs/`.
 
 ## Fastest correct path
 
-1. Clone the repo with submodules: `git clone -b ros2 --recurse-submodules ...`
+1. Clone the repo with submodules. `ros2` is the stable public branch, and that is what this
+   example clones: `git clone -b ros2 --recurse-submodules ...`
+   The V02 refactor happens on `ROS2_Duo_System_V02_refactor`; check that branch out explicitly
+   when following branch-specific refactor instructions.
 2. Install system and ROS dependencies: `bash ./scripts/agx_arm_install_deps.sh`
 3. Build with the system-Python wrapper: `bash ./scripts/colcon_build_system_python.sh`
 4. Create the optional runtime environment when needed: `bash ./scripts/setup_agx_arm_runtime_env.sh`
@@ -54,5 +57,9 @@ now live under `docs/`.
 ## Runtime notes
 
 - the authoritative bringup and script matrix is `docs/control/bringups/launches.md`
-- teach, replay, and shared-bus operating guidance lives in `docs/control/bringups/teach_and_run.md`
-- the shared arm-plus-hand CAN path still has known hazards; see `docs/errors_and_fixes.md`
+- teach and replay workflow lives in `docs/control/bringups/teach_and_run.md`
+- the normal topology (`dedicated_per_device`) gives every device its own CAN bus: arms on native
+  `can_nero_left` / `can_nero_right`, hands on `hand_left` / `hand_right` behind USB-CAN FD
+  adapters, so same-side arm and hand motion may run in parallel
+- shared arm-plus-hand CAN (`shared_per_side`) is a selectable degraded compatibility mode, not the
+  normal architecture; its known hazards are in `docs/errors_and_fixes.md`

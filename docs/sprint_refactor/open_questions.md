@@ -192,3 +192,24 @@ is reserved for them.
   make that call shorter or rarer than to add a second session owner.
 
   Numbers in `reference/sdk_latency_budget.md`, section "The hand's worker".
+
+## Opened 2026-08-16 (code review)
+
+- **Unit-safety writer restart has no epoch continuity.** `unit_safety_node` is
+  the single writer, and that part works. But its generation counter lives in
+  memory and starts at 0, while `UnitSafety.observe` ignores any snapshot whose
+  epoch is at or below the one it already holds. So after the writer restarts,
+  every observer that had reached a higher generation silently drops what the new
+  instance publishes until it climbs back past that number — and during that
+  window the unit cannot be told a new safety era has begun. The transient-local
+  latch and the heartbeat both republish the *restarted* value, so neither closes
+  the gap.
+
+  This is an implementation question, not a documentation one, and it is
+  deliberately not papered over: the docstrings say the writer exists, and they
+  also say this is unresolved. What has to be decided is where continuity comes
+  from — persisting the last generation, seeding from what observers report, or
+  making a restart itself allocate a stop so the unit fails safe rather than
+  fails silent. Devices can still stop themselves unilaterally throughout, which
+  is why this is a correctness gap in unit-wide arbitration rather than a loss of
+  the ability to stop.

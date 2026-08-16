@@ -631,10 +631,25 @@ Transport efficiency — profile first, then cut:
 
 Ownership, deliberately narrowed after review:
 
-- **a hand still has no serialized SDK owner.** The worker and its four lanes are
-  arm-only; the bridge reaches the SDK from its timer, its subscriptions and its
-  service handlers. Give the hand the same single-owner treatment here rather
-  than deferring it behind the contract work
+- **a hand has exactly one serialized SDK owner.** This is the design
+  requirement, and it **landed 2026-08-15**: the bridge owns an `SdkWorker` with
+  the same four lanes as the arms, and acquisition runs on its own paced thread,
+  so no SDK call is reachable from a ROS callback. Validated at L3 on the right
+  hand (`scripts/measure_hand_executor_latency.py`,
+  `reference/sdk_latency_budget.md`): with SDK work multiplied tenfold to
+  saturate a core, the stop service still answered in ~2 ms and the safety-lane
+  queue wait stayed under 1.9 ms across 150 stops, against 5321 diagnostic
+  submissions in the same window
+- what remains here is **not** creating the worker. It is the declared
+  stop-latency question — the safety lane preempts the queue but not the call in
+  flight, and the worst single call measured on this hand is 36.9 ms against the
+  arms' 20 ms budget, so the hand has no declared stop budget yet
+  (`open_questions.md`) — plus the residual transport bounds below
+
+  *Superseded 2026-08-15:* this subsection previously read "a hand still has no
+  serialized SDK owner", describing the worker as arm-only and the bridge as
+  reaching the SDK from its timer, subscriptions and service handlers. That was
+  the pre-implementation state and the reason this item was pulled into 2C.
 
 Exit gate:
 
@@ -648,7 +663,11 @@ Exit gate:
   — *done 2026-08-14: two poses through the action on the right hand, both
   SUCCESS with verified delivery, 0.27 s and 0.90 s*
 - a decision recorded on the vendor spin thread: patched, configured away, or
-  accepted and pinned. One core per hand is not something to leave undescribed
+  accepted and pinned. One core per hand is not something to leave undescribed —
+  *done 2026-08-14: patched in the tracked vendor fork under C3 to `poll()`
+  instead of a spin loop; the pair fell from 222.4 % to 25.3 % of a core*
+- one serialized SDK owner per hand, with no SDK call reachable from a ROS
+  callback — *done 2026-08-15, L3; see the ownership subsection above*
 - the `shared_per_side` topology still executes an activity when selected
 
 ---
@@ -721,9 +740,44 @@ Moved here from the struck Phase 2 because it is source-of-truth work, not
 parallel-operation work. Note that it touches the bridge a second time after 2A;
 sequence the bridge edits so the two do not fight.
 
+**The target shape, so it stops being re-derived per slice.** ROS standard
+messages are external types and are **not** extended: `sensor_msgs/JointState`
+stays a feedback/state message, and standard `FollowJointTrajectory` stays the
+MoveIt-facing trajectory action. What this phase adds is one repo-owned,
+authority-stamped *internal* hand-command boundary in `agx_arm_msgs` that both
+production primitives feed:
+
+1. the FJT executor binds an accepted standard action goal to its current device
+   claim and epoch, and emits stamped internal commands;
+2. the reactive skill controller claims the same device and emits the same
+   stamped internal command type;
+3. the bridge admits or rejects that internal command on owner, device epoch,
+   unit-safety epoch and sequence, and remains the only hardware transport
+   boundary;
+4. the bridge does **not** invent missing authority fields from its own current
+   state — which is exactly what it must do today, and why the stale-epoch and
+   out-of-order checks in 2C cannot reject anything yet.
+
+The authority fields are one reusable structure, referred to throughout as the
+**command authority stamp**, embedded by the abstract hand command:
+
+```text
+# agx_arm_msgs/DeviceCommandStamp.msg
+string owner_id
+uint64 device_epoch
+uint64 unit_safety_epoch
+uint64 sequence
+```
+
+The exact `.msg` name stays an implementation decision of this phase. What is
+already decided: these fields are carried explicitly, never encoded into
+`Header.frame_id`, action goal UUIDs, topic names, or ad-hoc JSON metadata; and
+there is one hand command message, not a family of OmniHand-specific ones.
+
 - consolidate `HandCmd`, `HandPositionTimeCmd`, `HandStatus`, `GripperStatus`,
   and `OmniHandStatus` into one abstract hand contract per C5
-- carry owner identity, control epoch, and sequence in hand commands
+- carry the command authority stamp — `owner_id`, `device_epoch`,
+  `unit_safety_epoch`, `sequence` — on hand commands
 - keep joint count, joint naming, and tactile layout as data, never as
   fixed-width fields, so `o10`, `o12_pro`, and the 1-DoF AGX gripper all fit
 - migrate every in-repo caller and remove the retired messages inside this phase;
@@ -851,7 +905,7 @@ reduction on CPU grounds (2C), hand contract consolidation (4D).
 | §14.1 enable readback, firmware version parsing, forced e-stop recovery | 1D |
 | §14.5 commanded / delivery_verified / contact_confirmed distinction | 4D |
 | §14.6 read-before-write, partial-command cache, fail-hard CAN mapping | 2A, 4D |
-| §11 MoveIt hand FJT non-default in production | 4C |
+| §11 MoveIt hand FJT availability in production profiles | 4C — **inverted 2026-08-14**: the proposal asked for non-default; FJT is the primary trajectory-execution primitive |
 | §16.9 registry drift check | 4E |
 | §16 failure-injection and state-conformance suite | 0B and per-phase gates |
 

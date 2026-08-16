@@ -13,7 +13,7 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 > Validated on hardware 2026-08-13: both bridges on their own bus, zero CANFD
 > timeouts. Before changing the bridge, read
 > `docs/sprint_refactor/planning/integration_plan.md` (constraints C1 and C5,
-> phases 2A-2D and 4D).
+> phases 2A-2C and 4D).
 
 ## Placement Rule
 
@@ -22,7 +22,7 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 
 ## Public ROS Contract
 
-- shared `control/joint_states` is the current arm-plus-hand command flow and is legacy: the V02 target is one abstract hand command carrying owner identity, control epoch, and sequence
+- shared `control/joint_states` is the current arm-plus-hand command flow and is legacy: the V02 target is one repo-owned abstract hand command carrying the command authority stamp — `owner_id`, `device_epoch`, `unit_safety_epoch`, `sequence`. The standard ROS messages themselves are not modified
 - resolve each hand's SocketCAN interface from its own registry entry, never from the arm's `can_port`, and select it through explicit backend construction rather than the process-global `OMNIHAND_SOCKETCAN_IFACE`
 - keep combined `feedback/joint_states` as the canonical follow-mode state
 - publish hand-only debug and diagnostics under `feedback/omnihand/*`
@@ -36,8 +36,9 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 ## Message Rules
 
 - use standard ROS messages where they already fit, such as `sensor_msgs/JointState`
-- keep OmniHand-specific diagnostics in `agx_arm_msgs`
-- do not force OmniHand onto Revo2-specific command or status messages
+- keep hand diagnostics in `agx_arm_msgs`
+- do not extend the Revo2-specific messages for OmniHand, and do not add a third OmniHand-only message either: the V02 target consolidates `HandCmd`, `HandPositionTimeCmd`, `HandStatus`, `GripperStatus`, and `OmniHandStatus` into one abstract hand contract that must fit any hand
+- keep fields statically defined; no runtime-variable structure in control paths
 
 ## Cadence Rules
 
@@ -47,7 +48,11 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 
 ## Backend Rules
 
-- **a hand has no serialized SDK owner yet**, and the reason is subtler than it looks. Its timer, subscriptions and service handlers all reach the SDK directly, but they run on one thread because the bridge uses `rclpy.spin`, so the measured attribution really is a single thread. What is missing is not serialization — it is that the property is incidental (one edit to a `MultiThreadedExecutor` silently ends it, and two sibling nodes in this package already use one) and that there are no lanes, so a stop waits behind whatever the executor is doing and a 17 ms status read blocks the claim service. Closed in phase 2C
+- **every hand bridge owns one `SdkWorker`.** Steady-state SDK calls are serialized through it on a declared priority lane, exactly as the arms do, and acquisition runs on its own paced thread so it is paced independently from ROS publication. Landed 2026-08-15, validated at L3
+- **a ROS callback must never call the vendor SDK directly.** A timer, subscription or service handler submits to the worker and reads the result the acquisition thread stored. The old property — one thread by accident, because the bridge used `rclpy.spin` — is gone, and so is the constraint that came with it: this node may now use a `MultiThreadedExecutor` safely
+- **safety work uses the safety lane.** A stop preempts queued ordinary work rather than waiting behind it; measured at ~2 ms while the worker was saturated. The lane does not preempt the call already in flight, so the bound is that call's duration — 36.9 ms worst case on this hand, above the arms' 20 ms budget and not yet a declared hand stop budget (`docs/sprint_refactor/open_questions.md`)
+- **shutdown stops both.** Stop the acquisition thread and the worker, and join them, before the node goes away
+- state any recovery or exception rule explicitly; nothing may be inferred from executor behaviour
 - keep the SDK or vendor transport below ROS
 - treat vendor ROS topics as backend input references only, not as the public repo contract
 - keep the mock backend and real backend behind the same repo-owned bridge surface when possible
