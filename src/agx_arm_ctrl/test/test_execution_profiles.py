@@ -119,3 +119,30 @@ def test_resolve_unknown_profile_lists_choices():
         assert "right_hand" in str(exc)
     else:
         raise AssertionError("Expected unknown profile rejection")
+
+
+def test_duo_hand_external_bridge_models_the_hand_but_does_not_own_it():
+    """Pairs with a coordination launch that starts its own bridges.
+
+    The hand must stay in the description — it is 1.06 kg at the flange, so
+    dropping it from the gravity model is not a neutral simplification — while
+    the bridge moves out, because two vendor SDK sessions on one hand is what
+    pairing duo_hand with a coordination bring-up would create.
+    """
+    resolved = resolve_execution_profile(
+        "duo_hand_external_bridge",
+        duo_model_path="/tmp/duo_system.urdf.xacro",
+    )
+    owned = resolve_execution_profile(
+        "duo_hand",
+        duo_model_path="/tmp/duo_system.urdf.xacro",
+    )
+
+    assert resolved["launch_omnihand_bridge"] == "false"
+    assert owned["launch_omnihand_bridge"] == "true"
+
+    # Everything else must match duo_hand, or the two slices would plan and
+    # compensate against different robots.
+    assert {k: v for k, v in resolved.items() if k != "launch_omnihand_bridge"} == {
+        k: v for k, v in owned.items() if k != "launch_omnihand_bridge"
+    }

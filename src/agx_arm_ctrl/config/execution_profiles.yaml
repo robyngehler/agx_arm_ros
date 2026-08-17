@@ -89,11 +89,54 @@ profiles:
         can_port: can_nero_right
         launch_driver: true
 
+  # Same as duo_hand, but the arm slice does NOT own the hand bridges: another
+  # launch does. Use this whenever a coordination bring-up
+  # (start_tea_demo.launch.py, start_hefeweizen_demo.launch.py) starts its own
+  # bridges under /<side>_hand — pairing those with duo_hand puts two vendor SDK
+  # sessions on one physical hand, which the one-owner rule forbids.
+  #
+  # The hand stays in the description either way, so gravity keeps the OmniHand's
+  # 1.06 kg at the flange and MoveIt keeps the hand's collision geometry. Only
+  # the bridge and its <side>_omnihand_controller FJT server move out; MoveIt
+  # still lists that controller and will log it as unavailable, which is
+  # harmless here because no hand group is planned through move_group.
+  duo_hand_external_bridge:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: both_arms
+    effector_type: omnihand
+    launch_omnihand_bridge: false
+    custom_model_xacro_args:
+      use_left_arm: true
+      use_left_hand: true
+      use_right_arm: true
+      use_right_hand: true
+    arm_instances:
+      - name: left_arm
+        namespace: left_arm
+        joint_prefix: left_arm_
+        feedback_joint_prefix: left_arm_
+        can_port: can_nero_left
+        launch_driver: true
+        effector_type: omnihand
+        omnihand_type: left
+      - name: right_arm
+        namespace: right_arm
+        joint_prefix: right_arm_
+        feedback_joint_prefix: right_arm_
+        can_port: can_nero_right
+        launch_driver: true
+        effector_type: omnihand
+        omnihand_type: right
+
   # Duo MoveIt slice with both OmniHands. Same per-arm MIT + move_group layout as
   # duo_arm; each instance additionally carries its side's OmniHand (namespaced
   # bridge on the side bus, per-side articulated gravity URDF, per-side
   # <side>_omnihand_controller FJT registration, per-side SRDF hand group
   # left_hand/right_hand incl. the intra-hand collision ACM).
+  #
+  # The arm slice OWNS the hand bridges here. Do not pair it with a coordination
+  # launch that starts its own — use duo_hand_external_bridge for that.
   duo_hand:
     robot_name: duo_nero_system
     use_duo_model: true

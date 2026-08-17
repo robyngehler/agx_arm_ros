@@ -40,9 +40,23 @@ so silence is not a safe state. See `teach_and_run.md` § Emergency stop / runaw
 | Layer | Command |
 |---|---|
 | CAN buses | `sudo bash ./scripts/activate_duo_can.sh` |
-| arms + MoveIt | `start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=duo_hand` |
+| arms + MoveIt | `start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=duo_hand_external_bridge` |
 | hands + coordinator | `start_tea_demo.launch.py` |
 | the activity | `ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1` |
+
+> **Use `duo_hand_external_bridge`, not `duo_hand`.** `start_tea_demo.launch.py`
+> starts both hand bridges itself, under `/left_hand` and `/right_hand`. The
+> `duo_hand` profile sets `launch_omnihand_bridge: true`, and a profile value
+> **overrides** the launch argument — so `launch_omnihand_bridge:=false` cannot
+> turn it off. Pairing the two therefore puts two bridges, and two vendor SDK
+> sessions, on one physical hand.
+>
+> `duo_hand_external_bridge` is identical except that the arm slice does not own
+> the bridges. The hand stays in the description, so gravity keeps its 1.06 kg at
+> the flange and MoveIt keeps its collision geometry — which `duo_arm` would both
+> drop. move_group will log `left_omnihand_controller` / `right_omnihand_controller`
+> as unavailable; that is expected here and harmless, because this activity plans
+> no hand group through move_group.
 
 ### 1. Dry run first (no hardware)
 
@@ -64,8 +78,8 @@ sudo bash ./scripts/activate_duo_can.sh
 # payload_mass_kg arms the teapot gravity model; without it the arm carries the
 # teapot on the unloaded model and the coordinator's attach request is refused.
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
-  mode:=moveit_mit execution_profile:=duo_hand follow:=true \
-  planning_pipelines:=ompl omnihand_backend_type:=sdk use_rviz:=false \
+  mode:=moveit_mit execution_profile:=duo_hand_external_bridge follow:=true \
+  planning_pipelines:=ompl use_rviz:=false \
   payload_mass_kg:=1.0
 
 # Hands + coordinator

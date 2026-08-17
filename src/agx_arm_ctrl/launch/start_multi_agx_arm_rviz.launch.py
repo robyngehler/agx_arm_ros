@@ -282,7 +282,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "execution_profile",
                 default_value="manual",
-                choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm", "duo_hand"],
+                choices=["manual", "standalone", "left_arm", "left_hand", "right_arm", "right_hand", "duo_arm", "duo_hand", "duo_hand_external_bridge"],
                 description="Repo-owned execution preset for shared Duo RViz debug.",
             ),
             DeclareLaunchArgument(
