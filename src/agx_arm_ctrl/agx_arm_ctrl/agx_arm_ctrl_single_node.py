@@ -2055,6 +2055,7 @@ class AgxArmRosNode(Node):
         self.control_ready = False
         self._control_ready_logged = False
         self._sdk.set_epoch(self._authority.device_epoch)
+        self._hold_before_teardown()
         if not self._sdk.quiesce(timeout=self.enable_timeout):
             # A call is still running. Handing the session over anyway would put
             # two owners on it, which is the race this whole structure removes —
@@ -2070,6 +2071,75 @@ class AgxArmRosNode(Node):
             target=self._recovery_thread, name=f"recovery-{self.device_id}", daemon=True
         )
         thread.start()
+
+    def _may_auto_enable_after_recovery(self) -> bool:
+        """True when recovery may return the arm to ordinary enabled operation.
+
+        Recovery restores transport and feedback so the arm can be diagnosed. It
+        may not re-arm one that was stopped: a latched emergency stop or an
+        active unit stop outlives the transport fault, and only an operator
+        clears them.
+        """
+        if not self.auto_enable:
+            return False
+        if self._estop_latched:
+            self.get_logger().warn(
+                "recovery will not auto-enable: an emergency stop is latched"
+            )
+            return False
+        if self._unit_safety.stopped:
+            self.get_logger().warn(
+                "recovery will not auto-enable: the unit is STOPPED"
+            )
+            return False
+        return True
+
+    def _hold_before_teardown(self) -> None:
+        """Put the arm in a firmware MOVE-J hold before recovery takes the session.
+
+        Runs while the worker still dequeues, which is the only window in which
+        the hold can be commanded at all: once recovery owns the session the
+        worker is quiesced.
+
+        A host-side MIT command is not a hold. The damped kp=0 zero below stops
+        a moving MIT command but has no stiffness, so leaving it as the terminal
+        state sags the arm; it is a braking transient before MOVE-J, never the
+        end state. Without trustworthy feedback no hold is claimed — a pose
+        synthesised from stale data would be a wrong hold, not a missing one —
+        and the independent watchdog is the boundary for that regime.
+        """
+        self._restore_feedback_push("pre-recovery hold")
+        if self.is_mit_mode or self._current_motion_mode == 'mit':
+            try:
+                self._submit_damped_stop_mit()
+            except Exception as exc:
+                self.get_logger().error(f"pre-recovery damped MIT stop failed: {exc}")
+
+        hold_pose = self._capture_hold_pose()
+        if hold_pose is None:
+            self.get_logger().error(
+                "pre-recovery firmware hold UNAVAILABLE: no trustworthy joint "
+                "feedback, so no hold was commanded and none is claimed. The "
+                "independent watchdog is the protective boundary here."
+            )
+            return
+        try:
+            left_mit, move_mode, attempts = self._assert_firmware_hold(hold_pose)
+        except Exception as exc:
+            self.get_logger().error(f"pre-recovery firmware hold failed: {exc}")
+            return
+        if left_mit:
+            self.get_logger().warn(
+                f"pre-recovery firmware hold established after {attempts} "
+                "MOVE-J assertion(s); the arm holds its pose through the "
+                "transport teardown"
+            )
+        else:
+            self.get_logger().error(
+                f"pre-recovery firmware hold NOT confirmed (move_mode="
+                f"{move_mode} after {attempts} assertions); the arm may sag "
+                "once the link goes down"
+            )
 
     def _recovery_thread(self) -> None:
         """Run one recovery attempt off the acquisition path."""
@@ -2123,15 +2193,8 @@ class AgxArmRosNode(Node):
         self._last_feedback_advance_monotonic = (
             time.monotonic() - self.feedback_timeout - 1.0
         )
-        # Before tearing the link down, override any moving last MIT command in
-        # the firmware with a damped zero: during recovery nothing streams, and
-        # the firmware otherwise keeps executing the last command it received
-        # (runaway observed live during a teach recording).
-        if self.is_mit_mode or self._current_motion_mode == 'mit':
-            try:
-                self._send_damped_stop_mit()
-            except Exception:
-                pass
+        # The motion stop already happened in _hold_before_teardown, while the
+        # worker could still carry it. From here this is transport repair only.
         try:
             is_ok = self.agx_arm.is_ok()
         except Exception:
@@ -2169,7 +2232,7 @@ class AgxArmRosNode(Node):
                 # the arm is armed because the link came back.
                 rearmed = None
                 try:
-                    if self.auto_enable:
+                    if self._may_auto_enable_after_recovery():
                         rearmed = self._enable_arm(True, self.enable_timeout)
                     self.agx_arm.set_speed_percent(self.speed_percent)
                     self.agx_arm.set_tcp_offset(self.tcp_offset)
@@ -3032,10 +3095,12 @@ class AgxArmRosNode(Node):
     def _sdk_safety(self, name: str, fn, timeout: float = None):
         """One SDK call on the safety lane, ahead of queued control work.
 
-        For the emergency stop only. Recovery must **not** come through here: it
-        has already quiesced the worker and taken the session, so a submission
-        would wait for a handover that does not complete until recovery ends.
-        Recovery calls the SDK directly because at that moment it is the owner.
+        For the emergency stop and the pre-recovery firmware hold — the latter
+        runs before the worker is quiesced, while this path still works.
+        Destructive recovery must **not** come through here: once it has
+        quiesced the worker and taken the session, a submission would wait for a
+        handover that only completes when recovery ends. It calls the SDK
+        directly because at that moment it is the owner.
         """
         return self._sdk.call(
             name, fn,
@@ -3219,11 +3284,22 @@ class AgxArmRosNode(Node):
         """
         stopped = False
         recovery_requested = False
+        # Seeded, because every branch below reports through it. If a stage
+        # raises before the settle check runs, the handler used to fall through
+        # to an unbound name and the whole callback died — an emergency stop
+        # that answered nothing at all.
+        verification = StopVerification(
+            False, False, "no verification was reached"
+        )
         # This device is stopped unilaterally and immediately: a device-level
         # fault on its own epoch, needing no other process. Whatever was issued
         # before this point is stale for this device from here on.
         self._estop_latched = True
         self._authority.enter_faulted("emergency stop requested")
+        # Carry the new generation to the worker at once. The safety lane
+        # overtakes queued work but does not invalidate it, so without this a
+        # MIT cycle queued before the stop still executes after the hold.
+        self._sdk.set_epoch(self._authority.device_epoch)
         # The unit-wide statement that a new safety era began is the writer's to
         # make, and is requested without waiting for it.
         self._request_unit_stop("emergency stop requested")
@@ -3236,10 +3312,10 @@ class AgxArmRosNode(Node):
             # verification reads the same dead link.
             #
             # So: latch, request the unit stop, and say plainly that a new
-            # hardware stop cannot be confirmed right now. The arm is already
-            # covered by the damped zero recovery sends before the teardown and
-            # by the fault lockout after it; that is a mitigation, and the
-            # independent watchdog is the boundary for this regime.
+            # hardware stop cannot be confirmed right now. Recovery attempts the
+            # firmware MOVE-J hold before it takes the session, so the arm is
+            # covered by that attempt when feedback was still trustworthy; where
+            # it was not, the independent watchdog is the boundary.
             response.success = False
             response.message = (
                 f"{self.arm_type} stop=unverifiable — the device is RECOVERING "
@@ -3282,9 +3358,18 @@ class AgxArmRosNode(Node):
                     self.is_mit_mode = True
                     self._current_motion_mode = 'js'
                 else:
-                    self._sdk_safety("move_j", partial(self.agx_arm.move_j, q))
+                    # The same bounded re-assertion the hand window uses, not a
+                    # single MOVE-J. One dropped mode frame leaves the firmware
+                    # in MIT executing the kp=0 damped stop above, which has no
+                    # stiffness — the arm sags instead of holding.
+                    left_mit, move_mode, attempts = self._assert_firmware_hold(q)
                     self.is_mit_mode = False
-                    self._current_motion_mode = 'j'
+                    if not left_mit:
+                        self.get_logger().error(
+                            f"emergency stop: firmware still reports MIT "
+                            f"(move_mode={move_mode}) after {attempts} MOVE-J "
+                            "assertions; the arm is NOT in a firmware hold"
+                        )
                 self.get_logger().info(f"Emergency stop command sent to {self.arm_type}")
             else:
                 # No trustworthy pose to hold: hard stop is the only safe option.
@@ -3504,29 +3589,35 @@ class AgxArmRosNode(Node):
     def _assert_firmware_hold(self, hold_pose) -> tuple:
         """Re-assert a MOVE-J hold until the firmware confirms it left MIT.
 
-        A single MOVE-J mode frame can be dropped on the flooded one-shot shared
-        bus (the push is still on here — it is only silenced once the hold is
-        verified), leaving the firmware in MIT while it executes the preceding
-        kp=0 damped stop, which sags. Re-send the same-pose, motionless MOVE-J
-        until the readback stops reporting a MIT move mode, bounded by
-        ``hand_window_hold_assert_s``.
+        The one hold this driver has. A single MOVE-J mode frame can be dropped
+        on a loaded one-shot bus, leaving the firmware in MIT executing the
+        preceding kp=0 damped stop — which is zero stiffness, so the arm sags.
+        Re-send the same-pose, motionless MOVE-J until the readback stops
+        reporting a MIT move mode, bounded by ``hand_window_hold_assert_s``.
+
+        Runs on the SAFETY lane: the emergency stop and the pre-recovery hold
+        both call it while a control stream may still be queued, and the hold
+        has to get in front of that stream rather than behind it.
 
         Returns ``(left_mit, move_mode, attempts)``: whether the firmware is
         confirmed out of MIT, the last move-mode read, and how many sends it
-        took (useful evidence of how lossy the bus was during the handoff).
+        took.
         """
-        self._sdk_write(
+        self._sdk_safety(
             "set_auto_set_motion_mode_enabled",
             lambda: self.agx_arm.set_auto_set_motion_mode_enabled(True),
         )
         deadline = time.monotonic() + self.hand_window_hold_assert_s
         attempts = 0
         while True:
-            self._sdk_write("move_j", lambda: self.agx_arm.move_j(hold_pose))
+            self._sdk_safety("move_j", lambda: self.agx_arm.move_j(hold_pose))
             self._current_motion_mode = 'j'
             attempts += 1
             time.sleep(self.hand_window_hold_poll_s)
-            move_mode = self._arm_move_mode()
+            status = self._arm_status_msg_safety()
+            move_mode = None if status is None else getattr(
+                status, "mode_feedback", None
+            )
             if not self._move_mode_is_mit(move_mode):
                 return True, move_mode, attempts
             if time.monotonic() >= deadline:
@@ -3541,6 +3632,19 @@ class AgxArmRosNode(Node):
         """Current firmware mode_feedback (MOVE P/J/L/C/MIT/CPV), or None."""
         status = self._arm_status_msg()
         return None if status is None else getattr(status, "mode_feedback", None)
+
+    def _arm_status_msg_safety(self):
+        """Arm status read on the safety lane, for the firmware-hold loop.
+
+        The hold polls this while a control stream may still be queued; on the
+        default lane the read waits behind that stream and the bounded
+        assertion window expires without ever seeing the mode change.
+        """
+        status = self._sdk.call(
+            "get_arm_status", self.agx_arm.get_arm_status,
+            timeout=self.feedback_timeout, lane=Lane.SAFETY,
+        )
+        return None if status is None else status.msg
 
     def _arm_status_msg(self):
         try:

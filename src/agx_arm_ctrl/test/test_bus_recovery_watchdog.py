@@ -182,6 +182,14 @@ def test_requesting_recovery_returns_immediately_and_latches_the_authority():
     # A real worker: recovery has to take the SDK session from it and give it
     # back, which is the property under test, not a detail to stub away.
     node._sdk = _SdkWorker("arm_left")
+    # Recovery now commands a firmware MOVE-J hold before it takes the session:
+    # a host-side MIT command is not a hold, and the arm must not sag through
+    # the teardown. These are what that attempt reads.
+    node.feedback_timeout = 1.0
+    node.is_mit_mode = False
+    node._current_motion_mode = None
+    node._hand_window_push_silenced = False
+    node._capture_hold_pose = lambda: None
     node._unit_safety = UnitSafety("arm_left", writer=False)
     node._authority = DeviceAuthority("arm_left", node._unit_safety)
     node._authority.go_standby("connected")
@@ -228,6 +236,14 @@ def test_a_second_request_does_not_start_a_second_recovery():
     # A real worker: recovery has to take the SDK session from it and give it
     # back, which is the property under test, not a detail to stub away.
     node._sdk = _SdkWorker("arm_left")
+    # Recovery now commands a firmware MOVE-J hold before it takes the session:
+    # a host-side MIT command is not a hold, and the arm must not sag through
+    # the teardown. These are what that attempt reads.
+    node.feedback_timeout = 1.0
+    node.is_mit_mode = False
+    node._current_motion_mode = None
+    node._hand_window_push_silenced = False
+    node._capture_hold_pose = lambda: None
     node._unit_safety = UnitSafety("arm_left", writer=False)
     node._authority = DeviceAuthority("arm_left", node._unit_safety)
 
@@ -309,6 +325,10 @@ def test_recovery_takes_the_sdk_session_and_gives_it_back():
     node._control_ready_logged = True
     node.enable_timeout = 1.0
     node._sdk = _W("arm_left")
+    node.feedback_timeout = 1.0
+    node.is_mit_mode = False
+    node._current_motion_mode = None
+    node._hand_window_push_silenced = False
     node._unit_safety = UnitSafety("arm_left", writer=False)
     node._authority = DeviceAuthority("arm_left", node._unit_safety)
     node._authority.go_standby("connected")
@@ -316,10 +336,20 @@ def test_recovery_takes_the_sdk_session_and_gives_it_back():
 
     released = _threading.Event()
     owned_during_recovery = []
+    order = []
+
+    # The hold has to be commanded while the worker still dequeues; once the
+    # session is handed over, nothing can command the arm at all. A pose that
+    # cannot be trusted yields no hold rather than a synthesised one.
+    node._capture_hold_pose = lambda: (order.append("capture"), [0.0] * 7)[1]
+    node._assert_firmware_hold = lambda q: (
+        order.append("hold"), (True, 0x01, 1)
+    )[1]
 
     def recovery():
         # While recovery owns the session the worker must be quiesced.
         owned_during_recovery.append(node._sdk.quiesced)
+        order.append("teardown")
         released.wait(5.0)
 
     node._recover_bus = recovery
@@ -328,6 +358,9 @@ def test_recovery_takes_the_sdk_session_and_gives_it_back():
         node._request_recovery()
         _time.sleep(0.3)
         assert node._sdk.quiesced is True, "worker still owns the session"
+        assert order[:3] == ["capture", "hold", "teardown"], (
+            f"the arm must be held before the session is taken away, got {order}"
+        )
 
         # Work submitted during the handover does not execute meanwhile.
         ran = []

@@ -7,11 +7,13 @@ latches locally, requests the unit stop, and says plainly that a new hardware
 stop cannot be confirmed in this window.
 """
 
+import pytest
 import threading
 
 from std_srvs.srv import Trigger
 
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
+from agx_arm_ctrl.sdk_worker import SdkWorker
 from agx_arm_ctrl.device_authority import DeviceAuthority, DeviceState, UnitSafety
 
 
@@ -42,6 +44,16 @@ class _CountingArm:
         return record
 
 
+_WORKERS: list[SdkWorker] = []
+
+
+@pytest.fixture(autouse=True)
+def _shut_down_workers():
+    yield
+    while _WORKERS:
+        _WORKERS.pop().shutdown()
+
+
 def _node(recovering=True):
     node = AgxArmRosNode.__new__(AgxArmRosNode)
     node.logger = _Logger()
@@ -59,6 +71,11 @@ def _node(recovering=True):
     node._authority.rearm(verified=True, detail="test")
     node.unit_stop_requests = []
     node._request_unit_stop = node.unit_stop_requests.append
+    # The stop carries its new generation to the worker, so the fixture needs a
+    # real one: the safety lane outranks queued work but does not invalidate it.
+    node._sdk = SdkWorker("arm_test")
+    node.feedback_timeout = 1.0
+    _WORKERS.append(node._sdk)
     return node
 
 
