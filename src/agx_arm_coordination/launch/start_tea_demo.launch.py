@@ -30,8 +30,11 @@ exercise the coordinator with no arms at all.
 
 Examples::
 
-    # laptop / dry validation: mock hands, no arms
-    ros2 launch agx_arm_coordination start_tea_demo.launch.py arm_dry_run:=true
+    # laptop / dry validation: mock hands, no arms. start_unit_safety:=true
+    # because no arm bring-up is running to provide the writer, and the
+    # coordinator refuses every activity until a generation is established.
+    ros2 launch agx_arm_coordination start_tea_demo.launch.py \
+        arm_dry_run:=true start_unit_safety:=true
 
     # on the Jetson, after the arm slice is up
     ros2 launch agx_arm_coordination start_tea_demo.launch.py backend_type:=sdk
@@ -45,6 +48,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -116,6 +120,16 @@ def generate_launch_description():
             description="Coordinator scheduler tick (s). Bounds how quickly a "
                         "Ctrl+C is noticed, so do not raise it far.",
         ),
+        # Off by default because the arm bring-up starts it, and exactly one
+        # writer may run per unit. Turn it on for arm_dry_run, where there is no
+        # arm bring-up and the coordinator would otherwise refuse every activity.
+        DeclareLaunchArgument(
+            "start_unit_safety", default_value="false",
+            choices=["true", "false"],
+            description="Start the unit safety generation writer here. Exactly "
+                        "one must run per unit; the arm bring-up starts it, so "
+                        "set true only for arm_dry_run.",
+        ),
     ]
 
     coordinator = Node(
@@ -131,7 +145,18 @@ def generate_launch_description():
         }],
     )
 
+    # Root namespace: the writer publishes relative `unit_safety` and every
+    # observer subscribes to absolute `/unit_safety`.
+    unit_safety = Node(
+        package="agx_arm_ctrl",
+        executable="unit_safety",
+        name="unit_safety",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("start_unit_safety")),
+    )
+
     nodes = list(args)
+    nodes.append(unit_safety)
     nodes += _hand_side(ACTIVE_SIDE, ctrl_launch_dir, "hand_pub_rate", "hand_joint_read_rate")
     nodes += _hand_side(
         IDLE_SIDE, ctrl_launch_dir, "idle_hand_pub_rate", "idle_hand_joint_read_rate"

@@ -40,9 +40,15 @@ so silence is not a safe state. See `teach_and_run.md` § Emergency stop / runaw
 | Layer | Command |
 |---|---|
 | CAN buses | `sudo bash ./scripts/activate_duo_can.sh` |
-| arms + MoveIt | `start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=duo_hand_external_bridge` |
+| arms + MoveIt + unit safety | `start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=duo_hand_external_bridge` |
 | hands + coordinator | `start_tea_demo.launch.py` |
 | the activity | `ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1` |
+
+> **The unit safety writer must be running.** `agx_arm_ctrl unit_safety` allocates the unit's safety
+> generation, and the coordinator is fail-closed: with no generation established it rejects every
+> activity (`unit safety state is not established (none has ever arrived)`). The arm bring-up starts
+> it (`start_unit_safety`, default true). Exactly one per unit — the coordination launch defaults its
+> own copy to **off** so the two cannot both write.
 
 > **Use `duo_hand_external_bridge`, not `duo_hand`.** `start_tea_demo.launch.py`
 > starts both hand bridges itself, under `/left_hand` and `/right_hand`. The
@@ -61,13 +67,22 @@ so silence is not a safe state. See `teach_and_run.md` § Emergency stop / runaw
 ### 1. Dry run first (no hardware)
 
 ```bash
-ros2 launch agx_arm_coordination start_tea_demo.launch.py arm_dry_run:=true
+ros2 launch agx_arm_coordination start_tea_demo.launch.py \
+  arm_dry_run:=true start_unit_safety:=true
 ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
 ```
 
 Mock hands, no arm goals sent. Confirms the graph validates, every action resolves, and the
 scheduler serializes the chain. It does **not** exercise planning, so it cannot tell you whether the
 anchors are reachable.
+
+`start_unit_safety:=true` because the live bring-up gets the unit safety writer from the arm launch,
+and there is no arm launch here. Without a writer the coordinator refuses every activity with
+`unit safety state is not established`. Exactly one writer per unit, so do **not** pass it when the
+arm slice is up.
+
+The payload transitions are skipped in a dry run (`dry_run: skipped payload attach ...`): the payload
+service lives on the MIT controller, which is an arm surface.
 
 ### 2. Live bring-up
 

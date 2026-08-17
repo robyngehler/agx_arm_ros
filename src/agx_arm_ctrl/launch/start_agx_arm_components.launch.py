@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, Opaq
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 import os
 from pathlib import Path
@@ -143,6 +144,20 @@ def generate_launch_description():
         default_value="left",
         choices=["left", "right"],
         description="OmniHand type.",
+    )
+    # The unit's one safety-generation writer. Nothing may command until it has
+    # spoken: the coordinator is fail-closed on an unestablished generation.
+    # Exactly one per unit — turn this off only when another launch starts it.
+    start_unit_safety_arg = DeclareLaunchArgument(
+        "start_unit_safety",
+        default_value="true",
+        choices=["true", "false"],
+        description=(
+            "Start the unit safety generation writer (agx_arm_ctrl unit_safety). "
+            "Exactly one must run per unit; the coordinator refuses new activities "
+            "while no generation is established. Set false only if another launch "
+            "already starts it."
+        ),
     )
     launch_omnihand_bridge_arg = DeclareLaunchArgument(
         "launch_omnihand_bridge",
@@ -553,6 +568,18 @@ def generate_launch_description():
         condition=IfCondition(mode_is_moveit),
     )
 
+    # No namespace: the writer publishes the relative topic `unit_safety` and
+    # every observer subscribes to absolute `/unit_safety`, so it has to sit at
+    # the root to be heard at all.
+    unit_safety_node = Node(
+        package="agx_arm_ctrl",
+        executable="unit_safety",
+        name="unit_safety",
+        output="screen",
+        ros_arguments=["--log-level", LaunchConfiguration("log_level")],
+        condition=IfCondition(LaunchConfiguration("start_unit_safety")),
+    )
+
     return LaunchDescription([
         log_level_arg,
         namespace_arg,
@@ -568,6 +595,7 @@ def generate_launch_description():
         effector_type_arg,
         revo2_type_arg,
         omnihand_type_arg,
+        start_unit_safety_arg,
         launch_omnihand_bridge_arg,
         hand_bus_arg,
         omnihand_backend_type_arg,
@@ -604,6 +632,7 @@ def generate_launch_description():
         planning_pipelines_arg,
         simple_obstacles_config_arg,
         OpaqueFunction(function=_validate_mode_contract),
+        unit_safety_node,
         manual_vendor_launch,
         debug_soft_target_launch,
         debug_soft_target_multi_arm_launch,

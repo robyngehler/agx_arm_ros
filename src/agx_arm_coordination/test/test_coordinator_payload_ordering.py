@@ -92,6 +92,7 @@ def _coord(payload_results=None):
     node._stop_reason = ""
     node._stop_lock = threading.Lock()
     node.event_pub = None
+    node.arm_dry_run = False
 
     node.trace: list[tuple[str, object]] = []
     node._payload_results = dict(payload_results or {})

@@ -66,6 +66,7 @@ def _coord(setbool_result=(True, "ok"), actions=None):
         return setbool_result
 
     node._call_setbool_sync = _fake_setbool
+    node.arm_dry_run = False
     return node
 
 
@@ -139,6 +140,17 @@ def test_an_action_naming_no_single_arm_is_refused_rather_than_resolved():
     ok, msg = node._apply_payload_update(_child("both_arms_lift", side=""))
     assert not ok
     assert "no single arm side" in msg
+    assert node.payload_calls == []
+
+
+def test_a_dry_run_skips_the_transition_instead_of_failing_on_it():
+    """arm_dry_run sends no arm goals, and the payload service is an arm surface."""
+    node = _coord()
+    node.arm_dry_run = True
+
+    ok, _ = node._apply_payload_update(_child("left_hand_grip_handle"))
+
+    assert ok
     assert node.payload_calls == []
 
 

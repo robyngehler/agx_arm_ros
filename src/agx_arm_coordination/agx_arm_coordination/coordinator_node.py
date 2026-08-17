@@ -634,6 +634,13 @@ class CoordinatorNode(Node):
         transition = action.payload_update
         if not transition:
             return True, ""
+        if self.arm_dry_run:
+            # The payload service lives on the MIT controller, so it is an arm
+            # surface: a run that sends no arm goals has no controller to ask.
+            self.get_logger().info(
+                f"dry_run: skipped payload {transition} for {child.action_id}"
+            )
+            return True, ""
 
         # The action's own robot_id backs the dispatch-time side, so an arm
         # action can declare a transition too; `both_arms` names no single arm
