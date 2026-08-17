@@ -1,0 +1,72 @@
+# L3: hand command authority on hardware (2026-08-17)
+
+Evidence for the Phase 4D command stamp, taken on the right hand against the
+vendor SDK backend on `hand_right`, plus the four-bus census that accompanied
+it. Level L3. Script: `scripts/l3_hand_command_authority.py`.
+
+## What this settles
+
+Before the stamp, the bridge built a command's identity from its own current
+epoch and its own counter, then checked that identity against the state it came
+from. The stale-epoch and out-of-order checks compared each value with itself
+and passed unconditionally — the code ran and could refuse nothing. That was
+demonstrable at L1 only; this is the same claim on a real device.
+
+**The run does not move the hand.** Every command carries the hand's own
+measured pose as its target, so admission is exercised end to end while the
+commanded position is the one the hand is already in.
+
+| Claim | Result | Evidence |
+| --- | --- | --- |
+| A correctly stamped command is admitted | PASS | no refusal for owner + current epochs + fresh sequence |
+| A foreign owner is refused | PASS | `not_owner: 'reactive:someone_else' is not the commander` |
+| An out-of-order sequence is refused | PASS | `stale_sequence: sequence 1 <= 1` |
+| An unknown unit-safety generation is refused | PASS | `unknown_unit_epoch: unit epoch 5 != 0` |
+| A stale device epoch is refused after a handover | PASS | epoch 2 -> 4, `stale_device_epoch: device epoch 2 != 4` |
+| The current epoch is still admitted afterwards | PASS | no refusal — the gate is selective, not shut |
+
+Each refusal carried its own structured reason, which is what distinguishes this
+from a gate that simply rejects everything.
+
+## Four-bus census taken in the same session
+
+Both hand bridges up on the SDK backend, arms not running:
+
+| Interface | Frames/s | RX errors | RX dropped | RX missed |
+| --- | --- | --- | --- | --- |
+| `hand_right` | 50 | 0 | 0 | 0 |
+| `hand_left` | 48 | 0 | 0 | 0 |
+| `can_nero_right` | 0 | 0 | 0 | 0 |
+| `can_nero_left` | 0 | 0 | 0 | 0 |
+
+Hand-bridge CPU, steady state, both hands: **30.2 % of one core for the pair**
+(15.3 % / 14.8 %), consistent with the 25.3 % recorded after the vendor spin-loop
+patch and against 319 % before it. Exactly one `sdk-<device>` worker thread per
+bridge, which is how the single-owner invariant is read.
+
+## Findings
+
+- **`hand_left` answers again.** The Phase 0E item "capture both sides
+  arm-and-hand in parallel" was blocked on a `hand_left` cable fault. On this
+  date the interface is up, the device answers, and its bus carries 48 frames/s
+  with zero errors and zero drops. The blocker is not reproducible; the
+  remaining half of that capture needs arm motion, not a cable.
+- **The owner-liveness revocation works, and it bites test harnesses.** The
+  first version of this script declared itself `reactive:l3_authority` while its
+  node was named `l3_hand_command_authority`. The bridge revoked the claim
+  mid-run, and the next command was refused as "no commander" — correct
+  behaviour, but it masked the check under test. An owner id's node half has to
+  be the real node name.
+- **Refusal logging is throttled by identical detail string** (5 s). Counting
+  refusals in a test therefore needs distinct reasons, or it will under-count.
+- The acquisition thread is named at the Python level but not at the OS level,
+  so it does not appear in `/proc/<pid>/task/*/comm` alongside `sdk-<device>`.
+  Observability gap only; per-thread SDK attribution still works because the
+  worker is the thread that matters. Not fixed here.
+
+## Not covered by this run
+
+Concurrent arm-and-hand motion per side and across sides, stop/rearm during
+active motion, and the reactive-versus-trajectory handover on a physical grasp
+all require arm motion or an object placed in the hand. They remain open in the
+Phase 2B/2C acceptance list.

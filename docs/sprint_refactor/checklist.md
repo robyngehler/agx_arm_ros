@@ -104,8 +104,11 @@ injection.
 - [x] Capture dual-arm hold, one MIT arm, one hand action.
 - [x] Capture same-side arm-and-hand in parallel: both completed, no drops,
       arm buses unaffected — the case C1 exists to allow.
-- [ ] Capture both sides arm-and-hand in parallel (blocked: `hand_left`
-      cable fault makes its half meaningless until replaced).
+- [~] Capture both sides arm-and-hand in parallel. The `hand_left` cable fault
+      that blocked this is **no longer reproducible** (2026-08-17): both hand
+      bridges run on the SDK backend, `hand_left` answers and carries 48 frames/s
+      with zero errors and zero drops (`reference/l3_command_authority.md`). What
+      remains is the arm half — this needs concurrent arm motion, not a cable.
 - [x] Capture bus-fault and recovery: detection took ~2 s after a 1.6 s
       starvation misdiagnosis, the loop stalled 10 s in one gap, and the
       "recovery succeeded" claim was the bus returning on its own.
