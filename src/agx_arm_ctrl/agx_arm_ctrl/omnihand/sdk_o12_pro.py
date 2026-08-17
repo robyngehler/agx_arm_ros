@@ -2,8 +2,9 @@
 
 Drives the real Pro hand via the vendor ``AgibotHandO12`` class from the built
 ``agibot_hand`` package (``vendor/OmniHand-Pro-2025/build/agibot_hand_pkg``). The
-CAN interface is selected via the ``OMNIHAND_SOCKETCAN_IFACE`` env var (our
-SocketCAN fork patch), exactly like the O10 backend.
+CAN interface is passed to the backend and held in ``OMNIHAND_SOCKETCAN_IFACE``
+(our SocketCAN fork patch) only for the SDK construction that reads it — see
+``agx_arm_ctrl.omnihand.socketcan_iface``.
 
 Differences from the O10 backend that matter:
 - 12 active joints (model registry ``o12_pro``); no 12->10 trimming.
@@ -29,6 +30,7 @@ from typing import Any
 from trajectory_msgs.msg import JointTrajectory
 
 from agx_arm_ctrl.omnihand.models import HandModel
+from agx_arm_ctrl.omnihand.socketcan_iface import socketcan_interface
 # Snapshot dataclasses live in the bridge module; importing them here is safe
 # because this module is only imported lazily, after omnihand_bridge_node has
 # finished loading (see OmniHandBridgeNode.__init__).
@@ -152,13 +154,6 @@ class O12ProSdkBackend:
         self.tactile_read_interval_s = SDK_TACTILE_READ_INTERVAL_S
         self._extra_fault_text = ""
 
-        # The vendor SocketCAN backend reads the interface ONLY from this env var.
-        # Export the repo-owned side-bus name explicitly so the hand opens on the
-        # public runtime interface (for example can_nero_right) instead of a legacy
-        # kernel-facing alias such as can0.
-        if can_interface:
-            os.environ["OMNIHAND_SOCKETCAN_IFACE"] = can_interface
-
         sdk_class, finger_enum, hand_type_enum, _control_mode_enum = _load_o12_pro_symbols(
             sdk_python_dir
         )
@@ -168,17 +163,21 @@ class O12ProSdkBackend:
             for layout_name, enum_name in model.tactile_fingers
         ]
 
-        # AgibotHandO12 opens the CAN session in its constructor.
+        # AgibotHandO12 opens the CAN session in its constructor, and the vendor
+        # SocketCAN backend picks its interface from the environment at that
+        # moment. Scoped to this call so the interface stays an argument to this
+        # backend rather than becoming state of the whole process.
         #
         # Wrapped so every vendor call is counted and timed by name, from the
         # thread that made it. Wrapping the session rather than each call site is
         # what makes the coverage complete: the call nobody thought to measure is
         # the one that turns out to dominate. ~150 % of a core per hand lives
         # behind this object and has never been decomposed.
-        self.hand = MeasuredSdk(
-            sdk_class(device_id=device_id, hand_type=hand_type),
-            self._metrics,
-        )
+        with socketcan_interface(can_interface):
+            self.hand = MeasuredSdk(
+                sdk_class(device_id=device_id, hand_type=hand_type),
+                self._metrics,
+            )
         if hasattr(self.hand, "show_data_details"):
             self.hand.show_data_details(False)
 

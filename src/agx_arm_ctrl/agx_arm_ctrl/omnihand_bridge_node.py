@@ -41,6 +41,7 @@ from agx_arm_ctrl.motion_registry import bus_topology, hand_sides
 from agx_arm_ctrl.runtime_metrics import MeasuredSdk, RuntimeMetrics, name_os_thread
 from agx_arm_ctrl.sdk_worker import CallOutcome, Lane, SdkWorker
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, HandModel, get_hand_model
+from agx_arm_ctrl.omnihand.socketcan_iface import socketcan_interface
 
 
 def resolve_can_interface(hand_side: str) -> tuple[str, str]:
@@ -581,12 +582,6 @@ class SdkOmniHandBackend:
         self.cfg_path = cfg_path
         self.sdk_python_dir = sdk_python_dir
         self.can_interface = can_interface
-        # The vendor SocketCAN backend reads the interface ONLY from this env var.
-        # Export the repo-owned side-bus name explicitly so the hand opens on the
-        # public runtime interface (for example can_nero_right) instead of a legacy
-        # kernel-facing alias such as can0.
-        if can_interface:
-            os.environ["OMNIHAND_SOCKETCAN_IFACE"] = can_interface
         self.backend_name = "vendor_sdk"
         self.control_mode = "active_joint_control"
         self.connected = False
@@ -620,18 +615,23 @@ class SdkOmniHandBackend:
             (layout_name, getattr(finger_enum, enum_name))
             for layout_name, enum_name in TACTILE_FINGERS
         ]
+        # The vendor SocketCAN backend picks its interface from the environment
+        # while the session is opened. Scoped to that call so the interface stays
+        # an argument to this backend rather than state of the whole process.
+        #
         # Wrapping the session rather than each call site is what makes the
         # coverage complete: a call nobody thought to measure is still measured,
         # and that is exactly the one that turns out to dominate. ~150 % of a
         # core per hand lives behind this object and has never been decomposed.
-        self.hand = MeasuredSdk(
-            _create_sdk_hand(
-                sdk_class,
-                device_id=device_id,
-                hand_type=hand_type,
-            ),
-            self._metrics,
-        )
+        with socketcan_interface(can_interface):
+            self.hand = MeasuredSdk(
+                _create_sdk_hand(
+                    sdk_class,
+                    device_id=device_id,
+                    hand_type=hand_type,
+                ),
+                self._metrics,
+            )
         if hasattr(self.hand, "show_data_details"):
             self.hand.show_data_details(False)
 
