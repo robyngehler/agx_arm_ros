@@ -97,6 +97,9 @@ def _coord():
     # path, so it satisfies that precondition rather than opting out.
     node._unit_activity.observe_unit_safety(epoch=1, stopped=False, reason='test')
     node._shutdown_event = threading.Event()
+    # A stop wakes the activity loop rather than letting it wait out a watchdog
+    # tick, so the bare node needs the same event the real one has.
+    node._progress = threading.Event()
     node._open_hand_windows = set()
     return node
 

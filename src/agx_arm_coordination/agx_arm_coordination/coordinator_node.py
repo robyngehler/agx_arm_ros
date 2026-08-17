@@ -95,9 +95,32 @@ class _Child:
         self._goal_future = None
         self._result_future = None
         self._goal_handle = None
+        # Set by the activity loop so a completing goal wakes it immediately,
+        # rather than being noticed on the next fixed-rate sweep.
+        self._notify = None
+
+    def set_notify(self, notify) -> None:
+        self._notify = notify
+        self._arm_notify(self._goal_future)
+        self._arm_notify(self._result_future)
+
+    def _arm_notify(self, future) -> None:
+        """Wake the activity loop when this future resolves.
+
+        Best-effort on purpose: a torn-down context can refuse the callback, and
+        the loop's watchdog tick still finds the completion. Losing a wakeup
+        costs latency; raising here would cost the activity.
+        """
+        if self._notify is None or future is None:
+            return
+        try:
+            future.add_done_callback(lambda _f: self._notify())
+        except Exception:
+            pass
 
     def attach_goal_future(self, future) -> None:
         self._goal_future = future
+        self._arm_notify(future)
 
     def mark(self, success: bool, message: str) -> None:
         self.done = True
@@ -115,6 +138,7 @@ class _Child:
                 self.mark(False, "goal rejected by executor")
                 return
             self._result_future = self._goal_handle.get_result_async()
+            self._arm_notify(self._result_future)
             return
         if self._result_future is not None and self._result_future.done():
             wrapper = self._result_future.result()
@@ -228,6 +252,14 @@ class CoordinatorNode(Node):
         self.declare_parameter("handoff_timeout_sec", 5.0)
         self.declare_parameter("arm_dry_run", False)
         self.declare_parameter("poll_period_sec", 0.05)
+        # The activity loop is woken by whatever it is waiting for — a child
+        # goal resolving, a cancel, a stop — so this is only a watchdog tick,
+        # not the rate at which completion is noticed. It exists so a lost
+        # wakeup costs latency instead of the activity.
+        self.declare_parameter("watchdog_period_sec", 0.5)
+        # How long cancellation waits for children to actually report done
+        # before it reports which ones did not.
+        self.declare_parameter("cleanup_timeout_sec", 3.0)
         self.declare_parameter("goal_accept_timeout_sec", 5.0)
         # MoveGroup planning knobs for anchor->anchor moves.
         self.declare_parameter("joint_goal_tolerance_rad", 0.01)
@@ -260,6 +292,14 @@ class CoordinatorNode(Node):
         self.handoff_timeout = float(self.get_parameter("handoff_timeout_sec").value)
         self.arm_dry_run = bool(self.get_parameter("arm_dry_run").value)
         self.poll_period = float(self.get_parameter("poll_period_sec").value)
+        self.watchdog_period = max(
+            0.01, float(self.get_parameter("watchdog_period_sec").value)
+        )
+        self.cleanup_timeout = max(
+            0.0, float(self.get_parameter("cleanup_timeout_sec").value)
+        )
+        # Set by anything the activity loop would otherwise have to poll for.
+        self._progress = threading.Event()
         self.goal_accept_timeout = float(self.get_parameter("goal_accept_timeout_sec").value)
         self.joint_goal_tolerance = float(self.get_parameter("joint_goal_tolerance_rad").value)
         self.num_planning_attempts = int(self.get_parameter("num_planning_attempts").value)
@@ -362,7 +402,7 @@ class CoordinatorNode(Node):
             "execute_activity",
             execute_callback=self._execute,
             goal_callback=self._on_goal,
-            cancel_callback=lambda _gh: CancelResponse.ACCEPT,
+            cancel_callback=self._on_cancel,
             callback_group=self._cb_group,
         )
 
@@ -408,6 +448,16 @@ class CoordinatorNode(Node):
         with self._stop_lock:
             return self._stop_requested
 
+    def _on_cancel(self, _goal_handle) -> CancelResponse:
+        """Accept the cancel and wake the activity loop to act on it now.
+
+        Without the wake, cancellation would wait out the loop's watchdog tick.
+        Making that tick low-rate is only safe because every reason to look —
+        a child finishing, a cancel, a stop — sets the same event.
+        """
+        self._progress.set()
+        return CancelResponse.ACCEPT
+
     def request_stop(self, reason: str) -> None:
         """Ask a running activity to unwind and stop the hardware.
 
@@ -423,6 +473,8 @@ class CoordinatorNode(Node):
         # Refuses further activities and tells us whether one still has to
         # unwind before main() may release.
         running = self._unit_activity.begin_stop(reason)
+        # Same reason as _on_cancel: the unwind must not wait for a tick.
+        self._progress.set()
         self.get_logger().warn(
             f"stop requested ({reason}); "
             + ("unwinding the running activity" if running else "no activity running")
@@ -883,6 +935,15 @@ class CoordinatorNode(Node):
         try:
             return self._execute_activity(goal_handle)
         finally:
+            # Authority is released the same way on every exit — success,
+            # failure, cancellation, and an exception nobody predicted. Any hand
+            # window still open is reopened here, because leaving one open keeps
+            # the arm's MIT gate shut and the next activity would find an arm
+            # that silently refuses to move.
+            try:
+                self._resume_all_hand_windows()
+            except Exception as exc:
+                self.get_logger().error(f"reopening hand windows failed: {exc}")
             self._unit_activity.release(activity_id)
             if self.stop_requested:
                 self._shutdown_event.set()
@@ -912,6 +973,12 @@ class CoordinatorNode(Node):
         self._open_hand_windows.clear()
 
         while rclpy.ok() and not scheduler.is_complete(completed):
+            # Cleared before the work, never after: a notification arriving
+            # while this pass runs then leaves the event set, and the wait at
+            # the bottom returns at once instead of sleeping through news that
+            # already happened.
+            self._progress.clear()
+
             if goal_handle.is_cancel_requested or self.stop_requested:
                 reason = self._stop_reason if self.stop_requested else "canceled"
                 self._stop_running(running, reason)
@@ -932,6 +999,7 @@ class CoordinatorNode(Node):
                     goal_handle, result, running, activity_id, "", len(completed), str(exc),
                 )
             for child in units:
+                child.set_notify(self._progress.set)
                 for covered_no in child.action_nos:
                     running[covered_no] = child
                 self.get_logger().info(f"-> dispatch {child.action_id} ({child.action_nos})")
@@ -978,7 +1046,9 @@ class CoordinatorNode(Node):
                     len(completed), "scheduler deadlock: no runnable or running nodes",
                 )
 
-            time.sleep(self.poll_period)
+            # Woken by a child result, a cancel, or a stop; the timeout is the
+            # watchdog that keeps a missed wakeup from stalling the activity.
+            self._progress.wait(self.watchdog_period)
 
         if not scheduler.is_complete(completed):
             # rclpy went down (context shutdown) while nodes were still pending.
@@ -1034,8 +1104,51 @@ class CoordinatorNode(Node):
         return result
 
     def _cancel_children(self, running: dict[int, _Child]) -> None:
+        """Cancel every child and wait, bounded, for it to actually stop.
+
+        Firing the cancels and clearing the dict reported cleanup as finished
+        the instant it was requested. The children were still executing on
+        hardware, so "activity aborted" could be published while an arm was
+        mid-trajectory, and nothing recorded that the two disagreed.
+
+        The wait is bounded because a child that never answers must not hold the
+        unit forever — but which children those were is a structured result, not
+        a silence.
+        """
+        children = []
+        seen: set[int] = set()
         for child in running.values():
+            if id(child) in seen:
+                continue
+            seen.add(id(child))
+            children.append(child)
             child.request_cancel()
+
+        deadline = time.monotonic() + self.cleanup_timeout
+        while children and time.monotonic() < deadline:
+            pending = []
+            for child in children:
+                child.poll()
+                if not child.done:
+                    pending.append(child)
+            if not pending:
+                children = []
+                break
+            children = pending
+            self._progress.wait(0.05)
+            self._progress.clear()
+
+        if children:
+            unstopped = ", ".join(sorted(c.action_id for c in children))
+            self.get_logger().error(
+                f"cleanup deadline: {len(children)} child(ren) did not confirm "
+                f"cancellation within {self.cleanup_timeout:.1f}s [{unstopped}]. "
+                "The activity is released, but the hardware may still be moving."
+            )
+            self._event(
+                "failed", state="cleanup_timeout",
+                message=f"children did not stop: {unstopped}",
+            )
         running.clear()
 
     def _publish_feedback(self, goal_handle, action_no, action_id, state,

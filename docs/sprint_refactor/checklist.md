@@ -768,15 +768,28 @@ CPU.
 
 The exclusivity guard landed in 1C; this is the conversion itself.
 
-- [ ] Replace polling and `time.sleep` with event-driven completion handling and
-      a low-rate deadline watchdog.
+- [x] Replace polling and `time.sleep` with event-driven completion handling and
+      a low-rate deadline watchdog. Landed 2026-08-17: a child goal resolving, a
+      cancel, and a stop all set one event the activity loop waits on, so the
+      loop reacts immediately instead of on the next 50 ms sweep. The remaining
+      timeout (`watchdog_period_sec`, 0.5 s) is only a missed-wakeup guard.
 - [ ] Make SIGINT with no activity in flight exit rather than spin (0B finding).
 - [ ] Extend the 1C guard to the full unit activity state machine, with cleanup
       as part of completion.
 - [ ] Migrate the Ctrl+C stop ladder and replay planning onto the event model
       without weakening them.
 - [ ] Make `sync_flag` merge strict: merge-or-fail, never independent fallback.
-- [ ] Add cleanup deadlines and structured failure reasons for child shutdown.
+- [x] Add cleanup deadlines and structured failure reasons for child shutdown.
+      Landed 2026-08-17: cancellation waits, bounded by `cleanup_timeout_sec`,
+      for each child to confirm it stopped, and names the ones that did not in a
+      `cleanup_timeout` event. It used to fire the cancels and clear its
+      bookkeeping in the same breath, so an activity could report "aborted"
+      while an arm was still executing.
+- [x] Release authority the same way on every exit path — success, failure,
+      cancellation, and an unexpected exception. Hand windows are reopened in a
+      `finally` alongside the unit-activity release; a window left open keeps the
+      arm's MIT gate shut, so the *next* activity would find an arm that
+      silently refuses to move.
 - [ ] Validate concurrent-goal rejection, cancellation, cleanup, and the
       parallel interleavings from 2C.
 
