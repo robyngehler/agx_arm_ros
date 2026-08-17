@@ -64,9 +64,34 @@ bridge, which is how the single-owner invariant is read.
   Observability gap only; per-thread SDK attribution still works because the
   worker is the thread that matters. Not fixed here.
 
+## The arms did not answer (2026-08-17)
+
+Arm motion was authorised for this session, limited to joints 1, 3 and 5 from
+the current pose. It could not be attempted: **neither arm answers on CAN.**
+
+| Interface | RX pkts since boot | TX pkts | Bus state |
+| --- | --- | --- | --- |
+| `can_nero_right` | 0 | 0 | ERROR-ACTIVE |
+| `can_nero_left` | 0 | 0 | ERROR-ACTIVE |
+| `hand_right` | 6421 | 6421 | ERROR-ACTIVE |
+| `hand_left` | 1588 | 1588 | ERROR-ACTIVE |
+
+Both drivers ran the full startup ladder, including the known wake-up path — the
+firmware push only starts after an incoming command, so the driver sends
+`set_normal_mode` once and retries. Both then reported:
+
+> Failed to get firmware version, also after re-asserting the feedback push. The
+> arm is not answering on CAN: check power, E-stop and wiring for this side.
+
+Nothing was received from either arm since the interfaces came up, while both
+hands ran on the same host in the same session — so the CAN stack, the adapters
+and the ROS graph are all healthy. This is arm availability (power, E-stop or
+wiring), not a software fault, and the driver's diagnosis was correct and
+specific.
+
 ## Not covered by this run
 
-Concurrent arm-and-hand motion per side and across sides, stop/rearm during
-active motion, and the reactive-versus-trajectory handover on a physical grasp
-all require arm motion or an object placed in the hand. They remain open in the
-Phase 2B/2C acceptance list.
+Concurrent arm-and-hand motion per side and across sides, and stop/rearm during
+active motion, need arms that answer. The reactive-versus-trajectory handover on
+a physical grasp additionally needs an object placed in the hand. All remain
+open in the Phase 2B/2C acceptance list.
