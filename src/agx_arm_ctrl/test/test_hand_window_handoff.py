@@ -216,6 +216,10 @@ def _node(arm: _FakeArm) -> AgxArmRosNode:
     node._last_feedback_frame_ts = None
     node._last_feedback_advance_monotonic = time.monotonic()
     node._check_arm_connected = lambda: True
+    # Feedback health and a transport session are separate facts now: this arm
+    # has both. The push writes are gated on the transport alone, because that
+    # is what they need — they are what makes feedback exist.
+    node._transport_connected = True
     node.feedback_timeout = 0.1
     node.hand_window_silence_feedback = True
     node.hand_window_max_silence_s = 10.0

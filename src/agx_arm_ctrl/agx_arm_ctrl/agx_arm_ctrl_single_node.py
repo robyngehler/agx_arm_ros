@@ -448,7 +448,20 @@ class AgxArmRosNode(Node):
         # stream is off, so the watchdog must not read that silence as a stall.
         self._hand_window_push_silenced = False
         self._hand_window_silence_started = 0.0
+        # Three facts that used to be one. A transport exists and can carry a
+        # command (transport_connected); feedback is advancing (control_ready,
+        # is_ok); the joints answered the last enable request (enable_flag).
+        # Deriving the first from the second is what deadlocked a silent arm:
+        # the command that restores feedback was refused for want of the
+        # feedback it exists to restore. Only this flag may gate a bootstrap
+        # command; motion still needs all three plus authority admission.
+        self._transport_connected = False
         self.enable_flag = False
+        # Set only by a readback, never by a command returning. "The enable was
+        # sent" and "the joints are enabled" are different claims and a startup
+        # on a mute arm can be in the first state without ever reaching the
+        # second.
+        self._enable_verified = False
         self.control_ready = False
         self._control_ready_logged = False
         self.arm_joint_names = list()
@@ -548,8 +561,102 @@ class AgxArmRosNode(Node):
                 return
             time.sleep(0.005)
 
+    def _connect_transport(self) -> bool:
+        """Open the SDK session and record that one exists.
+
+        Separate from any statement about feedback. ``connect()`` raising is the
+        only thing that means "no transport"; an arm that never answers still
+        has one, and that distinction is what lets a bootstrap command be sent
+        to an arm which by every feedback-derived measure looks absent.
+        """
+        try:
+            self.agx_arm.connect()
+        except Exception as exc:
+            self._transport_connected = False
+            self.get_logger().error(f"CAN transport connect failed: {exc}")
+            return False
+        self._transport_connected = True
+        return True
+
+    def _disconnect_transport(self) -> None:
+        """Close the SDK session and record that none exists."""
+        self._transport_connected = False
+        try:
+            self.agx_arm.disconnect()
+        except Exception as exc:
+            self.get_logger().warn(f"CAN transport disconnect failed: {exc}")
+
+    def _transport_available(self) -> bool:
+        """True when a bounded transport-level command may be attempted.
+
+        Deliberately NOT ``is_ok()``. That reports the health of the feedback
+        the firmware pushes, which is a consequence of the arm being awake — so
+        using it as a precondition for the command that wakes the arm is the
+        deadlock, not a safety property.
+        """
+        return self.agx_arm is not None and self._transport_connected
+
+    def _ensure_feedback_push_enabled(
+        self, reason: str, *, force: bool = False, direct: bool = False
+    ) -> bool:
+        """Ask the firmware to push feedback, whether or not it is pushing now.
+
+        This is a transport/reporting operation: it turns the Nero->host stream
+        on and commands no motion, so it needs a session and nothing else. In
+        particular it must never be gated on ``enable_flag``, ``control_ready``,
+        ``is_ok()`` or a fresh snapshot — those all describe feedback that this
+        call exists to produce.
+
+        Restoring observability is not the same act as permitting motion. A
+        stopped unit may run this and stay stopped.
+
+        ``force`` sends the frame even when the node believes the push is
+        already on. The local ``_hand_window_push_silenced`` flag only records
+        *this node's* silencing; an arm that booted mute out of a persisted
+        leader/follower configuration has a push that is off while the flag says
+        otherwise, so a bootstrap always passes ``force=True``.
+
+        ``direct`` bypasses the worker for the two callers that own the SDK
+        session outright — bus recovery, which has quiesced the worker, and
+        process shutdown. Everything else goes through the worker, because
+        ``set_can_push`` sends a real mode frame.
+        """
+        if not force and not self._hand_window_push_silenced:
+            return True
+        if not self._transport_available():
+            self.get_logger().warn(
+                f"cannot enable the feedback push ({reason}): no CAN transport"
+            )
+            return False
+        if not nero_can_push.supports_can_push(self.agx_arm):
+            self.get_logger().warn(
+                f"cannot enable the feedback push ({reason}): "
+                f"{nero_can_push.UNSUPPORTED_MESSAGE}"
+            )
+            return False
+        try:
+            if direct:
+                nero_can_push.set_can_push(self.agx_arm, True)
+            else:
+                self._sdk_write(
+                    "enable_can_push",
+                    lambda: nero_can_push.set_can_push(self.agx_arm, True),
+                )
+        except Exception as exc:
+            self.get_logger().error(
+                f"feedback push ENABLE failed ({reason}): {exc}"
+            )
+            return False
+        # Feedback is expected to restart from here, so neither the silence
+        # before this frame nor the gap until the first frame after it may be
+        # charged to the bus-recovery watchdog as a stall.
+        now = time.monotonic()
+        self._last_good_feedback_monotonic = now
+        self._last_feedback_advance_monotonic = now
+        return True
+
     def _recover_silent_arm(self) -> None:
-        """Re-enable the firmware feedback push on an arm that answers nothing.
+        """Escalate from a push-only bootstrap to a full mode re-assert.
 
         The arm persists its linkage configuration across power cycles, and both
         ``set_leader_mode`` and ``set_follower_mode`` leave ``enable_can_push``
@@ -559,18 +666,23 @@ class AgxArmRosNode(Node):
         ``set_normal_mode`` service down with it, so nothing could bring the arm
         back through ROS (observed on hardware 2026-07-24, left arm).
 
-        ``set_normal_mode`` re-asserts the normal linkage AND the push, which is
-        exactly what such an arm needs. It commands no motion.
+        Startup now asserts the push on its own (see
+        :meth:`_ensure_feedback_push_enabled`), so by the time this runs the
+        push-only frame has already been sent and did not help. What is left to
+        try is the part push-only deliberately does not touch: the persisted
+        linkage. ``set_normal_mode`` re-asserts normal linkage AND the push, so
+        it is the escalation rather than the primary bootstrap — a mode switch
+        should not be how feedback gets turned on. It commands no motion.
         """
         if not self.is_nero:
             return
         self.get_logger().warn(
-            "No firmware answer — the arm may be booted with its CAN feedback "
-            "push disabled (persisted leader/follower config). Sending "
-            "set_normal_mode once and retrying."
+            "No firmware answer after the feedback-push bootstrap — the arm may "
+            "be holding a persisted leader/follower linkage. Re-asserting normal "
+            "mode once and retrying."
         )
         try:
-            self.agx_arm.set_normal_mode()
+            self._sdk_write("set_normal_mode", self.agx_arm.set_normal_mode)
         except Exception as e:
             self.get_logger().error(f"set_normal_mode during startup recovery failed: {e}")
             return
@@ -593,7 +705,7 @@ class AgxArmRosNode(Node):
             robot=self.arm_type, comm="can", channel=self.can_port
         )
         self.agx_arm = self._measured(AgxArmFactory.create_arm(config))
-        self.agx_arm.connect()
+        self._connect_transport()
 
         self.arm_joint_names = list(config["joint_limits"].keys())
         # Kept, not just the names: the boundary check needs the bounds to say
@@ -601,11 +713,28 @@ class AgxArmRosNode(Node):
         self.arm_joint_limits = dict(config["joint_limits"])
         self.arm_joint_count = self.agx_arm.joint_nums
 
+        # Bootstrap before readiness. The push is asserted first and
+        # unconditionally, on the transport alone: an arm that boots mute has no
+        # feedback to gate this on, and every readiness signal below is derived
+        # from feedback this frame is what produces. Runs whether or not
+        # auto_enable is set, because a read-only bringup needs feedback too.
+        self._ensure_feedback_push_enabled("startup bootstrap", force=True)
+
         if self.auto_enable:
+            # The enable request goes out even if no feedback has arrived yet;
+            # only the verification below waits for evidence. On old firmware
+            # the push can depend on the enabled state, so the push is asserted
+            # a second time after the enable and the firmware query gets another
+            # bounded window before startup gives up.
             if not self._enable_arm(True, self.enable_timeout):
                 self.get_logger().error("Failed to auto-enable the arm")
 
             self._wait_for_firmware()
+            if not self.firmware:
+                self._ensure_feedback_push_enabled(
+                    "still silent after enable", force=True
+                )
+                self._wait_for_firmware()
             if not self.firmware:
                 # An arm whose feedback push is disabled answers nothing, so
                 # startup would die here — and with the node dead its
@@ -642,19 +771,36 @@ class AgxArmRosNode(Node):
                     )
 
                 if firmeware_version != PiperFW.DEFAULT:
-                    self.agx_arm.disconnect()
+                    self._disconnect_transport()
                     config = create_agx_arm_config(
                         robot=self.arm_type, comm="can", channel=self.can_port,
                         firmeware_version=firmeware_version
                     )
                     self.agx_arm = self._measured(AgxArmFactory.create_arm(config))
-                    self.agx_arm.connect()
+                    self._connect_transport()
+                    # A new SDK object is a new session: whatever the previous
+                    # one asked the firmware for does not carry over, so the
+                    # push is asserted again on the object that will actually
+                    # be driven.
+                    self._ensure_feedback_push_enabled(
+                        "reconnected on firmware tier", force=True
+                    )
             else:
+                # Say which half failed. A CAN transport exists and the bootstrap
+                # frames were handed to it; what did not happen is any feedback
+                # coming back. That distinguishes "the arm is not powered / not
+                # on the bus" from "our stack never transmitted", and the two
+                # have different fixes — measured on hardware 2026-08-17, where
+                # the arm bus showed TX=0 while a hand bus on the same host
+                # transmitted normally
+                # (docs/sprint_refactor/reference/l3_command_authority.md).
                 self.get_logger().error(
-                    "Failed to get firmware version, also after re-asserting the "
-                    "feedback push. The arm is not answering on CAN: check power, "
-                    "E-stop and wiring for this side, and that the bus carries "
-                    "feedback frames (candump)."
+                    "Failed to get firmware version. Transport session: present; "
+                    "feedback-push bootstrap: sent; feedback: none; enable: "
+                    "unverified. The arm is not answering on CAN — check power, "
+                    "E-stop and wiring for this side, that the bus carries "
+                    "feedback frames (candump), and that this interface's TX "
+                    "counter advances at all (ip -s link show)."
                 )
                 exit(1)
 
@@ -898,19 +1044,37 @@ class AgxArmRosNode(Node):
             time.monotonic() - self._last_feedback_advance_monotonic
         ) <= self.feedback_timeout
 
-    def _leader_feedback_fresh(self) -> bool:
+    def _leader_feedback_fresh(self, snapshot: "FeedbackSnapshot" = None) -> bool:
         """True when the leader-angle stream is actively reporting.
 
         In leader/drag mode this stream — not ``get_joint_angles()`` — is the
         live feedback the firmware pushes, so the bus-recovery watchdog uses it
         as the health signal while normal joint push is silenced.
+
+        Decided on the acquisition snapshot when one is available: the batch
+        already carries this stream, and re-reading it from the acquisition
+        thread was a second SDK caller for a value the worker had just fetched.
         """
         if not self.is_nero:
             return False
-        leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+        if snapshot is not None:
+            leader_joint_angles = snapshot.leader_joint_angles
+        else:
+            leader_joint_angles = self._sdk_read(
+                "get_leader_joint_angles", self.agx_arm.get_leader_joint_angles
+            )
         return leader_joint_angles is not None and leader_joint_angles.hz > 0
 
     def _check_arm_connected(self, snapshot: "FeedbackSnapshot" = None) -> bool:
+        """True when the arm's feedback stream is healthy.
+
+        Despite the name this reports FEEDBACK HEALTH, not the presence of a CAN
+        transport: ``is_ok()`` is the SDK's FPS window over received frames, so
+        it is false for every arm that is connected but silent. Use it to decide
+        whether feedback-derived state can be trusted; use
+        :meth:`_transport_available` to decide whether a bootstrap command may be
+        sent.
+        """
         if snapshot is not None:
             return snapshot.is_ok
         return self.agx_arm is not None and bool(
@@ -1380,21 +1544,33 @@ class AgxArmRosNode(Node):
                 return False
             time.sleep(poll_interval)
 
-    def _enable_arm(self, enable: bool = True, timeout: float = 5.0) -> bool:
-        """Command enable/disable and report only what the readback confirmed.
+    # _verify_enable outcomes. Three, not two: "the readback says the opposite"
+    # and "there is no readback" are different facts about the arm and only the
+    # first is evidence of anything.
+    ENABLE_VERIFIED = "verified"
+    ENABLE_CONTRADICTED = "contradicted"
+    ENABLE_UNAVAILABLE = "unavailable"
 
-        The command returning is not evidence that the joints changed state; the
-        per-joint readback is. This used to warn about a contradicting readback
-        and then ``return True`` anyway, leaving ``self.enable_flag`` at its
-        previous value — so a failed *disable* left the rest of the node
-        believing the arm was still commandable. ``enable_flag`` now always
-        carries what the readback said, and the return value says whether that
-        matched the request.
+    def _request_enable(self, enable: bool, timeout: float = 5.0) -> bool:
+        """Send the enable/disable command. Claims nothing about the arm.
+
+        Needs a transport and nothing else — in particular no feedback, because
+        an arm that has gone mute is exactly the arm this may have to reach. The
+        return value says only that the SDK accepted the call, which is as far
+        as the transport can establish; whether the joints actually changed
+        state is :meth:`_verify_enable`'s question.
+
+        Still a retry loop on the calling thread rather than a worker cycle: it
+        is bounded only by ``timeout``, and a cycle runs to completion once
+        started, so a 5 s cycle would block the safety lane for 5 s.
         """
-        start_time = time.time()
-        deadline = start_time + timeout
+        deadline = time.time() + timeout
         action_name = "enable" if enable else "disable"
-
+        if not self._transport_available():
+            self.get_logger().error(
+                f"cannot request {action_name}: no CAN transport"
+            )
+            return False
         while not self._sdk_write(
             action_name,
             (lambda: self.agx_arm.enable()) if enable
@@ -1406,27 +1582,76 @@ class AgxArmRosNode(Node):
                 )
                 return False
             time.sleep(0.01)
+        return True
 
-        # The readback is served from the last low-speed feedback frame, which
-        # may still predate the command, so give it the remaining budget to
-        # agree before calling it a contradiction.
+    def _verify_enable(self, enable: bool, timeout: float = 5.0) -> str:
+        """Read back what the joints report, and update ``enable_flag`` from it.
+
+        The readback is served from the last low-speed feedback frame, which may
+        still predate the command, so it gets the budget to agree before being
+        called a contradiction. A readback that never arrives is reported as
+        ``ENABLE_UNAVAILABLE`` rather than as a contradiction: on a mute arm
+        there is no evidence in either direction, and inventing one here is what
+        would let a silent arm be reported as verifiably disabled.
+        """
+        deadline = time.time() + timeout
+        joints_enabled = None
         while True:
-            joints_enabled = bool(self.agx_arm.get_joint_enable_status(255))
-            if joints_enabled == enable or time.time() >= deadline:
+            # Through the session owner: the single-owner rule covers the
+            # verification half as much as the command half, and this poll used
+            # to run straight off the calling thread while the worker drove the
+            # arm.
+            readback = self._sdk_read(
+                "get_joint_enable_status",
+                lambda: self.agx_arm.get_joint_enable_status(255),
+            )
+            if readback is not None:
+                joints_enabled = bool(readback)
+                if joints_enabled == enable:
+                    break
+            if time.time() >= deadline:
                 break
             time.sleep(0.02)
 
+        if joints_enabled is None:
+            self._enable_verified = False
+            self.get_logger().warn(
+                f"no joint enable readback within {timeout:.1f}s; the "
+                f"{'enable' if enable else 'disable'} was sent but is unverified"
+            )
+            return self.ENABLE_UNAVAILABLE
+
         self.enable_flag = joints_enabled
         if joints_enabled == enable:
-            self.get_logger().info(f"All joints {action_name} status is {self.enable_flag}")
-            return True
+            self._enable_verified = True
+            action_name = "enable" if enable else "disable"
+            self.get_logger().info(
+                f"All joints {action_name} status is {self.enable_flag}"
+            )
+            return self.ENABLE_VERIFIED
 
+        self._enable_verified = False
+        action_name = "enable" if enable else "disable"
         self.get_logger().error(
             f"{action_name} was accepted by the arm but the joint readback still "
             f"reports enabled={joints_enabled} after {timeout:.1f}s. Treating the "
             f"arm as NOT {action_name}d."
         )
-        return False
+        return self.ENABLE_CONTRADICTED
+
+    def _enable_arm(self, enable: bool = True, timeout: float = 5.0) -> bool:
+        """Request enable/disable and report only what the readback confirmed.
+
+        The composition of :meth:`_request_enable` and :meth:`_verify_enable`,
+        kept because most callers want both halves. The two are separate methods
+        because the command needs a transport and the verification needs
+        feedback, and conflating them is what made a silent arm unbootable.
+        """
+        start = time.time()
+        if not self._request_enable(enable, timeout):
+            return False
+        remaining = max(0.0, timeout - (time.time() - start))
+        return self._verify_enable(enable, remaining) == self.ENABLE_VERIFIED
 
     @staticmethod
     def _pace(next_tick: float, period_s: float) -> float:
@@ -1580,7 +1805,7 @@ class AgxArmRosNode(Node):
                             "Agx_arm feedback is ready, control is now enabled"
                         )
                         self._control_ready_logged = True
-            elif self._leader_mode_active and self._leader_feedback_fresh():
+            elif self._leader_mode_active and self._leader_feedback_fresh(snapshot):
                 # In leader/drag mode the firmware disables the normal
                 # joint-state push; the live signal is the leader-angle stream.
                 # Treat it as a healthy bus so the watchdog does not
@@ -1920,7 +2145,9 @@ class AgxArmRosNode(Node):
         # A recovery must never run against a deliberately silenced bus: every
         # verification step below reads feedback. Restore the push and drop the
         # hand window — the shared bus is the problem now, not the hand.
-        self._restore_feedback_push("bus recovery")
+        # direct: recovery has quiesced the worker and owns the session, so a
+        # queued write would never be dequeued.
+        self._restore_feedback_push("bus recovery", direct=True)
         self._hand_window_active = False
         # Gate every control callback off immediately; the existing
         # _check_can_control() guard turns this into a hard streaming stop so no
@@ -1958,7 +2185,7 @@ class AgxArmRosNode(Node):
             recovered = False
             for attempt in range(1, self.bus_recovery_max_attempts + 1):
                 try:
-                    self.agx_arm.disconnect()
+                    self._disconnect_transport()
                 except Exception as e:
                     self.get_logger().warn(f"disconnect during recovery failed: {e}")
 
@@ -1966,7 +2193,7 @@ class AgxArmRosNode(Node):
                     self._reset_can_link()
 
                 try:
-                    self.agx_arm.connect()
+                    self._connect_transport()
                 except Exception as e:
                     self.get_logger().warn(
                         f"reconnect attempt {attempt} failed: {e}"
@@ -2203,7 +2430,7 @@ class AgxArmRosNode(Node):
             # positions of the dragged arm; republish them here so the shared
             # feedback surface keeps tracking the freedriven pose.
             if self._leader_mode_active:
-                self._publish_leader_states_as_joint_states()
+                self._publish_leader_states_as_joint_states(snapshot)
             return
 
         velocitys = []
@@ -2239,8 +2466,12 @@ class AgxArmRosNode(Node):
             msg.name, msg.position, msg.velocity, msg.effort =map(list, zip(*joints_data))
             self.joint_states_pub.publish(msg)
 
-    def _publish_leader_states_as_joint_states(self):
-        leader_joint_angles = self.agx_arm.get_leader_joint_angles()
+    def _publish_leader_states_as_joint_states(self, snapshot: "FeedbackSnapshot"):
+        # From the snapshot the worker acquired, not a fresh read off the
+        # publish thread: the batch already carries this stream, and re-reading
+        # it here made the publish thread a second owner of the session in
+        # exactly the mode where it is the only live feedback there is.
+        leader_joint_angles = snapshot.leader_joint_angles
         if leader_joint_angles is None:
             return
 
@@ -2749,27 +2980,75 @@ class AgxArmRosNode(Node):
 
     ### service callbacks
     def _enable_callback(self, request, response):
+        """Request the enable state, then report only what the readback proved.
+
+        Gated on the transport, NOT on feedback. This service used to refuse
+        with "Agx_arm is not connected" whenever ``is_ok()`` was false — which
+        is the state of every arm that boots with its feedback push disabled, so
+        the one command able to wake such an arm was refused for want of the
+        feedback it produces (observed on hardware 2026-08-17: both services
+        refused while the CAN session was open and bound). A session is enough
+        to attempt a bounded command; it is never enough to report success.
+
+        ``enable_flag`` alone is not treated as proof of the current state
+        either when it was never verified: an unverified flag would let a mute
+        arm short-circuit to "already enabled" and skip the bootstrap.
+        """
         try:
-            if request.data and self.enable_flag:
+            if self._enable_verified and request.data == self.enable_flag:
                 response.success = True
-                response.message = "Agx_arm already enabled"
-                return response
-            if not request.data and not self.enable_flag:
-                response.success = True
-                response.message = "Agx_arm already disabled"
+                response.message = (
+                    "Agx_arm already enabled" if request.data
+                    else "Agx_arm already disabled"
+                )
                 return response
 
-            if not self._check_arm_connected():
+            action = "enable" if request.data else "disable"
+            if not self._transport_available():
                 response.success = False
-                response.message = "Agx_arm is not connected"
-                self.get_logger().warn("Agx_arm is not connected, cannot set enable state")
-            elif request.data:
-                response.success = True if self._enable_arm(True) else False
-                response.message = "Agx_arm enabled" if response.success else "Failed to enable Agx_arm"
+                response.message = "Agx_arm has no CAN transport"
+                self.get_logger().warn(
+                    f"no CAN transport, cannot {action} Agx_arm"
+                )
+                return response
+
+            if not request.data:
+                # A disable is even less suitable for a feedback pre-gate: the
+                # case where feedback is missing is the case where stopping
+                # matters most. Close the local motion gate first so nothing new
+                # is admitted while the request is in flight, whatever the
+                # readback ends up saying.
+                self.control_ready = False
+                self._control_ready_logged = False
+
+            sent = self._request_enable(request.data, self.enable_timeout)
+            if not sent:
+                response.success = False
+                response.message = f"Failed to send {action} to Agx_arm"
+                return response
+
+            # The command is out; now try to obtain the evidence. Asserting the
+            # push is part of that and not a side effect: without feedback there
+            # is nothing to verify against, and this is a reporting operation
+            # that commands no motion.
+            self._ensure_feedback_push_enabled(f"{action} verification", force=True)
+            outcome = self._verify_enable(request.data, self.enable_timeout)
+            if outcome == self.ENABLE_VERIFIED:
+                response.success = True
+                response.message = (
+                    "Agx_arm enabled" if request.data else "Agx_arm disabled"
+                )
+            elif outcome == self.ENABLE_UNAVAILABLE:
+                response.success = False
+                response.message = (
+                    f"{action} was sent but no feedback came back to verify it; "
+                    "the arm state is unknown"
+                )
             else:
-                response.success = True if self._enable_arm(False) else False
-                response.message = "Agx_arm disabled" if response.success else "Failed to disable Agx_arm"
-            
+                response.success = False
+                response.message = (
+                    f"{action} was sent but the joint readback contradicts it"
+                )
         except Exception as e:
             response.success = False
             response.message = f"Exception occurred: {str(e)}"
@@ -3188,13 +3467,16 @@ class AgxArmRosNode(Node):
                 response.success = False
                 response.message = "set_normal_mode is only supported for Nero"
                 return response
-            if not self._check_arm_connected():
+            # Transport, not feedback, and no enable precondition. This is the
+            # operator's escalation for an arm holding a persisted
+            # leader/follower linkage — the same thing _recover_silent_arm does
+            # at startup — so gating it on feedback health or on enable_flag
+            # refused it in precisely the situation it exists for. It re-asserts
+            # a mode and commands no motion; motion admission is still decided by
+            # control_ready and the authority, both untouched here.
+            if not self._transport_available():
                 response.success = False
-                response.message = "Agx_arm is not connected"
-                return response
-            if not self.enable_flag:
-                response.success = False
-                response.message = "Agx_arm is not enabled"
+                response.message = "Agx_arm has no CAN transport"
                 return response
 
             self._sdk_write("set_normal_mode", self.agx_arm.set_normal_mode)
@@ -3329,6 +3611,18 @@ class AgxArmRosNode(Node):
             return None
         return list(js.msg)
 
+    def _silence_push_frame(self) -> None:
+        """Send one feedback-push DISABLE frame through the session owner.
+
+        The paired write to :meth:`_ensure_feedback_push_enabled`. Kept separate
+        from the surrounding verification so that both directions of the push
+        reach the SDK the same way.
+        """
+        self._sdk_write(
+            "disable_can_push",
+            lambda: nero_can_push.set_can_push(self.agx_arm, False),
+        )
+
     def _silence_feedback_push(self) -> tuple:
         """Stop the firmware feedback push for a hand window.
 
@@ -3348,7 +3642,10 @@ class AgxArmRosNode(Node):
         if not self.hand_window_silence_feedback:
             return False, "feedback push left ON (hand_window_silence_feedback=false)"
         try:
-            nero_can_push.set_can_push(self.agx_arm, False)
+            # A real mode frame on the wire, not local bookkeeping, so it obeys
+            # the single-owner rule like every other write. It used to be called
+            # straight from the service thread while the worker drove the arm.
+            self._silence_push_frame()
         except Exception as e:
             return False, f"could not silence the feedback push: {e}"
         # Latch the flag BEFORE verifying: the DISABLE frame may land at any
@@ -3367,7 +3664,7 @@ class AgxArmRosNode(Node):
         # One re-send: a dropped mode frame is the expected failure here, and
         # the bus has had the verify window to drain in the meantime.
         try:
-            nero_can_push.set_can_push(self.agx_arm, False)
+            self._silence_push_frame()
         except Exception as e:
             self._restore_feedback_push("silence re-send failed")
             return False, f"could not re-send the feedback-push silence: {e}"
@@ -3391,12 +3688,30 @@ class AgxArmRosNode(Node):
         )
 
     def _feedback_frame_ts(self):
-        """Kernel timestamp of the last parsed feedback frame, or None."""
-        try:
+        """Kernel timestamp of the last parsed feedback frame.
+
+        Through the session owner: this polls at 100 Hz for the whole hand-window
+        verify budget, so reading the SDK from the calling thread put a second
+        owner on the session for exactly as long as the window took to open.
+
+        A read that did not execute returns a fresh sentinel rather than None.
+        None is a legitimate answer meaning "no frame yet", and a lost session
+        answering None would look identical to an unchanging timestamp — which
+        :meth:`_wait_for_feedback_silenced` would read as the push having gone
+        quiet. A sentinel that never compares equal makes that case restart the
+        quiet window instead, so a lost session times out as "not silenced".
+        """
+        def read():
             js = self.agx_arm.get_joint_angles()
+            return None if js is None else js.timestamp
+
+        try:
+            return self._sdk.call(
+                "get_joint_angles", read, timeout=self.feedback_timeout,
+                lane=Lane.DIAGNOSTIC,
+            )
         except Exception:
-            return None
-        return None if js is None else js.timestamp
+            return object()
 
     def _wait_for_feedback_silenced(self, timeout_s: float) -> bool:
         """True once the firmware has stopped pushing feedback frames.
@@ -3421,29 +3736,21 @@ class AgxArmRosNode(Node):
                 return True
         return False
 
-    def _restore_feedback_push(self, reason: str) -> bool:
-        """Re-enable the firmware feedback push and re-arm the watchdog.
+    def _restore_feedback_push(self, reason: str, *, direct: bool = False) -> bool:
+        """Close out a hand window's silence: re-enable the push, clear the flag.
 
-        Safe to call unconditionally; a no-op when nothing was silenced.
+        Bookkeeping paired with :meth:`_silence_feedback_push`, and a no-op when
+        this node silenced nothing. The wire operation itself belongs to
+        :meth:`_ensure_feedback_push_enabled`, which is also what startup and
+        operator recovery call — those must send the frame regardless of this
+        node's local silence flag, since an arm that booted mute has a push that
+        is off while the flag says it is on.
         """
         if not self._hand_window_push_silenced:
             return True
-        ok = True
-        try:
-            nero_can_push.set_can_push(self.agx_arm, True)
-        except Exception as e:
-            ok = False
-            self.get_logger().error(
-                f"failed to restore the feedback push ({reason}): {e}"
-            )
+        ok = self._ensure_feedback_push_enabled(reason, force=True, direct=direct)
         # Un-stand-down the MIT controller: feedback is coming back.
         self._set_push_silenced(False)
-        # Feedback restarts now: reset both the node-observed clock and the
-        # frame-advance window so the silence we asked for is never charged to
-        # the bus-recovery watchdog as a stall.
-        now = time.monotonic()
-        self._last_good_feedback_monotonic = now
-        self._last_feedback_advance_monotonic = now
         self.get_logger().info(f"feedback push restored ({reason})")
         return ok
 
@@ -3706,7 +4013,10 @@ def main(args=None):
         # would stay mute on CAN for the next session too.
         if node is not None:
             try:
-                node._restore_feedback_push("node shutdown")
+                # direct: the worker is stopped right after this, and a
+                # frame that never leaves the firmware mute for the next session
+                # is worth more than the queue hop.
+                node._restore_feedback_push("node shutdown", direct=True)
             except Exception:
                 pass
             try:

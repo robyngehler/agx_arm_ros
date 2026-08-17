@@ -82,6 +82,10 @@ def _node(arm, *, enable_flag=False) -> AgxArmRosNode:
     # Enable/disable reaches the SDK through the worker like every other
     # steady-state call, so the unit under test needs a real one.
     node._sdk = SdkWorker("arm_test")
+    # An enable REQUEST needs a transport and nothing else — no feedback, no
+    # prior enable state. That separation is what lets a mute arm be woken.
+    node._transport_connected = True
+    node._enable_verified = False
     node.feedback_timeout = 2.0
     _WORKERS.append(node._sdk)
     return node
