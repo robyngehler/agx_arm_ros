@@ -542,8 +542,12 @@ together with a real one.
 The recovery window is not a defect to be closed by better scheduling. A vendor
 call that blocks for a second blocks for a second, and a stack cannot command an
 arm through a link it is tearing down. The mitigation inside the software — the
-damped zero before the teardown, the lockout after — is what there is, and it is
-a mitigation rather than a guarantee.
+firmware MOVE-J hold established before the teardown, the lockout after — is
+what there is, and it is a mitigation rather than a guarantee. Superseded
+2026-08-17: this previously named the damped MIT zero as the mitigation. A kp=0
+command has no stiffness, so as a terminal state it sags the arm; it is now only
+the braking transient before MOVE-J, and where no trustworthy pose exists no
+hold is claimed at all.
 
 This is recorded as the concrete, measured requirement for the independent
 hardware watchdog in `docs/open_questions.md`: authority over the devices during

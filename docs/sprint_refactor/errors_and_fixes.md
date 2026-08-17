@@ -151,6 +151,42 @@ driver was run with `auto_enable:=false`, so the joints were never energised.
   Record it as a constant offset or take the baseline with that bridge stopped;
   do not attribute it to the code under measurement.
 
+### A stopped arm sagged instead of holding its pose
+
+Observed 2026-08-17 during the parallel arm+hand L3 run: the left arm lost all
+holding torque and dropped. The emergency stop was blamed at first, and the log
+cleared it — the CAN bus had stalled 5.75 s earlier, recovery was already
+running, and the stop callback issued no SDK call at all by design.
+
+The defect the investigation found is real and sits in two places:
+
+- **Recovery had no hold to offer.** It sent a kp=0 damped MIT zero (only when
+  already in MIT) and then tore the link down. A kp=0 command stops a moving arm
+  but has no stiffness, so as a terminal state it sags. Worse, the hold could not
+  be commanded from `_recover_bus()` at all: by then the worker is quiesced and
+  recovery owns the session.
+- **The emergency stop asserted MOVE-J once.** A single dropped mode frame left
+  the firmware in MIT executing that same zero-stiffness command, while the
+  software reported a verified stop.
+
+Fixed by making the bounded MOVE-J re-assertion the hand window already used the
+one hold, running it entirely on the safety lane, and calling it from
+`_request_recovery()` *before* the worker is quiesced. `disable()` is not and was
+never the stop primitive — a disabled Nero has no brakes.
+
+Two rules came out of it:
+
+- **A host-side MIT command is never a hold.** It is a braking transient before
+  MOVE-J. Without trustworthy feedback no hold is claimed, because a pose
+  synthesised from stale data is a wrong hold rather than a missing one; the
+  independent watchdog owns that regime.
+- **The quarantine on `/control/move_j` is about ROS ingress, not the primitive.**
+  `self.agx_arm.move_j(current_q)` is the internal firmware-hold primitive that
+  safety logic requires. Do not remove it while cleaning up legacy interfaces.
+
+Verified on hardware the same day: after an emergency stop the right arm held its
+pose to 3.5e-5 rad over six seconds, with the firmware confirmed out of MIT.
+
 ### Neither arm bus carries any traffic — check the 40-pin header FIRST
 
 **This has now happened twice, and a kernel update is enough to cause it again.**

@@ -386,12 +386,14 @@ assume the two arms are protocol-identical.
       of a core (8.2 % of the machine), acquisition 99.7/s, publish batch
       99.3/s, zero loop overruns. The comparison is not like-for-like — 0E ran
       a 200 Hz coupled loop and no MIT — so it is a direction, not a delta.
-- [ ] **Reduce what the measurement actually named.** The largest single
+- [~] **Reduce what the measurement actually named.** The largest single
       consumer is the rclpy executor thread: 23.4 % at rest, 26.3 % under load,
       against 3.6 % for the acquisition loop and 14.5 % for publication. The
       sprint assumed the per-joint SDK reads, then the publish batch; both were
       wrong. Fewer ROS entities or a different executor is the lever, and
       nothing here has attacked it yet.
+      **Postponed:** Not the biggest lever, invalidates current tests, and may 
+      introduce multithread problems. May revisit after draining other options.
 - [x] Measure the RX drain under a provoked fault (right arm, 14.9 s link-down,
       90 s sampled at 5 Hz). **Zero dropped, zero missed, zero errors, zero
       bus-off** across the whole window. The feared overflow cannot happen in
@@ -915,25 +917,32 @@ rather than a blocker for productive coordinated-motion work.
       the stamped path against the shared sequence watermark (L1/L2).
 - [x] The docs and agent contract describe the implemented design — one
       authority contract, two motion payloads — in both adapter mirrors.
-- [ ] **Point-8 L3 parallel-operation acceptance.** Blocked: neither arm
-      answers and no frame reaches the arm buses, so concurrent arm-and-hand
-      cases cannot run. See `reference/l3_command_authority.md`.
-- [ ] **Silent-arm bootstrap proven on both deployed arms.** Partially run
-      2026-08-17: the two cases that need an arm which does *not* answer are
-      done on hardware — Case E (feedback cannot be restored) on both arms, and
-      Case D (explicit enable before feedback is alive) on the right. Cases A,
-      B, C and F need an arm that answers. That run also corrected the arm
-      diagnosis: sends *are* attempted and the kernel refuses them with
-      `Transmit buffer full` while TX packets stay 0, which puts the remaining
-      fault on the bus or the device, not in our stack
-      (`reference/l3_command_authority.md`).
-- [ ] **Stamped hand authority re-run with legacy ingress off.** The existing
-      hardware evidence was gathered while the dual publish was live, so it
-      describes a path that no longer exists.
+- [x] **Point-8 L3 parallel-operation acceptance.** Ran 2026-08-17 once the
+      Jetson 40-pin header was reconfigured. Left arm + left hand, right arm +
+      right hand, and both sides concurrently: every bus carried traffic with
+      zero errors and zero drops (arms ~2160 RX/s, hands ~86 RX/TX per side),
+      host 78 % idle, no unexpected authority rejections. Exercised the
+      **quarantined development MOVE-J ingress**, not the production stamped
+      arm path — that evidence is separate by design.
+- [ ] **Production arm MIT/FJT parallel + stop case.** The stamped arm ingress
+      under the same hand-side load, closing the gap the run above leaves open.
 
-Everything above the first blocked item is **L1/L2 only**. The arm half of this
-gate is software-complete and hardware-unproven, and those are not the same
-claim.
+- [x] **Stamped hand authority re-run with legacy ingress off.** Ran 2026-08-17
+      on the right hand: 6/6 — valid stamp admitted, foreign owner, stale
+      sequence, unknown unit generation and stale device epoch all refused. The
+      bare surfaces do not exist as topics on a default bridge, while both
+      stamped surfaces carry exactly one subscriber.
+- [x] **Silent-arm bootstrap proven on both deployed arms.** All six cases ran
+      2026-08-17. The push-only primitive silences and wakes an arm on hardware
+      (2162 RX/s -> 0 -> 2167) with no mode switch and no motion command, and a
+      deliberately muted arm reaches READY through startup alone.
+- [x] **A stopped arm holds its pose.** Verified on the right arm after the
+      firmware-hold correction: 3.5e-5 rad drift over six seconds, firmware
+      confirmed out of MIT, no `disable()` frame.
+
+The arm and hand halves are now proven on hardware; what remains open is the
+production stamped arm path under parallel load, and the `/control/move_j`
+evidence must not be read as covering it.
 
 ## Documentation follow-through
 

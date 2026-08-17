@@ -1418,9 +1418,12 @@ class NeroMitControllerNode(Node):
                 # This sits ahead of the stale-feedback dead-man on purpose,
                 # which is only safe because the driver stops the arm itself on
                 # the one path that both refuses our commands and can leave the
-                # arm moving: bus recovery sends a damped MIT zero before it
-                # tears the link down. Feedback merely going stale does not
-                # revoke authority, so the dead-man below still covers that.
+                # arm moving: recovery revokes motion and puts the arm in a
+                # firmware MOVE-J hold before it takes the SDK session, using
+                # damped MIT only as the braking transient. Where it cannot
+                # establish that hold the independent watchdog is the boundary.
+                # Feedback merely going stale does not revoke authority, so the
+                # dead-man below still covers that.
                 self._set_execution_state(ExecutionState.NOT_AUTHORISED)
                 return
 

@@ -30,7 +30,7 @@ trajectory and the hand goal executing with nobody left to cancel them.
 | `Ctrl+C` on `run_activity` | cancels the activity goal, waits for the coordinator to confirm it unwound, then exits |
 | `Ctrl+C` on the coordinator | cancels children → reopens any hand window → pins the moving arm (`cancel_trajectory` + `hold_current`) → exits |
 | `Ctrl+C` a second time | escalates to `emergency_stop` on both sides, then exits immediately |
-| the coordinator crashes | **not covered by any of the above.** The MIT controller streams a damped stop on its own shutdown and the driver sends a damped MIT zero before a recovery disconnect, but a hard crash of the coordinator alone leaves the MoveIt goal running |
+| the coordinator crashes | **not covered by any of the above.** The MIT controller streams a damped stop on its own shutdown and the driver puts the arm in a firmware MOVE-J hold before a recovery disconnect, but a hard crash of the coordinator alone leaves the MoveIt goal running |
 
 The physical e-stop remains the only guaranteed stop: the Nero firmware has no MIT command watchdog,
 so silence is not a safe state. See `teach_and_run.md` § Emergency stop / runaway.
