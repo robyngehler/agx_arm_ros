@@ -151,17 +151,52 @@ driver was run with `auto_enable:=false`, so the joints were never energised.
   Record it as a constant offset or take the baseline with that bridge stopped;
   do not attribute it to the code under measurement.
 
-### Neither arm bus carries any traffic
+### Neither arm bus carries any traffic — check the 40-pin header FIRST
 
-- **Resolved 2026-08-11 (same day):** the Jetson 40-pin header was not
-  configured, so `mttcan` presented two interfaces that were UP and completely
-  silent. With the header configured both arms push at ~2150 frames/s.
-- The lesson survives the fix: an unconfigured header is indistinguishable from
-  a powered-off arm by `ip link` alone — both read UP with zero counters. The
-  arms also send nothing until something activates them, so silence has at least
-  three causes and `measure_can_baseline.sh` reports SILENT rather than guessing.
-- The 0 TX from the driver is explained by the same thing: with no feedback the
-  node never reached the point of re-asserting the push.
+**This has now happened twice, and a kernel update is enough to cause it again.**
+
+> After any kernel update, before diagnosing anything CAN-side:
+> `sudo /opt/nvidia/jetson-io/jetson-io.py`
+
+- **2026-08-11:** the Jetson 40-pin header was not configured, so `mttcan`
+  presented two interfaces that were UP and completely silent. With the header
+  configured both arms push at ~2150 frames/s.
+- **2026-08-17:** a kernel update discarded the header configuration. Same
+  symptom, and it cost most of a debugging session and produced two wrong
+  diagnoses before the header was reconfigured — after which both arms came up
+  immediately (left firmware 1.11 / `NeroFW.V111`, right 1.06 /
+  `NeroFW.DEFAULT`).
+
+**How to recognise it.** An unconfigured header is indistinguishable from a
+powered-off arm by `ip link` alone — both read UP, ERROR-ACTIVE, zero counters.
+The discriminator is what happens when something *tries* to send:
+
+```text
+RX: packets 0   errors 0  dropped 0
+TX: packets 0   errors 0  dropped 0
+state ERROR-ACTIVE (berr-counter tx 0 rx 0)   <ONE-SHOT,FD>
+```
+
+with the driver reporting sends failing as `ENOBUFS` / "Transmit buffer full".
+The pins are not muxed to the controller, so a frame is queued and never
+completes; the queue fills and `write()` fails. **The bus error counters stay at
+zero and are useless here** — ONE-SHOT aborts an unacknowledged frame instead of
+retrying it into error-passive. Read TX *packets*.
+
+A hand bus transmitting normally in the same session does not exonerate the
+header: the hands are on USB-CAN FD adapters and do not use the 40-pin header at
+all. That contrast narrows the fault to the native interfaces rather than the
+host.
+
+- The arms also send nothing until something activates them, so silence has at
+  least three causes and `measure_can_baseline.sh` reports SILENT rather than
+  guessing.
+- The 0 TX from the driver used to be explained by the driver never reaching the
+  point of re-asserting the push. That is no longer true: since 2026-08-17
+  startup asserts the feedback push on the transport alone, so a driver run now
+  distinguishes the cases for you — it reports `Transport session: present;
+  feedback-push bootstrap: sent; feedback: none; enable: unverified` when the
+  frames cannot leave the host.
 
 ### CAN interface names are `hand_left`/`hand_right`
 

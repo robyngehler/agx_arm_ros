@@ -2,6 +2,32 @@
 
 Cross-cutting issues that already produced confusion or wasted debugging time.
 
+## A kernel update discards the Jetson 40-pin header config, killing CAN TX
+
+**Check this before diagnosing any silent arm bus.**
+
+```bash
+sudo /opt/nvidia/jetson-io/jetson-io.py
+```
+
+The native arm interfaces (`can_nero_left`, `can_nero_right`) ride the 40-pin
+header. A kernel update resets its pinmux, after which `mttcan` still presents
+both interfaces as UP and ERROR-ACTIVE while nothing can be transmitted.
+
+Signature: `RX=0 TX=0` in `ip -s link show`, sends failing with `ENOBUFS`
+("Transmit buffer full"), and `berr-counter tx 0`. The error counters are not a
+discriminator — the interfaces run in ONE-SHOT mode, which aborts an
+unacknowledged frame rather than retrying it into error-passive. Read TX
+*packets*.
+
+The hands are on USB-CAN FD adapters and do not use the header, so a healthy
+hand bus in the same session does not rule this out.
+
+Happened 2026-08-11 (header never configured) and again 2026-08-17 (kernel
+update). The second occurrence cost most of a session and produced two wrong
+diagnoses. Detail and the driver-side diagnostic:
+`docs/sprint_refactor/errors_and_fixes.md`.
+
 ## Native CAN naming versus legacy public naming
 
 Problem: docs and examples mixed native Jetson side-bus names with USB role names.

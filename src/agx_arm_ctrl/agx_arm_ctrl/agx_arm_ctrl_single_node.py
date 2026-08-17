@@ -758,10 +758,13 @@ class AgxArmRosNode(Node):
                 self.get_logger().error(
                     "Failed to get firmware version. Transport session: present; "
                     "feedback-push bootstrap: sent; feedback: none; enable: "
-                    "unverified. The arm is not answering on CAN — check power, "
-                    "E-stop and wiring for this side, that the bus carries "
-                    "feedback frames (candump), and that this interface's TX "
-                    "counter advances at all (ip -s link show)."
+                    "unverified. Check in this order: (1) does this interface's "
+                    "TX packet counter advance at all (ip -s link show)? If not, "
+                    "the frames never leave the host — on Jetson the 40-pin "
+                    "header pinmux is discarded by a kernel update, so re-run "
+                    "sudo /opt/nvidia/jetson-io/jetson-io.py. (2) arm power, "
+                    "E-stop and wiring for this side. (3) does the bus carry "
+                    "feedback frames (candump)?"
                 )
                 exit(1)
 
@@ -1886,8 +1889,11 @@ class AgxArmRosNode(Node):
             "On the shared side bus this is usually hand-frame arbitration loss, "
             "not a dead arm."
             if handshake_required()
-            else "This arm owns its bus, so nothing else is competing for it: "
-            "suspect the link, the transceiver or the firmware, not the hand."
+            else "This arm owns its bus, so nothing else is competing for it. "
+            "If TX packets are also 0 (ip -s link show), the frames never left "
+            "the host: check the Jetson 40-pin header "
+            "(sudo /opt/nvidia/jetson-io/jetson-io.py), which a kernel update "
+            "discards."
         )
         # Read the feedback side off the snapshot rather than asserting it: the
         # guard above does not check it, and dropped sends with no feedback at

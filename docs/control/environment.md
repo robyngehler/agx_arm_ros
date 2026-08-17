@@ -19,6 +19,12 @@ against connected devices.
 
 - `sudo` may be required for CAN bringup scripts
 - live hardware validation belongs here
+- **after any kernel update, check the 40-pin header before anything else:**
+  `sudo /opt/nvidia/jetson-io/jetson-io.py`. A kernel update discards the header
+  pinmux, and the native arm interfaces then come up UP and ERROR-ACTIVE while
+  nothing can be transmitted (`RX=0 TX=0`, sends failing `ENOBUFS`). The hands
+  are on USB-CAN FD adapters and are unaffected, so a working hand bus does not
+  rule this out. See `docs/errors_and_fixes.md`.
 
 ### x86 or editor-only environment without ROS or hardware
 
