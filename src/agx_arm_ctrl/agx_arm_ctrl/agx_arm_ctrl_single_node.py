@@ -583,6 +583,11 @@ class AgxArmRosNode(Node):
         # an arm whose firmware never answers is still validated against the
         # protocol it is actually being driven with.
         self.firmware_tier = NeroFW.DEFAULT
+        # Only _wait_for_firmware assigned this, and it runs only under
+        # auto_enable. A bringup with auto_enable:=false — the read-only shape
+        # used to inspect an arm without energising it — therefore reached the
+        # capability publish with the attribute missing and died during startup.
+        self.firmware = None
         self.mit_limits = mit_limits_for_tier(NeroFW.DEFAULT)
         config: PiperCanDefaultConfig = create_agx_arm_config(
             robot=self.arm_type, comm="can", channel=self.can_port
