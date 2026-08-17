@@ -956,12 +956,10 @@ class OmniHandBridgeNode(Node):
         # not a forced STANDBY, because `_sync_authority` derives the state every
         # tick and would overwrite anything written behind its back.
         self.declare_parameter("owner_liveness_grace_s", 3.0)
-        # Bare JointState / JointTrajectory ingress, for manual development only.
-        # A command on those surfaces carries no identity, so the bridge has to
-        # invent one from its own current state — which is always current by
-        # construction, so a stale or reordered command passes every check. That
-        # is not an authority-safe path and is never described as one. Default
-        # off; production and demo bring-ups leave it off.
+        # Bare JointState / JointTrajectory ingress, development only. Those
+        # surfaces carry no identity, so the bridge would stamp them from its own
+        # current state and every staleness check would pass by construction.
+        # Not an authority-safe path.
         self.declare_parameter("allow_legacy_hand_command_ingress", False)
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
@@ -1197,11 +1195,10 @@ class OmniHandBridgeNode(Node):
                 self._joint_trajectory_callback,
                 10,
             )
-        # The authority-carrying surfaces (4D), and in the default configuration
-        # the only way to move this hand. Both primitives feed one admission
-        # path; what differs is only which message shape suits the motion — a
-        # trajectory for planned execution, a target for the reactive loop that
-        # cannot be time-parameterized.
+        # The authority-carrying surfaces (4D), and by default the only way to
+        # move this hand. Both feed one admission path; only the message shape
+        # differs — a trajectory for planned execution, a target for the
+        # reactive loop, which cannot be time-parameterized.
         self.create_subscription(
             AuthorizedJointTrajectory,
             "control/omnihand/authorized_trajectory",

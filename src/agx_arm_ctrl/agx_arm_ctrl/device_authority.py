@@ -190,18 +190,15 @@ class UnitSafety:
     because a second writer can be introduced by misconfiguration and the symptom
     has to stay visible if it is.
 
-    **Writer restart: solved by ordering per incarnation, not per epoch.**
-    Generations are held in memory and start at 0, so a restarted writer
-    republishes epochs its observers have already passed. Comparing epoch
-    numbers alone therefore dropped everything the new writer said until it
-    climbed back above the highest number seen — the unit could not be told a
-    new safety era had begun, which is the one message that must never be lost.
+    **Writer restart is ordered per incarnation, not per epoch.** Generations
+    live in memory and start at 0, so a restarted writer republishes epochs its
+    observers have already passed; comparing epoch numbers alone would drop
+    everything it says until it climbs back above the highest number seen.
 
-    Each writer run now carries an ``incarnation`` and the wall-clock time it
-    started. Ordering is *within* an incarnation; a new incarnation is adopted
-    outright and, because a restart is not evidence that anything is safe, is
-    adopted fail-closed. A straggler from the previous incarnation arriving
-    afterwards is rejected rather than being allowed to un-stop the unit.
+    Each writer run carries an ``incarnation`` and its start time. Ordering
+    applies within an incarnation; a new one is adopted outright and
+    fail-closed, since a restart is no evidence of safety. A straggler from the
+    previous incarnation is rejected rather than allowed to un-stop the unit.
     """
 
     def __init__(

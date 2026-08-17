@@ -48,6 +48,7 @@ This repository is organized so Claude Code loads only the guidance needed for t
 - generated-versus-source decisions: `.claude/rules/generated-vs-source-assets.md`
 - local change order and promotion workflow: `.claude/rules/local-agent-workflow.md`
 - OmniHand runtime contract and bridge surface: `.claude/rules/omnihand-bridge.md`
+- comment and docstring style in `src/`: `.claude/rules/source-comment-style.md`
 - how to run the system (environment, bringup launch/arguments, teach loop): `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/bringups/teach_and_run.md`
 - stable architecture and component ownership: `docs/project/architecture.md`, `docs/project/components/README.md`
 - current sprint entrypoint: `docs/sprint_refactor/` with detailed planning and reference notes under `docs/sprint_refactor/planning/` and `docs/sprint_refactor/reference/`; `planning/integration_plan.md` is the canonical plan and carries the binding constraints C1-C6

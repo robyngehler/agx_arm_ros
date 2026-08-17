@@ -46,6 +46,7 @@ Do not load every rule by default. Match context to the task.
 - source versus generated asset rules: `.claude/rules/generated-vs-source-assets.md`
 - local workflow and promotion order: `.claude/rules/local-agent-workflow.md`
 - OmniHand bridge contract and runtime surface: `.claude/rules/omnihand-bridge.md`
+- comment and docstring style in `src/`: `.claude/rules/source-comment-style.md`
 - how to run the system (environment + bringup + teach): `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/bringups/teach_and_run.md`
 - global docs hub and repo-wide summaries: `docs/README.md`, `docs/checklist.md`, `docs/errors_and_fixes.md`, `docs/open_questions.md`
 - current sprint entrypoint: `docs/sprint_refactor/` (V02 refactor; the canonical

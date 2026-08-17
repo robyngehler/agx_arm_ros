@@ -35,6 +35,7 @@ Do not load every instruction by default. Match context to the task.
 - source versus generated asset rules: `.github/instructions/generated-vs-source-assets.instruction.md`
 - local workflow and promotion order: `.github/instructions/local-agent-workflow.instruction.md`
 - OmniHand bridge contract and runtime surface: `.github/instructions/omnihand-bridge.instruction.md`
+- comment and docstring style in `src/`: `.github/instructions/source-comment-style.instruction.md`
 - current sprint entrypoint: `docs/sprint_refactor/` (V02 refactor; canonical plan `docs/sprint_refactor/planning/integration_plan.md`)
 - detailed planning and reference notes: `docs/sprint_refactor/planning/`, `docs/sprint_refactor/reference/`
 - `docs/sprint6/` is paused and adapts to the refactor contracts afterwards; its step-and-settle notes are superseded

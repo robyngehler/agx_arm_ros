@@ -43,6 +43,7 @@ This repository is intentionally organized so Copilot can load only the guidance
 - generated-versus-source decisions: `generated-vs-source-assets.instruction.md`
 - local change order and promotion workflow: `local-agent-workflow.instruction.md`
 - OmniHand runtime contract and bridge surface: `omnihand-bridge.instruction.md`
+- comment and docstring style in `src/`: `source-comment-style.instruction.md`
 - operational workflow: `docs/control/environment.md`, `docs/control/bringups/launches.md`, `docs/control/bringups/teach_and_run.md`
 - stable architecture and component ownership: `docs/project/architecture.md`, `docs/project/components/README.md`
 - current sprint entrypoint: `docs/sprint_refactor/` with detailed planning and reference notes under `docs/sprint_refactor/planning/` and `docs/sprint_refactor/reference/`; `planning/integration_plan.md` is the canonical plan and carries the binding constraints C1-C6

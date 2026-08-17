@@ -110,18 +110,11 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         self.last_status_monotonic = 0.0
 
         # The authority-carrying surface (4D), and the only one this executor
-        # publishes. The external interface is still standard
-        # FollowJointTrajectory; this is where the accepted goal is bound to the
-        # claim it runs under before it reaches the hardware.
-        #
-        # The bare JointTrajectory copy that used to go out alongside is gone.
-        # Two messages for one logical motion meant the bridge admitted the
-        # command twice, and the legacy copy was stamped by the bridge from its
-        # own current state — so it advanced the same sequence watermark the
-        # stamped copy is judged against, and could make the executor's next
-        # real command look stale. It also reintroduced exactly the flaw the
-        # stamped path removes: a delayed bare command being assigned today's
-        # authority though it was produced under yesterday's.
+        # publishes. The external interface stays standard
+        # FollowJointTrajectory; here the accepted goal is bound to the claim it
+        # runs under before reaching the hardware. One motion, one command:
+        # a second unstamped copy would be admitted separately and would advance
+        # the same sequence watermark this one is judged against.
         self.authorized_pub = self.create_publisher(
             AuthorizedJointTrajectory, "control/omnihand/authorized_trajectory", 10
         )
@@ -417,8 +410,8 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             self._release_hand()
 
     def _run_trajectory(self, goal_handle, trajectory):
-        # Bound to the claim this goal runs under, and carrying the trajectory
-        # whole. One logical motion, one command.
+        # Bound to the claim this goal runs under, carrying the trajectory
+        # whole.
         authorized = AuthorizedJointTrajectory()
         authorized.authority = self._authority_stamp()
         authorized.trajectory = trajectory

@@ -156,15 +156,9 @@ class OmniHandSkillController(Node):
         callback_group = ReentrantCallbackGroup()
         # The authority-carrying surface (4D), and the only one this controller
         # publishes. The reactive loop emits a next target each cycle and cannot
-        # be time-parameterized, so it gets a target message rather than being
-        # forced through the trajectory contract.
-        #
-        # The bare JointState copy on the shared command topic is gone. This
-        # loop publishes at its control rate, so every cycle produced two
-        # commands for one target — and the unstamped copy was completed by the
-        # bridge from its own current state, which no stale claim can fail. A
-        # contact-seeking motion whose claim was revoked mid-grasp would have
-        # kept closing the hand on that path.
+        # be time-parameterized, so it gets a target message rather than the
+        # trajectory contract. No unstamped copy: the bridge would stamp one
+        # from its own state, and a revoked claim could not stop it.
         self.target_pub = self.create_publisher(
             HandJointTarget, "control/omnihand/joint_target", 10
         )
@@ -281,8 +275,7 @@ class OmniHandSkillController(Node):
     def _publish_command(self, target: list[float]) -> None:
         positions = [float(value) for value in target]
 
-        # Stamped with the claim this motion runs under. One target, one
-        # command, and the identity travels with it.
+        # Stamped with the claim this motion runs under.
         with self._lock:
             self._sequence += 1
             stamp = DeviceCommandStamp()

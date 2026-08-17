@@ -97,6 +97,12 @@ edit source code or tests.
      because a bare command makes the bridge invent the identity it then checks.
      Flag any production or demo launch that enables it, and any node that
      publishes both a stamped and a bare copy of one motion.
+   - **Narrative source comments:** comments or docstrings under `src/` that tell
+     the history of the code — "used to", "before <phase> this passed
+     unconditionally", dated incident retellings, measured anecdotes, or
+     rhetorical framing. That material belongs in `docs/sprint*/errors_and_fixes.md`,
+     `docs/sprint*/reference/`, or the commit message. Source comments say what
+     the code does and why it exists, short.
    - **Instrumentation form (C6):** a measurement recorded without the form C6
      requires — the level it was taken at, the interface or device it names, and
      the script or capture that produced it.

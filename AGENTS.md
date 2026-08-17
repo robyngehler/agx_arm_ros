@@ -54,6 +54,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - Update `docs/assets/` when an OmniHand or runtime component contract (command, feedback, launch, package) changes.
 - Update `docs/project/` when repository structure or architecture changes; update `docs/control/` when environment or launch workflows change; update `.github/instructions/` and `.claude/rules/` when workflow, naming, or package-split rules change.
 - Treat `docs/sprintX/` as the first-class sprint entrypoints and keep any surviving historical evidence inside those sprint surfaces.
+- Comments and docstrings under `src/` say what the code does and why it exists, short. No history of what the code used to do, no dated incident retellings, no rhetorical framing — that material belongs in `docs/sprintX/errors_and_fixes.md`, `docs/sprintX/reference/`, or the commit message. See `.claude/rules/source-comment-style.md` and `.github/instructions/source-comment-style.instruction.md`.
 - Treat `.github/`, `docs/`, `src/`, `scripts/`, `config/`, and `vendor/` as source-managed.
 - Do not treat `build/`, `install/`, `log/`, or transient run outputs as canonical source.
 

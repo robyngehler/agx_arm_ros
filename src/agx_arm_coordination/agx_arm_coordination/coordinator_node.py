@@ -616,10 +616,8 @@ class CoordinatorNode(Node):
     def _resume_hand_window(self, side: str) -> None:
         """Close the hand window on ``side``, handing the arm back (best-effort).
 
-        Closing the window is what resumes the arm: `resume_arm_control` reopens
-        the arm's MIT gate and restores its feedback push. The two directions
-        read confusingly close together, so state which one this is — the window
-        closes, the arm resumes.
+        `resume_arm_control` reopens the arm's MIT gate and restores its feedback
+        push: the window closes, the arm resumes.
         """
         if not side or side not in self._open_hand_windows:
             return
@@ -859,14 +857,9 @@ class CoordinatorNode(Node):
 
         Returns None whenever the group is not exactly the two arm sides, is not
         all Trajectory, has no both_arms group configured, is not yet taught, or
-        the plans cannot be merged.
-
-        None is not a fallback. The caller raises `DispatchError` on it, because
-        dispatching a synchronized pair separately serializes it and drops the
-        synchronization silently — the opposite of what was asked for, presented
-        as success. This docstring used to say the caller falls back to
-        per-action dispatch, which stopped being true when the merge was made
-        strict.
+        the plans cannot be merged. None is not a fallback: the caller raises
+        `DispatchError`, because dispatching a synchronized pair separately
+        serializes it and drops the synchronization silently.
         """
         if len(members) != 2:
             return None
