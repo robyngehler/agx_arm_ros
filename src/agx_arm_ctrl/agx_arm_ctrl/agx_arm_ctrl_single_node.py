@@ -3578,16 +3578,22 @@ class AgxArmRosNode(Node):
             return False
 
     def _move_mode_is_firmware_hold(self, mode_feedback) -> bool:
-        """False only when the readback positively reports a MIT move mode.
+        """True only when the readback POSITIVELY reports a non-MIT move mode.
 
-        In MIT the arm only does what the host streams — with the feedback push
-        silenced the host streams nothing and no correction can be computed. A
-        hand window therefore requires a NON-MIT move mode, where the vendor's
-        own position controller closes the loop on the firmware side. An
-        unreadable or UNKNOWN mode is not treated as a failure; the observed
-        value is reported so a surprising one is visible instead of trusted.
+        In MIT the arm only does what the host streams, so a hold needs a mode
+        where the vendor's own position controller closes the loop. Confirmation
+        therefore requires a known non-MIT code, not merely the absence of a MIT
+        one: an unreadable or UNKNOWN mode is no evidence, and the moment a hold
+        matters most is exactly when the status read is least likely to answer.
         """
-        return not self._move_mode_is_mit(mode_feedback)
+        if mode_feedback is None:
+            return False
+        try:
+            return int(mode_feedback) in nero_can_push.firmware_hold_move_mode_codes(
+                self.agx_arm
+            )
+        except (TypeError, ValueError):
+            return False
 
     def _assert_firmware_hold(self, hold_pose) -> tuple:
         """Re-assert a MOVE-J hold until the firmware confirms it left MIT.
@@ -3621,7 +3627,7 @@ class AgxArmRosNode(Node):
             move_mode = None if status is None else getattr(
                 status, "mode_feedback", None
             )
-            if not self._move_mode_is_mit(move_mode):
+            if self._move_mode_is_firmware_hold(move_mode):
                 return True, move_mode, attempts
             if time.monotonic() >= deadline:
                 return False, move_mode, attempts

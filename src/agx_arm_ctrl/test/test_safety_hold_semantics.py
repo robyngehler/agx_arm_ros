@@ -251,3 +251,74 @@ def test_the_firmware_hold_runs_entirely_on_the_safety_lane():
     node._assert_firmware_hold([0.0] * 7)
 
     assert lanes and all(lane is Lane.SAFETY for lane in lanes), lanes
+
+
+class _UnreadableModeArm(_HoldArm):
+    """Answers joint angles but never a usable move mode.
+
+    The realistic shape of a sick bus: enough feedback to capture a pose, not
+    enough to confirm what the firmware did with it.
+    """
+
+    def __init__(self, *, mode=None):
+        super().__init__()
+        self._mode = mode
+
+    def get_arm_status(self):
+        self.mode_reads += 1
+        if self._mode is None:
+            return None
+        return type("S", (), {"msg": type("M", (), {
+            "ctrl_mode": 0x01, "mode_feedback": self._mode,
+        })()})()
+
+
+def test_an_unreadable_move_mode_does_not_confirm_the_hold():
+    """Absence of a MIT reading is not a non-MIT reading.
+
+    The verifier asked "is this not MIT?", so a status read that answered
+    nothing passed — precisely when the hold most needed checking.
+    """
+    node = _node(_UnreadableModeArm(mode=None))
+
+    left_mit, move_mode, _attempts = node._assert_firmware_hold([0.0] * 7)
+
+    assert left_mit is False
+    assert move_mode is None
+
+
+def test_an_unknown_move_mode_does_not_confirm_the_hold():
+    node = _node(_UnreadableModeArm(mode=0xFF))
+
+    left_mit, move_mode, _attempts = node._assert_firmware_hold([0.0] * 7)
+
+    assert left_mit is False
+    assert move_mode == 0xFF
+
+
+def test_a_positive_non_mit_move_mode_confirms_the_hold():
+    node = _node(_UnreadableModeArm(mode=0x01))   # MOVE-J
+
+    left_mit, move_mode, _attempts = node._assert_firmware_hold([0.0] * 7)
+
+    assert left_mit is True
+    assert move_mode == 0x01
+
+
+def test_the_stop_reports_an_unconfirmable_hold_rather_than_claiming_one():
+    node = _node(_UnreadableModeArm(mode=None))
+
+    node._emergency_stop_callback(None, Trigger.Response())
+
+    assert any("NOT in a firmware hold" in e for e in node.logger.errors)
+
+
+def test_neither_tier_s_mit_code_can_pass_as_a_hold():
+    """0x04 is MIT below v111 and unassigned on it; 0x06 is the reverse.
+
+    Neither may ever read as a confirmed hold, whichever driver is loaded.
+    """
+    for mit_code in (0x04, 0x06):
+        node = _node(_UnreadableModeArm(mode=mit_code))
+        left_mit, _mode, _attempts = node._assert_firmware_hold([0.0] * 7)
+        assert left_mit is False, f"move mode {mit_code:#04x} passed as a hold"

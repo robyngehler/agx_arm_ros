@@ -66,6 +66,33 @@ def mit_move_mode_codes(arm) -> frozenset:
         return FALLBACK_MIT_MOVE_MODES
 
 
+# P/J/L/C/CPV on both known tiers. Deliberately excludes 0x04 and 0x06: each is
+# MIT on one tier and unassigned on the other, so neither is ever a safe
+# positive reading. UNKNOWN (0xFF) is excluded because it is the absence of an
+# answer.
+FALLBACK_FIRMWARE_HOLD_MOVE_MODES = frozenset({0x00, 0x01, 0x02, 0x03, 0x05})
+
+
+def firmware_hold_move_mode_codes(arm) -> frozenset:
+    """MOVE-mode codes that POSITIVELY mean "the firmware closes the loop".
+
+    The complement of :func:`mit_move_mode_codes` among the modes the driver
+    actually defines — not simply "anything that is not MIT". An unreadable or
+    UNKNOWN mode must fail confirmation rather than pass it: the moment the hold
+    matters most is the one where the status read is least likely to answer.
+    """
+    try:
+        motion_mode = arm._msg_mode.Enums.MotionMode
+        mit = mit_move_mode_codes(arm)
+        return frozenset(
+            int(member)
+            for member in motion_mode
+            if int(member) not in mit and member.name != "UNKNOWN"
+        )
+    except Exception:
+        return FALLBACK_FIRMWARE_HOLD_MOVE_MODES
+
+
 def set_can_push(arm, enabled: bool) -> None:
     """Turn the arm's CAN feedback push on or off, keeping the control mode.
 
