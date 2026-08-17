@@ -12,9 +12,25 @@ sudo apt update && sudo apt install can-utils ethtool
 
 These two tools are used to configure the CAN module.
 
-## 0 Current native workflow: `activate_native_can.sh`
+## 0 Current workflow: `activate_duo_can.sh`
 
-The current Duo hardware-first baseline uses `scripts/activate_native_can.sh` on the Jetson native `mttcan` side buses. This is the path used by `docs/control/bringups/launches.md` and the current arm-plus-hand runtime.
+> **Retired 2026-08-17:** `activate_native_can.sh` is now a thin shim that
+> forwards to `scripts/activate_duo_can.sh`. The supported bring-up configures
+> all four Duo buses in one call and matches interfaces by **physical slot** —
+> the two hand adapters are identical hardware, so their `canN` indices depend
+> on enumeration order and can swap between boots, which would point a hand's
+> commands at the other hand. It carries every setting the retired script had,
+> including the TJA1051T/3 TDC offset on the native arm buses.
+>
+> ```bash
+> sudo bash scripts/activate_duo_can.sh          # all four
+> sudo bash scripts/activate_duo_can.sh arms     # arms only
+> bash scripts/activate_duo_can.sh --show        # report state, change nothing
+> ```
+
+### Historical: what `activate_native_can.sh` did
+
+The Duo hardware-first baseline used `scripts/activate_native_can.sh` on the Jetson native `mttcan` side buses.
 
 ```bash
 cd ~/agx_arm_ws/src/agx_arm_ros

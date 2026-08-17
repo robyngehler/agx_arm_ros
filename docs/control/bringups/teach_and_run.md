@@ -66,7 +66,7 @@ controller + driver first (it provides normal mode, `enable_agx_arm`, `mit_contr
 manager's default service/topic names match:
 
 ```bash
-bash ./scripts/activate_native_can.sh        # can_nero_right up (see Step A for the hand)
+sudo bash ./scripts/activate_duo_can.sh      # all four Duo buses up
 ros2 launch agx_arm_mit_controller start_nero_mit_controller.launch.py \
   can_port:=can_nero_right \
   gravity_arm_side:=right \
@@ -181,10 +181,10 @@ free-runs without the arm).
 >   `feedback/fault_lockout` latches `true` until `clear_fault_lockout` is called — recovery no longer
 >   silently re-arms motion (disable with `require_fault_ack:=false`).
 > - **for headroom under that policy, deepen the TX ring** —
->   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_native_can.sh right` — so an arm command burst fits the
+>   `TX_QUEUE_LEN=1000 sudo bash ./scripts/activate_duo_can.sh arms` — so an arm command burst fits the
 >   queue (avoids ENOBUFS `[105]`) without changing retransmission behaviour.
 > - **deepen the RX socket buffer too** (separate from arbitration, an *additional* failure mode):
->   `activate_native_can.sh` now raises `net.core.rmem_max`/`rmem_default` to 4 MB (`RMEM_MAX` env, `0` to
+>   `activate_duo_can.sh` raises `net.core.rmem_max` to 4 MB (`RMEM_MAX` env, `0` to
 >   skip). The kernel default (~208 KB ≈ 270 CAN frames ≈ 125 ms of buffer at the ~2150 f/s the arm pushes)
 >   overflows during the 200 ms+ publish-loop stalls the full teach stack causes, and the kernel then drops
 >   received frames — **including the hand's CANFD response frames**, which surface as `请求超时` even with an
@@ -465,7 +465,7 @@ bash ./scripts/colcon_build_system_python.sh --packages-select \
 source install/setup.bash
 
 # native CAN side bus (right)
-bash ./scripts/activate_native_can.sh        # brings up can_nero_right
+sudo bash ./scripts/activate_duo_can.sh      # brings up all four Duo buses
 
 # OmniHand bridge (right, real SDK) — self-locates the vendor pkg, opens can_nero_right
 ros2 launch agx_arm_ctrl start_omnihand_bridge.launch.py \

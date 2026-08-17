@@ -1,5 +1,12 @@
 # OmniHand CAN FD Setup (current, validated)
 
+> **Retired bring-up, 2026-08-17.** `activate_native_can.sh` and
+> `omnihand_canfd_activate.sh` are now thin shims forwarding to
+> `scripts/activate_duo_can.sh`, which is the supported bring-up for all four
+> Duo buses and carries every setting described below, TDCR included. The
+> commands in this document are kept because they explain *why* each setting is
+> needed; run the duo script instead.
+
 The OmniHand Pro runs on the Jetson **native `mttcan`** CAN FD controller (40-pin header) with a
 **BRS-capable 5 Mbit transceiver**. This is the current, working setup — control and firmware
 read-out are confirmed. The ZLG USB-CANFD adapter is **not** used.

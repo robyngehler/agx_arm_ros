@@ -56,6 +56,33 @@ TX_QUEUE_LEN=1000
 # RX socket while it does; a small kernel buffer then drops frames. See
 # docs/sprint_refactor/reference/phase0_baseline.md.
 RMEM_MAX=4194304
+# Transmitter Delay Compensation for the TJA1051T/3 on the 40-pin header. The
+# native arm interfaces run CAN FD at 5 Mbit and the transceiver needs this
+# offset, written through the mttcan sysfs attribute while the interface is
+# DOWN — the devmem register and DTB boot-entry routes were investigated and do
+# not work. The USB-CAN FD hand adapters have their own transceiver and are not
+# configured here.
+TDCR_VALUE="${TDCR_VALUE:-0x800}"
+
+set_tdc_offset() {
+    local iface="$1" tdc_path
+    tdc_path=$(find /sys/devices/platform/bus@0 -path "*/net/$iface/tdc_offset" 2>/dev/null | head -1)
+    if [ -n "$tdc_path" ]; then
+        echo "$TDCR_VALUE" | tee "$tdc_path" >/dev/null \
+            && echo "  $iface: TDCR = $TDCR_VALUE" \
+            || echo "  warning: could not write TDCR to $tdc_path" >&2
+    else
+        echo "  note: no tdc_offset for '$iface' — TDCR skipped (not a native mttcan bus?)" >&2
+    fi
+}
+
+is_arm_target() {
+    local candidate="$1" arm
+    for arm in "${ARMS[@]}"; do
+        [ "$arm" = "$candidate" ] && return 0
+    done
+    return 1
+}
 
 iface_for_slot() {
     local want="$1" dev name
@@ -93,6 +120,10 @@ bring_up() {
     fi
 
     ip link set "$current" down 2>/dev/null || true
+    # While the interface is down, and only on the native arm buses.
+    if is_arm_target "$target"; then
+        set_tdc_offset "$current"
+    fi
     ip link set "$current" type can \
         bitrate "$BITRATE" sample-point "$SAMPLE_POINT" \
         dbitrate "$DBITRATE" dsample-point "$DSAMPLE_POINT" \

@@ -12,7 +12,14 @@ sudo apt update && sudo apt install can-utils ethtool
 
 这两个工具用于配置 CAN 模块
 
-## 0 当前原生工作流：`activate_native_can.sh`
+## 0 当前工作流：`activate_duo_can.sh`
+
+> **2026-08-17:** `activate_native_can.sh` 已退役，现在只是转发到
+> `scripts/activate_duo_can.sh` 的薄封装。受支持的启动方式一次配置全部四条 Duo 总线，
+> 并按物理插槽匹配接口——两个手部适配器是相同硬件，其 `canN` 编号会在重启之间互换。
+> 下面保留的原始说明描述的是退役脚本的行为。
+
+### 历史说明：`activate_native_can.sh`
 
 当前 Duo 真机基线路径优先使用 Jetson 原生 `mttcan` side bus 上的 `scripts/activate_native_can.sh`。这也是 `docs/control/bringups/launches.md` 和当前 arm-plus-hand 运行时采用的路径。
 

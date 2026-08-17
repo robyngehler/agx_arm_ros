@@ -223,9 +223,9 @@ Routed through the runtime:
       0.61 -> 0.38 ms, max 10.5 -> 5.4 ms). It does not remove the tail: ~5 ms
       worst case survives as arbitration against the arm's own feedback push,
       which is what to attack for the 200-250 Hz target.
-- [ ] Make `activate_duo_can.sh` set the TX queue depth. The measurements above
-      were taken after a manual `ip link set`, so the supported bring-up does
-      not yet produce the configuration they describe.
+- [x] Make `activate_duo_can.sh` set the TX queue depth. It sets `txqueuelen`
+      1000 and raises `net.core.rmem_max`, so the supported bring-up produces
+      the configuration the measurements above describe.
 - [ ] Correct the inflated SDK call counts recorded earlier in the sprint. Two
       double-counting defects were found and fixed; durations were never
       affected, but totals quoted before 2026-08-13 are roughly 2× on reads.
@@ -462,10 +462,18 @@ hardware.
       feedback at 167/s (right) and 126/s (left), and each device on its own
       bus: hand buses 25 f/s each, arm buses 2200 f/s RX with 703 f/s TX per arm
       under a dual MIT hold. No CAN errors on any of the four.
-- [ ] Replace process-global `OMNIHAND_SOCKETCAN_IFACE` selection with explicit
-      backend construction.
-- [ ] Adopt `scripts/activate_duo_can.sh` as the supported bring-up and retire
-      `activate_native_can.sh` / `omnihand_canfd_activate.sh`.
+- [x] Replace process-global `OMNIHAND_SOCKETCAN_IFACE` selection with explicit
+      backend construction. The interface is an argument to the backend and is
+      held in the environment only for the SDK construction that reads it, under
+      a process-wide lock. It worked before only because the two bridges run in
+      separate processes; composed into one, whichever constructed second chose
+      the bus for both.
+- [x] Adopt `scripts/activate_duo_can.sh` as the supported bring-up and retire
+      `activate_native_can.sh` / `omnihand_canfd_activate.sh`. Both are now
+      forwarding shims rather than deletions, so a stale runbook still brings a
+      bus up. Retiring them first required porting the TJA1051T/3 TDC offset
+      into the duo script — the arm buses run CAN FD at 5 Mbit and the
+      transceiver needs it, and it was the one setting the duo script lacked.
 - [ ] Rewrite the operational docs bannered in 0A for the four-bus reality.
 
 ### 1B/2C measurement: what the full stack actually costs

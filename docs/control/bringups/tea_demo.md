@@ -39,7 +39,7 @@ so silence is not a safe state. See `teach_and_run.md` § Emergency stop / runaw
 
 | Layer | Command |
 |---|---|
-| CAN buses | `bash ./scripts/activate_native_can.sh` |
+| CAN buses | `sudo bash ./scripts/activate_duo_can.sh` |
 | arms + MoveIt | `start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=duo_hand` |
 | hands + coordinator | `start_tea_demo.launch.py` |
 | the activity | `ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1` |
@@ -58,7 +58,7 @@ anchors are reachable.
 ### 2. Live bring-up
 
 ```bash
-bash ./scripts/activate_native_can.sh
+sudo bash ./scripts/activate_duo_can.sh
 
 # Arms + MoveIt. use_rviz:=false is a CPU decision, not cosmetic (see below).
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \

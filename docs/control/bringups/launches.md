@@ -31,8 +31,8 @@ bash scripts/activate_duo_can.sh --show        # report state, change nothing
 Arms only, by name:
 
 ```bash
-sudo bash scripts/activate_native_can.sh
-# or: sudo bash scripts/activate_native_can.sh right
+sudo bash scripts/activate_duo_can.sh
+# or: sudo bash scripts/activate_duo_can.sh arms
 ip -details link show can_nero_right
 ```
 
@@ -41,7 +41,7 @@ roughly double per transmitted frame on an arm bus (`move_mit` 0.61 ms mean fall
 a bus brought up by hand should be deepened the same way:
 
 ```bash
-TX_QUEUE_LEN=1000 sudo bash scripts/activate_native_can.sh right
+TX_QUEUE_LEN=1000 sudo bash scripts/activate_duo_can.sh arms
 ```
 
 Details and alternatives: `../../assets/omnihand/omnihand_canfd_setup.md`.
