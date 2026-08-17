@@ -85,9 +85,34 @@ firmware push only starts after an incoming command, so the driver sends
 
 Nothing was received from either arm since the interfaces came up, while both
 hands ran on the same host in the same session — so the CAN stack, the adapters
-and the ROS graph are all healthy. This is arm availability (power, E-stop or
-wiring), not a software fault, and the driver's diagnosis was correct and
-specific.
+and the ROS graph are healthy.
+
+**The driver's "check power, E-stop and wiring" is not the whole story, and
+probing further changed the answer.** The arm's feedback push only starts after
+it receives a command, and that command never reaches the wire:
+
+- Both ROS services that could send it — `enable_agx_arm` and `set_normal_mode`,
+  the documented wake sequence used by `agx_arm_mit_tools/test_position_hold.py`
+  — refuse with **"Agx_arm is not connected"**. That guard is
+  `_check_arm_connected()`, which reads `is_ok()`, which is false because no
+  feedback has arrived. The wake command is gated behind the feedback it exists
+  to start.
+- Bypassing every ROS guard and driving the vendor SDK directly does not help.
+  `connect()` succeeds and the socket is genuinely bound to the right interface
+  (`can_nero_right` appears in `/proc/net/can/rcvlist_all`), `set_normal_mode()`
+  returns without raising, and `get_firmware()` returns `None` — while
+  **TX packets stay 0 on every CAN interface on the host**, with TX errors 0 and
+  TX dropped 0. Nothing was handed to the controller at all.
+
+For contrast, `hand_right` shows TX 6421 in the same session, so the host can
+transmit. Error counters do not discriminate here: `berr-counter tx` is 0 on the
+hand bus too, because successful transmissions accumulate no errors.
+
+So the deadlock is real and sits below our code: the SDK appears to gate its
+sends on a link-health flag it can only satisfy from received feedback. Whether
+an arm is *also* unpowered cannot be determined from this host, because no frame
+is put on the wire either way. Both need checking, and the software half is a
+vendor-fork question under C3 rather than something the driver can fix above it.
 
 ## Not covered by this run
 
