@@ -7,9 +7,20 @@ runtime or contract questions.
 
 ## OmniHand command surface
 
-Should `control/omnihand/joint_trajectory` remain compatibility-only, or should the repo later
-promote a more explicit action or controller contract once the stable hardware-backed hand workflow
-is fully signed off?
+**Closed 2026-08-17.** `control/omnihand/joint_trajectory` is not compatibility-only *and* subscribed;
+it is compatibility-only *and off*. The bridge subscribes it and the shared `control/joint_states`
+surface solely under `allow_legacy_hand_command_ingress` (default false, development only), because a
+bare command carries no commander, no generations and no sequence, so the bridge would have to invent
+the identity it then checks.
+
+The explicit contract the question anticipated exists: `DeviceCommandStamp` carried by
+`AuthorizedJointTrajectory` (trajectory execution) and `HandJointTarget` (reactive contact-seeking
+motion), with `control/omnihand/claim_device` deciding who may command at all. The external interface
+is still the standard `FollowJointTrajectory` action; what changed is what crosses the bridge boundary.
+
+What remains open is narrower and belongs to the status half of C5: `HandStatus`, `GripperStatus` and
+`OmniHandStatus` are still three messages where one abstract hand status should fit any hand.
+
 ## Independent hardware emergency stop
 
 The V02 refactor gives the unit a software safety generation: one writer

@@ -87,10 +87,11 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   the same four lanes since 2026-08-15, and no ROS callback reaches the vendor SDK
   directly. The safety lane preempts the queue but not the call in flight, and the
   hand has no declared stop budget yet
-- keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; shared
-  `control/joint_states` is the current hand command flow and is legacy (V02 target: one abstract hand
-  command carrying the authority stamp `owner_id`, `device_epoch`,
-  `unit_safety_epoch`, `sequence`; the standard ROS messages stay untouched)
+- keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; hand
+  commands carry `DeviceCommandStamp` (`owner_id`, `device_epoch`, `unit_safety_epoch`, `sequence`)
+  inside `AuthorizedJointTrajectory` (trajectory execution) or `HandJointTarget` (reactive motion) —
+  one authority contract, two motion payloads. Shared `control/joint_states` is legacy and is not
+  subscribed unless `allow_legacy_hand_command_ingress` is set (default false, development only)
 - the two arms run different, unflashable firmware (right 1.06 default tier, left 1.11 `NeroFW.V111`);
   anything derived from the protocol is per tier, not per robot model, and a measurement names its arm
 - each device owns its own CAN bus: arms on `can_nero_left`/`can_nero_right` (native), hands on

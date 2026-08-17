@@ -237,7 +237,7 @@ class CoordinatorNode(Node):
         self.declare_parameter("hand_action_template", "/{side}_hand/perform")
         # Driver-side step-and-settle handoff services, per arm side. Before a
         # hand action runs on a shared side bus the arm is quiesced into a
-        # verified hold (prepare_hand_window) and reopened afterwards
+        # verified hold (prepare_hand_window) and handed back afterwards
         # (resume_arm_control), so the hand actually owns the bus. On a
         # dedicated-per-device topology there is nothing to hand off.
         self.declare_parameter("arm_service_template", "/{side}_arm")
@@ -347,7 +347,7 @@ class CoordinatorNode(Node):
                 Trigger, f"{arm_ns}/emergency_stop", callback_group=self._cb_group
             )
         # Sides whose arm is currently quiesced for a hand window (prepared but
-        # not yet resumed), so any exit path can reopen them.
+        # not yet resumed), so any exit path can close them again.
         self._open_hand_windows: set[str] = set()
 
         # --- cooperative stop ------------------------------------------------
@@ -614,7 +614,13 @@ class CoordinatorNode(Node):
         self.get_logger().info(f"hand window opened on {side} (arm quiesced): {msg}")
 
     def _resume_hand_window(self, side: str) -> None:
-        """Reopen the arm side after a hand action (best-effort)."""
+        """Close the hand window on ``side``, handing the arm back (best-effort).
+
+        Closing the window is what resumes the arm: `resume_arm_control` reopens
+        the arm's MIT gate and restores its feedback push. The two directions
+        read confusingly close together, so state which one this is — the window
+        closes, the arm resumes.
+        """
         if not side or side not in self._open_hand_windows:
             return
         ok, msg = self._call_trigger_sync(
@@ -851,9 +857,16 @@ class CoordinatorNode(Node):
     def _try_merge_sync_group(self, members, activity_id) -> _Child | None:
         """Merge a synced left_arm+right_arm Trajectory pair into one both_arms goal.
 
-        Returns None (caller falls back to per-action dispatch) whenever the group
-        is not exactly the two arm sides, is not all Trajectory, has no both_arms
-        group configured, is not yet taught, or the plans cannot be merged.
+        Returns None whenever the group is not exactly the two arm sides, is not
+        all Trajectory, has no both_arms group configured, is not yet taught, or
+        the plans cannot be merged.
+
+        None is not a fallback. The caller raises `DispatchError` on it, because
+        dispatching a synchronized pair separately serializes it and drops the
+        synchronization silently — the opposite of what was asked for, presented
+        as success. This docstring used to say the caller falls back to
+        per-action dispatch, which stopped being true when the merge was made
+        strict.
         """
         if len(members) != 2:
             return None
@@ -873,7 +886,10 @@ class CoordinatorNode(Node):
         try:
             merged_plan = merge_arm_plans(plans, group, merged_id)
         except PlanMergeError as exc:
-            self.get_logger().warn(f"sync-merge fallback for {merged_id}: {exc}")
+            self.get_logger().warn(
+                f"sync-merge failed for {merged_id}: {exc}; the activity will "
+                "fail rather than run the pair unsynchronized"
+            )
             return None
 
         rep_no = members[0].action_no
@@ -937,13 +953,13 @@ class CoordinatorNode(Node):
         finally:
             # Authority is released the same way on every exit — success,
             # failure, cancellation, and an exception nobody predicted. Any hand
-            # window still open is reopened here, because leaving one open keeps
-            # the arm's MIT gate shut and the next activity would find an arm
-            # that silently refuses to move.
+            # window still open is CLOSED here — the arm gets its bus and its MIT
+            # gate back — because a window left open keeps that gate shut and the
+            # next activity would find an arm that silently refuses to move.
             try:
                 self._resume_all_hand_windows()
             except Exception as exc:
-                self.get_logger().error(f"reopening hand windows failed: {exc}")
+                self.get_logger().error(f"closing hand windows failed: {exc}")
             self._unit_activity.release(activity_id)
             if self.stop_requested:
                 self._shutdown_event.set()
@@ -1025,7 +1041,7 @@ class CoordinatorNode(Node):
                     for covered_no in child.action_nos:
                         completed.add(covered_no)
                     if isinstance(child, _HandChild):
-                        # Hand action done: reopen the arm side it quiesced.
+                        # Hand action done: close the window, hand the arm back.
                         self._resume_hand_window(child.side)
                     self._event("completed", activity_id=activity_id,
                                 action_id=child.action_id, state="completed",
@@ -1080,7 +1096,7 @@ class CoordinatorNode(Node):
         """Bring everything in flight to a held stop, in the only order that works.
 
         1. cancel the children — this is what actually stops the motion;
-        2. reopen any hand window, because while one is open the arm's MIT gate is
+        2. close any hand window, because while one is open the arm's MIT gate is
            closed and a hold command would be dropped before reaching the arm;
         3. pin the arms that were moving.
         """
@@ -1171,7 +1187,7 @@ def main(args: list[str] | None = None) -> None:
     # Own the interrupt instead of letting rclpy tear the context down on the
     # spot. A coordinator that just exits leaves its MoveIt trajectory and hand
     # goals running on hardware with nobody left to cancel them, so the first
-    # interrupt asks the activity to unwind (cancel -> reopen hand windows -> pin
+    # interrupt asks the activity to unwind (cancel -> close hand windows -> pin
     # the arms) while the graph is still alive to carry those messages. A second
     # interrupt means the operator wants out now: escalate to the emergency stop
     # and hand the signal back to the default handler.

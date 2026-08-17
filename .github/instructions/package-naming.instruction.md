@@ -28,7 +28,7 @@ Avoid rename churn while the current baseline is still stabilizing the shared en
 
 - keep OmniHand-specific messages under `agx_arm_msgs`
 - use repo-owned names such as `OmniHandStatus` and `OmniHandTactileRaw`
-- do not extend `HandCmd`, `HandPositionTimeCmd`, or `HandStatus` for OmniHand, and do not add a further OmniHand-only command or status message: the V02 target consolidates them with `GripperStatus` and `OmniHandStatus` into one abstract hand contract that must fit any hand (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D)
+- do not extend `HandCmd`, `HandPositionTimeCmd`, or `HandStatus` for OmniHand, and do not add a further OmniHand-only command or status message. The **command** half is settled — `DeviceCommandStamp` plus `AuthorizedJointTrajectory` and `HandJointTarget` — while the **status** half is still open: `HandStatus`, `GripperStatus` and `OmniHandStatus` are to become one abstract hand status that fits any hand (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D)
 - use `omnihand_type:=left|right` for side selection and normalized `left_*` or `right_*` joint names in ROS-facing surfaces
 
 ## Split Decision Rule

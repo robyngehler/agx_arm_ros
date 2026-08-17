@@ -22,7 +22,10 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 
 ## Public ROS Contract
 
-- shared `control/joint_states` is the current arm-plus-hand command flow and is legacy: the V02 target is one repo-owned abstract hand command carrying the command authority stamp — `owner_id`, `device_epoch`, `unit_safety_epoch`, `sequence`. The standard ROS messages themselves are not modified
+- a hand command carries the authority it was issued under: one reusable contract, two motion payloads — `DeviceCommandStamp` (`owner_id`, `device_epoch`, `unit_safety_epoch`, `sequence`) travels inside `AuthorizedJointTrajectory` for trajectory execution and inside `HandJointTarget` for reactive contact-seeking motion. Two payloads rather than one abstract command, because a time-parameterized trajectory and a next-target-per-cycle loop do not share a shape
+- shared `control/joint_states` and `control/omnihand/joint_trajectory` are legacy and are NOT subscribed by default. The bridge takes them only under `allow_legacy_hand_command_ingress` (default false, development only): a bare command makes the bridge invent the identity it then checks, so a stale or reordered command cannot be refused on those surfaces. Never describe them as authority-safe
+- no production node publishes both a stamped and a bare copy of one motion. Two commands for one motion means two admissions against one sequence watermark, and the self-stamped copy can starve the stamped one
+- the standard ROS messages themselves are not modified
 - resolve each hand's SocketCAN interface from its own registry entry, never from the arm's `can_port`, and select it through explicit backend construction rather than the process-global `OMNIHAND_SOCKETCAN_IFACE`
 - keep combined `feedback/joint_states` as the canonical follow-mode state
 - publish hand-only debug and diagnostics under `feedback/omnihand/*`
@@ -39,7 +42,7 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 
 - use standard ROS messages where they already fit, such as `sensor_msgs/JointState`
 - keep hand diagnostics in `agx_arm_msgs`
-- do not extend the Revo2-specific messages for OmniHand, and do not add a third OmniHand-only message either: the V02 target consolidates `HandCmd`, `HandPositionTimeCmd`, `HandStatus`, `GripperStatus`, and `OmniHandStatus` into one abstract hand contract that must fit any hand
+- do not extend the Revo2-specific messages for OmniHand, and do not add a third OmniHand-only message either. The **command** half of that consolidation is settled: `DeviceCommandStamp` plus the two motion payloads above. The **status** half is still open — `HandStatus`, `GripperStatus` and `OmniHandStatus` are to become one abstract hand status that fits any hand
 - keep fields statically defined; no runtime-variable structure in control paths
 
 ## Cadence Rules

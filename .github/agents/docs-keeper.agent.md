@@ -80,9 +80,23 @@ edit source code or tests.
      when live hardware validation could not be run.
    - **Message policy (C5):** guidance to extend `HandCmd`,
      `HandPositionTimeCmd`, or `HandStatus` for OmniHand, or to add a further
-     hand-specific command or status message. The target is one abstract hand
-     contract carrying joint count and tactile layout as data, so it fits `o10`,
-     `o12_pro`, and the 1-DoF gripper alike.
+     hand-specific command or status message. The **command** half is settled
+     and implemented: one reusable authority contract with two motion payloads —
+     `DeviceCommandStamp` inside `AuthorizedJointTrajectory` (trajectory
+     execution) and inside `HandJointTarget` (reactive contact-seeking motion).
+     Flag any text still describing the target as *one abstract hand command
+     message*; that reading is superseded as of 2026-08-17, because a
+     time-parameterized trajectory and a next-target-per-cycle loop do not share
+     a shape. The **status** half is still open: one abstract hand status
+     carrying joint count and tactile layout as data, fitting `o10`, `o12_pro`,
+     and the 1-DoF gripper alike.
+   - **Unstamped hand ingress:** any text presenting bare `control/joint_states`
+     or `control/omnihand/joint_trajectory` as a supported or authority-safe way
+     to command a hand. They are subscribed only under
+     `allow_legacy_hand_command_ingress` (default false, development only),
+     because a bare command makes the bridge invent the identity it then checks.
+     Flag any production or demo launch that enables it, and any node that
+     publishes both a stamped and a bare copy of one motion.
    - **Instrumentation form (C6):** a measurement recorded without the form C6
      requires — the level it was taken at, the interface or device it names, and
      the script or capture that produced it.

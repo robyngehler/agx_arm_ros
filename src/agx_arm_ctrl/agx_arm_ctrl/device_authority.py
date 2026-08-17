@@ -190,13 +190,18 @@ class UnitSafety:
     because a second writer can be introduced by misconfiguration and the symptom
     has to stay visible if it is.
 
-    **Open, not solved: writer restart and epoch continuity.** Generations are
-    held in memory and start at 0, while :meth:`observe` ignores any epoch at or
-    below the one it already holds. A restarted writer therefore republishes
-    generations that observers have already passed, and they are dropped until it
-    climbs back above the highest epoch seen — during which the unit cannot be
-    told that a new safety era began. Nothing here closes that; see
-    ``docs/sprint_refactor/open_questions.md``.
+    **Writer restart: solved by ordering per incarnation, not per epoch.**
+    Generations are held in memory and start at 0, so a restarted writer
+    republishes epochs its observers have already passed. Comparing epoch
+    numbers alone therefore dropped everything the new writer said until it
+    climbed back above the highest number seen — the unit could not be told a
+    new safety era had begun, which is the one message that must never be lost.
+
+    Each writer run now carries an ``incarnation`` and the wall-clock time it
+    started. Ordering is *within* an incarnation; a new incarnation is adopted
+    outright and, because a restart is not evidence that anything is safe, is
+    adopted fail-closed. A straggler from the previous incarnation arriving
+    afterwards is rejected rather than being allowed to un-stop the unit.
     """
 
     def __init__(

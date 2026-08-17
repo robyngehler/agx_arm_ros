@@ -194,12 +194,18 @@ Routed through the runtime:
       is fresh, which also closes the case where a command was admitted for an
       arm whose acquisition loop had stopped. L1 only; see
       `reference/sdk_latency_budget.md`.
-- [ ] Route the remaining SDK call sites: the hand-window and enable/disable
-      service handlers, and the quarantined legacy motion paths
-      (`move_j|p|l|c|js`, the `control/joint_states` follow). Off the hot path
-      and, for the legacy paths, off by default — but a development profile
-      that enables them puts a second writer on the session, so the counter
-      cannot be read as unconditional until they move.
+- [x] Route the enable/disable and feedback-push call sites. Landed 2026-08-17:
+      the enable readback, both directions of the feedback-push write, and the
+      hand-window timestamp poll now go through the session owner. The readback
+      was the sharpest of these — the single-owner rule held for the command
+      half of an enable and not for the half that verifies it, so a 100 Hz poll
+      ran off the calling thread while the worker drove the arm. Recovery and
+      process shutdown stay direct by design: they own the session outright and
+      a queued write would never be dequeued.
+- [ ] Route the quarantined legacy motion paths (`move_j|p|l|c|js`, the
+      `control/joint_states` follow). Off the hot path and off by default — but a
+      development profile that enables them puts a second writer on the session,
+      so the counter cannot be read as unconditional until they move.
 - [x] Measure what the queue in front of every setpoint costs — and act on it.
       The first routing sent the setpoint as one task and hardware refused it:
       6.4 ms mean and 21.4 ms worst case of non-preemptible work, more than the
@@ -781,7 +787,13 @@ The exclusivity guard landed in 1C; this is the conversion itself.
       as part of completion.
 - [ ] Migrate the Ctrl+C stop ladder and replay planning onto the event model
       without weakening them.
-- [ ] Make `sync_flag` merge strict: merge-or-fail, never independent fallback.
+- [x] Make `sync_flag` merge strict: merge-or-fail, never independent fallback.
+      Landed 2026-08-16: a batch that cannot be merged raises `DispatchError` and
+      aborts the activity. Falling back to independent dispatch meant a barrier
+      the plan declared could silently not happen, which is worse than failing —
+      the two arms would move unsynchronised and nothing would say so. Sync
+      groups are also admitted atomically, so a group is dispatched whole or not
+      at all.
 - [x] Add cleanup deadlines and structured failure reasons for child shutdown.
       Landed 2026-08-17: cancellation waits, bounded by `cleanup_timeout_sec`,
       for each child to confirm it stopped, and names the ones that did not in a
@@ -789,10 +801,11 @@ The exclusivity guard landed in 1C; this is the conversion itself.
       bookkeeping in the same breath, so an activity could report "aborted"
       while an arm was still executing.
 - [x] Release authority the same way on every exit path — success, failure,
-      cancellation, and an unexpected exception. Hand windows are reopened in a
-      `finally` alongside the unit-activity release; a window left open keeps the
-      arm's MIT gate shut, so the *next* activity would find an arm that
-      silently refuses to move.
+      cancellation, and an unexpected exception. Hand windows still open are
+      *closed* in a `finally` alongside the unit-activity release — closing the
+      window is what hands the arm back; a window left open keeps the arm's MIT
+      gate shut, so the *next* activity would find an arm that silently refuses
+      to move.
 - [ ] Validate concurrent-goal rejection, cancellation, cleanup, and the
       parallel interleavings from 2C.
 
@@ -876,6 +889,44 @@ Superseded 2026-08-14: this section previously required that `tea_pour_left_v1`
 still run after each phase closed, which contradicted the deferral recorded in
 0B. The demo is taught against command contracts this refactor is changing, so
 re-running it per phase would have measured the teach data, not the phase.
+
+## Refactor runtime RC gate
+
+The condition for treating the refactor runtime as ready for resumed
+Sprint-6/demo work. Everything after this gate is normal follow-up development
+rather than a blocker for productive coordinated-motion work.
+
+- [x] Arm startup cannot deadlock on feedback-before-enable. A transport
+      session, a live feedback stream and a verified enable are three separate
+      facts; only the first gates a bootstrap command (L1, 2026-08-17).
+- [x] Feedback recovery is distinct from motion permission. Turning the push
+      back on is a reporting operation a STOPPED unit may run while staying
+      stopped (L1).
+- [x] No bootstrap command falsely sets READY. An arm that never answers keeps
+      `control_ready` false and its enable unverified, with the bootstrap
+      provably attempted (L1).
+- [x] Enable/disable verification is evidence-backed, and "the readback
+      disagrees" is reported differently from "there is no readback" (L1).
+- [x] Feedback-push writes and the enable readback obey SDK ownership; recovery
+      and shutdown stay direct because they own the session outright (L1).
+- [x] Production hand commands carry the authority they were issued under
+      (L1/L2).
+- [x] No production dual-publish remains, so no self-stamped copy can starve
+      the stamped path against the shared sequence watermark (L1/L2).
+- [x] The docs and agent contract describe the implemented design — one
+      authority contract, two motion payloads — in both adapter mirrors.
+- [ ] **Point-8 L3 parallel-operation acceptance.** Blocked: neither arm
+      answers and no frame reaches the arm buses, so concurrent arm-and-hand
+      cases cannot run. See `reference/l3_command_authority.md`.
+- [ ] **Silent-arm bootstrap proven on both deployed arms.** Blocked by the
+      same condition — it is precisely what this gate item would diagnose.
+- [ ] **Stamped hand authority re-run with legacy ingress off.** The existing
+      hardware evidence was gathered while the dual publish was live, so it
+      describes a path that no longer exists.
+
+Everything above the first blocked item is **L1/L2 only**. The arm half of this
+gate is software-complete and hardware-unproven, and those are not the same
+claim.
 
 ## Documentation follow-through
 

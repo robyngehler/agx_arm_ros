@@ -206,9 +206,16 @@ reach L3 must say so explicitly. Encoded as a `.claude/skills/` workflow in 0B.
   `action_msgs`); repo-owned interfaces only for what ROS lacks
 - statically defined fields; no runtime-variable structure in control paths
 - hand interfaces abstract enough for any hand, not OmniHand-shaped
-- the hand message surface is **consolidated, not extended**: `HandCmd`,
-  `HandPositionTimeCmd`, `HandStatus`, `GripperStatus`, and `OmniHandStatus`
-  merge into one abstract hand contract with a documented caller migration
+- the hand message surface is **consolidated, not extended**. The command half
+  landed 2026-08-17 as one reusable authority contract with two motion payloads:
+  `DeviceCommandStamp` inside `AuthorizedJointTrajectory` (trajectory execution)
+  and inside `HandJointTarget` (reactive contact-seeking motion). Two payloads
+  rather than one abstract command message, because a time-parameterized
+  trajectory and a next-target-per-cycle loop do not share a shape — forcing
+  them together would have made the reactive primitive express contact-seeking
+  motion as a trajectory, which is the one thing it cannot do. The status half
+  is still open: `HandStatus`, `GripperStatus` and `OmniHandStatus` merge into
+  one abstract hand status with a documented caller migration
 - `src/agx_arm_msgs` has no `srv/` directory yet; adding one is part of Phase 1
 
 **Extend the existing hand-model abstraction; do not invent a second one.** The
@@ -769,15 +776,23 @@ uint64 unit_safety_epoch
 uint64 sequence
 ```
 
-The exact `.msg` name stays an implementation decision of this phase. What is
-already decided: these fields are carried explicitly, never encoded into
-`Header.frame_id`, action goal UUIDs, topic names, or ad-hoc JSON metadata; and
-there is one hand command message, not a family of OmniHand-specific ones.
+These fields are carried explicitly, never encoded into `Header.frame_id`,
+action goal UUIDs, topic names, or ad-hoc JSON metadata.
 
-- consolidate `HandCmd`, `HandPositionTimeCmd`, `HandStatus`, `GripperStatus`,
-  and `OmniHandStatus` into one abstract hand contract per C5
+**Command half — landed 2026-08-17.** The stamp is one reusable message,
+`DeviceCommandStamp`, and it is carried by two motion payloads rather than one
+abstract command: `AuthorizedJointTrajectory` for trajectory execution and
+`HandJointTarget` for the reactive loop. The earlier reading — "one hand command
+message, not a family" — is superseded: it was aimed at OmniHand-specific
+messages, and two payloads that differ by *motion shape* rather than by *device*
+satisfy what it was protecting. Bare `JointState`/`JointTrajectory` ingress is
+subscribed only under `allow_legacy_hand_command_ingress` (default false), and
+no production node publishes both a stamped and a bare copy of one motion.
+
+- consolidate `HandStatus`, `GripperStatus`, and `OmniHandStatus` into one
+  abstract hand status per C5 (**open**)
 - carry the command authority stamp — `owner_id`, `device_epoch`,
-  `unit_safety_epoch`, `sequence` — on hand commands
+  `unit_safety_epoch`, `sequence` — on hand commands (**done**)
 - keep joint count, joint naming, and tactile layout as data, never as
   fixed-width fields, so `o10`, `o12_pro`, and the 1-DoF AGX gripper all fit
 - migrate every in-repo caller and remove the retired messages inside this phase;

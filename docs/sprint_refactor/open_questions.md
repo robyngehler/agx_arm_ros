@@ -40,8 +40,14 @@
   listed in its `Consolidated from the proposal` table.
 - **Message strategy.** Native ROS interfaces are used where they already carry
   the meaning; repo-owned interfaces are added only for what ROS lacks, with
-  statically defined fields, and the existing hand messages are consolidated
-  into one abstract hand contract rather than extended. Recorded as C5.
+  statically defined fields. Recorded as C5. The *command* half is implemented
+  (2026-08-17) as one reusable authority contract with two motion payloads —
+  `DeviceCommandStamp` inside `AuthorizedJointTrajectory` and `HandJointTarget`.
+  The reading "one abstract hand command message" is superseded as of
+  2026-08-17: a time-parameterized trajectory and a next-target-per-cycle
+  reactive loop do not share a shape, and forcing them into one message would
+  have made the reactive primitive express contact-seeking motion as a
+  trajectory. The *status* half of the consolidation is still open.
 - **Test escalation.** L1 unit -> L2 mock/integration -> L3 hardware end-to-end,
   with L1 and L2 required before any hardware run on every platform. Recorded as
   C4 and to be encoded as a `.claude/skills/` workflow.
@@ -76,15 +82,23 @@ These are decided so implementation does not stall on them. Each carries the
 condition that would reopen it; none is expected to reopen before the phase that
 implements it.
 
-- **No separate hand ownership contract.** Single-commander arbitration will be
-  achieved by rejecting a second active goal on the hand skill controller, plus
-  `owner_id`, `device_epoch`, and `sequence` fields in the consolidated hand
-  command. Note this is work, not a property the code already has: the
-  controller currently accepts goals unconditionally. Rationale: the lease existed to arbitrate a shared
-  bus (C1 removed that); what remains is "one commander per device", which a
-  single-goal action server can enforce without a new interface, and the epoch
-  plus sequence reject late messages across ownership transitions. Adds no new interface. *Reopens if* a
-  second legitimate commander must coexist with the skill controller.
+- **Hand ownership is an explicit contract.** Reopened and settled by the
+  condition it named: a second legitimate commander does coexist with the skill
+  controller — trajectory execution and reactive contact-seeking are both
+  production primitives. The reading "no separate hand ownership contract, no
+  new interface" is superseded as of 2026-08-17.
+
+  What exists now: `control/omnihand/claim_device` (`ClaimDevice`) takes and
+  releases the device and advances its epoch; the bridge is fail-closed, so an
+  unclaimed hand executes nothing; and the command itself carries
+  `DeviceCommandStamp`, so a late command from the previous owner is
+  unexecutable rather than merely unlikely. Rejecting a second active goal on
+  one action server was never going to be enough, because the two primitives
+  are two servers.
+
+  Two related claims are superseded with it: that no new hand command interface
+  was needed, and that a topic command could not carry epochs and a sequence.
+  Both are now implemented — the stamp travels in the message.
 - **One command stamp for every commandable device, frozen 2026-08-12.** The
   four fields are the same everywhere — the ROS messages, `CommandStamp`, the
   driver's admission check, the MIT producer, and the hand contract:
