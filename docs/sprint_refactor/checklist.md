@@ -918,8 +918,15 @@ rather than a blocker for productive coordinated-motion work.
 - [ ] **Point-8 L3 parallel-operation acceptance.** Blocked: neither arm
       answers and no frame reaches the arm buses, so concurrent arm-and-hand
       cases cannot run. See `reference/l3_command_authority.md`.
-- [ ] **Silent-arm bootstrap proven on both deployed arms.** Blocked by the
-      same condition — it is precisely what this gate item would diagnose.
+- [ ] **Silent-arm bootstrap proven on both deployed arms.** Partially run
+      2026-08-17: the two cases that need an arm which does *not* answer are
+      done on hardware — Case E (feedback cannot be restored) on both arms, and
+      Case D (explicit enable before feedback is alive) on the right. Cases A,
+      B, C and F need an arm that answers. That run also corrected the arm
+      diagnosis: sends *are* attempted and the kernel refuses them with
+      `Transmit buffer full` while TX packets stay 0, which puts the remaining
+      fault on the bus or the device, not in our stack
+      (`reference/l3_command_authority.md`).
 - [ ] **Stamped hand authority re-run with legacy ingress off.** The existing
       hardware evidence was gathered while the dual publish was live, so it
       describes a path that no longer exists.

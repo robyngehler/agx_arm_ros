@@ -448,7 +448,7 @@ class AgxArmRosNode(Node):
         # stream is off, so the watchdog must not read that silence as a stall.
         self._hand_window_push_silenced = False
         self._hand_window_silence_started = 0.0
-        # Three facts that used to be one. A transport exists and can carry a
+        # Three facts: A transport exists and can carry a
         # command (transport_connected); feedback is advancing (control_ready,
         # is_ok); the joints answered the last enable request (enable_flag).
         # Deriving the first from the second is what deadlocked a silent arm:
@@ -1939,10 +1939,20 @@ class AgxArmRosNode(Node):
             else "This arm owns its bus, so nothing else is competing for it: "
             "suspect the link, the transceiver or the firmware, not the hand."
         )
+        # State the feedback side from the snapshot rather than asserting it.
+        # This message said "while feedback is live" unconditionally, and the
+        # guard above never checked: on an arm that answers nothing it reported
+        # live feedback next to dropped sends, which is the most misleading
+        # combination it could name — and it is the combination that says the
+        # arm is not on the bus at all.
+        feedback_state = (
+            "while feedback is live" if snapshot.is_ok
+            else "and NO feedback is arriving either"
+        )
         self.get_logger().warn(
-            f"silent TX loss: {dropped} send(s) dropped (total {count}) while feedback "
-            f"is live (last: {last}); arm commands may not be reaching the firmware. "
-            f"{cause}"
+            f"silent TX loss: {dropped} send(s) dropped (total {count}) "
+            f"{feedback_state} (last: {last}); arm commands may not be reaching "
+            f"the firmware. {cause}"
         )
 
     def _should_recover_bus(self, snapshot: "FeedbackSnapshot" = None) -> bool:
@@ -3490,8 +3500,19 @@ class AgxArmRosNode(Node):
             # Normal joint push resumes now; give it a fresh watchdog window so
             # the transition itself is never read as a stall.
             self._last_good_feedback_monotonic = time.monotonic()
+            # The SDK not raising is not evidence that the arm changed mode.
+            # Now that this service is reachable without feedback, it can be
+            # called on an arm that answers nothing — and it answered
+            # "Switched to normal mode" there, which is the same false claim the
+            # enable path was fixed for. Say which of the two happened.
             response.success = True
-            response.message = "Switched to normal mode"
+            if self._check_arm_connected():
+                response.message = "Switched to normal mode"
+            else:
+                response.message = (
+                    "normal mode sent, but no feedback is arriving to confirm "
+                    "the arm took it"
+                )
             self.get_logger().info(response.message)
         except Exception as e:
             response.success = False

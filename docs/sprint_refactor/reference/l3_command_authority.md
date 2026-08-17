@@ -87,32 +87,88 @@ Nothing was received from either arm since the interfaces came up, while both
 hands ran on the same host in the same session — so the CAN stack, the adapters
 and the ROS graph are healthy.
 
-**The driver's "check power, E-stop and wiring" is not the whole story, and
-probing further changed the answer.** The arm's feedback push only starts after
-it receives a command, and that command never reaches the wire:
+## Why the arms are silent (revised 2026-08-17, after the bootstrap fix)
 
-- Both ROS services that could send it — `enable_agx_arm` and `set_normal_mode`,
-  the documented wake sequence used by `agx_arm_mit_tools/test_position_hold.py`
-  — refuse with **"Agx_arm is not connected"**. That guard is
-  `_check_arm_connected()`, which reads `is_ok()`, which is false because no
-  feedback has arrived. The wake command is gated behind the feedback it exists
-  to start.
-- Bypassing every ROS guard and driving the vendor SDK directly does not help.
-  `connect()` succeeds and the socket is genuinely bound to the right interface
-  (`can_nero_right` appears in `/proc/net/can/rcvlist_all`), `set_normal_mode()`
-  returns without raising, and `get_firmware()` returns `None` — while
-  **TX packets stay 0 on every CAN interface on the host**, with TX errors 0 and
-  TX dropped 0. Nothing was handed to the controller at all.
+This section was rewritten twice on the same day as the evidence improved. Both
+earlier readings are superseded and are stated here so the reasoning is
+followable:
 
-For contrast, `hand_right` shows TX 6421 in the same session, so the host can
-transmit. Error counters do not discriminate here: `berr-counter tx` is 0 on the
-hand bus too, because successful transmissions accumulate no errors.
+1. *"Check power, E-stop and wiring"* — the driver's own message, correct in
+   direction but unproven at the time.
+2. *"Nothing our stack sends reaches the wire; the SDK appears to gate its sends
+   on a link-health flag."* **Superseded 2026-08-17.** The gating half was a
+   hypothesis and it is wrong: the SDK does attempt the send.
 
-So the deadlock is real and sits below our code: the SDK appears to gate its
-sends on a link-health flag it can only satisfy from received feedback. Whether
-an arm is *also* unpowered cannot be determined from this host, because no frame
-is put on the wire either way. Both need checking, and the software half is a
-vendor-fork question under C3 rather than something the driver can fix above it.
+### What was actually established
+
+Two things were genuinely broken and one was misread.
+
+**Broken, and fixed (software).** The wake command was gated behind the feedback
+it exists to start. `enable_agx_arm` and `set_normal_mode` — the documented
+sequence in `agx_arm_mit_tools/test_position_hold.py` — both refused with
+*"Agx_arm is not connected"*, from `_check_arm_connected()` reading `is_ok()`,
+which is an FPS window over *received* frames and is therefore false for every
+arm that is connected but silent. Fixed: a transport session now gates a
+bootstrap command, and feedback health gates only what depends on feedback.
+
+**Broken, and fixed (reporting).** With the gate relaxed, `set_normal_mode`
+answered `success=True, "Switched to normal mode"` on an arm that answers
+nothing — the SDK not raising was being read as the arm having complied. It now
+distinguishes *sent* from *confirmed*. In the same run the silent-TX-loss
+warning asserted *"while feedback is live"* unconditionally, next to dropped
+sends on an arm with no feedback at all; it now states the feedback side from
+the snapshot it already holds.
+
+**Misread.** The claim that nothing was handed to the controller. Once the
+bootstrap ladder actually ran, the driver reported:
+
+> silent TX loss: 2 send(s) dropped (total 2) and NO feedback is arriving either
+> (last: **Transmit buffer full**); arm commands may not be reaching the firmware.
+
+`Transmit buffer full` is ENOBUFS from the socket write. Our stack does hand
+frames to the socket; the kernel cannot place them on the wire. Measured on
+`can_nero_right` immediately afterwards:
+
+```text
+RX: packets 0   errors 0  dropped 0
+TX: packets 0   errors 0  dropped 0   carrier 0
+state ERROR-ACTIVE (berr-counter tx 0 rx 0)   <ONE-SHOT,FD>
+```
+
+Zero completed transmissions, zero errors, and a send path that blocks on a full
+buffer. On CAN a frame counts as transmitted only once another node
+acknowledges it; with nothing else powered on that bus the controller never
+completes the transmit, the queue fills, and `write()` returns ENOBUFS. The
+error counters stay at zero because ONE-SHOT aborts the frame instead of
+retrying it into error-passive — which is why they are useless as a
+discriminator here, and why TX *packets* is the number to read.
+
+**So the remaining fault is below the driver and below the SDK: on the bus or
+the device.** Arm power, the E-stop, the wiring and the transceiver are the
+things to check, and this host cannot narrow it further. The first reading was
+pointing in the right direction after all; what it lacked was the evidence that
+the software above it had also been wrong, independently.
+
+Both hands transmitted normally on the same host in the same session
+(`hand_right` TX 6421, `hand_left` TX 1588), so the CAN stack, the adapters and
+the ROS graph are healthy.
+
+## Arm bootstrap cases that could be completed
+
+Two of the six silent-arm cases need an arm that does *not* answer, so they ran:
+
+- **Case E — feedback cannot be restored.** Both arms. The full ladder now
+  executes — push bootstrap, enable request, push re-assert, linkage
+  re-assert — and startup then exits with the four facts separated:
+  `Transport session: present; feedback-push bootstrap: sent; feedback: none;
+  enable: unverified`. No READY, no command admission.
+- **Case D — explicit enable service before feedback is alive.** Right arm. The
+  command is now *attempted* rather than refused as "not connected", and the
+  service reports `Failed to send enable to Agx_arm` — the SDK's `enable()`
+  never returning truthy — instead of claiming success. `set_normal_mode`
+  reports the mode as sent but unconfirmed.
+
+Cases A, B, C and F need an arm that answers and remain open.
 
 ## Not covered by this run
 
@@ -120,3 +176,10 @@ Concurrent arm-and-hand motion per side and across sides, and stop/rearm during
 active motion, need arms that answer. The reactive-versus-trajectory handover on
 a physical grasp additionally needs an object placed in the hand. All remain
 open in the Phase 2B/2C acceptance list.
+
+**The hand-authority evidence above predates the removal of the legacy dual
+publish.** It was taken while both primitives published a stamped and a bare
+copy of every motion, so it describes a runtime path that no longer exists. The
+refusals it records are still the right refusals, but the run needs repeating
+with `allow_legacy_hand_command_ingress` off before it describes the shipped
+path — one logical motion producing exactly one bridge command.
