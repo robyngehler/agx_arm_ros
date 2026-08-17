@@ -30,7 +30,9 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 - exclusivity comes from **device authority, not topic separation**. Both primitives claim `control/omnihand/claim_device` (never plain `claim_device` — the arm driver owns that name in the same namespace) and release afterwards. The bridge is fail-closed: an unclaimed hand executes nothing
 - an owner declares itself as `<primitive>:<node>`: the primitive half tells a trajectory command from a reactive one, the node half is how a commander that died still holding a claim is noticed
 - claim and release advance the device epoch, so a command issued under the previous owner cannot execute after the handover. A grasp that ends holding keeps the claim
-- keep `control/omnihand/joint_trajectory` as a bridge-specific compatibility surface while the longer-term action or controller contract is still open
+- **a command carries the authority it was issued under.** `agx_arm_msgs/DeviceCommandStamp` (`owner_id`, `device_epoch`, `unit_safety_epoch`, `sequence`) is embedded by `AuthorizedJointTrajectory` on `control/omnihand/authorized_trajectory` and by `HandJointTarget` on `control/omnihand/joint_target`. A commander fills it from the claim response and restarts its sequence at each claim
+- the bridge admits on the stamp the command **arrived with**, and never substitutes a missing field from its own state. A stamp the bridge builds itself is current by construction, which is why the stale-epoch and out-of-order checks could not refuse anything before this
+- shared `control/joint_states` and `control/omnihand/joint_trajectory` remain as migration-only compatibility surfaces. They self-stamp, so they cannot reject a stale or reordered command — do not build new callers on them
 - `control/omnihand/stop` **cancels** the pending target and holds the current pose. It is not a latching device stop: a hand re-arms on the next command, and only the unit generation can latch it STOPPED. Do not describe it as an emergency stop or rely on it to keep a hand down
 
 ## Message Rules

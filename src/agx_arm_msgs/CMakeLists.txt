@@ -13,12 +13,16 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AgxArmStatus.msg"
   "msg/AgxDeviceAuthority.msg"
   "msg/AgxDeviceCapability.msg"
   "msg/AgxUnitSafety.msg"
+  "msg/DeviceCommandStamp.msg"
+  "msg/AuthorizedJointTrajectory.msg"
+  "msg/HandJointTarget.msg"
   "msg/GripperStatus.msg"
   "msg/HandStatus.msg"
   "msg/HandCmd.msg"
@@ -31,7 +35,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/RequestUnitStop.srv"
   "action/PerformAction.action"
   "action/PerformActivity.action"
-  DEPENDENCIES std_msgs geometry_msgs action_msgs
+  DEPENDENCIES std_msgs geometry_msgs action_msgs trajectory_msgs
 )
 
 if(BUILD_TESTING)

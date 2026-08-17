@@ -31,6 +31,8 @@ from agx_arm_msgs.srv import ClaimDevice
 from agx_arm_msgs.msg import (
     AgxDeviceAuthority,
     AgxUnitSafety,
+    AuthorizedJointTrajectory,
+    HandJointTarget,
     OmniHandStatus,
     OmniHandTactileRaw,
 )
@@ -139,6 +141,10 @@ PRIMITIVE_REACTIVE = "reactive"
 SURFACE_PRIMITIVES = {
     "joint_state": PRIMITIVE_REACTIVE,
     "joint_trajectory": PRIMITIVE_TRAJECTORY,
+    # The authority-carrying surfaces (4D). Same two primitives, but the command
+    # brings its own identity instead of the bridge inventing one.
+    "hand_joint_target": PRIMITIVE_REACTIVE,
+    "authorized_trajectory": PRIMITIVE_TRAJECTORY,
 }
 
 
@@ -1171,6 +1177,22 @@ class OmniHandBridgeNode(Node):
             self._joint_trajectory_callback,
             10,
         )
+        # The authority-carrying surfaces (4D). Both primitives feed one
+        # admission path; what differs is only which message shape suits the
+        # motion — a trajectory for planned execution, a target for the reactive
+        # loop that cannot be time-parameterized.
+        self.create_subscription(
+            AuthorizedJointTrajectory,
+            "control/omnihand/authorized_trajectory",
+            self._authorized_trajectory_callback,
+            10,
+        )
+        self.create_subscription(
+            HandJointTarget,
+            "control/omnihand/joint_target",
+            self._hand_joint_target_callback,
+            10,
+        )
         self.create_service(Trigger, "control/omnihand/stop", self._stop_callback)
         self.create_service(
             ClaimDevice, HAND_CLAIM_SERVICE, self._claim_device_callback
@@ -1284,6 +1306,86 @@ class OmniHandBridgeNode(Node):
 
         self._submit_command(target_map, "joint_trajectory")
 
+    def _stamp_from(self, authority) -> CommandStamp:
+        """The authority the command arrived with, taken verbatim.
+
+        Nothing is defaulted or repaired here. A commander that leaves a field
+        empty is refused by admission rather than silently completed from the
+        bridge's own state, which is the behaviour 4D exists to end.
+        """
+        return CommandStamp(
+            owner_id=authority.owner_id,
+            device_epoch=int(authority.device_epoch),
+            unit_safety_epoch=int(authority.unit_safety_epoch),
+            sequence=int(authority.sequence),
+        )
+
+    def _authorized_trajectory_callback(self, msg: AuthorizedJointTrajectory) -> None:
+        """A trajectory that carries the authority it was issued under (4D).
+
+        The MVP keeps the known-good vendor integration: the final point drives
+        the existing position path, exactly as the compatibility topic does. What
+        changes is that the trajectory reaches this boundary whole and the
+        identity travels with it, so a goal issued under a superseded claim is
+        refused here instead of executing.
+        """
+        trajectory = msg.trajectory
+        if not trajectory.points:
+            self.get_logger().warn(
+                "Rejected AuthorizedJointTrajectory: no points"
+            )
+            return
+
+        final_point = trajectory.points[-1]
+        if len(final_point.positions) != len(trajectory.joint_names):
+            self.get_logger().warn(
+                "Rejected AuthorizedJointTrajectory: joint_names and final point "
+                "positions length mismatch"
+            )
+            return
+
+        target_map = {
+            joint_name: float(position)
+            for joint_name, position in zip(
+                trajectory.joint_names, final_point.positions, strict=True
+            )
+            if joint_name in self.joint_name_set
+        }
+        if not target_map:
+            self.get_logger().warn(
+                "Rejected AuthorizedJointTrajectory: no recognized OmniHand joints"
+            )
+            return
+
+        self._submit_command(
+            target_map, "authorized_trajectory", self._stamp_from(msg.authority)
+        )
+
+    def _hand_joint_target_callback(self, msg: HandJointTarget) -> None:
+        """One authority-stamped target from the reactive primitive (4D)."""
+        if len(msg.positions) != len(msg.joint_names):
+            self.get_logger().warn(
+                "Rejected HandJointTarget: joint_names and positions length mismatch"
+            )
+            return
+
+        target_map = {
+            joint_name: float(position)
+            for joint_name, position in zip(
+                msg.joint_names, msg.positions, strict=True
+            )
+            if joint_name in self.joint_name_set
+        }
+        if not target_map:
+            self.get_logger().warn(
+                "Rejected HandJointTarget: no recognized OmniHand joints"
+            )
+            return
+
+        self._submit_command(
+            target_map, "hand_joint_target", self._stamp_from(msg.authority)
+        )
+
     def _log_refusal(self, detail: str) -> None:
         """Say why a command was refused, without a flood.
 
@@ -1352,13 +1454,20 @@ class OmniHandBridgeNode(Node):
         self._authority.revoke(f"owner '{owner}' no longer present")
         self.pending_command = None
 
-    def _admit_command(self, control_mode: str) -> tuple[bool, str]:
+    def _admit_command(
+        self, control_mode: str, stamp: "CommandStamp | None" = None
+    ) -> tuple[bool, str]:
         """Decide whether a command from this surface may reach the hand.
 
         Fail-closed: an unclaimed hand executes nothing. That costs a migration —
         every caller now has to claim — and it is the point. A default-open gate
         would have left the two-commander race open for exactly the callers
         nobody remembered to convert, which is the set that causes the incident.
+
+        ``stamp`` is the authority the command arrived with. When present it is
+        judged as given and nothing here substitutes for a missing field: the
+        bridge is not entitled to decide, on a commander's behalf, which era its
+        command belongs to.
         """
         if not self._admission_enforced:
             return True, ""
@@ -1372,20 +1481,35 @@ class OmniHandBridgeNode(Node):
                 "(claim_device)"
             )
 
+        surface_primitive = SURFACE_PRIMITIVES.get(control_mode, "")
+        declared = owner_primitive(stamp.owner_id if stamp is not None else owner)
+        if declared and surface_primitive and declared != surface_primitive:
+            return False, (
+                f"{self._authority.device_id} is held by '{owner}' ({declared}); a "
+                f"{surface_primitive} command may not preempt it"
+            )
+
+        if stamp is not None:
+            # The command brought its own identity, so judge THAT. This is the
+            # only form in which a stale epoch or an out-of-order sequence can
+            # actually be refused: a stamp the bridge builds itself is always
+            # current by construction, which is why those two checks passed
+            # unconditionally before 4D.
+            verdict = self._authority.admit(stamp)
+            if not verdict.accepted:
+                return False, f"{verdict.reason.value}: {verdict.detail}"
+            return True, ""
+
+        # Legacy self-stamped path (shared control/joint_states and the
+        # bridge-local trajectory topic). Retained for migration only: it cannot
+        # reject a stale or reordered command, because it invents the identity it
+        # then checks. Ownership and surface are all that refuse anything here.
         if snapshot.device_epoch != self._sequence_epoch:
             # A new era: ownership changed, or the device rearmed. Start the
             # sequence again rather than carrying a watermark set by whoever held
             # it before.
             self._sequence_epoch = snapshot.device_epoch
             self._command_sequence = 0
-
-        surface_primitive = SURFACE_PRIMITIVES.get(control_mode, "")
-        declared = owner_primitive(owner)
-        if declared and surface_primitive and declared != surface_primitive:
-            return False, (
-                f"{self._authority.device_id} is held by '{owner}' ({declared}); a "
-                f"{surface_primitive} command may not preempt it"
-            )
 
         self._command_sequence += 1
         verdict = self._authority.admit(
@@ -1400,14 +1524,19 @@ class OmniHandBridgeNode(Node):
             return False, f"{verdict.reason.value}: {verdict.detail}"
         return True, ""
 
-    def _submit_command(self, target_map: dict[str, float], control_mode: str) -> None:
+    def _submit_command(
+        self,
+        target_map: dict[str, float],
+        control_mode: str,
+        stamp: "CommandStamp | None" = None,
+    ) -> None:
         """Send a hand target and keep it pending until the readback confirms it.
 
         On the shared CAN bus the hand's frames lose arbitration under arm load
         and get dropped silently (one-shot mode), so a single send is unreliable.
         Targets are absolute setpoints, so re-sending the latest one is safe.
         """
-        admitted, refusal = self._admit_command(control_mode)
+        admitted, refusal = self._admit_command(control_mode, stamp)
         if not admitted:
             self._log_refusal(refusal)
             return

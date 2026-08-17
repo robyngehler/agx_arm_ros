@@ -59,7 +59,13 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 from agx_arm_msgs.action import PerformAction
-from agx_arm_msgs.msg import OmniHandStatus, OmniHandTactileRaw, RobotEvent
+from agx_arm_msgs.msg import (
+    DeviceCommandStamp,
+    HandJointTarget,
+    OmniHandStatus,
+    OmniHandTactileRaw,
+    RobotEvent,
+)
 from agx_arm_msgs.srv import ClaimDevice
 
 from agx_arm_ctrl.omnihand.models import DEFAULT_HAND_MODEL, get_hand_model
@@ -151,6 +157,17 @@ class OmniHandSkillController(Node):
 
         callback_group = ReentrantCallbackGroup()
         self.command_pub = self.create_publisher(JointState, command_topic, 10)
+        # The authority-carrying surface (4D). The reactive loop emits a next
+        # target each cycle and cannot be time-parameterized, so it gets a target
+        # message rather than being forced through the trajectory contract.
+        self.target_pub = self.create_publisher(
+            HandJointTarget, "control/omnihand/joint_target", 10
+        )
+        # Both generations come from the claim response; the sequence restarts
+        # with each claim, since a claim opens a new era for the device.
+        self._device_epoch = 0
+        self._unit_safety_epoch = 0
+        self._sequence = 0
         # The owner_id declares the motion primitive first, then the node: the
         # bridge tells the two production primitives apart by it, and uses the
         # node half to notice a commander that died still holding a claim.
@@ -257,10 +274,28 @@ class OmniHandSkillController(Node):
         return None
 
     def _publish_command(self, target: list[float]) -> None:
+        positions = [float(value) for value in target]
+
+        # Stamped with the claim this motion runs under. The bridge admits on
+        # this one; the plain JointState is published alongside for subscribers
+        # that have not migrated off the shared command topic.
+        with self._lock:
+            self._sequence += 1
+            stamp = DeviceCommandStamp()
+            stamp.owner_id = self.owner_id
+            stamp.device_epoch = self._device_epoch
+            stamp.unit_safety_epoch = self._unit_safety_epoch
+            stamp.sequence = self._sequence
+        authorized = HandJointTarget()
+        authorized.authority = stamp
+        authorized.joint_names = list(self.joint_names)
+        authorized.positions = positions
+        self.target_pub.publish(authorized)
+
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.name = list(self.joint_names)
-        msg.position = [float(value) for value in target]
+        msg.position = positions
         self.command_pub.publish(msg)
         with self._lock:
             self._last_command = list(target)
@@ -663,6 +698,11 @@ class OmniHandSkillController(Node):
         response = future.result()
         if response is None:
             return False, f"{self.claim_service_name} returned nothing"
+        if response.accepted and claim:
+            with self._lock:
+                self._device_epoch = int(response.device_epoch)
+                self._unit_safety_epoch = int(response.unit_safety_epoch)
+                self._sequence = 0
         return bool(response.accepted), response.message or response.reason
 
     def _clear_hold(self) -> None:

@@ -12,7 +12,11 @@ from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from agx_arm_msgs.msg import OmniHandStatus
+from agx_arm_msgs.msg import (
+    AuthorizedJointTrajectory,
+    DeviceCommandStamp,
+    OmniHandStatus,
+)
 from agx_arm_msgs.srv import ClaimDevice
 
 from agx_arm_ctrl.motion_registry import assert_matches_topology, handshake_required
@@ -111,6 +115,17 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         self.last_status_monotonic = 0.0
 
         self.trajectory_pub = self.create_publisher(JointTrajectory, trajectory_topic, 10)
+        # The authority-carrying surface (4D). The external interface is still
+        # standard FollowJointTrajectory; this is where the accepted goal is
+        # bound to the claim it runs under before it reaches the hardware.
+        self.authorized_pub = self.create_publisher(
+            AuthorizedJointTrajectory, "control/omnihand/authorized_trajectory", 10
+        )
+        # Both generations come from the claim response, so the first command
+        # after a claim need not wait for the authority topic to catch up.
+        self._device_epoch = 0
+        self._unit_safety_epoch = 0
+        self._sequence = 0
         self.create_subscription(JointState, feedback_topic, self._feedback_callback, 20)
         self.create_subscription(
             OmniHandStatus, self.status_topic, self._status_callback, 10
@@ -317,7 +332,23 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         response = future.result()
         if response is None:
             return False, f"{self.claim_service_name} returned nothing"
+        if response.accepted and claim:
+            # A claim opens a new era for this device, so the sequence starts
+            # again with it rather than carrying a watermark across owners.
+            self._device_epoch = int(response.device_epoch)
+            self._unit_safety_epoch = int(response.unit_safety_epoch)
+            self._sequence = 0
         return bool(response.accepted), response.message or response.reason
+
+    def _authority_stamp(self) -> DeviceCommandStamp:
+        """The stamp for the next command issued under the current claim."""
+        self._sequence += 1
+        stamp = DeviceCommandStamp()
+        stamp.owner_id = self.owner_id
+        stamp.device_epoch = self._device_epoch
+        stamp.unit_safety_epoch = self._unit_safety_epoch
+        stamp.sequence = self._sequence
+        return stamp
 
     def _open_hand_window(self) -> tuple[bool, str]:
         """Quiesce the same-side arm before commanding the hand.
@@ -382,6 +413,14 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             self._release_hand()
 
     def _run_trajectory(self, goal_handle, trajectory):
+        # Bound to the claim this goal runs under, and carrying the trajectory
+        # whole. The compatibility topic is published alongside so a subscriber
+        # that has not migrated still sees the goal; it is the stamped message
+        # that the bridge admits on.
+        authorized = AuthorizedJointTrajectory()
+        authorized.authority = self._authority_stamp()
+        authorized.trajectory = trajectory
+        self.authorized_pub.publish(authorized)
         self.trajectory_pub.publish(trajectory)
         published_at = time.monotonic()
         desired = self._desired_point(trajectory)

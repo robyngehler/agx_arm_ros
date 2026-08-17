@@ -56,7 +56,19 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 - claim and release advance the device epoch, so a command issued under the
   previous owner cannot execute after the handover. A grasp that ends holding
   keeps the claim — the hold *is* the reactive primitive still owning the hand
-- keep `control/omnihand/joint_trajectory` as a bridge-specific compatibility surface while the longer-term action or controller contract is still open
+- **a command carries the authority it was issued under.**
+  `agx_arm_msgs/DeviceCommandStamp` (`owner_id`, `device_epoch`,
+  `unit_safety_epoch`, `sequence`) is embedded by `AuthorizedJointTrajectory` on
+  `control/omnihand/authorized_trajectory` and by `HandJointTarget` on
+  `control/omnihand/joint_target`. A commander fills it from the claim response
+  and restarts its sequence at each claim
+- the bridge admits on the stamp the command **arrived with**, and never
+  substitutes a missing field from its own state. A stamp the bridge builds
+  itself is current by construction, which is why the stale-epoch and
+  out-of-order checks could not refuse anything before this
+- shared `control/joint_states` and `control/omnihand/joint_trajectory` remain as
+  migration-only compatibility surfaces. They self-stamp, so they cannot reject a
+  stale or reordered command — do not build new callers on them
 - `control/omnihand/stop` **cancels** the pending target and holds the current
   pose. It is not a latching device stop: a hand re-arms on the next command,
   and only the unit generation can latch it STOPPED. Do not describe it as an

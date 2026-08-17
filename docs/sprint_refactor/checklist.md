@@ -644,14 +644,12 @@ section too.
       `True` mattered: anything starting those nodes outside the launch files — a
       test double, a bare `ros2 run`, a measurement harness — quiesced an arm for
       a hand that has its own bus, silently.
-- [ ] **C7 exit condition, still open:** remove the independent overrides. Both
-      remain declared ROS parameters, so a run can still set
-      `handoff_enabled:=true` against a `dedicated_per_device` registry and
-      re-create the two-truths gap C7 exists to close (`test_l2_activity_integration.py`
-      does exactly that today, deliberately). Deriving the default narrows the
-      blast radius; it does not make the topology one fact. Either drop the
-      parameters and read `handshake_required()` at the point of use, or keep
-      them and validate an override against the declared topology at startup.
+- [x] **C7 exit condition:** closed 2026-08-16. Both parameters remain declared
+      as compatibility inputs, and a value disagreeing with `bus_topology` now
+      fails startup naming both sources — so no entry point, including a bare
+      `ros2 run`, can assert a topology the registry contradicts. The L2 harness
+      was itself forcing `handoff_enabled:=true` against a dedicated registry;
+      removed, and its window-bracket test now pins the opposite contract.
 - [x] Remove the MIT stand-down on `feedback/hand_window_active`. Done earlier
       in 1A: the MIT controller acts on `AgxDeviceAuthority`, which distinguishes
       a deliberate quiescence from a fault, a stop, or the device changing hands.
@@ -698,13 +696,16 @@ CPU.
       advanced the epoch 4 -> 5; the trajectory then took the free hand and
       succeeded; and a stop during a moving trajectory left 0.0008 rad of
       motion over the following two seconds. Six claims, none skipped.
-- [ ] Reject stale-epoch and out-of-order hand commands at the bridge boundary.
-      The admission logic exists and runs, but it cannot reject on these grounds
-      today: a `JointState` or `JointTrajectory` carries no epoch and no
-      sequence, so the bridge builds the stamp from its *own* current epoch and
-      its own counter. Those two checks therefore always pass. Closing this needs
-      identity carried per command, which is the consolidated hand contract (4D).
-      Ownership and surface are what reject a command today.
+- [x] Reject stale-epoch and out-of-order hand commands at the bridge boundary.
+      Closed 2026-08-17 by the 4D command stamp. A command arriving on
+      `control/omnihand/authorized_trajectory` or `control/omnihand/joint_target`
+      carries `owner_id`, `device_epoch`, `unit_safety_epoch` and `sequence`, and
+      the bridge admits on *that* rather than on a stamp it builds itself.
+      Verified at L1 by removing the fix: five admission tests — stale device
+      epoch, out-of-order sequence, foreign owner, unknown unit generation, and
+      the trajectory equivalent — pass only when the carried stamp is judged.
+      The legacy shared `control/joint_states` path still self-stamps and still
+      cannot reject on these grounds; it is retained for migration only.
 - [x] Close the two-commander hole: the skill controller's grasp hold no longer
       republishes at 20 Hz after the grasp succeeds. It monitors contact only.
       **L3, 2026-08-15, right hand on a real object** — the physical run this
@@ -799,11 +800,20 @@ The exclusivity guard landed in 1C; this is the conversion itself.
 - [ ] Consolidate `HandCmd`, `HandPositionTimeCmd`, `HandStatus`,
       `GripperStatus`, and `OmniHandStatus` into one abstract hand contract per
       C5, with a caller migration note (4D).
-- [ ] Carry the command authority stamp — `owner_id`, `device_epoch`,
-      `unit_safety_epoch`, `sequence` — on hand commands. The standard
-      `sensor_msgs/JointState` and `trajectory_msgs/JointTrajectory` messages are
-      **not** modified: the target is a repo-owned internal hand command that
-      carries standard motion content plus the stamp.
+- [x] Carry the command authority stamp — `owner_id`, `device_epoch`,
+      `unit_safety_epoch`, `sequence` — on hand commands. Landed 2026-08-17:
+      `agx_arm_msgs/DeviceCommandStamp` is the reusable structure, embedded by
+      `AuthorizedJointTrajectory` (trajectory execution, carrying
+      `trajectory_msgs/JointTrajectory` whole) and `HandJointTarget` (reactive
+      contact-seeking). Both commanders take their generations from the claim
+      response and restart the sequence at each claim. The standard ROS messages
+      are **not** modified, and the external interface is still standard
+      `FollowJointTrajectory`.
+- [ ] Retire the legacy self-stamped command path once every caller has moved to
+      the stamped surfaces. Shared `control/joint_states` and
+      `control/omnihand/joint_trajectory` still reach the hand, still invent
+      their own identity, and are published alongside the stamped messages so an
+      unmigrated subscriber keeps working.
 - [ ] Validate joint values at the bridge; remove SDK read-before-write; reject
       partial commands without a valid cache.
 - [ ] Distinguish `commanded`, `delivery_verified`, and `contact_confirmed`

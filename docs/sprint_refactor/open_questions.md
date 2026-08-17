@@ -193,9 +193,19 @@ is reserved for them.
 
   Numbers in `reference/sdk_latency_budget.md`, section "The hand's worker".
 
-## Opened 2026-08-16 (code review)
+## Resolved 2026-08-16 (writer incarnation)
 
-- **Unit-safety writer restart has no epoch continuity.** `unit_safety_node` is
+- **Unit-safety writer restart.** Closed by giving each run of the writer an
+  incarnation identity that travels with every generation, ordered by writer
+  start time. Epochs are compared only within one incarnation; a new incarnation
+  fails closed, holding the unit stopped until an explicit rearm, and a message
+  from a writer that has since died is dropped rather than obeyed. Rearm now
+  always allocates, because it is exactly when the restarted writer believes
+  nothing is wrong that observers hold a stop it has no record of. A first
+  observation is exempt, so a cold boot still needs no operator. The original
+  finding follows.
+
+- **Unit-safety writer restart had no epoch continuity.** `unit_safety_node` is
   the single writer, and that part works. But its generation counter lives in
   memory and starts at 0, while `UnitSafety.observe` ignores any snapshot whose
   epoch is at or below the one it already holds. So after the writer restarts,
