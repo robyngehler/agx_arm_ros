@@ -11,17 +11,18 @@ Repo-wide documentation and consistency checklist.
 | 3 | Nero planning and control hardening | complete | TRAC-IK + OMPL planning, `/compute_ik`, and the MIT execution path are validated. |
 | 4 | Duo body + OmniHand system baseline | complete | Body-mounted Duo staging, prefixed multi-arm MoveIt, and per-arm hand-aware profiles are landed. |
 | 5 | CAN transport + arm-plus-hand | complete | Native `mttcan` CAN FD side buses and pinned `pyAgxArm` runtime are the baseline; shared-bus caveats remain operational guidance. |
-| 6 | Coordinated tasks + skill layer | paused | Coordinator, dual-arm teach flow, and semantic OmniHand skill abstraction are landed but await adaptation to the refactored runtime contracts. |
+| 6 | Coordinated tasks + skill layer | resuming | Coordinator, dual-arm teach flow, and semantic OmniHand skill abstraction are landed but await adaptation to the refactored runtime contracts. |
 | refactor | V02 runtime refactor (device authority, parallel operation, contract consolidation) | active | Safety, CPU relief, and parallel arm-plus-hand operation. Canonical plan: `docs/sprint_refactor/planning/integration_plan.md`, binding constraints C1-C8. |
 
 ## Current System Focus
 
-- `sprint_refactor` is the active implementation sprint; `docs/sprint_refactor/planning/integration_plan.md` is canonical over any older plan
-- Sprint 6 is paused and adapts to the refactored runtime contracts afterwards; its step-and-settle and shared-bus notes are superseded by the per-device CAN topology
+- **The Refactor Runtime RC closed 2026-08-17.** Coordinated demo work resumes; the remaining Phase-4/5/6 items are follow-up engineering, not prerequisites for productive motion development. Pull a Phase-4 item forward only when it blocks an interface the demo actually uses
+- `sprint_refactor` remains the implementation sprint for that follow-up work; `docs/sprint_refactor/planning/integration_plan.md` is canonical over any older plan
+- Sprint 6 resumes against the refactored runtime contracts; its step-and-settle and shared-bus notes stay superseded by the per-device CAN topology
 - the normal topology is one CAN bus per device (arms `can_nero_left` / `can_nero_right` native, hands `hand_left` / `hand_right` on USB-CAN FD adapters); `shared_per_side` is a selectable degraded compatibility mode, not a production focus
 - keep the public ROS surface agx_arm-centric and keep arm execution per-arm at the MIT action boundary while coordination grows above it
 - L1 and L2 are the standing per-phase software regression gates; L3 evidence is required wherever hardware behaviour is claimed
-- coordinated demo work — including `tea_pour_left_v1` / the Hefeweizen ladder — resumes once the refactor runtime reaches its stabilization gate and the demo has been re-taught against the new command contracts. It is not a per-phase gate during the migration
+- coordinated demo work — including `tea_pour_left_v1` / the Hefeweizen ladder — is unblocked by the RC closure. What it still needs is a re-teach against the new command contracts, which is demo work rather than refactor work
 
 ### Previous state (superseded 2026-08-16)
 

@@ -937,8 +937,28 @@ rather than a blocker for productive coordinated-motion work.
       host 78 % idle, no unexpected authority rejections. Exercised the
       **quarantined development MOVE-J ingress**, not the production stamped
       arm path — that evidence is separate by design.
-- [ ] **Production arm MIT/FJT parallel + stop case.** The stamped arm ingress
-      under the same hand-side load, closing the gap the run above leaves open.
+- [x] **Production arm MIT/FJT parallel + stop case.** Ran 2026-08-17: both
+      arms held by streamed MIT torque, both hands under stamped command load,
+      emergency stop on both. Firmware left MIT positively confirmed on both
+      tiers (0x06→0x01 left, 0x04→0x01 right, `ctrl_mode` CAN control), arm TX
+      fell from ~700 frames/s to 0, no `disable()`, hands unaffected. Pose drift
+      was NOT used as the criterion — the arms stood near a gravity-neutral
+      pose, where a limp arm drifts as little as a held one.
+      See `reference/l3_production_estop.md`.
+- [x] **Unknown move feedback cannot count as hold confirmation.** The verifier
+      asked "is this not MIT?", which an unreadable status read answers with
+      yes — so silence confirmed a hold at exactly the moment a hold most needs
+      checking. Confirmation now requires a known non-MIT code.
+- [x] **Left-arm stall reproduced or classified.** Does not reproduce on the
+      current branch under the same load case: 0 stalls, 0 recoveries, 0 new
+      drops. Classified as pre-fix evidence — the original run predates routing
+      quarantined `control/move_j` through the `SdkWorker`, where it raced the
+      worker from a subscription callback. No socket or recovery change is made
+      on the strength of it.
+
+**Refactor Runtime RC is closed (2026-08-17).** Remaining Phase-4/5/6 work is
+follow-up engineering and is not a reason to keep Sprint 6 paused; pull a
+Phase-4 item forward only when it blocks an interface the demo actually uses.
 
 - [x] **Stamped hand authority re-run with legacy ingress off.** Ran 2026-08-17
       on the right hand: 6/6 — valid stamp admitted, foreign owner, stale
@@ -953,9 +973,9 @@ rather than a blocker for productive coordinated-motion work.
       firmware-hold correction: 3.5e-5 rad drift over six seconds, firmware
       confirmed out of MIT, no `disable()` frame.
 
-The arm and hand halves are now proven on hardware; what remains open is the
-production stamped arm path under parallel load, and the `/control/move_j`
-evidence must not be read as covering it.
+Every item is proven on hardware. The `/control/move_j` parallel evidence and
+the production MIT evidence are recorded separately, because they validate
+different contracts.
 
 ## Documentation follow-through
 

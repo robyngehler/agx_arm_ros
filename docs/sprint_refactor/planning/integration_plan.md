@@ -213,8 +213,9 @@ reach L3 must say so explicitly. Encoded as a `.claude/skills/` workflow in 0B.
   rather than one abstract command message, because a time-parameterized
   trajectory and a next-target-per-cycle loop do not share a shape — forcing
   them together would have made the reactive primitive express contact-seeking
-  motion as a trajectory, which is the one thing it cannot do. The status half
-  is still open: `HandStatus`, `GripperStatus` and `OmniHandStatus` merge into
+  motion as a trajectory, which is the one thing it cannot do. The status side
+  is the largest remaining hand-message consolidation item; the smaller contract
+  items around it are intentionally post-RC. The status half is still open: `HandStatus`, `GripperStatus` and `OmniHandStatus` merge into
   one abstract hand status with a documented caller migration
 - `src/agx_arm_msgs` has no `srv/` directory yet; adding one is part of Phase 1
 
