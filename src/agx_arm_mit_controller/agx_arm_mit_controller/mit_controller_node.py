@@ -28,6 +28,11 @@ from agx_arm_msgs.msg import (
 )
 
 from .feedforward_model import CalibrationModel, load_calibration_model
+from .gravity_launch_utils import (
+    derive_fixed_payload_urdf,
+    resolve_payload_parent_link,
+    solid_cylinder_inertia,
+)
 from .gravity_model import GravityModel, GravityModelError, create_gravity_model
 from .model_metadata import default_nero_calibration_path
 from .trajectory_buffer import JointTrajectoryBuffer, SampledTrajectoryPoint, duration_to_seconds
@@ -116,6 +121,15 @@ class NeroMitControllerNode(Node):
         # model so compensation is correct for a tilted body mount; [0,0,0] keeps
         # the upright table-mount default.
         self.declare_parameter("gravity_mounting_rpy", [0.0, 0.0, 0.0])
+        # Optional carried payload as a second, preloaded gravity model. Mass 0
+        # means no loaded model exists and ~/payload_attached can only be false.
+        # com is in the *parent link's own frame*: on the Duo the hand reaches
+        # along the flange's +x, so a tool-axis offset is [d, 0, 0], not [0, 0, d].
+        self.declare_parameter("payload_mass_kg", 0.0)
+        self.declare_parameter("payload_com_xyz", [0.15, 0.0, 0.0])
+        self.declare_parameter("payload_cylinder_radius_m", 0.06)
+        self.declare_parameter("payload_cylinder_height_m", 0.15)
+        self.declare_parameter("payload_parent_link", "")
         self.declare_parameter("calibration_file", "")
         self.declare_parameter("action_name", "arm_controller/follow_joint_trajectory")
         self.declare_parameter("action_feedback_rate_hz", 20.0)
@@ -160,6 +174,11 @@ class NeroMitControllerNode(Node):
         self.gravity_scale = float(self.get_parameter("gravity_scale").value)
         self.gravity_feedforward_sign = float(self.get_parameter("gravity_feedforward_sign").value)
         self.gravity_mounting_rpy = [float(v) for v in self.get_parameter("gravity_mounting_rpy").value]
+        self.payload_mass_kg = float(self.get_parameter("payload_mass_kg").value)
+        self.payload_com_xyz = [float(v) for v in self.get_parameter("payload_com_xyz").value]
+        self.payload_cylinder_radius_m = float(self.get_parameter("payload_cylinder_radius_m").value)
+        self.payload_cylinder_height_m = float(self.get_parameter("payload_cylinder_height_m").value)
+        self.payload_parent_link = str(self.get_parameter("payload_parent_link").value)
         self.calibration_file = str(self.get_parameter("calibration_file").value)
         self.action_name = str(self.get_parameter("action_name").value)
         self.action_feedback_rate_hz = float(self.get_parameter("action_feedback_rate_hz").value)
@@ -210,7 +229,13 @@ class NeroMitControllerNode(Node):
         self.hold_reference: Optional[SampledTrajectoryPoint] = None
         self.last_stale_feedback_log = 0.0
         self._stale_since_monotonic: Optional[float] = None
+        # Two preloaded gravity models, one active reference. The control loop
+        # reads `gravity_model`; ~/payload_attached only swaps which of the two
+        # it points at, so a payload transition builds nothing and blocks nothing.
         self.gravity_model: Optional[GravityModel] = None
+        self.gravity_model_base: Optional[GravityModel] = None
+        self.gravity_model_loaded: Optional[GravityModel] = None
+        self.payload_attached = False
         self.calibration_model: Optional[CalibrationModel] = None
         self.leader_mode_active = False
         self.freedrive_active = False
@@ -300,6 +325,12 @@ class NeroMitControllerNode(Node):
         self.create_service(SetBool, "~/freedrive", self._freedrive_callback, callback_group=self.callback_group)
         self.create_service(Empty, "~/hold_current", self._hold_current_callback, callback_group=self.callback_group)
         self.create_service(
+            SetBool,
+            "~/payload_attached",
+            self._payload_attached_callback,
+            callback_group=self.callback_group,
+        )
+        self.create_service(
             Empty,
             "~/cancel_trajectory",
             self._cancel_trajectory_callback,
@@ -314,8 +345,6 @@ class NeroMitControllerNode(Node):
             cancel_callback=self._cancel_callback,
             callback_group=self.callback_group,
         )
-        # These two lines used to sit after a `return` in the parameter
-        # callback, so they never ran. Restored where they were meant to be.
         self.get_logger().info(
             f"FollowJointTrajectory action available on '{self.action_name}'"
         )
@@ -426,10 +455,62 @@ class NeroMitControllerNode(Node):
                         f"{len(payload_joint_names)} payload joints from live feedback: "
                         f"{payload_joint_names}"
                     )
+                self.gravity_model_base = self.gravity_model
+                self._init_loaded_gravity_model()
             except GravityModelError as exc:
                 self.get_logger().error(str(exc))
                 self.gravity_model = None
+                self.gravity_model_base = None
                 self.gravity_compensation_enabled = False
+
+    def _init_loaded_gravity_model(self) -> None:
+        """Build the carried-payload twin of the base gravity model, if configured.
+
+        Failing here leaves only the base model, so an attach request is refused
+        rather than answered with the unloaded model.
+        """
+        if self.payload_mass_kg <= 0.0 or self.gravity_model_base is None:
+            return
+        try:
+            parent_link = resolve_payload_parent_link(
+                self.gravity_model_base.urdf_path,
+                input_joint_prefix=self.input_joint_prefix,
+                explicit_parent_link=self.payload_parent_link,
+            )
+            inertia = solid_cylinder_inertia(
+                self.payload_mass_kg,
+                self.payload_cylinder_radius_m,
+                self.payload_cylinder_height_m,
+            )
+            loaded_urdf = derive_fixed_payload_urdf(
+                self.gravity_model_base.urdf_path,
+                parent_link,
+                self.payload_mass_kg,
+                self.payload_com_xyz,
+                inertia,
+            )
+            loaded_model = create_gravity_model(
+                self.gravity_backend, loaded_urdf, self.gravity_mounting_rpy
+            )
+        except (ValueError, GravityModelError) as exc:
+            self.get_logger().error(f"Payload gravity model unavailable: {exc}")
+            return
+
+        # A fixed link must not change the q layout; if it did, the two models
+        # would disagree about which joints the control loop is compensating.
+        if loaded_model.joint_names != self.gravity_model_base.joint_names:
+            self.get_logger().error(
+                "Payload gravity model changed the joint set; refusing it "
+                f"({len(loaded_model.joint_names)} vs "
+                f"{len(self.gravity_model_base.joint_names)} joints)"
+            )
+            return
+
+        self.gravity_model_loaded = loaded_model
+        self.get_logger().info(
+            f"Payload gravity model ready: {self.payload_mass_kg} kg at "
+            f"{self.payload_com_xyz} in frame '{parent_link}' ({loaded_urdf})"
+        )
 
     def _load_float_array(self, name: str) -> list[float]:
         values = [float(value) for value in self.get_parameter(name).value]
@@ -933,6 +1014,41 @@ class NeroMitControllerNode(Node):
             self._set_execution_state(ExecutionState.IDLE_HOLD)
             self.get_logger().info("Captured current joint state as MIT hold target")
             return response
+
+    def _payload_attached_callback(
+        self, request: SetBool.Request, response: SetBool.Response
+    ) -> SetBool.Response:
+        """Point the gravity feedforward at the loaded or the unloaded model.
+
+        Idempotent and non-motion-generating: it swaps a reference under the
+        lock the control loop reads it under. Attaching succeeds only when a
+        loaded model exists, so a missing payload model cannot be mistaken for
+        an applied one.
+        """
+        want_loaded = bool(request.data)
+        with self.state_lock:
+            if not self.gravity_compensation_enabled or self.gravity_model_base is None:
+                response.success = False
+                response.message = "gravity compensation is not active"
+                return response
+            if want_loaded and self.gravity_model_loaded is None:
+                response.success = False
+                response.message = (
+                    "no payload gravity model is configured (payload_mass_kg is 0 "
+                    "or the derived model failed to build)"
+                )
+                return response
+            self.payload_attached = want_loaded
+            self.gravity_model = (
+                self.gravity_model_loaded if want_loaded else self.gravity_model_base
+            )
+            response.success = True
+            response.message = (
+                f"payload {'attached' if want_loaded else 'detached'}; "
+                f"gravity model {self.gravity_model.urdf_path}"
+            )
+        self.get_logger().info(response.message)
+        return response
 
     def _cancel_trajectory_callback(self, request: Empty.Request, response: Empty.Response) -> Empty.Response:
         del request

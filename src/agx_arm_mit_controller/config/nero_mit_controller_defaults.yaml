@@ -32,6 +32,9 @@
     # [0,0,0] = upright table mount. Set to the body mounting pose so freedrive
     # gravity compensation is correct for a tilted arm.
     gravity_mounting_rpy: [0.0, 0.0, 0.0]
+    # Carried-payload model (payload_mass_kg, payload_com_xyz, payload_cylinder_*,
+    # payload_parent_link) is NOT set here: the launch file always passes it, and
+    # its explicit parameters override this file. Set it with the launch argument.
     # Leave empty to auto-discover config/nero_gravity_calibration.json.
     calibration_file: ""
     action_name: arm_controller/follow_joint_trajectory

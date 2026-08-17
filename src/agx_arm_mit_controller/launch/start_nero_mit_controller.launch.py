@@ -99,6 +99,22 @@ def _build_controller_node(context):
     except Exception:
         gravity_mounting_rpy = [0.0, 0.0, 0.0]
 
+    payload_com_str = LaunchConfiguration("payload_com_xyz").perform(context)
+    try:
+        payload_com_xyz = [float(value) for value in ast.literal_eval(payload_com_str)]
+        if len(payload_com_xyz) != 3:
+            raise ValueError
+    except Exception:
+        payload_com_xyz = [0.15, 0.0, 0.0]
+
+    payload_mass_kg = float(LaunchConfiguration("payload_mass_kg").perform(context))
+    payload_cylinder_radius_m = float(
+        LaunchConfiguration("payload_cylinder_radius_m").perform(context)
+    )
+    payload_cylinder_height_m = float(
+        LaunchConfiguration("payload_cylinder_height_m").perform(context)
+    )
+
     return [
         LogInfo(msg=["MIT controller params_file: ", LaunchConfiguration("params_file")]),
         LogInfo(
@@ -122,6 +138,11 @@ def _build_controller_node(context):
                     "input_joint_prefix": LaunchConfiguration("input_joint_prefix"),
                     "gravity_urdf_path": resolved_gravity_urdf_path,
                     "gravity_mounting_rpy": gravity_mounting_rpy,
+                    "payload_mass_kg": payload_mass_kg,
+                    "payload_com_xyz": payload_com_xyz,
+                    "payload_cylinder_radius_m": payload_cylinder_radius_m,
+                    "payload_cylinder_height_m": payload_cylinder_height_m,
+                    "payload_parent_link": LaunchConfiguration("payload_parent_link"),
                     "enable_debug_joint_trajectory_topic": LaunchConfiguration(
                         "enable_debug_joint_trajectory_topic"
                     ),
@@ -285,6 +306,31 @@ def generate_launch_description():
         default_value="[0.0, 0.0, 0.0]",
         description="Manual arm base orientation in world [roll, pitch, yaw] (XYZ extrinsic, rad) for gravity/freedrive. [0,0,0] = upright. Prefer gravity_arm_side (URDF-derived); use this only as an override, and keep it [0,0,0] when gravity_arm_side is set.",
     )
+    payload_mass_kg_arg = DeclareLaunchArgument(
+        "payload_mass_kg",
+        default_value="0.0",
+        description="Mass of a carried object the arm can pick up, in kg. >0 preloads a second gravity model that ~/payload_attached switches to; 0 leaves only the unloaded model and refuses an attach request.",
+    )
+    payload_com_xyz_arg = DeclareLaunchArgument(
+        "payload_com_xyz",
+        default_value="[0.15, 0.0, 0.0]",
+        description="Carried payload centre of mass in the payload_parent_link frame [x, y, z] in m. On the Duo the hand reaches along the flange's +x (fingertips at x~0.25 m), so a tool-axis offset goes in x, not z.",
+    )
+    payload_cylinder_radius_m_arg = DeclareLaunchArgument(
+        "payload_cylinder_radius_m",
+        default_value="0.06",
+        description="Cylinder radius used for the payload inertia tensor. Gravity ignores the tensor; it is carried so the payload description stays physically complete.",
+    )
+    payload_cylinder_height_m_arg = DeclareLaunchArgument(
+        "payload_cylinder_height_m",
+        default_value="0.15",
+        description="Cylinder height used for the payload inertia tensor (see payload_cylinder_radius_m).",
+    )
+    payload_parent_link_arg = DeclareLaunchArgument(
+        "payload_parent_link",
+        default_value="",
+        description="Link the payload is fixed to. Empty resolves the arm's '*nero_tool0' flange link from the gravity URDF, narrowed by input_joint_prefix.",
+    )
     gravity_hand_payload_arg = DeclareLaunchArgument(
         "gravity_hand_payload",
         default_value="articulated",
@@ -376,6 +422,11 @@ def generate_launch_description():
             input_joint_prefix_arg,
             gravity_urdf_path_arg,
             gravity_mounting_rpy_arg,
+            payload_mass_kg_arg,
+            payload_com_xyz_arg,
+            payload_cylinder_radius_m_arg,
+            payload_cylinder_height_m_arg,
+            payload_parent_link_arg,
             gravity_hand_payload_arg,
             gravity_arm_side_arg,
             params_file_arg,

@@ -175,6 +175,14 @@ def _instance_runtime_launches(context):
                         "input_joint_prefix": instance["joint_prefix"],
                         "params_file": LaunchConfiguration("mit_params_file").perform(context),
                         "launch_driver": _bool_string(instance["launch_driver"], "true"),
+                        # Both arms get the same payload model; which arm is
+                        # actually carrying is decided at runtime by the
+                        # per-side ~/payload_attached service, not here.
+                        "payload_mass_kg": LaunchConfiguration("payload_mass_kg").perform(context),
+                        "payload_com_xyz": LaunchConfiguration("payload_com_xyz").perform(context),
+                        "payload_cylinder_radius_m": LaunchConfiguration("payload_cylinder_radius_m").perform(context),
+                        "payload_cylinder_height_m": LaunchConfiguration("payload_cylinder_height_m").perform(context),
+                        "payload_parent_link": LaunchConfiguration("payload_parent_link").perform(context),
                     }.items(),
                 )
             )
@@ -364,6 +372,11 @@ def generate_launch_description():
             DeclareLaunchArgument("db", default_value="false", choices=["true", "false"]),
             DeclareLaunchArgument("mit_control_rate_hz", default_value="100.0"),
             DeclareLaunchArgument("mit_params_file", default_value=default_mit_params_file),
+            DeclareLaunchArgument("payload_mass_kg", default_value="0.0"),
+            DeclareLaunchArgument("payload_com_xyz", default_value="[0.15, 0.0, 0.0]"),
+            DeclareLaunchArgument("payload_cylinder_radius_m", default_value="0.06"),
+            DeclareLaunchArgument("payload_cylinder_height_m", default_value="0.15"),
+            DeclareLaunchArgument("payload_parent_link", default_value=""),
             DeclareLaunchArgument(
                 "planning_pipelines",
                 default_value="",

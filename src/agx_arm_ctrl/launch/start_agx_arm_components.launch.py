@@ -295,6 +295,34 @@ def generate_launch_description():
         default_value=default_mit_params_file,
         description="Optional MIT controller params file override.",
     )
+    # A carried object the arm can pick up (moveit_mit mode only). >0 preloads a
+    # second gravity model per arm; which arm is carrying is decided at runtime
+    # by the coordinator through the per-side ~/payload_attached service.
+    payload_mass_kg_arg = DeclareLaunchArgument(
+        "payload_mass_kg",
+        default_value="0.0",
+        description="Mass in kg of a payload the arm can pick up. 0 = no payload model; an attach request is then refused.",
+    )
+    payload_com_xyz_arg = DeclareLaunchArgument(
+        "payload_com_xyz",
+        default_value="[0.15, 0.0, 0.0]",
+        description="Payload centre of mass in the flange frame [x, y, z] in m. The hand reaches along the flange's +x, so a tool-axis offset goes in x.",
+    )
+    payload_cylinder_radius_m_arg = DeclareLaunchArgument(
+        "payload_cylinder_radius_m",
+        default_value="0.06",
+        description="Cylinder radius for the payload inertia tensor (gravity ignores it; carried for completeness).",
+    )
+    payload_cylinder_height_m_arg = DeclareLaunchArgument(
+        "payload_cylinder_height_m",
+        default_value="0.15",
+        description="Cylinder height for the payload inertia tensor.",
+    )
+    payload_parent_link_arg = DeclareLaunchArgument(
+        "payload_parent_link",
+        default_value="",
+        description="Link the payload is fixed to. Empty resolves the arm's '*nero_tool0' flange link from the gravity URDF.",
+    )
     mit_joint_target_duration_arg = DeclareLaunchArgument(
         "mit_joint_target_duration_s",
         default_value="0.75",
@@ -513,6 +541,11 @@ def generate_launch_description():
             "use_mit_controller": "true",
             "mit_control_rate_hz": LaunchConfiguration("mit_control_rate_hz"),
             "mit_params_file": LaunchConfiguration("mit_params_file"),
+            "payload_mass_kg": LaunchConfiguration("payload_mass_kg"),
+            "payload_com_xyz": LaunchConfiguration("payload_com_xyz"),
+            "payload_cylinder_radius_m": LaunchConfiguration("payload_cylinder_radius_m"),
+            "payload_cylinder_height_m": LaunchConfiguration("payload_cylinder_height_m"),
+            "payload_parent_link": LaunchConfiguration("payload_parent_link"),
             "planning_pipelines": LaunchConfiguration("planning_pipelines"),
             "load_simple_obstacles": LaunchConfiguration("load_simple_obstacles"),
             "simple_obstacles_config": LaunchConfiguration("simple_obstacles_config"),
@@ -561,6 +594,11 @@ def generate_launch_description():
         db_arg,
         mit_control_rate_arg,
         mit_params_file_arg,
+        payload_mass_kg_arg,
+        payload_com_xyz_arg,
+        payload_cylinder_radius_m_arg,
+        payload_cylinder_height_m_arg,
+        payload_parent_link_arg,
         mit_joint_target_duration_arg,
         load_simple_obstacles_arg,
         planning_pipelines_arg,

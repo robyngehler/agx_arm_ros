@@ -1,11 +1,153 @@
 from __future__ import annotations
 
+import math
 import shlex
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Sequence
 from xml.etree import ElementTree as ET
+
+# Name of the link the payload derivation appends. Fixed so a second call on an
+# already-derived URDF is rejected instead of stacking payloads.
+PAYLOAD_LINK_NAME = "gravity_payload"
+
+
+def solid_cylinder_inertia(
+    mass_kg: float, radius_m: float, height_m: float
+) -> tuple[float, float, float]:
+    """Principal inertia (ixx, iyy, izz) of a solid cylinder about its own CoM.
+
+    The cylinder axis is local z. Gravity does not read the tensor, but a
+    physically complete payload description keeps the URDF usable for the later
+    dynamics feedforward.
+    """
+    if mass_kg < 0.0 or radius_m < 0.0 or height_m < 0.0:
+        raise ValueError("cylinder inertia needs non-negative mass, radius and height")
+    ixx = mass_kg * (3.0 * radius_m**2 + height_m**2) / 12.0
+    izz = mass_kg * radius_m**2 / 2.0
+    return (ixx, ixx, izz)
+
+
+def _link_names(root: ET.Element) -> list[str]:
+    return [link.attrib.get("name", "") for link in root.findall("link")]
+
+
+def resolve_payload_parent_link(
+    base_gravity_urdf_path: str | Path,
+    input_joint_prefix: str = "",
+    explicit_parent_link: str = "",
+    flange_suffix: str = "nero_tool0",
+) -> str:
+    """Pick the link a payload attaches to, from the URDF rather than by guess.
+
+    An explicit name wins. Otherwise the arm's flange link is taken from the
+    URDF: the joint prefix narrows it on a two-arm model, and an ambiguous or
+    absent match raises instead of silently loading the wrong arm.
+    """
+    if explicit_parent_link.strip():
+        return explicit_parent_link.strip()
+
+    root = ET.parse(str(Path(base_gravity_urdf_path).expanduser().resolve())).getroot()
+    candidates = [name for name in _link_names(root) if name.endswith(flange_suffix)]
+    prefix = input_joint_prefix.strip()
+    if prefix:
+        prefixed = [name for name in candidates if name.startswith(prefix)]
+        if prefixed:
+            candidates = prefixed
+    if not candidates:
+        raise ValueError(
+            f"no '*{flange_suffix}' link in {base_gravity_urdf_path}; "
+            "set payload_parent_link explicitly"
+        )
+    if len(candidates) > 1:
+        raise ValueError(
+            f"payload parent link is ambiguous between {sorted(candidates)}; "
+            "set payload_parent_link explicitly"
+        )
+    return candidates[0]
+
+
+def derive_fixed_payload_urdf(
+    base_gravity_urdf_path: str | Path,
+    parent_link: str,
+    mass_kg: float,
+    com_xyz: Sequence[float],
+    inertia: "Sequence[float] | None" = None,
+) -> str:
+    """Write a copy of the gravity URDF with one fixed payload link appended.
+
+    The payload rides `parent_link` through a fixed joint, so it adds mass at a
+    lever without adding a DoF: the resulting model has the same joints, the same
+    q layout, and the same articulated-payload joint names as the base.
+
+    `com_xyz` is the payload centre of mass in the `parent_link` frame — the
+    frame's real axes, not an assumed tool direction. `inertia` is
+    (ixx, iyy, izz) about the CoM; omitted means a point mass.
+    """
+    base_path = Path(base_gravity_urdf_path).expanduser().resolve()
+    if not base_path.is_file():
+        raise ValueError(f"base gravity URDF does not exist: {base_path}")
+    if not parent_link.strip():
+        raise ValueError("payload parent_link must be set")
+    if not math.isfinite(mass_kg) or mass_kg <= 0.0:
+        raise ValueError(f"payload mass must be finite and > 0, got {mass_kg}")
+    com = [float(value) for value in com_xyz]
+    if len(com) != 3 or not all(math.isfinite(value) for value in com):
+        raise ValueError(f"payload com_xyz must be three finite numbers, got {com_xyz}")
+
+    tensor = [0.0, 0.0, 0.0] if inertia is None else [float(value) for value in inertia]
+    if len(tensor) != 3 or not all(math.isfinite(v) and v >= 0.0 for v in tensor):
+        raise ValueError(
+            f"payload inertia must be three finite, non-negative numbers (ixx, iyy, izz), got {inertia}"
+        )
+
+    root = ET.parse(str(base_path)).getroot()
+    names = _link_names(root)
+    if parent_link not in names:
+        raise ValueError(
+            f"payload parent_link '{parent_link}' is not a link in {base_path}. "
+            f"Candidates: {sorted(n for n in names if n)}"
+        )
+    if PAYLOAD_LINK_NAME in names:
+        raise ValueError(
+            f"'{base_path}' already carries a '{PAYLOAD_LINK_NAME}' link; "
+            "derive the loaded model from the unloaded gravity URDF"
+        )
+
+    link = ET.SubElement(root, "link", {"name": PAYLOAD_LINK_NAME})
+    inertial = ET.SubElement(link, "inertial")
+    ET.SubElement(inertial, "origin", {"xyz": "0 0 0", "rpy": "0 0 0"})
+    ET.SubElement(inertial, "mass", {"value": repr(float(mass_kg))})
+    ET.SubElement(
+        inertial,
+        "inertia",
+        {
+            "ixx": repr(tensor[0]), "ixy": "0.0", "ixz": "0.0",
+            "iyy": repr(tensor[1]), "iyz": "0.0",
+            "izz": repr(tensor[2]),
+        },
+    )
+    joint = ET.SubElement(
+        root, "joint", {"name": f"{PAYLOAD_LINK_NAME}_joint", "type": "fixed"}
+    )
+    ET.SubElement(joint, "parent", {"link": parent_link})
+    ET.SubElement(joint, "child", {"link": PAYLOAD_LINK_NAME})
+    ET.SubElement(
+        joint,
+        "origin",
+        {"xyz": f"{com[0]} {com[1]} {com[2]}", "rpy": "0 0 0"},
+    )
+
+    temp_urdf = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".urdf", prefix=f"{base_path.stem}_payload_", delete=False
+    )
+    try:
+        temp_urdf.write(ET.tostring(root, encoding="unicode"))
+    finally:
+        temp_urdf.close()
+    return temp_urdf.name
 
 
 def parse_xacro_mappings(raw_args: str) -> dict[str, str]:

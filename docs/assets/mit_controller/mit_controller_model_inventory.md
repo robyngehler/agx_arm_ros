@@ -84,3 +84,26 @@ Recent history already pushed the controller into a usable standalone Nero state
 - `b4976bc` documented the validated workflow.
 
 That means Sprint 1 does not need to invent a MIT controller model path. It only needs to document the one that already exists and make its assumptions explicit.
+
+### Carried Payload Model (2026-08-17)
+
+The controller can hold **two** gravity models and switch which one the control loop reads:
+
+| Model | Contents |
+| --- | --- |
+| `gravity_model_base` | the resolved gravity URDF (arm + body mount + OmniHand payload) |
+| `gravity_model_loaded` | the same URDF plus one fixed payload link on the flange |
+
+Both are built at startup. `~/payload_attached` (`std_srvs/SetBool`) swaps the active reference under `state_lock` — no model is constructed, and no motion is generated, at the transition.
+
+- `true` selects the loaded model, `false` the base model; both are idempotent.
+- Attaching **fails** when no loaded model exists (`payload_mass_kg: 0.0`, or a failed derivation). The service never reports success without applying, because callers treat success as permission to lift.
+- The loaded model must keep the base model's joint set. A fixed link adds no DoF; a derived model that changed the joint set is refused at construction.
+
+Payload parameters: `payload_mass_kg` (0.0 = feature off), `payload_com_xyz`, `payload_cylinder_radius_m`, `payload_cylinder_height_m`, `payload_parent_link`. The parent link defaults to the arm's `*nero_tool0` flange link resolved from the URDF and narrowed by `input_joint_prefix`; it is never guessed, and an ambiguous match raises.
+
+`payload_com_xyz` is expressed in the **parent link's own frame**. On the Duo the OmniHand mounts through a rotated flange joint and reaches along tool0's **+x**, so a tool-axis offset belongs in x, not z — see `../../sprint6/reference/payload_gravity_model.md`.
+
+The cylinder inertia is carried into the URDF for completeness only: `computeGeneralizedGravity` is RNEA at zero velocity and acceleration, so g(q) depends on mass and CoM alone.
+
+Who calls it: the `agx_arm_coordination` coordinator, from an action's `payload_update: attach|detach` metadata, after that action succeeds and before its graph node counts as completed. The hand controller never calls it — which gravity model an arm uses is a task-level fact, not a property of a hand gesture.
