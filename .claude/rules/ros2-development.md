@@ -21,6 +21,7 @@ Load this rule for ROS2-native questions and decisions.
 - keep the public ROS surface agx_arm-centric
 - reuse the current owning packages before creating a new ROS2 surface
 - when the task is multi-arm or multi-hand bringup, make description and launch surfaces arm-count-aware from the start
+- the quarantine on `control/move_j` (and the other bare arm-motion topics) applies to unauthenticated **ROS ingress**, not to the driver's internal `move_j(current_q)` primitive. That internal call is the firmware position hold the emergency stop and pre-recovery hold depend on: a kp=0 damped MIT command has no stiffness and sags as a terminal state. Do not remove it while cleaning up legacy interfaces
 - keep combined `feedback/joint_states` as the coordinated arm-plus-hand feedback surface; a hand command carries the authority it was issued under — `DeviceCommandStamp` (`owner_id`, `device_epoch`, `unit_safety_epoch`, `sequence`) inside `AuthorizedJointTrajectory` for trajectory execution or `HandJointTarget` for reactive motion. Shared `control/joint_states` is legacy and is not subscribed unless `allow_legacy_hand_command_ingress` is set (default false, development only), because a bare command makes the bridge invent the identity it then checks (`docs/sprint_refactor/planning/integration_plan.md`, C5 and 4D). The standard ROS messages are external types and stay untouched
 - keep hand-only diagnostics under `feedback/omnihand/*`
 - use standard ROS messages first and extend `agx_arm_msgs` only for repo-owned semantics, with statically defined fields

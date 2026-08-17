@@ -64,10 +64,18 @@ bridge, which is how the single-owner invariant is read.
   Observability gap only; per-thread SDK attribution still works because the
   worker is the thread that matters. Not fixed here.
 
-## The arms did not answer (2026-08-17)
+## The arms did not answer (2026-08-17, RESOLVED same day)
+
+**Resolved:** the Jetson 40-pin header pinmux had been discarded by a kernel
+update. Once it was reconfigured with `sudo /opt/nvidia/jetson-io/jetson-io.py`
+both arms came up immediately — left firmware 1.11 (`NeroFW.V111`), right 1.06
+(`NeroFW.DEFAULT`) — and every blocked hardware case below was then run. The
+diagnostic reasoning is kept because it is what the next occurrence looks like,
+and because two of its readings were wrong; see `docs/errors_and_fixes.md`.
 
 Arm motion was authorised for this session, limited to joints 1, 3 and 5 from
-the current pose. It could not be attempted: **neither arm answers on CAN.**
+the current pose. It could not be attempted at the time: **neither arm answered
+on CAN.**
 
 | Interface | RX pkts since boot | TX pkts | Bus state |
 | --- | --- | --- | --- |
@@ -143,11 +151,14 @@ error counters stay at zero because ONE-SHOT aborts the frame instead of
 retrying it into error-passive — which is why they are useless as a
 discriminator here, and why TX *packets* is the number to read.
 
-**So the remaining fault is below the driver and below the SDK: on the bus or
-the device.** Arm power, the E-stop, the wiring and the transceiver are the
-things to check, and this host cannot narrow it further. The first reading was
-pointing in the right direction after all; what it lacked was the evidence that
-the software above it had also been wrong, independently.
+**So the remaining fault was below the driver and below the SDK.** It was the
+40-pin header: the pins were no longer muxed to the CAN controller, so a frame
+was queued and never completed, the socket buffer filled, and `write()` returned
+ENOBUFS. Arm power and wiring were never the cause — the third reading was as
+wrong as the first two, in the other direction. What survives is the method:
+read TX *packets*, not error counters, and treat a healthy hand bus as no
+evidence at all, since the hands are on USB-CAN FD adapters that never touch the
+header.
 
 Both hands transmitted normally on the same host in the same session
 (`hand_right` TX 6421, `hand_left` TX 1588), so the CAN stack, the adapters and
@@ -168,7 +179,11 @@ Two of the six silent-arm cases need an arm that does *not* answer, so they ran:
   never returning truthy — instead of claiming success. `set_normal_mode`
   reports the mode as sent but unconfirmed.
 
-Cases A, B, C and F need an arm that answers and remain open.
+Cases A, B, C and F ran once the header was fixed; all six are complete.
+`scripts/l3_arm_silent_bootstrap.py` proves the push-only primitive on hardware:
+`can_nero_right` went 2162.7 RX/s -> 0.0 -> 2167.7 with no mode switch and no
+motion command, and a deliberately muted arm then reached READY through startup
+alone, without the `set_normal_mode` escalation firing.
 
 ## Not covered by this run
 
@@ -177,9 +192,13 @@ active motion, need arms that answer. The reactive-versus-trajectory handover on
 a physical grasp additionally needs an object placed in the hand. All remain
 open in the Phase 2B/2C acceptance list.
 
-**The hand-authority evidence above predates the removal of the legacy dual
-publish.** It was taken while both primitives published a stamped and a bare
-copy of every motion, so it describes a runtime path that no longer exists. The
-refusals it records are still the right refusals, but the run needs repeating
-with `allow_legacy_hand_command_ingress` off before it describes the shipped
-path — one logical motion producing exactly one bridge command.
+**Re-run 2026-08-17 with legacy ingress off** — the evidence above was taken
+while both primitives still published a stamped and a bare copy of every motion.
+The repeat passed 6/6 on the shipped path, and the bare surfaces do not exist as
+topics on a default bridge while both stamped surfaces carry exactly one
+subscriber.
+
+Parallel operation ran the same day: left arm + left hand, right arm + right
+hand, and both sides concurrently, with zero errors and zero drops on every bus.
+That run used the **quarantined development MOVE-J ingress**; the production
+stamped arm path under the same load is the one case still open.
