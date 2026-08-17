@@ -81,6 +81,32 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
 	*(hardware-pending — nothing in this chain has been executed live.)*
 - [ ] run `hefeweizen_pour_v1` on the escalation ladder: no objects → dummy → empty → water → beer.
 	*(graph + `start_hefeweizen_demo.launch.py` ready; hardware-pending.)*
+
+## Step 5b — Dynamic payload adjustment (2026-08-17)
+
+Per `planning/sprint6_dynamic_payload_adjustment_proposal.md`; evidence and the
+flange-axis correction in `reference/payload_gravity_model.md`.
+
+- [x] MIT controller preloads a base and a loaded gravity model; `~/payload_attached`
+	(`std_srvs/SetBool`) swaps the active reference under `state_lock`. Idempotent,
+	non-motion-generating, and refused when no loaded model exists.
+- [x] `gravity_launch_utils.derive_fixed_payload_urdf` appends one fixed payload link
+	to the already-resolved gravity URDF; parent link resolved from the URDF
+	(`*nero_tool0`, narrowed by joint prefix), never guessed.
+- [x] action-level `payload_update: attach|detach` in the catalogue, validated at load
+	so a typo fails before the robot moves. Deliberately **not** derived from the hand
+	preset: `pre_grip` and `release` both run `can_pre_grip`.
+- [x] coordinator applies the transition after a child succeeds and **before** the node
+	counts as completed; a failed transition aborts the activity.
+- [x] `tea_pour_left_v1`: attach on action 70, detach on action 150.
+- [x] payload launch arguments forwarded through the production `moveit_mit` bringup.
+	*(Not through the RViz debug launches — deliberate.)*
+- [ ] L3 static payload check: hold the grip pose, toggle `payload_attached`, confirm
+	`~/gravity_feedforward` moves in the expected direction and the arm does not sag.
+	*(hardware-pending; mass 1.0 kg and the 0.15 m lever are unmeasured estimates.)*
+- [ ] L3 first `tea_pour_left_v1` with the payload active: exactly two transitions, no
+	visible sag after lift, no jump at attach/detach, no torque-limit rejection.
+	*(hardware-pending.)*
 - [x] `planning/hefeweizen_validation_log.md` created to capture runs (dev slice logged).
 
 ## Step 6 — Stop / interrupt safety

@@ -44,7 +44,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from std_srvs.srv import Empty, Trigger
+from std_srvs.srv import Empty, SetBool, Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.action import PerformActivity, PerformAction
@@ -322,6 +322,7 @@ class CoordinatorNode(Node):
         self._cancel_traj_clients: dict[str, object] = {}
         self._hold_clients: dict[str, object] = {}
         self._estop_clients: dict[str, object] = {}
+        self._payload_clients: dict[str, object] = {}
         for side in ("left", "right"):
             name = self.hand_action_template.format(side=side)
             self._hand_clients[side] = ActionClient(
@@ -342,6 +343,11 @@ class CoordinatorNode(Node):
             )
             self._hold_clients[side] = self.create_client(
                 Empty, f"{mit_ns}/hold_current", callback_group=self._cb_group
+            )
+            # Task-level consequence of a grasp: which gravity model the arm on
+            # this side compensates with. The hand controller never calls it.
+            self._payload_clients[side] = self.create_client(
+                SetBool, f"{mit_ns}/payload_attached", callback_group=self._cb_group
             )
             self._estop_clients[side] = self.create_client(
                 Trigger, f"{arm_ns}/emergency_stop", callback_group=self._cb_group
@@ -596,6 +602,58 @@ class CoordinatorNode(Node):
         if resp is None:
             return False, f"{label}: no response"
         return bool(resp.success), resp.message or ""
+
+    def _call_setbool_sync(self, client, value: bool, label: str) -> tuple[bool, str]:
+        """Call a SetBool service and wait for its result (bounded)."""
+        if not client.wait_for_service(timeout_sec=self.handoff_timeout):
+            return False, f"{label}: service unavailable"
+        request = SetBool.Request()
+        request.data = bool(value)
+        future = client.call_async(request)
+        deadline = time.monotonic() + self.handoff_timeout
+        while rclpy.ok() and not future.done():
+            if time.monotonic() > deadline:
+                return False, f"{label}: timed out"
+            time.sleep(self.poll_period)
+        resp = future.result()
+        if resp is None:
+            return False, f"{label}: no response"
+        return bool(resp.success), resp.message or ""
+
+    def _apply_payload_update(self, child: _Child) -> tuple[bool, str]:
+        """Apply a completed action's declared payload transition, if it has one.
+
+        Runs before the node is marked completed, so no downstream arm action can
+        be admitted under the wrong gravity model. A failed transition fails the
+        activity: lifting with the wrong model is worse than stopping.
+        """
+        try:
+            action = self.catalogue.get_action_detail(child.action_id)
+        except KeyError:
+            return True, ""
+        transition = action.payload_update
+        if not transition:
+            return True, ""
+
+        # The action's own robot_id backs the dispatch-time side, so an arm
+        # action can declare a transition too; `both_arms` names no single arm
+        # and is refused rather than resolved to one.
+        side = getattr(child, "side", "") or ""
+        if side not in self._payload_clients:
+            side = action.robot_id.split("_", 1)[0]
+        if side not in self._payload_clients:
+            return False, (
+                f"{child.action_id} requests payload {transition} but names no "
+                f"single arm side (robot_id '{action.robot_id}')"
+            )
+        ok, msg = self._call_setbool_sync(
+            self._payload_clients[side],
+            transition == "attach",
+            f"payload_{transition}[{side}]",
+        )
+        if ok:
+            self.get_logger().info(f"payload {transition} applied on {side}: {msg}")
+        return ok, msg
 
     def _open_hand_window(self, side: str) -> None:
         """Quiesce the arm on ``side`` into a verified hold before a hand action.
@@ -1031,6 +1089,18 @@ class CoordinatorNode(Node):
                 for covered_no in child.action_nos:
                     running.pop(covered_no, None)
                 if child.success:
+                    # Before the node counts as completed, so the scheduler
+                    # cannot admit a downstream arm action under a payload
+                    # state the finished action was supposed to change.
+                    payload_ok, payload_msg = self._apply_payload_update(child)
+                    if not payload_ok:
+                        if isinstance(child, _HandChild):
+                            self._resume_hand_window(child.side)
+                        return self._abort(
+                            goal_handle, result, running, activity_id,
+                            child.action_id, len(completed),
+                            f"payload update failed: {payload_msg}",
+                        )
                     for covered_no in child.action_nos:
                         completed.add(covered_no)
                     if isinstance(child, _HandChild):

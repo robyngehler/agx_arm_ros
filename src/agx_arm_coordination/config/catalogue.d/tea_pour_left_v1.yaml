@@ -15,9 +15,14 @@
 # are kept verbatim wherever they name stored data, so nothing has to be
 # re-measured. Do not rename the stored poses/gestures without re-capturing.
 #
-# Hand actions carry only skill_name (the skill -> motion/preset mapping lives in
-# agx_arm_ctrl/config/omnihand_skills.yaml). Arm actions are either MoveIt-planned
-# anchor moves (to_pose) or taught replays (source: recorded + waypoints).
+# Hand actions carry skill_name (the skill -> motion/preset mapping lives in
+# agx_arm_ctrl/config/omnihand_skills.yaml) and, where the grasp changes what the
+# arm carries, payload_update. Arm actions are either MoveIt-planned anchor moves
+# (to_pose) or taught replays (source: recorded + waypoints).
+#
+# payload_update is on the ACTION, never on the hand preset: pre_grip and release
+# both map to the can_pre_grip shape, and only one of them means the teapot is
+# gone. Grip attaches the payload gravity model, release detaches it.
 
 actions:
 
@@ -51,6 +56,7 @@ actions:
     metadata:
       skill_name: grip_handle
       timeout_sec: 5.0
+      payload_update: attach
       description: "Taught closure on the teapot handle."
       fallback_policy: { on_cancel: stop_and_hold, on_timeout: report_failure }
   left_hand_release_handle:
@@ -59,6 +65,7 @@ actions:
     metadata:
       skill_name: release_handle
       timeout_sec: 5.0
+      payload_update: detach
       description: "Open back to the pre-grip shape so the arm can withdraw."
       fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
 

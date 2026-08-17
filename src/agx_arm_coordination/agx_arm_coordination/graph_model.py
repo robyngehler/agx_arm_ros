@@ -110,6 +110,13 @@ def conflicts(
     return bool(units_for(robot_a, units) & units_for(robot_b, units))
 
 
+# Optional action metadata: the arm on this action's side switches to its
+# configured payload gravity model (attach) or back to the unloaded one (detach)
+# once the action succeeds. Absent means the payload state is left alone.
+PAYLOAD_UPDATE_KEY = "payload_update"
+VALID_PAYLOAD_UPDATES: frozenset[str] = frozenset({"attach", "detach"})
+
+
 @dataclass(frozen=True)
 class Action:
     """One catalogue action."""
@@ -130,6 +137,20 @@ class Action:
                 f"action '{self.action_id}': unknown robot_id '{self.robot_id}'; "
                 f"expected one of {sorted(VALID_ROBOT_IDS)}"
             )
+        # Rejected at load, not at dispatch: a mistyped value that silently did
+        # nothing would run the lift under the unloaded gravity model.
+        if PAYLOAD_UPDATE_KEY in self.metadata:
+            value = self.metadata[PAYLOAD_UPDATE_KEY]
+            if value not in VALID_PAYLOAD_UPDATES:
+                raise GraphError(
+                    f"action '{self.action_id}': {PAYLOAD_UPDATE_KEY} '{value}' "
+                    f"invalid; expected one of {sorted(VALID_PAYLOAD_UPDATES)}"
+                )
+
+    @property
+    def payload_update(self) -> str:
+        """``attach``, ``detach``, or ``""`` when the action changes nothing."""
+        return str(self.metadata.get(PAYLOAD_UPDATE_KEY, ""))
 
 
 @dataclass(frozen=True)

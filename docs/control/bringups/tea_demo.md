@@ -61,9 +61,12 @@ anchors are reachable.
 sudo bash ./scripts/activate_duo_can.sh
 
 # Arms + MoveIt. use_rviz:=false is a CPU decision, not cosmetic (see below).
+# payload_mass_kg arms the teapot gravity model; without it the arm carries the
+# teapot on the unloaded model and the coordinator's attach request is refused.
 ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
   mode:=moveit_mit execution_profile:=duo_hand follow:=true \
-  planning_pipelines:=ompl omnihand_backend_type:=sdk use_rviz:=false
+  planning_pipelines:=ompl omnihand_backend_type:=sdk use_rviz:=false \
+  payload_mass_kg:=1.0
 
 # Hands + coordinator
 ros2 launch agx_arm_coordination start_tea_demo.launch.py backend_type:=sdk
@@ -133,6 +136,24 @@ air just as happily if the handle is not where the anchor says it is. Tactile-ga
 available through the `grasp_*_until_contact` skills once a contact threshold is calibrated — the
 0.35 placeholder in `catalogue.yaml` is orders of magnitude below the raw normal-force magnitudes the
 Pro actually reports, so it would trigger on noise today.
+
+### Payload: the arm is told when it is carrying the teapot
+
+Action 70 (`left_hand_grip_handle`) carries `payload_update: attach` and action 150
+(`left_hand_release_handle`) carries `payload_update: detach`. On success the coordinator calls
+`/left_arm/mit_controller/payload_attached` **before** marking the node completed, so the lift at
+action 80 cannot start under the unloaded gravity model. A failed transition aborts the activity —
+lifting with the wrong model is worse than stopping.
+
+The flag is on the **action**, never on the hand preset: actions 30 and 150 both run the
+`can_pre_grip` shape, and only one of them means the teapot is gone.
+
+If you bring the arms up without `payload_mass_kg:=1.0`, the controller has no loaded model, refuses
+the attach, and the activity fails at action 70 with `no payload gravity model is configured`. That
+is deliberate — it fails loudly rather than pouring under the wrong gravity compensation.
+
+The mass (1.0 kg) and the 0.15 m lever are **estimates**, not measurements; the axis is derived from
+the URDF. See `../../sprint6/reference/payload_gravity_model.md`.
 
 ### Arm: how a replay reaches its start
 
@@ -214,6 +235,10 @@ start on an anchor — the coordinator's approach phase handles that.
   recording was taught.
 - The hand grasp is open loop (see `pose` above).
 - Coordinator crash recovery is not covered — only clean interrupts are.
+- The teapot payload mass and lever are unmeasured estimates, and the payload state does not survive
+  a MIT controller restart (deliberate for the MVP — re-establish it through the service before
+  resuming motion). An activity that aborts while still gripping keeps the loaded model, which is the
+  safer approximation.
 
 ## References
 
@@ -221,3 +246,4 @@ start on an anchor — the coordinator's approach phase handles that.
 - `launches.md`: the full bring-up matrix
 - `../../sprint_refactor/reference/critical_cpu_paths.md`: the CPU hot paths this runbook budgets against
 - `../../sprint6/planning/hefeweizen_activity_graph.md`: the coordinator's graph/catalogue contract
+- `../../sprint6/reference/payload_gravity_model.md`: the carried-payload gravity model and its flange-axis evidence
