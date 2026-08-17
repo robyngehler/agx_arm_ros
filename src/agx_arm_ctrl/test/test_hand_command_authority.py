@@ -193,3 +193,85 @@ def test_a_reactive_stamp_may_not_preempt_a_trajectory_owner(bridge):
     assert bridge.pending_command is None, (
         "a reactive surface command executed while a trajectory owner held the hand"
     )
+
+
+def test_the_legacy_surfaces_are_not_subscribed_by_default():
+    """A production bridge offers no unstamped way to move the hand.
+
+    The bare surfaces cannot refuse a stale or reordered command — the bridge
+    has to invent the identity it then checks — so leaving them subscribed meant
+    every authority guarantee had a documented bypass sitting next to it.
+    """
+    rclpy.init(args=["--ros-args", "-p", "backend_type:=mock"])
+    try:
+        node = OmniHandBridgeNode()
+        topics = {name for name, _types in node.get_topic_names_and_types()}
+        subscribed = {
+            name
+            for name in topics
+            if node.count_subscribers(name) and node.count_publishers(name) == 0
+        }
+        assert "/control/omnihand/joint_trajectory" not in subscribed
+        assert "/control/joint_states" not in subscribed
+        assert node.allow_legacy_hand_command_ingress is False
+        node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_legacy_ingress_is_available_only_when_asked_for_and_says_so():
+    """Kept for manual development, behind one explicit flag and a loud warning."""
+    rclpy.init(
+        args=[
+            "--ros-args",
+            "-p", "backend_type:=mock",
+            "-p", "allow_legacy_hand_command_ingress:=true",
+        ]
+    )
+    try:
+        node = OmniHandBridgeNode()
+        assert node.allow_legacy_hand_command_ingress is True
+        topics = {name for name, _types in node.get_topic_names_and_types()}
+        assert "/control/omnihand/joint_trajectory" in topics
+        node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_one_stamped_trajectory_produces_exactly_one_command(bridge):
+    """One logical motion, one admission.
+
+    While the executor published both the stamped and the bare copy, the bridge
+    admitted the same motion twice — and the self-stamped copy advanced the very
+    sequence watermark the stamped copy is judged against.
+    """
+    device_epoch, unit_epoch = _claim(bridge, TRAJ_OWNER)
+    submitted = []
+    bridge._submit_command = lambda *args, **kwargs: submitted.append(args)
+
+    bridge._authorized_trajectory_callback(
+        _trajectory(bridge, TRAJ_OWNER, device_epoch, unit_epoch, 1)
+    )
+
+    assert len(submitted) == 1
+
+
+def test_a_self_stamped_copy_can_starve_the_stamped_path(bridge):
+    """Why the dual publish had to go, stated as the failure it caused.
+
+    The bridge's own counter and the executor's counter feed one watermark. A
+    self-stamped command that lands first takes the sequence the real command
+    was going to use, and the real one is then refused as out of order — a
+    motion silently dropped by the mechanism meant to protect it.
+    """
+    device_epoch, unit_epoch = _claim(bridge, TRAJ_OWNER)
+
+    # The legacy path, stamping itself from the bridge's current state.
+    assert bridge._admit_command("joint_trajectory")[0] is True
+
+    # The executor's own first command, at its own sequence 1.
+    admitted, refusal = bridge._admit_command(
+        "authorized_trajectory", _stamp(TRAJ_OWNER, device_epoch, unit_epoch, 1)
+    )
+    assert admitted is False
+    assert "sequence" in refusal

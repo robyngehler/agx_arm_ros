@@ -40,11 +40,6 @@ def generate_launch_description():
         default_value="o12_pro",
         description="OmniHand hardware model; must match the bridge's hand_model.",
     )
-    command_topic_arg = DeclareLaunchArgument(
-        "command_topic",
-        default_value="control/joint_states",
-        description="Shared JointState topic the bridge subscribes to.",
-    )
     skill_config_path_arg = DeclareLaunchArgument(
         "skill_config_path",
         default_value="",
@@ -66,7 +61,6 @@ def generate_launch_description():
         parameters=[{
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "hand_model": LaunchConfiguration("hand_model"),
-            "command_topic": LaunchConfiguration("command_topic"),
             "skill_config_path": LaunchConfiguration("skill_config_path"),
             "action_name": LaunchConfiguration("action_name"),
         }],
@@ -77,7 +71,6 @@ def generate_launch_description():
         namespace_arg,
         omnihand_type_arg,
         hand_model_arg,
-        command_topic_arg,
         skill_config_path_arg,
         action_name_arg,
         skill_controller,

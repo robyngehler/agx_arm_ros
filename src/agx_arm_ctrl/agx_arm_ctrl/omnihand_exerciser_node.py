@@ -285,8 +285,14 @@ class OmniHandExerciser(Node):
         if self.trajectory_publisher is None:
             self.get_logger().error(
                 f"pose '{name}' NOT sent: no OmniHand bridge is subscribed to "
-                f"'{self.trajectory_topic}' or to the root fallback. Check that a "
-                "bridge is running and that its namespace matches --namespace."
+                f"'{self.trajectory_topic}' or to the root fallback. This is the "
+                "expected state on a default bridge: the bare trajectory surface "
+                "carries no commander, generations or sequence, so it is no "
+                "longer subscribed unless the bridge is started with "
+                "allow_legacy_hand_command_ingress:=true (development only). "
+                "Prefer the FollowJointTrajectory action, which carries its "
+                "authority. Otherwise check that a bridge is running and that "
+                "its namespace matches --namespace."
             )
             return
         # The bridge is fail-closed, so the fallback has to own the hand too.

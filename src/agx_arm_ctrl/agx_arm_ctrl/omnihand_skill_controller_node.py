@@ -116,14 +116,12 @@ class OmniHandSkillController(Node):
         self.declare_parameter("omnihand_type", "right")
         self.declare_parameter("hand_model", DEFAULT_HAND_MODEL)
         self.declare_parameter("skill_config_path", "")
-        self.declare_parameter("command_topic", "control/joint_states")
         self.declare_parameter("action_name", "perform")
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
         if self.hand_side not in ("left", "right"):
             raise ValueError("omnihand_type must be 'left' or 'right'")
         self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
-        command_topic = str(self.get_parameter("command_topic").value)
         action_name = str(self.get_parameter("action_name").value)
 
         skill_config_path = str(self.get_parameter("skill_config_path").value).strip()
@@ -156,10 +154,17 @@ class OmniHandSkillController(Node):
         self._state = STATE_IDLE
 
         callback_group = ReentrantCallbackGroup()
-        self.command_pub = self.create_publisher(JointState, command_topic, 10)
-        # The authority-carrying surface (4D). The reactive loop emits a next
-        # target each cycle and cannot be time-parameterized, so it gets a target
-        # message rather than being forced through the trajectory contract.
+        # The authority-carrying surface (4D), and the only one this controller
+        # publishes. The reactive loop emits a next target each cycle and cannot
+        # be time-parameterized, so it gets a target message rather than being
+        # forced through the trajectory contract.
+        #
+        # The bare JointState copy on the shared command topic is gone. This
+        # loop publishes at its control rate, so every cycle produced two
+        # commands for one target — and the unstamped copy was completed by the
+        # bridge from its own current state, which no stale claim can fail. A
+        # contact-seeking motion whose claim was revoked mid-grasp would have
+        # kept closing the hand on that path.
         self.target_pub = self.create_publisher(
             HandJointTarget, "control/omnihand/joint_target", 10
         )
@@ -229,7 +234,7 @@ class OmniHandSkillController(Node):
         self.get_logger().info(
             f"OmniHand skill controller up: side={self.hand_side}, "
             f"model={self.hand_model.name} ({len(self.joint_names)} joints), "
-            f"command_topic={command_topic}, action={action_name}, "
+            f"action={action_name}, "
             f"skills={sorted(self.catalogue.skills)}"
         )
 
@@ -276,9 +281,8 @@ class OmniHandSkillController(Node):
     def _publish_command(self, target: list[float]) -> None:
         positions = [float(value) for value in target]
 
-        # Stamped with the claim this motion runs under. The bridge admits on
-        # this one; the plain JointState is published alongside for subscribers
-        # that have not migrated off the shared command topic.
+        # Stamped with the claim this motion runs under. One target, one
+        # command, and the identity travels with it.
         with self._lock:
             self._sequence += 1
             stamp = DeviceCommandStamp()
@@ -291,12 +295,6 @@ class OmniHandSkillController(Node):
         authorized.joint_names = list(self.joint_names)
         authorized.positions = positions
         self.target_pub.publish(authorized)
-
-        msg = JointState()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = list(self.joint_names)
-        msg.position = positions
-        self.command_pub.publish(msg)
         with self._lock:
             self._last_command = list(target)
 

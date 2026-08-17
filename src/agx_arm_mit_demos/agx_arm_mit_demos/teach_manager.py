@@ -592,7 +592,19 @@ class TeachManagerNode(Node):
             self.hand_status_topics[label] = status_topic
             self.hand_status_by_arm[label] = None
             self.hand_status_monotonic[label] = 0.0
+            # Bare JointState, which the hand bridge no longer subscribes by
+            # default: the surface carries no commander, no generations and no
+            # sequence, so a stale command cannot be refused on it. Teach
+            # playback of hand poses therefore needs the bridge started with
+            # allow_legacy_hand_command_ingress:=true until this path is moved
+            # onto the stamped hand contract. Said once at start-up, because the
+            # failure is otherwise a publish that succeeds and reaches nobody.
             self.hand_command_pubs[label] = self.create_publisher(JointState, command_topic, 10)
+            self.get_logger().warn(
+                f"hand commands for {label} go out unstamped on '{command_topic}'; "
+                "the OmniHand bridge ignores that surface unless it was started "
+                "with allow_legacy_hand_command_ingress:=true"
+            )
             self.create_subscription(
                 JointState,
                 feedback_topic,

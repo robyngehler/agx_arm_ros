@@ -148,7 +148,20 @@ def generate_launch_description():
     joint_states_command_topic_arg = DeclareLaunchArgument(
         "joint_states_command_topic",
         default_value="control/joint_states",
-        description="Shared JointState command topic consumed by the OmniHand bridge.",
+        description=(
+            "Shared JointState command topic; only subscribed when "
+            "allow_legacy_hand_command_ingress is true."
+        ),
+    )
+    allow_legacy_hand_command_ingress_arg = DeclareLaunchArgument(
+        "allow_legacy_hand_command_ingress",
+        default_value="false",
+        description=(
+            "Development only. Subscribes the bare JointState and JointTrajectory "
+            "command surfaces, which carry no commander, generations or sequence, "
+            "so a stale or reordered command cannot be refused on them. Never a "
+            "production path."
+        ),
     )
     tactile_sample_count_arg = DeclareLaunchArgument(
         "tactile_sample_count",
@@ -190,6 +203,9 @@ def generate_launch_description():
                 LaunchConfiguration("command_verify_tolerance_rad"), value_type=float
             ),
             "joint_states_command_topic": LaunchConfiguration("joint_states_command_topic"),
+            "allow_legacy_hand_command_ingress": LaunchConfiguration(
+                "allow_legacy_hand_command_ingress"
+            ),
             "tactile_sample_count": ParameterValue(LaunchConfiguration("tactile_sample_count"), value_type=int),
         }],
     )
@@ -213,6 +229,7 @@ def generate_launch_description():
         command_retry_period_s_arg,
         command_verify_tolerance_rad_arg,
         joint_states_command_topic_arg,
+        allow_legacy_hand_command_ingress_arg,
         tactile_sample_count_arg,
         # Must run after the arguments are declared and before the node is
         # created, so the resolved namespace is what the node actually gets.

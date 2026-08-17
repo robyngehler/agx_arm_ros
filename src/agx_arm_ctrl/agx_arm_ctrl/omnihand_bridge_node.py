@@ -956,6 +956,13 @@ class OmniHandBridgeNode(Node):
         # not a forced STANDBY, because `_sync_authority` derives the state every
         # tick and would overwrite anything written behind its back.
         self.declare_parameter("owner_liveness_grace_s", 3.0)
+        # Bare JointState / JointTrajectory ingress, for manual development only.
+        # A command on those surfaces carries no identity, so the bridge has to
+        # invent one from its own current state — which is always current by
+        # construction, so a stale or reordered command passes every check. That
+        # is not an authority-safe path and is never described as one. Default
+        # off; production and demo bring-ups leave it off.
+        self.declare_parameter("allow_legacy_hand_command_ingress", False)
 
         self.hand_side = str(self.get_parameter("omnihand_type").value)
         # This device in the authority contract. Note it is *not* the
@@ -1022,6 +1029,9 @@ class OmniHandBridgeNode(Node):
         )
         self.joint_states_command_topic = str(
             self.get_parameter("joint_states_command_topic").value
+        )
+        self.allow_legacy_hand_command_ingress = bool(
+            self.get_parameter("allow_legacy_hand_command_ingress").value
         )
         self.device_id = int(self.get_parameter("device_id").value)
         self.canfd_id = int(self.get_parameter("canfd_id").value)
@@ -1165,22 +1175,33 @@ class OmniHandBridgeNode(Node):
             OmniHandTactileRaw, "feedback/omnihand/tactile_raw", 10
         )
 
-        self.create_subscription(
-            JointState,
-            self.joint_states_command_topic,
-            self._joint_states_command_callback,
-            10,
-        )
-        self.create_subscription(
-            JointTrajectory,
-            "control/omnihand/joint_trajectory",
-            self._joint_trajectory_callback,
-            10,
-        )
-        # The authority-carrying surfaces (4D). Both primitives feed one
-        # admission path; what differs is only which message shape suits the
-        # motion — a trajectory for planned execution, a target for the reactive
-        # loop that cannot be time-parameterized.
+        if self.allow_legacy_hand_command_ingress:
+            self.get_logger().warn(
+                "LEGACY HAND COMMAND INGRESS ENABLED: bare JointState on "
+                f"'{self.joint_states_command_topic}' and bare JointTrajectory on "
+                "'control/omnihand/joint_trajectory' will move this hand. Those "
+                "surfaces carry no commander, no generations and no sequence, so "
+                "a stale or reordered command CANNOT be refused on them — the "
+                "bridge has to stamp them from its own current state. "
+                "Development only; never a production path."
+            )
+            self.create_subscription(
+                JointState,
+                self.joint_states_command_topic,
+                self._joint_states_command_callback,
+                10,
+            )
+            self.create_subscription(
+                JointTrajectory,
+                "control/omnihand/joint_trajectory",
+                self._joint_trajectory_callback,
+                10,
+            )
+        # The authority-carrying surfaces (4D), and in the default configuration
+        # the only way to move this hand. Both primitives feed one admission
+        # path; what differs is only which message shape suits the motion — a
+        # trajectory for planned execution, a target for the reactive loop that
+        # cannot be time-parameterized.
         self.create_subscription(
             AuthorizedJointTrajectory,
             "control/omnihand/authorized_trajectory",

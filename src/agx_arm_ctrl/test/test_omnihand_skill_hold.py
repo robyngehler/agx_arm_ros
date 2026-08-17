@@ -36,7 +36,7 @@ class _Recorder:
 def controller():
     rclpy.init(args=["--ros-args", "-p", "omnihand_type:=right"])
     node = OmniHandSkillController()
-    node.command_pub = _Recorder()
+    node.target_pub = _Recorder()
     node.event_pub = _Recorder()
     yield node
     node.destroy_node()
@@ -59,14 +59,14 @@ def test_a_hold_tick_issues_no_command(controller):
     for _ in range(50):
         controller._hold_tick()
 
-    assert len(controller.command_pub) == 0
+    assert len(controller.target_pub) == 0
 
 
 def test_a_tick_without_a_hold_does_nothing(controller):
     for _ in range(10):
         controller._hold_tick()
 
-    assert len(controller.command_pub) == 0
+    assert len(controller.target_pub) == 0
     assert len(controller.event_pub) == 0
 
 
@@ -79,7 +79,7 @@ def test_the_hold_still_escalates_on_lost_contact(controller):
 
     kinds = [getattr(msg, "event_type", "") for msg in controller.event_pub.messages]
     assert "contact_lost" in kinds
-    assert len(controller.command_pub) == 0
+    assert len(controller.target_pub) == 0
 
 
 def test_the_monitor_rate_is_not_the_control_rate(controller):
@@ -89,3 +89,35 @@ def test_the_monitor_rate_is_not_the_control_rate(controller):
     """
     monitor_rate = float(controller.get_parameter("hold_monitor_rate_hz").value)
     assert monitor_rate < controller.defaults.control_rate_hz
+
+
+def test_a_reactive_command_goes_out_stamped_and_only_once(controller):
+    """One target, one message, carrying the claim it runs under.
+
+    The bare JointState copy that used to go out alongside was completed by the
+    bridge from its own current state, so no revoked claim could fail it: a
+    contact-seeking motion whose claim was pulled mid-grasp would have kept
+    closing the hand on that path.
+    """
+    controller._device_epoch = 7
+    controller._unit_safety_epoch = 3
+
+    controller._publish_command([0.2] * len(controller.joint_names))
+
+    assert len(controller.target_pub) == 1
+    (msg,) = controller.target_pub.messages
+    assert msg.authority.owner_id == controller.owner_id
+    assert msg.authority.device_epoch == 7
+    assert msg.authority.unit_safety_epoch == 3
+    assert msg.authority.sequence == 1
+
+
+def test_the_controller_publishes_no_unstamped_command_surface(controller):
+    """There is no second, identity-free way out of this node."""
+    published = {
+        name
+        for name, types in controller.get_topic_names_and_types()
+        if controller.count_publishers(name)
+        and "sensor_msgs/msg/JointState" in types
+    }
+    assert "/control/joint_states" not in published

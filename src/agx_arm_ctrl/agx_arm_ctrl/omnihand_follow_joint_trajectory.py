@@ -44,10 +44,6 @@ class OmniHandFollowJointTrajectoryBridge(Node):
             "right_omnihand_controller/follow_joint_trajectory",
         )
         self.declare_parameter(
-            "trajectory_topic",
-            "control/omnihand/joint_trajectory",
-        )
-        self.declare_parameter(
             "feedback_topic",
             "feedback/omnihand/joint_states",
         )
@@ -86,7 +82,6 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         self.hand_model = get_hand_model(str(self.get_parameter("hand_model").value))
         self.joint_names = build_joint_names(hand_side, self.hand_model)
         action_name = str(self.get_parameter("action_name").value)
-        trajectory_topic = str(self.get_parameter("trajectory_topic").value)
         feedback_topic = str(self.get_parameter("feedback_topic").value)
         self.status_topic = str(self.get_parameter("status_topic").value)
         self.feedback_timeout_s = float(self.get_parameter("feedback_timeout_s").value)
@@ -114,10 +109,19 @@ class OmniHandFollowJointTrajectoryBridge(Node):
         self.last_status: OmniHandStatus | None = None
         self.last_status_monotonic = 0.0
 
-        self.trajectory_pub = self.create_publisher(JointTrajectory, trajectory_topic, 10)
-        # The authority-carrying surface (4D). The external interface is still
-        # standard FollowJointTrajectory; this is where the accepted goal is
-        # bound to the claim it runs under before it reaches the hardware.
+        # The authority-carrying surface (4D), and the only one this executor
+        # publishes. The external interface is still standard
+        # FollowJointTrajectory; this is where the accepted goal is bound to the
+        # claim it runs under before it reaches the hardware.
+        #
+        # The bare JointTrajectory copy that used to go out alongside is gone.
+        # Two messages for one logical motion meant the bridge admitted the
+        # command twice, and the legacy copy was stamped by the bridge from its
+        # own current state — so it advanced the same sequence watermark the
+        # stamped copy is judged against, and could make the executor's next
+        # real command look stale. It also reintroduced exactly the flaw the
+        # stamped path removes: a delayed bare command being assigned today's
+        # authority though it was produced under yesterday's.
         self.authorized_pub = self.create_publisher(
             AuthorizedJointTrajectory, "control/omnihand/authorized_trajectory", 10
         )
@@ -414,14 +418,11 @@ class OmniHandFollowJointTrajectoryBridge(Node):
 
     def _run_trajectory(self, goal_handle, trajectory):
         # Bound to the claim this goal runs under, and carrying the trajectory
-        # whole. The compatibility topic is published alongside so a subscriber
-        # that has not migrated still sees the goal; it is the stamped message
-        # that the bridge admits on.
+        # whole. One logical motion, one command.
         authorized = AuthorizedJointTrajectory()
         authorized.authority = self._authority_stamp()
         authorized.trajectory = trajectory
         self.authorized_pub.publish(authorized)
-        self.trajectory_pub.publish(trajectory)
         published_at = time.monotonic()
         desired = self._desired_point(trajectory)
         goal_joint_names = list(trajectory.joint_names)
