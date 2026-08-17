@@ -2735,7 +2735,10 @@ class AgxArmRosNode(Node):
             joint_pos[joint_name] = self._safe_get_value(msg.position, idx)
         joints = [joint_pos.get(i, 0) for i in self.arm_joint_names]
         try:
-            self.agx_arm.move_j(joints)
+            # Through the worker even here. The quarantine decides who may enter
+            # this path; it does not license a second SDK owner once a developer
+            # opens it, which would race the worker and confound a stop test.
+            self._sdk_write("legacy_move_j", lambda: self.agx_arm.move_j(joints))
             self.is_mit_mode = False
             self._current_motion_mode = 'j'
         except Exception as e:
