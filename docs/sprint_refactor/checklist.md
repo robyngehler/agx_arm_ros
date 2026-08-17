@@ -772,7 +772,12 @@ CPU.
       (pair) after pub-rate fix, then to 25.3 % (pair) after vendor SDK spin
       thread patch in the tracked fork. Stack baseline improved from 814.5 % to
       399.7 % idle (both arms) and from 882.9 % to 431.3 % under dual MIT 100 Hz.
-- [ ] Validate parallel same-side arm and hand motion without CAN RX drops.
+- [x] Validate parallel same-side arm and hand motion without CAN RX drops.
+      Ran 2026-08-17 on both sides and both sides at once: arms ~2160 RX/s,
+      hands ~86 RX/TX, zero errors and zero drops on every bus, host 78 % idle.
+      Used the quarantined development MOVE-J ingress
+      (`scripts/l3_parallel_arm_hand.py`); the production stamped arm path under
+      the same load is tracked separately in the RC gate.
 - [ ] Verify the `shared_per_side` topology still executes an activity.
 
 ## Phase 3 - Event-driven coordinator and strict synchronization
