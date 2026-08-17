@@ -71,6 +71,21 @@ def generate_launch_description():
         description='Launch the repo-owned OmniHand bridge when effector_type is omnihand.'
     )
 
+    # The driver folds these into the combined feedback/joint_states, which is
+    # what move_group reads the full robot state from. The relative default only
+    # resolves when the bridge shares this namespace; a bridge owned by another
+    # launch has to be named absolutely or the hand joints never arrive.
+    omnihand_joint_states_topic_arg = DeclareLaunchArgument(
+        'omnihand_joint_states_topic',
+        default_value='feedback/omnihand/joint_states',
+        description=(
+            'Topic the arm driver reads OmniHand joint states from. Relative '
+            'resolves inside this arm namespace (bridge started here). Point it '
+            'at an absolute topic such as /left_hand/feedback/omnihand/joint_states '
+            'when another launch owns the bridge.'
+        )
+    )
+
     hand_bus_arg = DeclareLaunchArgument(
         'hand_bus',
         default_value=_DEFAULT_HAND_BUS,
@@ -214,6 +229,7 @@ def generate_launch_description():
             'speed_percent': LaunchConfiguration('speed_percent'),
             'enable_timeout': LaunchConfiguration('enable_timeout'),
             'effector_type': LaunchConfiguration('effector_type'),
+            'omnihand_joint_states_topic': LaunchConfiguration('omnihand_joint_states_topic'),
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
             'publish_gripper_joint': LaunchConfiguration('publish_gripper_joint'),
@@ -314,6 +330,7 @@ def generate_launch_description():
         effector_type_arg,
         omnihand_type_arg,
         launch_omnihand_bridge_arg,
+        omnihand_joint_states_topic_arg,
         hand_bus_arg,
         omnihand_backend_type_arg,
         omnihand_device_id_arg,

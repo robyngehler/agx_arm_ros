@@ -185,6 +185,11 @@ def generate_launch_description():
         default_value="left",
         description="OmniHand side forwarded to agx_arm_ctrl when applicable.",
     )
+    omnihand_joint_states_topic_arg = DeclareLaunchArgument(
+        "omnihand_joint_states_topic",
+        default_value="feedback/omnihand/joint_states",
+        description="Topic the arm driver reads OmniHand joint states from. Absolute when another launch owns the bridge.",
+    )
     launch_omnihand_bridge_arg = DeclareLaunchArgument(
         "launch_omnihand_bridge",
         default_value="false",
@@ -373,6 +378,7 @@ def generate_launch_description():
             "omnihand_type": LaunchConfiguration("omnihand_type"),
             "launch_omnihand_bridge": LaunchConfiguration("launch_omnihand_bridge"),
             "hand_bus": LaunchConfiguration("hand_bus"),
+            "omnihand_joint_states_topic": LaunchConfiguration("omnihand_joint_states_topic"),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type"),
             "omnihand_device_id": LaunchConfiguration("omnihand_device_id"),
             "omnihand_canfd_id": LaunchConfiguration("omnihand_canfd_id"),
@@ -400,6 +406,7 @@ def generate_launch_description():
             effector_type_arg,
             omnihand_type_arg,
             launch_omnihand_bridge_arg,
+            omnihand_joint_states_topic_arg,
             hand_bus_arg,
             omnihand_backend_type_arg,
             omnihand_device_id_arg,

@@ -53,6 +53,25 @@ def _resolved_argument(context, profile_values: dict[str, str], name: str) -> st
     return LaunchConfiguration(name).perform(context).strip()
 
 
+def _hand_joint_states_topic(
+    launch_omnihand_bridge: str, effector_type: str, omnihand_type: str
+) -> str:
+    """Where this arm's driver finds its hand's joint states.
+
+    The driver folds them into the combined feedback/joint_states, which is what
+    move_group reads the whole robot from — without them it holds a partial state
+    and never plans. A bridge started in this arm's namespace answers on the
+    relative topic; a bridge owned by a coordination launch lives under
+    /<side>_hand, so the subscription has to name it absolutely.
+    """
+    relative = "feedback/omnihand/joint_states"
+    if launch_omnihand_bridge == "true" or effector_type != "omnihand":
+        return relative
+    if not omnihand_type:
+        return relative
+    return f"/{omnihand_type}_hand/{relative}"
+
+
 def _resolved_robot_name(context, profile_values: dict[str, str]) -> str:
     robot_name = _resolved_argument(context, profile_values, "robot_name")
     if robot_name:
@@ -145,6 +164,11 @@ def _instance_runtime_launches(context):
             "omnihand_type": _value_or_default(instance["omnihand_type"], omnihand_type),
             "revo2_type": _value_or_default(instance["revo2_type"], revo2_type),
             "launch_omnihand_bridge": launch_omnihand_bridge,
+            "omnihand_joint_states_topic": _hand_joint_states_topic(
+                launch_omnihand_bridge,
+                _value_or_default(instance["effector_type"], effector_type),
+                _value_or_default(instance["omnihand_type"], omnihand_type),
+            ),
             "hand_bus": LaunchConfiguration("hand_bus").perform(context),
             "omnihand_backend_type": LaunchConfiguration("omnihand_backend_type").perform(context),
             "omnihand_device_id": LaunchConfiguration("omnihand_device_id").perform(context),

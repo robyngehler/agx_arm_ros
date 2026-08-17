@@ -60,9 +60,17 @@ so silence is not a safe state. See `teach_and_run.md` § Emergency stop / runaw
 > `duo_hand_external_bridge` is identical except that the arm slice does not own
 > the bridges. The hand stays in the description, so gravity keeps its 1.06 kg at
 > the flange and MoveIt keeps its collision geometry — which `duo_arm` would both
-> drop. move_group will log `left_omnihand_controller` / `right_omnihand_controller`
-> as unavailable; that is expected here and harmless, because this activity plans
-> no hand group through move_group.
+> drop. Each arm driver is pointed at `/<side>_hand/feedback/omnihand/joint_states`
+> so the hand joints still reach the combined `feedback/joint_states`, which is
+> where move_group reads the full robot from.
+>
+> **Order matters with this profile.** Until the hands come up, move_group repeats
+> `The complete state of the robot is not yet known. Missing left_index_abad_joint, …`
+> — it has the arms but not the 24 hand joints, and it will not plan. The warning
+> stops once step 3 runs. If it persists after the hands are up, the arm driver
+> and the bridge disagree about the topic; check
+> `ros2 param get /left_arm/agx_arm_ctrl_single_node omnihand_joint_states_topic`
+> against `ros2 topic list | grep omnihand/joint_states`.
 
 ### 1. Dry run first (no hardware)
 
