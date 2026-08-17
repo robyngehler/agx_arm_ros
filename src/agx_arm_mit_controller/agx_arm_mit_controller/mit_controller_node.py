@@ -706,7 +706,8 @@ class NeroMitControllerNode(Node):
         An **epoch change aborts too**, even when the device still accepts
         motion. A new epoch means whatever was in flight was issued against a
         device state that no longer exists — a recovery, a rearm, or another
-        commander taking over.
+        commander taking over. The one exception is this controller acquiring
+        the device: its own claim is what advanced the epoch.
         """
         with self.state_lock:
             if self.expected_device_id and msg.device_id != self.expected_device_id:
@@ -740,6 +741,22 @@ class NeroMitControllerNode(Node):
                 or previous.unit_safety_epoch != msg.unit_safety_epoch
             )
             if not (lost_motion or new_epoch):
+                return
+
+            # Taking the device is what bumps the epoch, so this controller's own
+            # claim arrives here looking exactly like a takeover. Aborting on it
+            # would abort the goal that issued the claim.
+            acquired_by_us = (
+                msg.owner_id == self.commander_id
+                and previous.owner_id != self.commander_id
+                and msg.motion_ready
+                and not lost_motion
+            )
+            if acquired_by_us:
+                self.get_logger().info(
+                    f"Took command of '{msg.device_id}' at device generation "
+                    f"{msg.device_epoch}"
+                )
                 return
 
             # Drop everything in flight. A trajectory's start clock keeps

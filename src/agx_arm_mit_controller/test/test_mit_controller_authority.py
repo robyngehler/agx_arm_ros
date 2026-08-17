@@ -294,3 +294,83 @@ def test_an_epoch_bump_alone_aborts_a_running_goal():
         assert node._take_authority_abort() is not None
     finally:
         _close(node)
+
+
+def test_this_controllers_own_claim_does_not_abort_the_goal_that_issued_it():
+    """Claiming the device is what bumps the epoch.
+
+    ``_set_enabled(True)`` claims, the driver advances the device generation and
+    republishes, and that arrives here looking exactly like a takeover. Aborting
+    on it aborted the trajectory whose auto-enable issued the claim, so the first
+    arm action after bring-up could never run.
+    """
+    node = _node()
+    try:
+        node._authority_callback(_authority(device_epoch=1, owner_id=""))
+        node.active_trajectory = object()
+        node.hold_reference = object()
+        node.active_goal_handle = object()
+
+        node._authority_callback(_authority(device_epoch=2, owner_id=_COMMANDER))
+
+        assert node.active_trajectory is not None
+        assert node.hold_reference is not None
+        assert node._authority_abort_reason is None
+        assert node._authority_blocks_motion() is False
+    finally:
+        _close(node)
+
+
+def test_taking_the_device_from_another_commander_still_aborts_that_ones_work():
+    """Only the acquirer is spared; whatever the previous owner left runs no more."""
+    node = _node()
+    try:
+        node._authority_callback(_authority(device_epoch=1, owner_id="someone_else"))
+        node.active_trajectory = object()
+        node.active_goal_handle = object()
+
+        # Another commander takes it, not us.
+        node._authority_callback(_authority(device_epoch=2, owner_id="a_third_party"))
+
+        assert node.active_trajectory is None
+        assert node._authority_abort_reason is not None
+    finally:
+        _close(node)
+
+
+def test_an_epoch_bump_while_we_already_held_it_still_aborts():
+    """A recovery or rearm under a standing claim is not an acquisition."""
+    node = _node()
+    try:
+        node._authority_callback(_authority(device_epoch=1, owner_id=_COMMANDER))
+        node.active_trajectory = object()
+        node.active_goal_handle = object()
+
+        node._authority_callback(_authority(device_epoch=2, owner_id=_COMMANDER))
+
+        assert node.active_trajectory is None
+        assert node._authority_abort_reason is not None
+    finally:
+        _close(node)
+
+
+def test_acquiring_without_motion_ready_is_not_a_free_pass():
+    node = _node()
+    try:
+        node._authority_callback(_authority(device_epoch=1, owner_id=""))
+        node.active_trajectory = object()
+        node.active_goal_handle = object()
+
+        node._authority_callback(
+            _authority(
+                device_epoch=2,
+                owner_id=_COMMANDER,
+                motion_ready=False,
+                state=AgxDeviceAuthority.STATE_STOPPED,
+            )
+        )
+
+        assert node.active_trajectory is None
+        assert node._authority_abort_reason is not None
+    finally:
+        _close(node)
