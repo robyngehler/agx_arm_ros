@@ -4,8 +4,7 @@
 > as the Sprint-6 MVP instead: two preloaded Pinocchio models and a
 > `std_srvs/SetBool` `~/payload_attached` switch, driven by an action-level
 > `payload_update` flag in the catalogue. See
-> `sprint6_dynamic_payload_adjustment_proposal.md` and
-> `../reference/payload_gravity_model.md`.
+> `decision_record.md` §4 and `../reference/payload_gravity_model.md`.
 >
 > Still open and still wanted here: the general `SetGravityPayload.srv` with a
 > runtime-settable mass/COM/tensor, `reference: flange|palm` resolution,
@@ -17,7 +16,7 @@
 > flange **z** offset, and the hand actually reaches along the flange's **x**.
 
 Status: **planned, not started** (2026-07-03). Follow-up to the hand-aware gravity work in
-`debug_recordings.md` (P1'/P1''). Implement when the teach/transition debugging is done.
+`../evidence/hand_recordings_2026-07-02.md` (P1'/P1''). Implement when the teach/transition debugging is done.
 
 ## Goal
 

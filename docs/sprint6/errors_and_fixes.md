@@ -124,7 +124,7 @@ joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch pr
   `vendor/OmniHand-Pro-2025/description/urdf/o12_hand_description-o12_t3/` (visual+collision meshes,
   both sides, mimic ratios that match `models.py`). Integrate it (reprefix `R_`/`L_`→`right_`/`left_`)
   and update SRDF/controllers/initial_positions/ros2_control to the 12 active joints. See
-  `planning/session_handoff_2026-06-29.md`.
+  `planning/decision_record.md` §1.
 
 ## 2026-06-29
 

@@ -1,25 +1,27 @@
 # Sprint 6 Target
-status: PAUSED_PENDING_V02_REFACTOR
-last_updated: 2026-08-11
+status: RESUMING_ON_V02_CONTRACTS
+last_updated: 2026-08-18
 
 Sprint 6 is the coordinated dual-arm plus dual-hand task layer.
 
-> **Paused.** The V02 refactor takes priority on safety, CPU relief, and
-> parallel operation; the demo is not meaningful before those land. The active
-> entrypoint is `docs/sprint_refactor/`, canonical plan
-> `docs/sprint_refactor/planning/integration_plan.md`.
+> **Resuming.** The V02 refactor's Runtime RC closed 2026-08-17, so coordinated
+> demo work is unblocked. Remaining Phase-4/5/6 refactor items are follow-up
+> engineering; pull one forward only when it blocks an interface the demo
+> actually uses.
 >
-> Two premises of this sprint have changed. Each device now has its own CAN bus
-> (arms `can_nero_left`/`can_nero_right`, hands `hand_left`/`hand_right` on
-> USB-CAN FD adapters), so the
-> **step-and-settle and hand-window planning notes here are superseded** —
-> same-side arm and hand motion runs in parallel and step-and-settle is a
-> selectable degraded mode. The hand message surface is also being consolidated
-> into one abstract hand contract.
+> **Read [`planning/decision_record.md`](../planning/decision_record.md) §6
+> before resuming.** Several premises of this sprint changed underneath it: each
+> device now owns its CAN bus so same-side arm and hand motion runs in parallel
+> and step-and-settle is a selectable degraded mode; a hand command carries the
+> authority it was issued under and an unclaimed hand executes nothing; the MIT
+> controller consumes device authority rather than a hand-window boolean; and
+> the coordinator admits one activity at a time with atomic sync groups.
 >
-> Sprint 6 resumes and adapts to the resulting contracts once the refactor
-> phases land. Its remaining hardware-validation items become regression
-> criteria for the refactor rather than independent work.
+> The first thing resumption needs is a **re-teach against the new command
+> contracts**. That is demo work, not refactor work.
+>
+> Canonical refactor plan: `docs/sprint_refactor/planning/integration_plan.md`;
+> its rationale: `docs/sprint_refactor/planning/decision_record.md`.
 
 ## Main goal
 

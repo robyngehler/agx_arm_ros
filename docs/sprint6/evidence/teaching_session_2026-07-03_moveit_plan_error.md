@@ -172,7 +172,7 @@ default) — with soft playback gains under gravity load a steady-state error > 
 enough, and MoveIt maps the controller abort to CONTROL_FAILED even though the arm is essentially at
 the target. Diagnosis on next run: check the mit_controller log for GOAL_TOLERANCE_VIOLATED at the
 failure timestamp and compare `~/reference_joint_states` vs `feedback/joint_states` at the end of the
-motion. The now-correct hand-aware gravity model (see `debug_recordings.md` P1'') should already
+motion. The now-correct hand-aware gravity model (see `hand_recordings_2026-07-02.md` P1'') should already
 shrink the steady-state error — retest before touching tolerances; if it persists, raise
 `goal_position_tolerance` / `goal_time_tolerance_s` for the moveit_mit profile or stiffen the hold
 gains.

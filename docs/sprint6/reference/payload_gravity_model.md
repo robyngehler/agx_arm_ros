@@ -83,4 +83,4 @@ refusals and coordinator ordering are unit-tested; the derivation and the
 26-DoF-preserving property were also exercised against the real generated Duo
 gravity URDF. **No hardware run.** The gravity effect on a live arm is the L3
 static payload check in
-`planning/sprint6_dynamic_payload_adjustment_proposal.md` §10.
+`planning/decision_record.md` §4.

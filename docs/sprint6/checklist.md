@@ -2,6 +2,14 @@
 
 Build order from `planning/architecture_and_repo_integration.md` §9 (decisions: YAML graph,
 PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_coordination`).
+Decisions and their rationale: `planning/decision_record.md`.
+
+> **Resuming on the V02 contracts (2026-08-17).** Every unchecked item below is a
+> *hardware-pending* item, and the runtime under it changed while the sprint was
+> paused — hand commands now carry authority, an unclaimed hand executes nothing,
+> and the hand window is off by default on the four-bus topology. Read
+> `planning/decision_record.md` §6 before ticking anything. The taught data
+> predates the new command contracts, so a re-teach comes first.
 
 ## Planning
 
@@ -84,8 +92,8 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
 
 ## Step 5b — Dynamic payload adjustment (2026-08-17)
 
-Per `planning/sprint6_dynamic_payload_adjustment_proposal.md`; evidence and the
-flange-axis correction in `reference/payload_gravity_model.md`.
+Decisions and the flange-axis correction in `planning/decision_record.md` §4;
+evidence in `reference/payload_gravity_model.md`.
 
 - [x] MIT controller preloads a base and a loaded gravity model; `~/payload_attached`
 	(`std_srvs/SetBool`) swaps the active reference under `state_lock`. Idempotent,

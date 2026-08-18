@@ -58,7 +58,7 @@ First run of the real toolchain on the hardware host (previous entry was a Windo
 hand, the coordinator end-to-end. The SDK-path migration (bridge + load/smoke scripts) is in
 the working tree, builds clean, but is **not committed** and **not yet exercised on hardware**.
 The O12 description migration (now vendor-grounded — official URDF available) is the next blocker
-to a clean `components.launch`. See `session_handoff_2026-06-29.md`.
+to a clean `components.launch`. See `decision_record.md` §1.
 
 ## 2026-06-29 — O12 description migration + teach tooling (arm64 host)
 

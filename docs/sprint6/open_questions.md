@@ -20,23 +20,37 @@
 	`pose` is deterministic but blind — it closes on empty air if the handle is not where the anchor
 	says. Blocked on a calibrated `contact_threshold` (the 0.35 placeholder is orders of magnitude
 	below the Pro's raw normal-force values).
-- What is the real CPU headroom during the demo? The lowered hand rates in `start_tea_demo.launch.py`
-	are reasoned, not measured, against `sprint_refactor/reference/critical_cpu_paths.md`.
 - How should a coordinator **crash** be covered? The interrupt path is handled, but a hard crash
 	leaves the MoveIt goal executing. Candidates: a MoveIt-side execution watchdog, or a supervisor
 	that pins the arms when the coordinator disappears.
+
+## Closed by the V02 refactor (2026-08-17)
+
+- **Does arm + hand on one native side bus stay stable during sustained coordinated
+	motion?** Moot. Each device owns its own interface (C1). Same-side arm and hand
+	motion was run in parallel on both sides and both sides at once with zero errors
+	and zero drops on every bus. The shared side bus survives only as the selectable
+	`shared_per_side` topology.
+- **Should `one-shot` stay on for the hand?** It was a shared-bus arbitration
+	question. On a dedicated hand adapter nothing else transmits, so the setting no
+	longer trades hand delivery against arm retransmission buildup.
+- **What is the real CPU headroom during the demo?** Measured, and the answer moved
+	twice: the stack fell from 814.5 % of a core to 399.7 % idle and from 882.9 % to
+	431.3 % under dual MIT at 100 Hz, after a pub-rate fix and a vendor receive-loop
+	patch. The lowered hand rates in `start_tea_demo.launch.py` are now redundant
+	rather than wrong — `pub_rate` is a ceiling that cannot drive publication.
 
 ## Needs hardware validation / calibration
 
 - Which backend gestures/presets work best for the glass and the bottle grasp?
 - Which tactile sensors are reliable for stable contact per object?
-- Robust `contact_threshold` and `stable_samples` across repeated grasps?
-- Does arm + hand on one native side bus stay stable during sustained coordinated motion
-	(depends on sprint-5 bus-load validation)?
-- Should `one-shot` CAN mode stay on for the hand under all demo conditions, or off so hand
-	commands retransmit? (sprint-5 caveat)
+- Robust `contact_threshold` and `stable_samples` across repeated grasps? The 0.35
+	placeholder is orders of magnitude below the Pro's raw normal-force values, and it
+	blocks `close_until_contact` for the demo.
 - Safest fallback if a hand loses contact during the pour (warn vs abort)?
 - Pour angle and duration for a visually successful but low-risk first demo?
+- Does the payload gravity swap behave? Mass 1.0 kg and the 0.15 m lever are
+	unmeasured estimates (`planning/decision_record.md` §4).
 
 ## Design questions settled during implementation (2026-06-29)
 
