@@ -252,7 +252,7 @@ Routed through the runtime:
       unilaterally on its own epoch. Verified on hardware: an e-stop on the right
       arm now stops the left arm through the generation, and with the writer not
       running the right arm still stops itself. See
-      `planning/unit_safety_writer_spec.md`.
+      `planning/decision_record.md` §3.
 - [x] Add the `srv/` directory to `src/agx_arm_msgs` (`RequestUnitStop.srv`).
 - [x] Refuse a **new top-level activity** while unit safety is unknown. The
       writer heartbeats, and staleness is the only usable signal because the
@@ -474,7 +474,15 @@ hardware.
       bus up. Retiring them first required porting the TJA1051T/3 TDC offset
       into the duo script — the arm buses run CAN FD at 5 Mbit and the
       transceiver needs it, and it was the one setting the duo script lacked.
-- [ ] Rewrite the operational docs bannered in 0A for the four-bus reality.
+- [~] Rewrite the operational docs bannered in 0A for the four-bus reality. The
+      banners were corrected 2026-08-18 — they had claimed the code still derives
+      the hand interface from the arm bus, which 2A removed — and now say that the
+      hand-window passages describe the `shared_per_side` degraded topology. The
+      pages themselves are still written around the shared bus and the
+      pre-authority hand command surface: `docs/control/bringups/teach_and_run.md`,
+      `docs/control/bringups/tea_demo.md`,
+      `docs/assets/omnihand/omnihand_solo_bringup_and_load_test.md`. Rewriting
+      them is best done with the Sprint-6 re-teach, which changes the same flows.
 
 ### 1B/2C measurement: what the full stack actually costs
 

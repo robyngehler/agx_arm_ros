@@ -641,7 +641,7 @@ changes, which is the interesting part.
 - Only hardware surfaced this. The unit tests passed throughout, because none
   of them ran the publish loop after an e-stop — a gap the new regression closes.
 
-## 2026-08-14 (found while following the refinement proposal into the hand bridge)
+## 2026-08-14 (found while following the bridge-refinement review into the hand bridge)
 
 ### The hand publishes at the arm's rate, ten times faster than it has data
 

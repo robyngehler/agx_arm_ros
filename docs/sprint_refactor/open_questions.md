@@ -137,9 +137,9 @@ implements it.
   carries neither. That needs per-command identity (4D). The earlier "FJT is debug-only"
   reading contradicted the design. Superseded 2026-08-14: both primitives are
   production, and exclusive ownership closes the two-commander hole. See
-  AGENTS.md "ROS Contract Rules", the refinement proposal "remove claims that
-  hand FJT is debug/development-only", and the `errors_and_fixes.md` 2026-08-14
-  entries on hand claim services and two-commander elimination.
+  AGENTS.md "ROS Contract Rules", `planning/decision_record.md` §5, and the
+  `errors_and_fixes.md` 2026-08-14 entries on hand claim services and
+  two-commander elimination.
 - **The degraded step-and-settle mode has no removal date yet.** It is retained
   while a single-bus fallback remains physically possible, and its removal is
   reviewed at the Phase 5 close-out against the measured four-bus evidence. No

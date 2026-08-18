@@ -73,7 +73,7 @@ Right arm, `feedback/authority`, latched. The full sequence in one session:
 the unit epoch locally. It latches a device fault on the device's own epoch and
 *requests* a generation from the writer. The table above therefore records the
 pre-writer behaviour; the current sequence is in
-`planning/unit_safety_writer_spec.md`. What still holds: the device left READY
+`planning/decision_record.md` §3. What still holds: the device left READY
 on its own epoch, so a command issued under the previous epoch is stale. The stop itself reported
 `stop=verified — confirmed stopped (peak 0.007 rad/s (dt=24ms))` and did not
 escalate, so the arm stayed energised.

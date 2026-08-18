@@ -7,7 +7,7 @@ Runtime CPU-load hot spots identified while debugging the shared-CAN hand window
 the refactor's performance goals. None of these is a *correctness* bug — the shared-bus handshake worked —
 but together they starve the Jetson enough that, under the full teach stack, CPU stalls overflow the CAN
 RX socket buffer and drop hand response frames (see `docs/sprint6/errors_and_fixes.md`, 2026-07-27, and
-the `sprint6/planning/step_and_settle_implementation_summary.md` §8e finding). Verify each with the
+the `sprint6/planning/decision_record.md` §2 finding). Verify each with the
 Phase 0 CPU / loop-duration / SDK-call instrumentation before acting.
 
 ## What changed since this note was written

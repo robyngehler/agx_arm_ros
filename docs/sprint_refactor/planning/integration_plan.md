@@ -1,7 +1,7 @@
 # Sprint Refactor - Integration Plan
 
 status: CANONICAL_PLAN
-last_updated: 2026-08-11
+last_updated: 2026-08-18
 branch: ROS2_Duo_System_V02_refactor
 
 ## Goal
@@ -10,17 +10,26 @@ Turn the coordination refactor proposal into a migration sequence that can be
 implemented on branch `ROS2_Duo_System_V02_refactor` without building later work on top
 of unsafe ownership assumptions.
 
-This plan is the canonical migration surface. `coordination_architecture_refactor_proposal.md`
-is the architectural input; where the two disagree, this plan wins. Proposal
-items that are still relevant but were missing here have been consolidated into
-the phases below (see `Consolidated from the proposal`).
+This plan is the canonical migration surface: it carries the phases, their
+order, and the binding constraints. [`decision_record.md`](decision_record.md)
+carries the reasoning — every decision, what forced it, what it replaced, and
+what it left open — consolidated from the eleven proposal and review documents
+this sprint produced. Where the two disagree, this plan wins on scope and
+sequencing and the decision record wins on rationale.
+
+## Status
+
+**The Refactor Runtime RC closed 2026-08-17** (see `../checklist.md`, "Refactor
+runtime RC gate"). Sprint-6 and coordinated demo work resume. The remaining
+Phase-4/5/6 items below are follow-up engineering; pull one forward only when it
+blocks an interface the demo actually uses.
 
 ## Priority
 
-The refactor takes priority over demo work on three axes: **safety**, **CPU
-relief**, and **parallel operation**. The demo is not meaningful before those
-land. `docs/sprint6/` adapts to the resulting contracts afterwards rather than
-running in parallel for the same hardware and the same files.
+Until the RC closed, the refactor took priority over demo work on three axes:
+**safety**, **CPU relief**, and **parallel operation**, because the demo was not
+meaningful before those landed. That ordering has been served. `docs/sprint6/`
+now adapts to the resulting contracts.
 
 ## Working practice
 
@@ -740,7 +749,7 @@ Exit gate:
   the dual-primitive design. Both primitives enforce single-commander arbitration
   through device authority (exclusive ownership via `control/omnihand/claim_device`),
   so FJT is neither a debug surface nor optional. See AGENTS.md "ROS Contract Rules"
-  and the refinement proposal "remove claims that hand FJT is debug/development-only".
+  and `decision_record.md` §5.
 
 ### 4D. Hand contract consolidation
 
@@ -911,6 +920,11 @@ closure (2B), resource split (2C), single-commander arbitration and traffic
 reduction on CPU grounds (2C), hand contract consolidation (4D).
 
 ## Consolidated from the proposal
+
+The architectural input was `coordination_architecture_refactor_proposal.md`
+(2026-07-27), retired into `decision_record.md` on 2026-08-18. Its section
+numbers are kept here because the two tables below are the only remaining index
+of where each part of it went.
 
 | Proposal section | Landed in |
 | --- | --- |
