@@ -10,6 +10,7 @@ This directory contains the stable OmniHand-specific documentation surfaces.
 - `omnihand_ros_integration_options.md`: stable architecture and ROS-contract decision record
 - `omnihand_wrapper_integration_plan.md`: backend sequencing and wrapper-first rollout plan
 - `omnihand_vendor_socketcan_recv_report.md`: the receive-thread spin reported upstream, with the fix carried in our fork
+- `omnihand_pro_analysis.md`: what the vendor Pro SDK can and cannot do — control modes, the missing joint→actuator velocity mapping, synchronous request behaviour, and the deferred characterization work
 
 ## Historical or engineering-reference docs
 

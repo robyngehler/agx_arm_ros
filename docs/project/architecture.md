@@ -1,15 +1,22 @@
 # Architecture
 
 status: ACTIVE_BASELINE
-last_updated: 2026-07-19
+last_updated: 2026-08-18
 
 This document is the stable architecture reference for the current Duo baseline. It focuses on how
 the repo-owned runtime surfaces interact, how launch files compose them, and where the public ROS
 contract lives.
 
+**It does not describe the control-integrity layer.** Who may command a device,
+which generation a command was issued under, who owns a device's vendor SDK
+session, and what happens on an e-stop or a recovery are in
+`control_integrity_architecture.md`. Read that one before changing anything on a
+command path; this one is about composition and wiring.
+
 Use this together with:
 
 - `repository_structure.md` for package ownership and documentation boundaries
+- `control_integrity_architecture.md` for authority, epochs, SDK ownership, recovery, and e-stop
 - `components/README.md` for the stable component index
 - `../control/bringups/launches.md` for runnable entrypoints
 
@@ -50,7 +57,10 @@ flowchart LR
     OJS["feedback/omnihand/joint_states<br/>sensor_msgs/JointState"]
     OSTAT["feedback/omnihand/status<br/>agx_arm_msgs/OmniHandStatus"]
     OTACT["feedback/omnihand/tactile_raw<br/>agx_arm_msgs/OmniHandTactileRaw"]
-    OTRAJ["control/omnihand/joint_trajectory<br/>trajectory_msgs/JointTrajectory"]
+    OAT["control/omnihand/authorized_trajectory<br/>agx_arm_msgs/AuthorizedJointTrajectory"]
+    OJT["control/omnihand/joint_target<br/>agx_arm_msgs/HandJointTarget"]
+    AUTH["feedback/authority<br/>agx_arm_msgs/AgxDeviceAuthority"]
+    UNS["/unit_safety<br/>agx_arm_msgs/AgxUnitSafety"]
 
     CLI -- "plan and execute" --> MG
     MG -- "FollowJointTrajectory action<br/>use_mit_controller=true" --> MIT
@@ -61,15 +71,22 @@ flowchart LR
     CLI -- "debug sliders only" --> DBG
     DBG -- "debug JointTrajectory" --> MIT
 
-    CJS --> AGX
-    CJS --> OH
-    OTRAJ --> OH
+    CJS -. "legacy, off by default" .-> AGX
+    CJS -. "legacy, allow_legacy_hand_command_ingress" .-> OH
+    OAT --> OH
+    OJT --> OH
     FJS --> MIT
-    MIT -- "control/move_mit" --> AGX
+    MIT -- "control/move_mit<br/>stamped MoveMITMsg" --> AGX
 
-    CLI -- "enable_agx_arm, move_home,<br/>set_normal_mode, set_leader_mode,<br/>emergency_stop" --> AGX
+    AGX -- "publish, latched" --> AUTH
+    OH -- "publish, latched" --> AUTH
+    AUTH --> MIT
+    UNS --> AGX
+    UNS --> OH
+
+    CLI -- "enable_agx_arm, move_home,<br/>set_normal_mode, set_leader_mode,<br/>emergency_stop, claim_device" --> AGX
     CLI -- "mit_controller/enable,<br/>hold_current, cancel_trajectory" --> MIT
-    CLI -- "control/omnihand/stop" --> OH
+    CLI -- "control/omnihand/stop,<br/>control/omnihand/claim_device" --> OH
 
     AGX -- "publish" --> FJS
     AGX -- "feedback/tcp_pose and feedback/arm_status" --> CLI
@@ -89,6 +106,21 @@ Key contract points:
 - hand-only diagnostics stay under `feedback/omnihand/*`
 - the MoveIt default path is `move_group -> mit_controller -> control/move_mit -> agx_arm_ctrl_single_node`
 - the `ros2_control` branch is a compatibility path, not the preferred production execution route
+- **every production command carries the authority it was issued under.** The
+  arm's `MoveMITMsg` and the hand's `AuthorizedJointTrajectory` /
+  `HandJointTarget` all embed `owner_id`, `device_epoch`, `unit_safety_epoch`
+  and `sequence`; the receiving device admits on the stamp the command *arrived
+  with* and never substitutes a field from its own state
+- **the bare surfaces are legacy and off.** Shared `control/joint_states` and
+  `control/omnihand/joint_trajectory` reach a device only under
+  `allow_legacy_hand_command_ingress` / `allow_legacy_motion_ingress`, both
+  default false. They self-stamp, so they cannot refuse a stale or reordered
+  command — never describe them as authority-safe
+- **four devices, four buses, four authorities.** Arms on `can_nero_left` /
+  `can_nero_right` (native `mttcan`), hands on `hand_left` / `hand_right`
+  (USB-CAN FD adapters). Same-side arm and hand motion runs in parallel;
+  `shared_per_side` is a selectable degraded topology declared once as
+  `bus_topology` in the registry
 
 ## 2. Launch and runtime flow
 
