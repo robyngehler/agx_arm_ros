@@ -131,7 +131,7 @@ This writes `/boot/kernel_tegra234-<board>-nv-hdr40-user-custom.dtbo` and adds a
 > **Do not** recreate the `JetsonIO-CAN-TDCR-*` boot entries or `/boot/dtb_can_tdcr/` from the
 > reference host. That approach was investigated and **did not work** — all eight generated DTBs are
 > byte-identical, so the boot-time TDCR value never differed and never took effect. The TDCR is set at
-> runtime via sysfs instead (3c), which `scripts/activate_native_can.sh` does for you. Same verdict for
+> runtime via sysfs instead (3c), which `scripts/activate_duo_can.sh` does for you. Same verdict for
 > the `devmem`/`0xC310048` register approach. See `../assets/omnihand/omnihand_canfd_setup.md`.
 
 ### 3b. Verify after reboot
@@ -159,7 +159,7 @@ find /sys/devices/platform/bus@0 -name tdc_offset
 
 If these paths are absent after an L4T update, stop and re-evaluate — CAN FD to the OmniHand will not
 work and no repo-side workaround exists. The validated value is `0x800` for the **Adafruit CAN Pal
-(TJA1051T/3)**; `scripts/activate_native_can.sh` applies it automatically and accepts
+(TJA1051T/3)**; `scripts/activate_duo_can.sh` applies it automatically and accepts
 `TDCR_VALUE=0x...` for a different transceiver.
 
 ### 3d. Wiring
@@ -421,8 +421,8 @@ Hardware bringup touches live arms and hands. Per `AGENTS.md`, confirm hardware 
 the session first. `sudo` is available without a password in the intended hardware environment.
 
 ```bash
-# 1. CAN bringup (both side buses, CAN FD + TDCR)
-sudo bash ./scripts/activate_native_can.sh
+# 1. CAN bringup (all four interfaces: two arm buses + two hand adapters, CAN FD + TDCR)
+sudo bash ./scripts/activate_duo_can.sh
 ip -details link show can_nero_right | grep 'mtu 72'    # 72 = CAN FD MTU
 
 # 2. Below-ROS hand probe

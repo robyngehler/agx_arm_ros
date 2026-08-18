@@ -274,8 +274,12 @@ status snapshot):
   TRAC-IK Duo planning, and a joint arm + OmniHand bringup with small live movements.
 - Execution **sprint 5 is complete**: native `mttcan` CAN FD transport (`one-shot`, arm + hand per
   side bus) and `vendor/pyAgxArm` pinning are the settled baseline.
-- Execution **sprint 6 is active**: coordination, Duo-hand runtime hardening, and the first demo
-  task path (Hefeweizen pouring).
+- Execution **sprint 6 is resuming**: coordination, Duo-hand runtime hardening, and the first demo
+  task path (tea pour, then Hefeweizen pouring). It was paused for the V02 runtime refactor and
+  resumes against the refactored command contracts.
+- The **V02 refactor** (`docs/sprint_refactor/`) is the current implementation sprint: device
+  authority and epochs, one serialized SDK owner per device, per-device CAN buses with parallel
+  same-side arm and hand motion. Its Runtime RC closed 2026-08-17.
   These execution sprints sit ahead of this roadmap's thematic phase 5 (AGV/base), which stays external.
 - Simulation and Isaac work stay behind the first validated Duo body system baseline instead of leading it.
 

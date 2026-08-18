@@ -2,12 +2,18 @@
 
 > **Superseded in part — V02 refactor.** Each device now has its own CAN bus
 > (arms `can_nero_left`/`can_nero_right` native, hands `hand_left`/`hand_right`
-> on USB-CAN FD adapters), so
-> same-side arm and hand motion may run in parallel and the shared-bus hand
-> window is a selectable degraded mode, not normal operation. This page still
-> describes the **current code**, which resolves the hand interface from the arm
-> bus; it is rewritten in phase 2A. See
-> `docs/sprint_refactor/planning/integration_plan.md` (constraint C1).
+> on USB-CAN FD adapters), declared once as `bus_topology` in the registry. Every
+> hand bridge resolves its interface from its **own** registry entry and fails
+> closed without one; the derivation from the arm's `can_port` is gone. Same-side
+> arm and hand motion runs in parallel, the handshake defaults **off**, and the
+> shared-bus hand window is a selectable degraded mode.
+>
+> **The hand-window and handshake passages below therefore describe the
+> `shared_per_side` degraded topology, not normal operation.** A hand command
+> also now carries the authority it was issued under, and an unclaimed hand
+> executes nothing. This page has not yet been rewritten around either change.
+> See `docs/sprint_refactor/planning/integration_plan.md` (C1, C7) and
+> `docs/sprint_refactor/planning/decision_record.md` §5 and §7.
 
 How to teach and run coordinated arm(+hand) motions — single arm, either side, or both arms
 simultaneously — by **reusing** the MIT demo/tools instead of building new motion code. Examples use
@@ -406,7 +412,7 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
 > `gravity_payload_api_plan.md`) — there is currently no "record a hand gesture into a trajectory"
 > path. `t` transitions mode (MoveIt) against a duo+hands bring-up uses
 > `execution_profile:=duo_hand` on the components baseline (offline-validated, hardware run pending —
-> see [duo_both_hands_moveit_gap.md](../../sprint6/planning/duo_both_hands_moveit_gap.md)).
+> see [the sprint-6 decision record](../../sprint6/planning/decision_record.md) §3).
 
 **Resource choice at save time (not a hardcoded rule).** With two arms, `record` (`n`) and anchor
 (`a`) ask which resource to store the result as: `both_arms` (merged **14-dim**, left then right),

@@ -139,4 +139,4 @@ The staged dry-run and live sequence remains in `teach_and_run.md`.
 - `teach_and_run.md`: teach loop, gravity, bus details, and coordinator-facing motion flow
 - `../../assets/control/single_vs_multi_arm_control_chain.md`: per-arm versus Duo interaction analysis
 - `../../assets/omnihand/omnihand_canfd_setup.md`: CAN transport and hardware bringup details
-- `../../sprint6/planning/duo_both_hands_moveit_gap.md`: current duo-hand validation gap
+- `../../sprint6/planning/decision_record.md` §3: how the duo-hand profile was closed, and its validation state

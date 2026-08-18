@@ -71,6 +71,15 @@ The arm driver serializes every steady-state SDK call for a device onto one work
 - name the thread after the device it serves (`hand-acq-right`), because per-thread call attribution is how the one-owner invariant is read, and `Thread-3` proves nothing
 - a test that drives such a node by hand calls the loop body (`_acquire_once`), never the loop. The thread belongs to the runtime; the test wants one deterministic cycle
 
+## Rates, Logging, And Derived State
+
+Three traps that have each cost a session, and two of them cost more than one.
+
+- **do not gate a periodic action on `now - last >= interval` inside a loop already paced at that interval.** Ordinary jitter makes cycles miss the comparison, and the achieved rate lands well below the configured one — it has produced 15.4 Hz from a 20 Hz readback and 10 Hz from a 20 Hz tactile cadence in this repository, the second time one function away from the comment warning about the first. An interval at or below the loop period means *every* cycle; a slower cadence is compared with half a period of tolerance
+- **a rate argument that is forwarded rather than chosen belongs to whoever it was chosen for.** The arm's `pub_rate` passed into the hand bridge made it publish ten times faster than its data changed, and every subscriber paid for it too. Publication is driven by new data; a rate parameter is a ceiling that can throttle and never drive
+- **`rclpy` caches a logger's severity per call site and raises if it changes.** `(self.get_logger().info if ok else self.get_logger().warn)(msg)` is one call site with two severities: the first time the other branch runs, the exception unwinds out of the callback and can take the node with it. Write two call sites
+- **a derived state mapping erases anything set directly.** A state rebuilt from its inputs every publish cycle overwrites whatever a callback assigned behind its back — that is how a latched emergency stop came back as `READY` a second later. Anything that must survive the mapping has to be an *input* to it
+
 ## Guarding Untrusted Numbers
 
 - never let a saturating or clamping helper be the first thing that sees an untrusted value. `max(-limit, min(limit, value))` maps NaN and `+inf` onto `limit`, so a corrupt number becomes the *maximum* command and every downstream range check then sees a plausible value. Reject non-finite input first, then saturate

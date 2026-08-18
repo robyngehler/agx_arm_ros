@@ -29,11 +29,21 @@ This directory is the human-facing documentation hub for the current Duo baselin
 - Current package and staging rules: `project/repository_structure.md`
 - Provisioning a new Jetson host: `project/jetson_migration.md`
 - Current architecture diagrams: `project/architecture.md`
+- Who may command a device, and what happens on a stop or a recovery:
+  `project/control_integrity_architecture.md`
 - Current repo target and documentation ownership rules: `target/README.md`
 - Current implementation focus: `sprint_refactor/` (V02 refactor; canonical plan
-  `sprint_refactor/planning/integration_plan.md`)
-- `sprint6/` is paused and adapts to the refactor contracts afterwards; its step-and-settle
-  and hand-window notes are superseded by the per-device CAN topology
+  `sprint_refactor/planning/integration_plan.md`, its rationale
+  `sprint_refactor/planning/decision_record.md`)
+- `sprint6/` is resuming against the refactored contracts — read
+  `sprint6/planning/decision_record.md` §6 first; its step-and-settle and hand-window
+  notes are superseded by the per-device CAN topology
+
+Each sprint surface carries at most one `planning/decision_record.md`: what was
+decided, what forced it, and what it left open. Proposals and reviews are folded
+into it once their decisions land, rather than kept alongside it — parallel
+documents describing the same subsystem from different dates is how this tree
+last grew contradictions.
 
 For operational launches, prefer the `control/bringups/launches.md` taxonomy first: pick a baseline,
 then add the matching tool or demo on top. In the normal MoveIt or MIT wrapper path,

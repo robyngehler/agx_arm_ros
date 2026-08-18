@@ -26,7 +26,7 @@ What remains open is narrower and belongs to the status half of C5: `HandStatus`
 The V02 refactor gives the unit a software safety generation: one writer
 allocates `unit_safety_epoch`, devices observe it, and commands stamped under a
 superseded generation are refused
-(`docs/sprint_refactor/planning/unit_safety_writer_spec.md`).
+(`docs/sprint_refactor/planning/decision_record.md` §3).
 
 **That is command arbitration, not a protective stop.** It orders and
 invalidates commands inside our own stack, and every part of it — ROS, the
@@ -47,8 +47,15 @@ then up) with the driver instrumented per call
 This is a **software-side limit, accepted rather than engineered away.** No
 queue discipline shortens a blocking vendor call, and no amount of restructuring
 makes a stack stop an arm through a link it is in the middle of tearing down.
-What covers the window today is the damped zero the driver sends *before* the
-teardown and the fault lockout it latches after — a mitigation, not a guarantee.
+
+What covers the window today, since 2026-08-17: the driver attempts the firmware
+`MOVE-J(current_q)` hold *before* the worker is quiesced and the session is
+handed to recovery, asserted until the firmware is positively confirmed out of
+MIT, and latches the fault afterwards. That is strictly stronger than the damped
+MIT zero it replaced — which had no stiffness and sagged as a terminal state —
+but it is still a mitigation, not a guarantee: **it requires trustworthy
+feedback, and if there is none no hold is claimed at all.** That case is exactly
+the watchdog's regime.
 
 That is precisely the gap the independent watchdog exists to hold. The
 requirement is therefore not "a stop that is more reliable in general" but a

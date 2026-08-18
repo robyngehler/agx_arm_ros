@@ -17,8 +17,8 @@ The OmniHand bridge stays repo-owned and agx_arm-centric.
 > (USB-CAN FD adapters) — so same-side arm and hand motion run in parallel and
 > the shared-bus hand window is a selectable degraded mode, not normal operation.
 > Validated on hardware 2026-08-13: both bridges on their own bus, zero CANFD
-> timeouts. The hand command surface is moving to one abstract, owned hand
-> contract. Before changing the bridge, read
+> timeouts. The hand *command* contract is settled — one authority stamp, two
+> motion payloads; the *status* half is not. Before changing the bridge, read
 > `docs/sprint_refactor/planning/integration_plan.md` (constraints C1 and C5,
 > phases 2A-2C and 4D). The rules below describe the current baseline; do not
 > build new work on the surfaces marked legacy.

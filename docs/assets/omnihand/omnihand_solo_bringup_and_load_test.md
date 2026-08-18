@@ -2,12 +2,18 @@
 
 > **Superseded in part — V02 refactor.** Each device now has its own CAN bus
 > (arms `can_nero_left`/`can_nero_right` native, hands `hand_left`/`hand_right`
-> on USB-CAN FD adapters), so
-> same-side arm and hand motion may run in parallel and the shared-bus hand
-> window is a selectable degraded mode, not normal operation. This page still
-> describes the **current code**, which resolves the hand interface from the arm
-> bus; it is rewritten in phase 2A. See
-> `docs/sprint_refactor/planning/integration_plan.md` (constraint C1).
+> on USB-CAN FD adapters), declared once as `bus_topology` in the registry. Every
+> hand bridge resolves its interface from its **own** registry entry and fails
+> closed without one; the derivation from the arm's `can_port` is gone. Same-side
+> arm and hand motion runs in parallel, the handshake defaults **off**, and the
+> shared-bus hand window is a selectable degraded mode.
+>
+> **The hand-window and handshake passages below therefore describe the
+> `shared_per_side` degraded topology, not normal operation.** A hand command
+> also now carries the authority it was issued under, and an unclaimed hand
+> executes nothing. This page has not yet been rewritten around either change.
+> See `docs/sprint_refactor/planning/integration_plan.md` (C1, C7) and
+> `docs/sprint_refactor/planning/decision_record.md` §5 and §7.
 
 Two workflows for working with the OmniHand on its own, below and at the ROS layer:
 a **vendor-level communication load test** (for measuring the hand's CAN FD bus

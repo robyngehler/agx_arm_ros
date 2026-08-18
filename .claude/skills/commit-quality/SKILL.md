@@ -122,8 +122,8 @@ the call landed.
 
 - Every hardware operation for a side now goes through one worker, with
   emergency stop on a priority lane ahead of queued motion.
-- Commands carry the control epoch they were issued under, so anything queued
-  across an ownership change is dropped instead of arriving late.
+- Commands carry the device and unit generations they were issued under, so
+  anything queued across an ownership change is dropped instead of arriving late.
 - Feedback is taken once per acquisition cycle and shared, which removes the
   per-joint SDK reads that were starving the publish thread.
 
