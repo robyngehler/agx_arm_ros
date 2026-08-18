@@ -53,9 +53,11 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
 - [x] Correct all `pyAgxArm` references to `vendor/pyAgxArm` and document the C3
       workflow.
 - [x] Record the MIT control-rate requirement (>= 100 Hz, target 200-250 Hz).
-- [ ] Remove the stray untracked `vendor/Omnihand-2025-SDK/` checkout (legacy
+- [x] Remove the stray untracked `vendor/Omnihand-2025-SDK/` checkout (legacy
       non-Pro `o10` SDK, no longer used; the runtime targets
-      `vendor/OmniHand-Pro-2025`).
+      `vendor/OmniHand-Pro-2025`). Removed 2026-08-18; it was never tracked and
+      is re-clonable from `github.com/robyngehler/Omnihand-2025-SDK` if the
+      `o10` device ever returns.
 
 ### 0B Regression harness and test ladder
 
