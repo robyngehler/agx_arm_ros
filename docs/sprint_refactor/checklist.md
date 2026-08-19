@@ -71,9 +71,9 @@ items are follow-up engineering.
 - [~] Define the `tea_pour_left_v1` regression criteria. Deferred by decision
       while the command contracts moved; the L2 harness has been the standing
       regression net throughout. **The demo itself ran on 2026-08-17** and did so
-      twice within 1.1 s of itself, so the criteria can now be written against
-      measured numbers rather than guessed: 93 s end to end, 16 FJT goals per run
-      with none rejected, two payload transitions, eight hand claim/release pairs.
+      three times, so the criteria can now be written against measured numbers
+      rather than guessed: 90-94 s end to end, 16 FJT goals per run with none
+      rejected, two payload transitions, five hand claim/release pairs per run.
       Still to decide is which of those are gates and what tolerance each gets.
 
 ### 0C Honest velocity and stop semantics

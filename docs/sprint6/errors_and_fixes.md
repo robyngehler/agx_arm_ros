@@ -4,16 +4,55 @@ Record concrete errors and their fixes here as the hand skill controller, perfor
 coordinator come up — e.g. tactile stream gaps, grasp-threshold miscalibration, `both_arms`
 joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch problems.
 
-## 2026-08-17 (found in the logs of the first successful tea-pour run)
+## 2026-08-17 (found in the logs of the first tea-pour hardware session)
 
-Four anomalies from a session in which the activity completed twice and the
-operator saw nothing wrong. None failed the demo; all four are recorded because
-each is a known open item finally showing itself with a reproducible trigger.
-Evidence: `evidence/tea_pour_left_v1_2026-08-17.md`.
+Findings from a session of eight attempts — three dry, five live, three of the
+live ones complete. Evidence: `evidence/tea_pour_left_v1_2026-08-17.md`.
+
+### A controller aborted the goal its own claim had just enabled
+
+- Symptom: the **first** live attempt failed 0.33 s into the first arm move, with
+  the coordinator reporting `child failed: MoveIt error_code=-4` (`CONTROL_FAILED`).
+- Cause, in four lines of the left MIT controller's log: it enabled, accepted a
+  34-point goal, warned `does not hold this device (held by nobody)`, and then
+  `Device authority changed (... device_epoch=2 ...): claimed by
+  left_arm/mit_controller; aborted the active trajectory`. **Its own claim bumped
+  the device epoch, and its authority callback treated that epoch change like any
+  other — as a reason to abort in-flight work.**
+- Why the rule was right and the application wrong: aborting on an epoch change is
+  exactly what should happen, because a new epoch means the work was issued
+  against a device state that no longer exists. The exception is the transition
+  that *grants* this commander the device.
+- Fixed by `31c0350`, committed four minutes after the failure; the first
+  successful run followed eight minutes later. What remains is a one-cycle race at
+  claim time (below), which is benign.
+- The general shape: **a guard that reacts to state changes has to exclude the
+  change it caused itself.** The failure is invisible until something actually
+  claims, which is why it survived every test that never took ownership.
+
+### A cancelled activity leaves no line in the coordinator log
+
+- Symptom: a run that stopped mid-dispatch, two nodes from the end, with no
+  terminal log line of any kind — indistinguishable at a glance from a coordinator
+  that hung.
+- Cause: `_abort()` logs `ERROR: aborting '<activity>': <reason>`, but the cancel
+  branch (`goal_handle.is_cancel_requested or self.stop_requested`) emits a
+  `failed` event on `~/events`, sets the action result, calls
+  `goal_handle.canceled()` and returns — with **no logger call at all**.
+- How it was resolved here: by reading the abort path's source and observing that
+  no ERROR line existed, which excluded the failure path and left cancellation.
+  That is not a diagnosis anyone should have to make from source.
+- Impact is observability, not motion: the cancellation itself worked. But the
+  whole point of a session log is to reconstruct a run afterwards, and the one
+  outcome that most needs explaining is the one that writes nothing.
+- Not fixed.
+
+The three findings below failed nothing. Each is a known open item finally
+showing itself with a reproducible trigger.
 
 ### A closing hand gesture always exhausts the delivery-verification retry bound
 
-- Symptom: five times in one session, on the left hand only —
+- Symptom: nine times across the two live stacks, on the left hand only —
   `OmniHand hand_joint_target command not verified within 8 attempts
   (tolerance 0.100 rad); giving up — fingers may be in contact or the bus is
   congested`.
@@ -30,17 +69,17 @@ Evidence: `evidence/tea_pour_left_v1_2026-08-17.md`.
   `commanded`, `delivery_verified` and `contact_confirmed` — and it now has a
   trigger that reproduces on demand rather than a hypothetical.
 - It is also the measured case for the open 2C item *bound and record the SDK
-  round trips per commanded setpoint*: five commands each cost 8 sends plus their
+  round trips per commanded setpoint*: nine commands each cost 8 sends plus their
   verification readbacks, on a hand that was doing exactly what was asked of it.
 - Not fixed. Fixing it means giving a blocked pose an honest terminal state, not
   raising the tolerance or the attempt count.
 
-### One acquisition-loop overrun, at the instant the first activity started
+### One acquisition-loop overrun, at the instant an activity started
 
 - Symptom: `acquisition-loop overrun: 340 ms gap (> 200 ms; count=1, peak=340 ms)`
-  on the left arm, 0.8 s after the first dispatch — MoveIt planning and the first
-  hand action starting together.
-- `count=1` across 69 minutes, no recovery triggered, nothing downstream noticed.
+  on the left arm, 0.8 s after a dispatch — MoveIt planning and the first hand
+  action starting together.
+- `count=1` for the whole stack, no recovery triggered, nothing downstream noticed.
   The message names the right reading itself: local starvation, not a dead bus.
 - Recorded rather than fixed. One overrun at the busiest moment of startup is the
   expected shape of a CPU transient, and the recovery watchdog correctly refused
@@ -54,7 +93,7 @@ Evidence: `evidence/tea_pour_left_v1_2026-08-17.md`.
 - One control cycle declined to command while the claim was still in flight.
 - This is the **benign remainder** of the defect fixed in `31c0350`: the goal is
   no longer aborted by its own claim, and what is left is a skipped cycle at
-  enable time. Once per session, on the first enable.
+  enable time. Once per stack, on the first enable.
 
 ### The publish loop outlived its context at shutdown
 

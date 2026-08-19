@@ -5,9 +5,10 @@ PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_
 Decisions and their rationale: `planning/decision_record.md`.
 
 > **Resumed on the V02 contracts, and the demo has run (2026-08-17).**
-> `tea_pour_left_v1` completed end to end on hardware, twice in one stack, at
-> 17:02 and 17:12 — full evidence in
-> [`evidence/tea_pour_left_v1_2026-08-17.md`](evidence/tea_pour_left_v1_2026-08-17.md).
+> `tea_pour_left_v1` completed end to end on hardware **three times** across two
+> bring-ups — 16:49, 17:02 and 17:12 — with one further run cancelled two nodes
+> from the end and one aborted before the fix that enabled the rest. Full evidence
+> in [`evidence/tea_pour_left_v1_2026-08-17.md`](evidence/tea_pour_left_v1_2026-08-17.md).
 > The re-teach this sprint was waiting for turned out not to be needed: the taught
 > data ran unchanged against the new command contracts.
 >
@@ -95,15 +96,22 @@ Decisions and their rationale: `planning/decision_record.md`.
 	- `trajectory_execution.allowed_start_tolerance` raised 0.01 → 0.05 (all three recordings
 	  exceeded the MoveIt default against their anchors).
 	- catalogue may now be split across `config/catalogue.d/*.yaml` fragments.
-- [x] **run `tea_pour_left_v1` on hardware — done 2026-08-17, and repeated.** The full 17-node
-	activity completed twice in one stack, at 17:02:40 and 17:12:52, without a restart or an
-	operator step between them. 92.7 s and 93.8 s end to end, with no action differing by more
-	than 0.9 s between the runs, so the result is repeatable rather than a lucky pass. Both
-	payload transitions fired in both runs; the hand claimed and released its device eight times,
-	none skipped; the two arms came up on their different protocol tiers and each fitted its own
-	torque envelope. Every arm motion went through `FollowJointTrajectory`, 16 goals per run, none
-	rejected, aborted or replanned. Commit `31c0350`, profile `duo_hand_external_bridge`.
-	Evidence, including the four anomalies that did *not* fail the activity:
+- [x] **run `tea_pour_left_v1` on hardware — done 2026-08-17, three complete runs.** 90.0 s,
+	92.7 s and 93.8 s across two independent bring-ups; the last two ran back to back in one stack
+	without a restart or an operator step, and within a stack no action differed by more than 0.9 s.
+	Both payload transitions fired in every completed run; 19 hand claim/release pairs against 19
+	skill-controller performs, so no hand action skipped its claim; the two arms came up on their
+	different protocol tiers and each fitted its own torque envelope. Every arm motion went through
+	`FollowJointTrajectory`, 16 goals per run, none rejected or replanned. Commit `31c0350`,
+	profile `duo_hand_external_bridge`.
+	- The **first live attempt aborted** (16:41) with MoveIt `CONTROL_FAILED`, because the MIT
+	  controller's own claim bumped the device epoch and its authority callback aborted the goal it
+	  had just accepted. Fixed by `31c0350` four minutes later; the first success came eight
+	  minutes after that. The failure appears before that commit and never after it.
+	- A **fourth live run was cancelled** two nodes from the end (16:58). See Step 6.
+	- Three dry runs preceded the live ones; the first found `payload_attach[left]: service
+	  unavailable` before any hardware was at risk.
+	Evidence, including the five anomalies that did *not* fail a run:
 	`evidence/tea_pour_left_v1_2026-08-17.md`.
 	- The escalation ladder (no teapot → empty → water) is not separately recorded; the logs do
 	  not say what the teapot held, so treat the object state as unrecorded rather than assumed.
@@ -161,15 +169,31 @@ evidence in `reference/payload_gravity_model.md`.
 - [x] the activity loop no longer reports **success** when it exits because rclpy went down with
 	nodes still pending.
 - [x] `Ctrl+C` on an **idle** coordinator exits instead of spinning. Hardware, 2026-08-17: the
-	interrupt arrived with nothing running, the coordinator logged
+	interrupt on the final stack arrived with nothing running, the coordinator logged
 	`stop requested (interrupt (Ctrl+C)); no activity running`, and all five tea-stack processes
 	were reported finished cleanly within 0.66 s — the coordinator itself in 0.28 s. This closes
 	the Phase-0B finding that an idle coordinator survived the first SIGINT.
+- [x] **cancel an activity in flight.** Hardware, 2026-08-17 16:58: a run was cancelled at action
+	150 of 170, two nodes from the end. The activity terminated cleanly and both launches then
+	shut down normally. Read the limit with it — see the next item.
 - [ ] verify the stop ladder on hardware, **mid-replay and mid-hand-window**.
-	*(still hardware-pending; unit-tested only. The 2026-08-17 interrupt does **not** cover this:
-	it landed 55 minutes after the last activity finished, so no child was cancelled, no arm was
-	pinned and no hand was stopped, because there was nothing in flight. A successful idle exit
-	and a successful unwind are different claims.)*
+	*(still hardware-pending. The 16:58 cancel landed in the ~1 s window between the hand child
+	finishing and the coordinator recording it complete, so **nothing was in flight**: no arm goal
+	was open, the hand goal had already succeeded, and `_cancel_children` had no moving child to
+	stop. Cancelling an activity and cancelling a moving arm are different claims, and only the
+	first has hardware evidence.)*
+- [ ] **make a cancelled activity visible in the log.** Found by reconstructing the 16:58 run:
+	`_abort()` logs `ERROR: aborting '<activity>': <reason>`, but the cancel branch logs nothing
+	at all — it emits a `failed` event on `~/events`, sets the action result, and returns. A
+	cancelled run therefore leaves a log that stops mid-dispatch with no terminal line, which is
+	indistinguishable at a glance from a coordinator that hung. Establishing which had happened
+	required reading the source, not the log.
+- [ ] **decide what a cancelled activity should leave the payload state as.** The 16:58 cancel
+	arrived before the detach transition, so the activity ended with the loaded 1 kg gravity model
+	still active on a hand that had physically released the teapot. `tea_demo.md` documents this
+	as the deliberate safer approximation (over- rather than under-compensating), and the attach
+	is idempotent so the next run recovers — but this is its first hardware occurrence and it is
+	worth confirming that is still the intended answer.
 - [ ] coordinator **crash** (as opposed to interrupt) is still uncovered — the MoveIt goal survives
 	the process. Needs either a MoveIt-side watchdog or a supervisor.
 	*(Known runtime-resilience limitation, not a demo gap. It does not make the 2026-08-17 run

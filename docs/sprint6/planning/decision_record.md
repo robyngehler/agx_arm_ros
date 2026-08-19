@@ -211,8 +211,10 @@ failure modes. The Hefeweizen graph adds dual-arm synchronization on top of a ch
 that had never run.
 
 **Outcome, 2026-08-17.** The sequencing paid off: the chain ran end to end on the
-first supervised session, twice in one stack, and the four anomalies the logs
-recorded were all already-known open items rather than new defects
+first supervised session — three complete runs across two bring-ups — and of the
+anomalies the logs recorded, only two were new: a controller aborting the goal its
+own claim enabled (fixed the same afternoon, four minutes after it appeared) and a
+cancelled activity leaving no line in the log
 (`../evidence/tea_pour_left_v1_2026-08-17.md`). Two taught replays account for 38 %
 of the 93 s runtime, which is the first concrete argument for re-timing recordings
 rather than optimising the runtime.

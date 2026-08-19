@@ -11,7 +11,7 @@ Repo-wide documentation and consistency checklist.
 | 3 | Nero planning and control hardening | complete | TRAC-IK + OMPL planning, `/compute_ik`, and the MIT execution path are validated. |
 | 4 | Duo body + OmniHand system baseline | complete | Body-mounted Duo staging, prefixed multi-arm MoveIt, and per-arm hand-aware profiles are landed. |
 | 5 | CAN transport + arm-plus-hand | complete | Native `mttcan` CAN FD side buses and pinned `pyAgxArm` runtime are the baseline; shared-bus caveats remain operational guidance. |
-| 6 | Coordinated tasks + skill layer | active | Coordinator, dual-arm teach flow, and semantic OmniHand skill abstraction are landed. `tea_pour_left_v1` completed end to end on hardware 2026-08-17, twice in one stack. Hefeweizen still needs calibrated tactile thresholds. |
+| 6 | Coordinated tasks + skill layer | active | Coordinator, dual-arm teach flow, and semantic OmniHand skill abstraction are landed. `tea_pour_left_v1` completed end to end on hardware 2026-08-17, three times across two bring-ups, plus one run cancelled two nodes from the end. Hefeweizen still needs calibrated tactile thresholds. |
 | refactor | V02 runtime refactor (device authority, parallel operation, contract consolidation) | active | Safety, CPU relief, and parallel arm-plus-hand operation. Canonical plan: `docs/sprint_refactor/planning/integration_plan.md`, binding constraints C1-C8. |
 
 ## Current System Focus
@@ -22,7 +22,7 @@ Repo-wide documentation and consistency checklist.
 - the normal topology is one CAN bus per device (arms `can_nero_left` / `can_nero_right` native, hands `hand_left` / `hand_right` on USB-CAN FD adapters); `shared_per_side` is a selectable degraded compatibility mode, not a production focus
 - keep the public ROS surface agx_arm-centric and keep arm execution per-arm at the MIT action boundary while coordination grows above it
 - L1 and L2 are the standing per-phase software regression gates; L3 evidence is required wherever hardware behaviour is claimed
-- **`tea_pour_left_v1` completed on hardware 2026-08-17**, twice in one stack, on the post-refactor contracts and on the *existing* taught data — the re-teach that was expected to be needed first was not. Evidence: `docs/sprint6/evidence/tea_pour_left_v1_2026-08-17.md`
+- **`tea_pour_left_v1` completed on hardware 2026-08-17**, three times across two bring-ups, on the post-refactor contracts and on the *existing* taught data — the re-teach that was expected to be needed first was not. A fourth run was cancelled two nodes from the end and terminated cleanly. Evidence: `docs/sprint6/evidence/tea_pour_left_v1_2026-08-17.md`
 - the Hefeweizen ladder is the remaining demo target and is blocked on a calibrated `contact_threshold`, not on the runtime
 
 ### Previous state (superseded 2026-08-16)

@@ -5,7 +5,7 @@ what measured values. Development-host entries (no ROS/hardware) and Jetson/Duo
 hardware entries are kept separate so calibration placeholders are obvious.
 
 > **Superseded in part 2026-08-17 for the tea demo.** `tea_pour_left_v1` ran end
-> to end on hardware with `arm_dry_run=False`, twice, on taught anchors and
+> to end on hardware with `arm_dry_run=False`, three times, on taught anchors and
 > recordings — see the entry below and
 > `../evidence/tea_pour_left_v1_2026-08-17.md`. It uses the deterministic `pose`
 > hand motion and needs no tactile threshold.
@@ -14,32 +14,36 @@ hardware entries are kept separate so calibration placeholders are obvious.
 > thresholds, grasp/open presets and its own anchors remain uncalibrated, and it
 > has not run on hardware in any form.
 
-## 2026-08-17 — `tea_pour_left_v1`, first successful hardware run (Jetson/Duo, L3)
+## 2026-08-17 — `tea_pour_left_v1`, first hardware runs (Jetson/Duo, L3)
 
 **Scope.** Full 17-node activity, left arm plus left hand, both sides brought up.
 Commit `31c0350`, profile `duo_hand_external_bridge`, topology
 `dedicated_per_device`, `arm_dry_run=False`.
 
-**Result.** Completed twice in one stack — 17:02:40–17:04:12 (92.7 s) and
-17:12:52–17:14:25 (93.8 s) — with no restart between them and no action differing
-by more than 0.9 s across the two runs.
+**Result.** Completed three times — 16:49:56–16:51:26 (90.0 s), then
+17:02:40–17:04:12 (92.7 s) and 17:12:52–17:14:25 (93.8 s) back to back in one
+stack, with no restart between them and no action differing by more than 0.9 s
+within a stack. A fourth run was cancelled at action 150 of 170 and terminated
+cleanly; the first live attempt, before commit `31c0350`, aborted at the first arm
+move.
 
 **Measured values worth carrying forward:**
 
 | | |
 | --- | --- |
-| activity duration | 92.7 s / 93.8 s |
+| activity duration | 90.0 s / 92.7 s / 93.8 s |
 | `left_arm_pour_tea` | 21.3 s (73-point replay, 19.364 s declared) |
 | `left_arm_teapot_handle_release` | 14.3 s (50-point replay, 13.177 s declared) |
 | payload attach / detach | ~0.51 s each, twice per run |
 | FJT goals per run | 16, none rejected or replanned |
-| hand claim/release pairs | 8 across the session, none skipped |
+| hand claim/release pairs | 19 across the two live stacks, against 19 skill performs — none skipped |
 | idle SIGINT to last process exit | 0.66 s |
 
 **Still placeholders after this run:** the payload mass (1.0 kg) and lever
 (0.15 m), and every tactile threshold — the tea demo never reads one.
 
-**Full record, including four non-fatal anomalies:**
+**Full record**, including the five non-fatal anomalies, the cancelled run, and the
+first live attempt that aborted before commit `31c0350`:
 `../evidence/tea_pour_left_v1_2026-08-17.md`.
 
 ## 2026-06-29 — implementation slice (development host, no ROS/hardware)

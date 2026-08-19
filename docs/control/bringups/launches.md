@@ -114,7 +114,7 @@ MoveIt anchor transitions use the same `execution_profile` family as the compone
 ## Demos
 
 Tea pour (`tea_pour_left_v1`) — the first end-to-end demo, left arm plus left hand, both sides live.
-**Validated on hardware 2026-08-17**, twice in one stack, with this composition.
+**Validated on hardware 2026-08-17**, three complete runs across two bring-ups, with this composition.
 
 ```bash
 # 1. components baseline — note the profile: the tea launch owns the hand bridges

@@ -122,8 +122,8 @@ ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
 **Measured 2026-08-17: 93 s**, twice, within 1.1 s of each other — 8 planned anchor moves, 3 taught
 replays (4.6 s + 19.4 s + 13.2 s at the 0.75 time-stretch) and 5 hand actions. On the normal
 `dedicated_per_device` topology **no hand window is opened**: the hand claims its own device, the arm
-keeps its own bus, and the handshake is off. Per-action timings and the four non-fatal anomalies that
-run recorded are in `../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`.
+keeps its own bus, and the handshake is off. Per-action timings for all three completed runs, and the
+anomalies they recorded, are in `../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`.
 
 Two taught replays are 38 % of the runtime (`left_arm_pour_tea` 21.3 s,
 `left_arm_teapot_handle_release` 14.3 s). Both durations come from the recordings themselves, so a
@@ -298,10 +298,12 @@ start on an anchor — the coordinator's approach phase handles that.
 ## Validation status
 
 **Validated on hardware 2026-08-17** (L3, commit `31c0350`): the composition documented above ran the
-full activity end to end, twice in the same stack, at 17:02 and 17:12. 92.7 s and 93.8 s, no action
-differing by more than 0.9 s between the runs; 16 `FollowJointTrajectory` goals per run, none
-rejected, aborted or replanned; both payload transitions in both runs; eight hand claim/release
-pairs, none skipped. Full record, including four non-fatal anomalies:
+full activity end to end **three times** — at 16:49, 17:02 and 17:12, across two bring-ups. 90.0 s,
+92.7 s and 93.8 s; within a stack no action differed by more than 0.9 s. 16 `FollowJointTrajectory`
+goals per run, none rejected or replanned; both payload transitions in every completed run; 19 hand
+claim/release pairs against 19 skill performs, so none skipped. A fourth run was cancelled two nodes
+from the end and terminated cleanly. Full record, including the five non-fatal anomalies and the
+first live attempt that aborted before the fix that enabled the rest:
 `../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`.
 
 What that run does **not** establish: nothing sampled CPU or CAN counters, so this runbook's rate
