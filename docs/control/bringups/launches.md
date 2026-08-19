@@ -114,15 +114,38 @@ MoveIt anchor transitions use the same `execution_profile` family as the compone
 ## Demos
 
 Tea pour (`tea_pour_left_v1`) — the first end-to-end demo, left arm plus left hand, both sides live.
-Start the components baseline with `mode:=moveit_mit` (and `use_rviz:=false`, a CPU decision), then:
+**Validated on hardware 2026-08-17**, twice in one stack, with this composition.
 
 ```bash
+# 1. components baseline — note the profile: the tea launch owns the hand bridges
+ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
+  mode:=moveit_mit \
+  execution_profile:=duo_hand_external_bridge \
+  payload_mass_kg:=1.0 \
+  use_rviz:=false
+
+# 2. hand bridges, skill controllers and the coordinator
 ros2 launch agx_arm_coordination start_tea_demo.launch.py backend_type:=sdk
+
+# 3. run it
 ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
 ```
 
-Full runbook, CPU budget and stop behaviour: [`tea_demo.md`](tea_demo.md). `Ctrl+C` on either the
-coordinator or the client now cancels the activity and pins the arm rather than just exiting.
+**Use `duo_hand_external_bridge`, not `duo_hand`.** `start_tea_demo.launch.py` starts the hand
+bridges itself, so the generic `duo_hand` profile — which sets `launch_omnihand_bridge: true` —
+gives you two bridges per hand fighting over one adapter. The two profiles are otherwise identical.
+The generic `duo_hand` profile keeps its own separate validation status; the tea run does not
+transfer to it, because it was not the profile used.
+
+**`payload_mass_kg` is not optional here.** It defaults to `0.0`, which preloads no second gravity
+model — and the activity's `payload_update: attach` on action 70 is then *refused*, aborting the
+run. The demo's teapot value is `1.0`.
+
+Expect ~93 s per activity. Full runbook, CPU budget and stop behaviour:
+[`tea_demo.md`](tea_demo.md); the run record is
+[`../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`](../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md).
+`Ctrl+C` on either the coordinator or the client cancels the activity and pins the arm rather than
+just exiting; with no activity running, the coordinator exits on the first interrupt.
 
 Hefeweizen coordinator: start the components baseline with `mode:=moveit_mit`, then run:
 

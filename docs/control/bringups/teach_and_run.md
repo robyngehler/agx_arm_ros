@@ -142,10 +142,23 @@ free-runs without the arm).
 > capture), not from `feedback/leader_joint_angles`. Tune `freedrive_kd` on hardware: raise if the arm
 > drifts/oscillates, lower if it feels sticky.
 
-> **Degraded mode only since 2026-08-13.** Each hand now has its own USB-CAN FD adapter
-> (`hand_left` / `hand_right`), so arm and hand motion run in parallel and none of the window
-> handshake below is exercised by a default bring-up. It still applies when `bus_topology` is set
-> to `shared_per_side`, and the services described here still exist.
+> ### Normal operation, and the degraded `shared_per_side` mode
+>
+> **Normal (`dedicated_per_device`, what this robot declares):** each device owns its own CAN
+> interface — arms `can_nero_left` / `can_nero_right`, hands `hand_left` / `hand_right`. A side's
+> arm and hand hold **independent** scheduler resources and may run at the same time. **No hand
+> window is opened, the handshake defaults off, and the arm's feedback push is never silenced.** A
+> hand is commanded by claiming it (`control/omnihand/claim_device`) and sending a stamped command;
+> an unclaimed hand executes nothing.
+>
+> **Degraded (`shared_per_side`):** the block below. It is the arm+hand handshake built when the two
+> shared one bus, retained because a single-bus fallback stays physically possible. The services
+> exist and work; nothing in a default bring-up calls them. Read it for the *reasoning* behind
+> mechanisms that are still live elsewhere — the verified firmware hold and the push-only helper are
+> both used by the emergency stop today — not as the current runbook.
+>
+> Everything about **hand cadence, command retry, delivery verification and readback age** at the end
+> of this block is current in both modes.
 >
 > **Shared arm+hand CAN bus — keep the hand alive.** On the right side the arm and the OmniHand share one
 > physical bus (`can_nero_right`; there are only two mttcan channels, one per arm). The arm firmware pushes
@@ -247,10 +260,12 @@ free-runs without the arm).
 >   the cached republish satisfied that even during a total SDK fault, so MoveIt reported
 >   `successfully finished` for poses the hand never received. Note the window can now outlive the
 >   trajectory by up to `delivery_timeout_s`; keep `hand_window_max_silence_s` above the sum.
-> - **the MIT controller stands down during a window instead of dead-manning:** the driver publishes a
->   latched `feedback/hand_window_active`; while it is `true` the MIT controller (which would otherwise read
->   the intentional feedback silence as a dead bus and stream a 50 Hz damped-stop flood into the gate)
->   enters a `HAND_WINDOW` state and publishes nothing, recapturing the hold when the window closes.
+> - **the MIT controller stands down during a window instead of dead-manning.** *Superseded
+>   2026-08-13 in mechanism, unchanged in effect:* the controller no longer subscribes
+>   `feedback/hand_window_active` and has no `HAND_WINDOW` state. It consumes `AgxDeviceAuthority`,
+>   which reports an open window as STANDBY with the reason naming it — strictly more than the
+>   boolean said, because it also distinguishes a fault, a stop, and the device changing hands. The
+>   driver still publishes the boolean; nothing subscribes it.
 > - **the teach manager also holds its window until delivery**, on the same `feedback/omnihand/status`
 >   signal the MoveIt bridge uses, instead of a fixed `--hand-settle-sec` dwell (which could close the
 >   window mid-retry). `--hand-delivery-timeout-sec` (default 4 s) bounds the wait; the fixed dwell remains

@@ -34,7 +34,8 @@ trajectory and the hand goal executing with nobody left to cancel them.
 | You press | What happens |
 |---|---|
 | `Ctrl+C` on `run_activity` | cancels the activity goal, waits for the coordinator to confirm it unwound, then exits |
-| `Ctrl+C` on the coordinator | cancels children → reopens any hand window → pins the moving arm (`cancel_trajectory` + `hold_current`) → exits |
+| `Ctrl+C` on the coordinator | cancels children → pins the moving arm (`cancel_trajectory` + `hold_current`) → exits. On the degraded `shared_per_side` topology it also closes any hand window it opened; on the normal topology there is none to close |
+| `Ctrl+C` with **no activity running** | the coordinator exits on the first interrupt. Verified on hardware 2026-08-17: all five tea-stack processes gone within 0.66 s |
 | `Ctrl+C` a second time | escalates to `emergency_stop` on both sides, then exits immediately |
 | the coordinator crashes | **not covered by any of the above.** The MIT controller streams a damped stop on its own shutdown and the driver puts the arm in a firmware MOVE-J hold before a recovery disconnect, but a hard crash of the coordinator alone leaves the MoveIt goal running |
 
@@ -118,36 +119,61 @@ ros2 launch agx_arm_coordination start_tea_demo.launch.py backend_type:=sdk
 ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
 ```
 
-Expect roughly two minutes: 8 planned anchor moves, 3 taught replays (4.6 s + 19.4 s + 13.2 s at the
-0.75 time-stretch) and 5 hand actions, each of which opens and closes a shared-bus hand window.
+**Measured 2026-08-17: 93 s**, twice, within 1.1 s of each other — 8 planned anchor moves, 3 taught
+replays (4.6 s + 19.4 s + 13.2 s at the 0.75 time-stretch) and 5 hand actions. On the normal
+`dedicated_per_device` topology **no hand window is opened**: the hand claims its own device, the arm
+keeps its own bus, and the handshake is off. Per-action timings and the four non-fatal anomalies that
+run recorded are in `../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`.
+
+Two taught replays are 38 % of the runtime (`left_arm_pour_tea` 21.3 s,
+`left_arm_teapot_handle_release` 14.3 s). Both durations come from the recordings themselves, so a
+faster demo means re-teaching those two segments.
 
 ## CPU budget
 
-The Jetson, not the robot, is the binding constraint. When the host stalls, nothing drains the CAN RX
-socket and the kernel drops hand response frames — see
-`../../sprint_refactor/reference/critical_cpu_paths.md`. Every rate below is bus reliability, not
-just headroom.
+The Jetson, not the robot, is the binding constraint: when the host stalls, the kernel CAN RX socket
+overflows and hand response frames are dropped. That failure mode is **host CPU starvation, not bus
+contention**, so it survived the move to four buses — and parallel operation makes it more likely,
+not less.
+
+The conservative rates below are kept, but their reason has changed. They are **headroom**, not
+shared-bus mitigation: each hand now has its own adapter, so a hand poll no longer competes with arm
+feedback for a bus. Distinguish the three things a "rate" can mean here:
+
+- **ROS publication cadence** — since the refactor, publication is driven by *new readbacks*, and
+  `hand_pub_rate` is a ceiling that can throttle it and cannot make it faster;
+- **real CAN/SDK request cadence** — `hand_joint_read_rate` is the one that still costs bus traffic
+  and vendor round trips;
+- **rendering and planning-scene load** — `use_rviz`, which is pure host CPU.
 
 | Knob | Default here | vs. Hefeweizen | Why it is safe to lower |
 |---|---|---|---|
 | `hand_pub_rate` (left) | 20 Hz | 50 Hz | ROS republish only; nothing closes a loop on it |
-| `hand_joint_read_rate` (left) | 10 Hz | 20 Hz | each poll is real CAN traffic on the shared bus (hot path 4) |
+| `hand_joint_read_rate` (left) | 10 Hz | 20 Hz | the one rate that is still real CAN traffic and a vendor round trip |
 | `idle_hand_pub_rate` (right) | 5 Hz | 50 Hz | the right hand is kept alive but never addressed |
 | `idle_hand_joint_read_rate` (right) | 2 Hz | 20 Hz | pure background load |
-| `use_rviz` on the arm bring-up | `false` | `true` | rviz rendering plus its planning-scene monitor is hot path 5 |
+| `use_rviz` on the arm bring-up | `false` | `true` | rviz rendering plus its planning-scene monitor is the largest non-node consumer |
 
 **Deliberately not lowered:** the arm driver's `pub_rate` (200 Hz) and the MIT control rate. Those are
-load bearing for control and gravity compensation, and they belong to the arm bring-up. Hot path 1
-(the 200 Hz per-joint SDK reads) is a refactor target, not something to trim here.
+load bearing for control and gravity compensation, and the control rate is a hard requirement
+(constraint C2) rather than a tuning knob.
+
+*Superseded 2026-08-14:* an earlier version of this section named the arm driver's 200 Hz per-joint
+SDK reads as the standing CPU target. They were measured at ~10 % of their own publish batch. The
+real consumer was a vendor busy-wait inside the hand SDK, since patched, which took the whole stack
+from 814 % of a core to 400 % idle.
 
 `poll_period_sec` (coordinator scheduler tick, 0.05 s) bounds how fast a `Ctrl+C` is noticed. Do not
 raise it far to save CPU — it is a safety latency, and at 20 Hz it costs nothing.
 
 ## How the chain is built
 
-The activity is a strictly linear DAG — no `sync_flag`, no parallelism. The left arm and left hand
-share one physical CAN bus, so `graph_model.ROBOT_UNITS` serializes them anyway; the edges make the
-order explicit and leave no room to interleave a hand action into an arm move.
+The activity is a strictly linear DAG — no `sync_flag`, no parallelism. The **edges** are what
+serialize it: on the normal `dedicated_per_device` topology the left arm and left hand hold
+independent resource tokens and *could* be scheduled together, so the ordering here is a property of
+this graph rather than of the wiring. *Superseded 2026-08-11: this used to read "they share one
+physical CAN bus, so `graph_model.ROBOT_UNITS` serializes them anyway", which was true of the shared
+side bus and is not true of the deployed topology.*
 
 | # | Action | Kind | Backing data |
 |---|---|---|---|
@@ -269,14 +295,31 @@ ros2 run agx_arm_mit_demos agx_arm_recorded_to_catalogue \
 `--max-points` is chosen for roughly one waypoint every 0.2 s. You do not need to make the recording
 start on an anchor — the coordinator's approach phase handles that.
 
+## Validation status
+
+**Validated on hardware 2026-08-17** (L3, commit `31c0350`): the composition documented above ran the
+full activity end to end, twice in the same stack, at 17:02 and 17:12. 92.7 s and 93.8 s, no action
+differing by more than 0.9 s between the runs; 16 `FollowJointTrajectory` goals per run, none
+rejected, aborted or replanned; both payload transitions in both runs; eight hand claim/release
+pairs, none skipped. Full record, including four non-fatal anomalies:
+`../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`.
+
+What that run does **not** establish: nothing sampled CPU or CAN counters, so this runbook's rate
+budget remains reasoned rather than measured *for this demo*; the payload mass is still an estimate;
+and the interrupt tested at the end of the session landed on an idle stack, so the stop ladder
+mid-motion is unexercised.
+
 ## Known gaps
 
-- **Not validated on hardware.** Every claim above about planning, reachability and grasp quality is
-  untested; only the graph, catalogue, planning-layer wiring and stop logic are covered by unit tests.
 - Anchor `Can_Grip_L` sits ~0.22 rad (j5) / 0.20 rad (j7) past the end of the handle-entry replay.
   That offset is intentional (it seats the hand in the handle) but has not been re-verified since the
   recording was taught.
-- The hand grasp is open loop (see `pose` above).
+- The hand grasp is open loop (see `pose` above). A closing gesture therefore exhausts the bridge's
+  8-attempt delivery verification every time — five occurrences in the 2026-08-17 session, all
+  benign, because the fingers are physically blocked and the bridge cannot yet tell contact from
+  congestion.
+- **The stop ladder is unexercised on hardware.** The 2026-08-17 `Ctrl+C` landed with no activity
+  running, so it proved the idle exit and nothing about cancelling a moving arm.
 - Coordinator crash recovery is not covered — only clean interrupts are.
 - The teapot payload mass and lever are unmeasured estimates, and the payload state does not survive
   a MIT controller restart (deliberate for the MVP — re-establish it through the service before
@@ -285,7 +328,7 @@ start on an anchor — the coordinator's approach phase handles that.
 
 ## References
 
-- `teach_and_run.md`: teach loop, gravity, shared-bus details, emergency stop
+- `teach_and_run.md`: teach loop, gravity, emergency stop, and the degraded shared-bus mode
 - `launches.md`: the full bring-up matrix
 - `../../sprint_refactor/reference/critical_cpu_paths.md`: the CPU hot paths this runbook budgets against
 - `../../sprint6/planning/hefeweizen_activity_graph.md`: the coordinator's graph/catalogue contract
