@@ -132,11 +132,21 @@ implements it.
 - **The hand has two production motion primitives: trajectory execution and
   reactive contact-seeking.** Both claim `control/omnihand/claim_device` before
   commanding and enforce single-commander arbitration through device authority.
-  What rejects a command today is ownership and the surface it arrived on; the
+
+  **Per-command identity landed 2026-08-17**, so what rejects a command is now
+  ownership *and* both generations *and* the sequence, judged on the stamp the
+  command arrived with. `AuthorizedJointTrajectory` and `HandJointTarget` each
+  embed `DeviceCommandStamp`, and the bridge never substitutes a missing field
+  from its own state. *Superseded 2026-08-17:* this entry previously read "the
   epoch and sequence checks exist but cannot fire on a topic command, which
-  carries neither. That needs per-command identity (4D). The earlier "FJT is debug-only"
-  reading contradicted the design. Superseded 2026-08-14: both primitives are
-  production, and exclusive ownership closes the two-commander hole. See
+  carries neither" — true of the bare surfaces, and those are now subscribed only
+  under `allow_legacy_hand_command_ingress` (default false). What remains in
+  Phase 4 is retiring that legacy ingress and consolidating the *status*
+  contract, not inventing per-command identity.
+
+  The earlier "FJT is debug-only" reading contradicted the design. Superseded
+  2026-08-14: both primitives are production, and exclusive ownership closes the
+  two-commander hole. See
   AGENTS.md "ROS Contract Rules", `planning/decision_record.md` §5, and the
   `errors_and_fixes.md` 2026-08-14 entries on hand claim services and
   two-commander elimination.
@@ -237,3 +247,25 @@ is reserved for them.
   fails silent. Devices can still stop themselves unilaterally throughout, which
   is why this is a correctness gap in unit-wide arbitration rather than a loss of
   the ability to stop.
+
+## Post-RC hardening, recorded not scheduled (2026-08-18)
+
+Two narrow items surfaced by an external cleanup review. Neither is a defect and
+neither justifies a sprint; they are here so they are not rediscovered.
+
+- **TX observability is warned about, not enforced.** The arm driver checks at
+  startup whether the pinned SDK exposes `get_send_error_count()` and logs the
+  answer either way — "available" on both arms in every recent session. If the
+  submodule pin were ever stale, silently dropped arm commands would stop being
+  surfaced and the run would continue on a warning. Open: whether a *production*
+  profile should fail startup instead, with mock and debug profiles still allowed
+  to run without it. Not urgent while the pinned fork provides the counters.
+
+- **The vendor poll-error branches are reasoned, not exercised.** The OmniHand
+  receive-loop fix handles `POLLERR` / `POLLHUP` / `POLLNVAL`, and the second fix
+  (`c037b38`) exists precisely because the first version would have spun on a
+  persistent socket error. The available L3 evidence is a 25 s link-down, which
+  reaches `poll()`'s timeout and never enters those branches: `POLLERR`/`POLLHUP`
+  need the adapter physically removed, `POLLNVAL` needs the descriptor closed
+  underneath the thread. This is submodule fault-injection work, not a reason to
+  re-run any demo.

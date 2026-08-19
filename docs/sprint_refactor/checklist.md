@@ -6,8 +6,11 @@ C3 (pinned submodule vs development checkout), C4 (test ladder), C5 (message
 policy), C6 (instrumentation form), C7 (bus topology is one declared fact), and
 C8 (the two arms speak different protocol tiers, permanently) are defined there.
 
-Priority: safety, CPU relief, and parallel operation come before demo work.
-`docs/sprint6/` adapts afterwards.
+Priority: safety, CPU relief, and parallel operation came before demo work, and
+that ordering has been served — the Runtime RC closed 2026-08-17 and
+`tea_pour_left_v1` completed on hardware the same day
+(`../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`). Remaining Phase-4/5/6
+items are follow-up engineering.
 
 ## Sprint setup
 
@@ -65,9 +68,13 @@ Priority: safety, CPU relief, and parallel operation come before demo work.
       bridge for one activity including a hand action.
 - [x] Encode the C4 test ladder as a `.claude/skills/` workflow with a
       `.github/skills/` mirror, following the `commit-quality` skill's shape.
-- [~] Define the `tea_pour_left_v1` regression criteria — **deferred by
-      decision**; the L2 harness is the standing regression net until the demo
-      is re-taught against the new contracts.
+- [~] Define the `tea_pour_left_v1` regression criteria. Deferred by decision
+      while the command contracts moved; the L2 harness has been the standing
+      regression net throughout. **The demo itself ran on 2026-08-17** and did so
+      twice within 1.1 s of itself, so the criteria can now be written against
+      measured numbers rather than guessed: 93 s end to end, 16 FJT goals per run
+      with none rejected, two payload transitions, eight hand claim/release pairs.
+      Still to decide is which of those are gates and what tolerance each gets.
 
 ### 0C Honest velocity and stop semantics
 
@@ -484,7 +491,10 @@ hardware.
       pre-authority hand command surface: `docs/control/bringups/teach_and_run.md`,
       `docs/control/bringups/tea_demo.md`,
       `docs/assets/omnihand/omnihand_solo_bringup_and_load_test.md`. Rewriting
-      them is best done with the Sprint-6 re-teach, which changes the same flows.
+      them is best done alongside the next Sprint-6 hardware session, which
+      exercises the same flows. Partly addressed 2026-08-18: `tea_demo.md` now
+      describes the four-bus path as normal and carries its validation status, and
+      `teach_and_run.md` labels its hand-window block as the degraded mode.
 
 ### 1B/2C measurement: what the full stack actually costs
 
@@ -655,11 +665,20 @@ at 2.04 ms mean.
 
 ### 2B Parallel resource model, handoff derived not configured
 
-Code-complete 2026-08-15. **The parallelism itself is not yet demonstrated on
-hardware** — the scheduler will now emit a same-side arm and hand batch together,
-and no run has done it. That is the open 2C item "validate parallel same-side arm
-and hand motion without CAN RX drops", and it is the acceptance evidence for this
-section too.
+Code-complete 2026-08-15. **The parallelism was demonstrated on hardware
+2026-08-17** by the Point-8 L3 run: left arm with left hand, right arm with right
+hand, and both sides concurrently, with every bus carrying traffic and zero errors
+and zero drops (arms ~2160 RX/s, hands ~86 RX/TX per side), host 78 % idle.
+
+Read the evidence boundary with it: that run drove the arms through the
+**quarantined development MOVE-J ingress**, so it validates bus concurrency on the
+four-bus topology, not production stamped arm-command acceptance under the same
+load. The production MIT/FJT evidence is recorded separately in the RC gate below
+and in `reference/l3_production_estop.md`, because the two validate different
+contracts.
+
+*Superseded 2026-08-17: this section previously read "the parallelism itself is
+not yet demonstrated on hardware — no run has done it."*
 
 - [x] Derive the scheduler's bus tokens from `bus_topology`; under
       `dedicated_per_device`, `<side>_arm` and `<side>_hand` stop sharing one.
@@ -905,15 +924,19 @@ The exclusivity guard landed in 1C; this is the conversion itself.
 - [ ] L3 evidence recorded wherever the phase claims hardware behaviour, or its
       absence stated explicitly.
 
-`tea_pour_left_v1` is **not** a per-phase gate during the migration. It becomes
-one again only after the post-refactor command contract is frozen and the demo
-has been re-taught against it; until then the L2 activity harness is the standing
-regression net (see 0B, where the criteria are deferred by the same decision).
+`tea_pour_left_v1` was **not** a per-phase gate during the migration, because the
+demo is taught against command contracts the refactor was changing and re-running
+it per phase would have measured the teach data rather than the phase. The L2
+activity harness carried that role instead.
+
+**It is available as a gate again since 2026-08-17**, when it ran end to end on
+hardware — twice, and on the existing taught data, so the re-teach the deferral
+anticipated was not needed. Whether it *becomes* a standing per-phase gate
+depends on the criteria still open in 0B; it is a slow gate (~93 s plus bring-up
+and a physical teapot), so it belongs at phase boundaries rather than per commit.
 
 Superseded 2026-08-14: this section previously required that `tea_pour_left_v1`
-still run after each phase closed, which contradicted the deferral recorded in
-0B. The demo is taught against command contracts this refactor is changing, so
-re-running it per phase would have measured the teach data, not the phase.
+still run after each phase closed, which contradicted the deferral recorded in 0B.
 
 ## Refactor runtime RC gate
 

@@ -23,7 +23,7 @@ so their decisions are consolidated here and the originals are in git history.
 | `proposal_code_crosscheck.md` | 2026-07-27 | Kept in `reference/` — it is evidence, not a decision |
 | `refinement_proposal.md` | 2026-08-14 | §1 and §4 landed; §2, §3, §5 became plan 2C |
 | `dual_hand_motion_authority_proposal.md` | 2026-08-14 | Implemented. §5 of this record |
-| `recovery_watchdog_boundary_proposal.md` | 2026-08-13 | Software half implemented (§2, §4); watchdog half promoted to `docs/project/duo_system_architecture_authority_worker_watchdog.md` |
+| `recovery_watchdog_boundary_proposal.md` | 2026-08-13 | Software half implemented (§2, §4); watchdog half promoted to `docs/project/control_integrity_architecture.md` |
 | `refactor_correction_proposal.md` | 2026-08-13 | All ten items closed. Review log below |
 | `unit_safety_writer_spec.md` | 2026-08-13 | Implemented and hardware-verified. §3 of this record |
 | `docs_cleanup_proposal.md` | 2026-08-16 | Executed 2026-08-16 |
@@ -707,7 +707,8 @@ Recorded so they are not resurrected.
 | `control_epoch` and three-field command stamps | The frozen four-field stamp | 2026-08-12 |
 | "A hand still has no serialized SDK owner" | Every hand bridge owns an `SdkWorker` with the same four lanes | 2026-08-15 |
 | "Recovery is safe because it sends a damped MIT zero before teardown" | Recovery attempts the firmware MOVE-J hold before destructive ownership transfer; damped MIT is a transient only | 2026-08-17 |
-| `tea_pour_left_v1` runs after every phase | L1+L2 are the standing per-phase gates; the demo returns as a gate after re-teach | 2026-08-14 |
+| `tea_pour_left_v1` runs after every phase | L1+L2 are the standing per-phase gates; the demo returns as a gate once it runs again | 2026-08-14 |
+| The demo needs re-teaching against the new command contracts before it can run | It ran unchanged on 2026-08-17. The contract changed what crosses the bridge boundary, not what a taught pose means | 2026-08-17 |
 | Per-side authority and one epoch per side | Four device authorities, two epoch levels | 2026-08-11 |
 
 ---
@@ -799,6 +800,33 @@ startup around bootstrap rather than readiness. In the same pass: the firmware
 hold reuse above, the stamped-only production path, and the instruction to keep
 the quarantined-MOVE-J L3 evidence **separate** from the production MIT/FJT
 evidence because they validate different contracts.
+
+### Review 5 — Cleanup and evidence closure (2026-08-18)
+
+Post-RC, and the first review with no defect to report. It asked for the written
+state to catch up with a runtime that had moved past it: record the successful
+tea-pour run as evidence, remove the last stale pre-refactor statements, make the
+operator runbooks four-bus native throughout rather than only in their banners,
+and keep the coordinator-crash gap open but scoped away from demo acceptance. Two
+contradictions it caught were real: `open_questions.md` still said a topic command
+carries no epoch or sequence after the stamp had shipped, and the 2B section still
+said parallelism had never been demonstrated while Point-8 further down the same
+file recorded it.
+
+**Its account of the hardware session was wrong in two places, and the logs
+settled both.** It reported a `Ctrl+C` test that "terminated the activity
+correctly"; the coordinator's own log says `no activity running`, 55 minutes after
+the last run — so the interrupt proved the idle-exit path, not the stop ladder. It
+also reported "no operational anomaly"; the logs carry five hand
+delivery-verification give-ups, an acquisition-loop overrun, a one-cycle ownership
+race and a teardown publish failure, none of which failed the demo but all of which
+are worth having.
+
+The rule that follows, and it is the reason the evidence file exists at all:
+**operator recollection and log evidence are two different sources, and a written
+record that merges them silently loses the disagreement.** Where they conflicted
+here, the logs won, and the parts only the operator can attest to — that the arm
+did not visibly sag — are labelled as such.
 
 ### What the reviews are worth, stated as a rule
 
