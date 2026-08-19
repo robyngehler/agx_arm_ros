@@ -7,6 +7,12 @@
 - Performer → **coordinator-internal** router for the MVP.
 - Orchestration package → **`agx_arm_coordination`**.
 - CAN-bus resource tokens → **deferred** until contention is observed.
+	*Superseded 2026-08-17.* Contention was observed, which produced the shared-bus token and
+	step-and-settle; the four-bus topology then removed the contention. The resource relation is
+	now **derived from `bus_topology`** rather than fixed: under `dedicated_per_device` a side's
+	arm and hand hold independent tokens and may run concurrently, under `shared_per_side` they
+	share one, and an unrecognised value reads as shared. Validation and scheduling take the same
+	table, so they cannot disagree about the same machine.
 
 ## Opened by the tea demo (2026-07-28)
 

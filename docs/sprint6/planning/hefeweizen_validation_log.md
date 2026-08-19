@@ -4,10 +4,43 @@ Running record of what was validated for the coordinated pour, where, and with
 what measured values. Development-host entries (no ROS/hardware) and Jetson/Duo
 hardware entries are kept separate so calibration placeholders are obvious.
 
-> Hardware calibration is still pending for all tactile thresholds, grasp/open
-> presets, anchor poses, and recorded trajectories. Until those are measured,
-> the demo runs only with `arm_dry_run:=true` and the open/release hand smoke
-> test; grasps need real tactile contact.
+> **Superseded in part 2026-08-17 for the tea demo.** `tea_pour_left_v1` ran end
+> to end on hardware with `arm_dry_run=False`, twice, on taught anchors and
+> recordings — see the entry below and
+> `../evidence/tea_pour_left_v1_2026-08-17.md`. It uses the deterministic `pose`
+> hand motion and needs no tactile threshold.
+>
+> The banner still holds for **Hefeweizen**: its grasps are tactile-gated, so
+> thresholds, grasp/open presets and its own anchors remain uncalibrated, and it
+> has not run on hardware in any form.
+
+## 2026-08-17 — `tea_pour_left_v1`, first successful hardware run (Jetson/Duo, L3)
+
+**Scope.** Full 17-node activity, left arm plus left hand, both sides brought up.
+Commit `31c0350`, profile `duo_hand_external_bridge`, topology
+`dedicated_per_device`, `arm_dry_run=False`.
+
+**Result.** Completed twice in one stack — 17:02:40–17:04:12 (92.7 s) and
+17:12:52–17:14:25 (93.8 s) — with no restart between them and no action differing
+by more than 0.9 s across the two runs.
+
+**Measured values worth carrying forward:**
+
+| | |
+| --- | --- |
+| activity duration | 92.7 s / 93.8 s |
+| `left_arm_pour_tea` | 21.3 s (73-point replay, 19.364 s declared) |
+| `left_arm_teapot_handle_release` | 14.3 s (50-point replay, 13.177 s declared) |
+| payload attach / detach | ~0.51 s each, twice per run |
+| FJT goals per run | 16, none rejected or replanned |
+| hand claim/release pairs | 8 across the session, none skipped |
+| idle SIGINT to last process exit | 0.66 s |
+
+**Still placeholders after this run:** the payload mass (1.0 kg) and lever
+(0.15 m), and every tactile threshold — the tea demo never reads one.
+
+**Full record, including four non-fatal anomalies:**
+`../evidence/tea_pour_left_v1_2026-08-17.md`.
 
 ## 2026-06-29 — implementation slice (development host, no ROS/hardware)
 

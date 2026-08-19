@@ -4,12 +4,22 @@ Build order from `planning/architecture_and_repo_integration.md` §9 (decisions:
 PerformAction-for-hand-skills, coordinator-internal performer, package `agx_arm_coordination`).
 Decisions and their rationale: `planning/decision_record.md`.
 
-> **Resuming on the V02 contracts (2026-08-17).** Every unchecked item below is a
-> *hardware-pending* item, and the runtime under it changed while the sprint was
-> paused — hand commands now carry authority, an unclaimed hand executes nothing,
-> and the hand window is off by default on the four-bus topology. Read
-> `planning/decision_record.md` §6 before ticking anything. The taught data
-> predates the new command contracts, so a re-teach comes first.
+> **Resumed on the V02 contracts, and the demo has run (2026-08-17).**
+> `tea_pour_left_v1` completed end to end on hardware, twice in one stack, at
+> 17:02 and 17:12 — full evidence in
+> [`evidence/tea_pour_left_v1_2026-08-17.md`](evidence/tea_pour_left_v1_2026-08-17.md).
+> The re-teach this sprint was waiting for turned out not to be needed: the taught
+> data ran unchanged against the new command contracts.
+>
+> **Read the remaining unchecked items individually.** They are no longer one
+> category. Some are still hardware or calibration work (the Hefeweizen demo,
+> tactile thresholds, the payload mass); some are architecture or runtime
+> resilience that a successful supervised demo does not touch (coordinator crash
+> containment, the stop ladder mid-motion). Do not read a checked demo as
+> covering either.
+>
+> Decisions and rationale: `planning/decision_record.md`; what the refactor
+> changed underneath this sprint is §6 there.
 
 ## Planning
 
@@ -85,10 +95,26 @@ Decisions and their rationale: `planning/decision_record.md`.
 	- `trajectory_execution.allowed_start_tolerance` raised 0.01 → 0.05 (all three recordings
 	  exceeded the MoveIt default against their anchors).
 	- catalogue may now be split across `config/catalogue.d/*.yaml` fragments.
-- [ ] run `tea_pour_left_v1` on hardware, escalation ladder: no teapot → empty → water.
-	*(hardware-pending — nothing in this chain has been executed live.)*
+- [x] **run `tea_pour_left_v1` on hardware — done 2026-08-17, and repeated.** The full 17-node
+	activity completed twice in one stack, at 17:02:40 and 17:12:52, without a restart or an
+	operator step between them. 92.7 s and 93.8 s end to end, with no action differing by more
+	than 0.9 s between the runs, so the result is repeatable rather than a lucky pass. Both
+	payload transitions fired in both runs; the hand claimed and released its device eight times,
+	none skipped; the two arms came up on their different protocol tiers and each fitted its own
+	torque envelope. Every arm motion went through `FollowJointTrajectory`, 16 goals per run, none
+	rejected, aborted or replanned. Commit `31c0350`, profile `duo_hand_external_bridge`.
+	Evidence, including the four anomalies that did *not* fail the activity:
+	`evidence/tea_pour_left_v1_2026-08-17.md`.
+	- The escalation ladder (no teapot → empty → water) is not separately recorded; the logs do
+	  not say what the teapot held, so treat the object state as unrecorded rather than assumed.
+	- Two taught replays dominate the runtime: `left_arm_pour_tea` at 21.3 s and
+	  `left_arm_teapot_handle_release` at 14.3 s, 38 % of the activity between them. Both are the
+	  recorded segment's own declared duration, so shortening the demo means re-timing the
+	  recordings, not the runtime.
 - [ ] run `hefeweizen_pour_v1` on the escalation ladder: no objects → dummy → empty → water → beer.
-	*(graph + `start_hefeweizen_demo.launch.py` ready; hardware-pending.)*
+	*(graph + `start_hefeweizen_demo.launch.py` ready; hardware-pending. The tea result does not
+	transfer — Hefeweizen is dual-arm and tactile-gated, and needs a calibrated
+	`contact_threshold` first.)*
 
 ## Step 5b — Dynamic payload adjustment (2026-08-17)
 
@@ -112,9 +138,17 @@ evidence in `reference/payload_gravity_model.md`.
 - [ ] L3 static payload check: hold the grip pose, toggle `payload_attached`, confirm
 	`~/gravity_feedforward` moves in the expected direction and the arm does not sag.
 	*(hardware-pending; mass 1.0 kg and the 0.15 m lever are unmeasured estimates.)*
-- [ ] L3 first `tea_pour_left_v1` with the payload active: exactly two transitions, no
-	visible sag after lift, no jump at attach/detach, no torque-limit rejection.
-	*(hardware-pending.)*
+- [x] L3 first `tea_pour_left_v1` with the payload active — **done 2026-08-17**, and twice.
+	**Exactly two transitions per run**, in the intended places and order: attach after
+	`left_hand_grip_handle` (action 70), detach after `left_hand_release_handle` (action 150).
+	Each applied in ~0.51 s and each named the gravity model it switched to, so the loaded model
+	was active for the whole carried-and-poured section and the base model for the rest. No
+	torque-limit rejection, no authority refusal, no aborted goal anywhere in either run.
+	*Sag and jump are operator-observed only — nothing sampled `~/gravity_feedforward` or joint
+	effort during the run, so "no visible sag" is what the operator saw, not a measurement.*
+- [ ] Measure whether 1.0 kg at `[0.15, 0.0, 0.0]` is actually right. The run proves the
+	transition mechanism works on hardware; it says nothing about the number, which is still an
+	unmeasured estimate. This is what the static check above is for.
 - [x] `planning/hefeweizen_validation_log.md` created to capture runs (dev slice logged).
 
 ## Step 6 — Stop / interrupt safety
@@ -126,10 +160,21 @@ evidence in `reference/payload_gravity_model.md`.
 	exiting while the robot keeps moving.
 - [x] the activity loop no longer reports **success** when it exits because rclpy went down with
 	nodes still pending.
-- [ ] verify the stop ladder on hardware, mid-replay and mid-hand-window.
-	*(hardware-pending; unit-tested only.)*
+- [x] `Ctrl+C` on an **idle** coordinator exits instead of spinning. Hardware, 2026-08-17: the
+	interrupt arrived with nothing running, the coordinator logged
+	`stop requested (interrupt (Ctrl+C)); no activity running`, and all five tea-stack processes
+	were reported finished cleanly within 0.66 s — the coordinator itself in 0.28 s. This closes
+	the Phase-0B finding that an idle coordinator survived the first SIGINT.
+- [ ] verify the stop ladder on hardware, **mid-replay and mid-hand-window**.
+	*(still hardware-pending; unit-tested only. The 2026-08-17 interrupt does **not** cover this:
+	it landed 55 minutes after the last activity finished, so no child was cancelled, no arm was
+	pinned and no hand was stopped, because there was nothing in flight. A successful idle exit
+	and a successful unwind are different claims.)*
 - [ ] coordinator **crash** (as opposed to interrupt) is still uncovered — the MoveIt goal survives
 	the process. Needs either a MoveIt-side watchdog or a supervisor.
+	*(Known runtime-resilience limitation, not a demo gap. It does not make the 2026-08-17 run
+	incomplete: that run was supervised, and a graceful interrupt exercises a different path from
+	an abrupt process death.)*
 
 ## Repo hygiene
 

@@ -187,9 +187,15 @@ OmniHand mounts through a rotated flange joint and reaches along the tool0 frame
 *verify the frame axis direction via FK on the generated URDF, do not guess* — was
 the one instruction that mattered, and it was written before the mistake was made.
 
-**Unvalidated:** mass 1.0 kg and the 0.15 m lever are estimates. The L3 static check
-(hold the grip pose, toggle `payload_attached`, confirm `~/gravity_feedforward` moves
-in the expected direction and the arm does not sag) has not run.
+**Validated on hardware 2026-08-17**, in the mechanism only: both transitions fired
+in both tea-demo runs, in the intended places, each applying in ~0.51 s and each
+naming the gravity model it switched to. No torque-limit rejection followed either.
+
+**Still unvalidated:** the mass. 1.0 kg at a 0.15 m lever remain estimates, and
+nothing sampled `~/gravity_feedforward` or joint effort during the run — "no visible
+sag" is an operator observation, not a measurement. The L3 static check (hold the
+grip pose, toggle `payload_attached`, confirm the feedforward moves in the expected
+direction) has not run, and it is what would settle the number.
 
 ---
 
@@ -200,9 +206,16 @@ Hefeweizen MVP: one arm and one hand, 17 linear nodes over 8 anchor moves, 3 tau
 replays and 5 hand poses. Both sides are brought up and only the left is addressed.
 
 **Why.** A single-side linear graph exercises the whole chain — coordinator, MoveIt
-dispatch, taught replay, hand skills, payload transitions, the stop ladder — with
-one arm's worth of failure modes. The Hefeweizen graph adds dual-arm synchronization
-on top of a chain that had never run.
+dispatch, taught replay, hand skills, payload transitions — with one arm's worth of
+failure modes. The Hefeweizen graph adds dual-arm synchronization on top of a chain
+that had never run.
+
+**Outcome, 2026-08-17.** The sequencing paid off: the chain ran end to end on the
+first supervised session, twice in one stack, and the four anomalies the logs
+recorded were all already-known open items rather than new defects
+(`../evidence/tea_pour_left_v1_2026-08-17.md`). Two taught replays account for 38 %
+of the 93 s runtime, which is the first concrete argument for re-timing recordings
+rather than optimising the runtime.
 
 **The `pose` hand motion** was added for it: a deterministic ramp to a taught preset
 with no tactile gating. The `close_until_contact` path stays available but needs a
@@ -233,15 +246,26 @@ Read before resuming.
 | A sync group is a barrier the scheduler tries to honour | A sync group is admitted whole or not at all, and a batch that cannot be merged aborts the activity rather than falling back to independent dispatch |
 | Hand feedback publishes at the arm's `pub_rate` | Bringups pass `hand_pub_rate` / `hand_joint_read_rate`; publication is driven by new readbacks |
 
-**What resumption needs first**, in order:
+**Resumption happened on 2026-08-17, and the expected blocker did not
+materialise.** A re-teach against the new command contracts was assumed to be the
+first thing needed, because the taught data predates them. It was not: the
+existing anchors and recordings ran unchanged, twice, and the activity completed
+end to end (`../evidence/tea_pour_left_v1_2026-08-17.md`). The command contract
+changed what crosses the bridge boundary, not what a taught pose means.
 
-1. **Re-teach against the new command contracts.** The taught data was captured under
-   the old ingress; that is demo work, not refactor work, and it is the one thing
-   blocking `tea_pour_left_v1`.
-2. **Calibrate `contact_threshold` and `stable_samples`** on the Pro hand, which
-   unblocks `close_until_contact` and the Hefeweizen grasps.
-3. **The L3 payload checks** (§4), which have never run.
-4. **The stop ladder on hardware**, mid-replay and mid-hand-window.
+What remains, in order:
+
+1. **Calibrate `contact_threshold` and `stable_samples`** on the Pro hand. The tea
+   demo sidesteps this with the deterministic `pose` motion; the Hefeweizen grasps
+   cannot.
+2. **Measure the payload** (§4). The transition mechanism now has hardware
+   evidence; the 1.0 kg and the 0.15 m lever still do not.
+3. **The stop ladder on hardware**, mid-replay and mid-hand-window. The 2026-08-17
+   interrupt landed on an idle stack and proves only the idle exit.
+4. **Give a blocked hand pose an honest completion.** A closing gesture into a
+   physical stop exhausts the bridge's 8-attempt verification every time — five
+   occurrences in that one session. Harmless here, but it is the concrete case for
+   distinguishing `commanded`, `delivery_verified` and `contact_confirmed`.
 
 ---
 

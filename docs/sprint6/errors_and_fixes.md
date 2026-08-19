@@ -4,6 +4,66 @@ Record concrete errors and their fixes here as the hand skill controller, perfor
 coordinator come up — e.g. tactile stream gaps, grasp-threshold miscalibration, `both_arms`
 joint-ordering issues, coordinator resource deadlocks, or sync-group dispatch problems.
 
+## 2026-08-17 (found in the logs of the first successful tea-pour run)
+
+Four anomalies from a session in which the activity completed twice and the
+operator saw nothing wrong. None failed the demo; all four are recorded because
+each is a known open item finally showing itself with a reproducible trigger.
+Evidence: `evidence/tea_pour_left_v1_2026-08-17.md`.
+
+### A closing hand gesture always exhausts the delivery-verification retry bound
+
+- Symptom: five times in one session, on the left hand only —
+  `OmniHand hand_joint_target command not verified within 8 attempts
+  (tolerance 0.100 rad); giving up — fingers may be in contact or the bus is
+  congested`.
+- Trigger, and it is exact: **every occurrence follows a closing gesture** —
+  `grip_handle` on the teapot handle, or `rest_fist` where the fingers close on
+  each other. The commanded joint positions are physically unreachable because
+  something is in the way, so the readback never converges to within 0.1 rad and
+  the bridge spends its whole 8-attempt budget before giving up.
+- Why it did not fail anything: the skill action still reported success and the
+  coordinator advanced. A `pose` motion is deterministic and blind by design, so
+  "the fingers stopped early" is the expected outcome of gripping a handle.
+- What it actually exposes: **the bridge cannot tell contact from congestion, and
+  says so in the message.** That is the open Phase-4D item — distinguish
+  `commanded`, `delivery_verified` and `contact_confirmed` — and it now has a
+  trigger that reproduces on demand rather than a hypothetical.
+- It is also the measured case for the open 2C item *bound and record the SDK
+  round trips per commanded setpoint*: five commands each cost 8 sends plus their
+  verification readbacks, on a hand that was doing exactly what was asked of it.
+- Not fixed. Fixing it means giving a blocked pose an honest terminal state, not
+  raising the tolerance or the attempt count.
+
+### One acquisition-loop overrun, at the instant the first activity started
+
+- Symptom: `acquisition-loop overrun: 340 ms gap (> 200 ms; count=1, peak=340 ms)`
+  on the left arm, 0.8 s after the first dispatch — MoveIt planning and the first
+  hand action starting together.
+- `count=1` across 69 minutes, no recovery triggered, nothing downstream noticed.
+  The message names the right reading itself: local starvation, not a dead bus.
+- Recorded rather than fixed. One overrun at the busiest moment of startup is the
+  expected shape of a CPU transient, and the recovery watchdog correctly refused
+  to treat it as a bus fault — which is the Level-0 classification working.
+
+### A one-cycle ownership race at the first claim
+
+- Symptom, within 6 ms: `arm_left claimed by 'left_arm/mit_controller' at device
+  generation 2`, then `'left_arm/mit_controller' does not hold this device (held
+  by nobody); not commanding`, then `Took command of 'arm_left'`.
+- One control cycle declined to command while the claim was still in flight.
+- This is the **benign remainder** of the defect fixed in `31c0350`: the goal is
+  no longer aborted by its own claim, and what is left is a skipped cycle at
+  enable time. Once per session, on the first enable.
+
+### The publish loop outlived its context at shutdown
+
+- Symptom: `publish batch failed: Failed to publish: publisher's context is
+  invalid` on the right arm at SIGINT.
+- Teardown ordering, at process exit, on the arm that was not moving. Cosmetic,
+  but it is the same class as the acquisition-thread lifetime issue the bridge
+  already fixed: a loop that outlives the node it publishes through.
+
 ## 2026-07-27 (hand window validated; a second, CPU-bound bottleneck found)
 
 ### Hand still times out under the full teach stack even with the window open

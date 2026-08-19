@@ -17,8 +17,12 @@ Sprint 6 is the coordinated dual-arm plus dual-hand task layer.
 > controller consumes device authority rather than a hand-window boolean; and
 > the coordinator admits one activity at a time with atomic sync groups.
 >
-> The first thing resumption needs is a **re-teach against the new command
-> contracts**. That is demo work, not refactor work.
+> **The demo has since run.** `tea_pour_left_v1` completed end to end on
+> hardware on 2026-08-17, twice in one stack, on the *existing* taught data — the
+> re-teach that was expected to be needed first was not. See
+> `../evidence/tea_pour_left_v1_2026-08-17.md`. What remains is calibration
+> (tactile thresholds for Hefeweizen, the payload mass) and resilience work
+> (the stop ladder mid-motion, coordinator-crash containment).
 >
 > Canonical refactor plan: `docs/sprint_refactor/planning/integration_plan.md`;
 > its rationale: `docs/sprint_refactor/planning/decision_record.md`.
