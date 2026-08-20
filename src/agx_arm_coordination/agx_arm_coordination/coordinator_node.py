@@ -544,10 +544,12 @@ class CoordinatorNode(Node):
                     self.get_logger().warn(f"safe stop ({reason}): {msg}")
 
     def emergency_stop_all(self) -> None:
-        """Last-resort stop on every side: damped zero, hold, electronic e-stop.
+        """Last-resort stop on every side: damped zero, then the firmware hold.
 
-        Only used on an explicit second interrupt. The physical e-stop remains the
-        only guaranteed stop while the arm firmware has no command watchdog.
+        Only used on an explicit second interrupt. The driver's ladder ends at
+        that hold and issues no descent-type vendor stop, so the physical e-stop
+        remains the only guaranteed stop while the arm firmware has no command
+        watchdog.
 
         The driver answers with three outcomes, not two: a stop confirmed in
         feedback, a stop contradicted by feedback, and a stop that was commanded

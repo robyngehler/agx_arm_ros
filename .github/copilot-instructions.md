@@ -70,6 +70,13 @@ Use these when a task benefits from a narrower persona:
 - each device owns its own CAN bus: arms on `can_nero_left`/`can_nero_right` (native), hands on `hand_left`/`hand_right` (USB-CAN FD adapters); same-side arm and hand motion may run in parallel and the shared-bus hand window is a selectable degraded mode
 - a hand has two production motion primitives — trajectory execution (`<side>_omnihand_controller/follow_joint_trajectory`) and reactive contact-seeking motion (the skill controller) — and exactly one owner at a time. Both claim `control/omnihand/claim_device` before commanding; the bridge is fail-closed, so an unclaimed hand executes nothing
 - `control/omnihand/stop` is a cancel-and-hold, not a latching device stop
+- the arm stop ladder ends at the firmware `MOVE-J(current_q)` hold; no safety
+  path calls the vendor `electronic_emergency_stop()`, which is a damped descent
+  and would release the stiffness the hold provides. An unverified stop
+  re-asserts the hold, then asks for a bus-recovery link reset as transport
+  repair; no trustworthy pose means nothing commanded and nothing claimed, and
+  the external CAN watchdog owns that regime
+  (`docs/sprint_refactor/reference/emergency_stop_ladder.md`)
 - use repo-owned `agx_arm_msgs` messages for hand diagnostics and tactile payloads, with statically defined fields
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment
 - use `.github/instructions/ros2-development.instruction.md` for ROS2-native questions and value-capture decisions

@@ -63,6 +63,20 @@ specific one: **authority over the devices during a window in which the software
 stack is provably unable to command them**, of the order of ten seconds, and
 recurring whenever the transport faults.
 
+### The software side deliberately stops short of it (2026-08-20)
+
+The Jetson-side ladder ends at the firmware `MOVE-J(current_q)` hold and never
+issues the vendor `electronic_emergency_stop()`. That call is a damped descent —
+it releases the stiffness that keeps a raised arm up — so it belongs to the
+layer that fires when nothing here is holding the arm anyway, not to a path
+whose whole purpose is to hold it. An unverified stop re-asserts the hold; where
+no trustworthy pose exists, nothing is commanded and nothing is claimed.
+
+This makes the watchdog's job **larger and more explicit, not smaller**: it now
+owns every regime in which the hold cannot be established, and it is the layer
+free to command a descent. Detail and the reasoning:
+`sprint_refactor/reference/emergency_stop_ladder.md`.
+
 Open: a secondary emergency stop that shares nothing with this software path.
 The shape sketched so far is a small PLC or single-board controller that
 

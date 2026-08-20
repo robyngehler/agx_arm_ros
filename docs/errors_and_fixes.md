@@ -124,6 +124,30 @@ an output written behind its back.**
 Only hardware surfaced it: the unit tests passed throughout, because none of
 them ran the publish loop after an e-stop.
 
+### An escalation rung that undoes the rung below it is not an escalation
+
+The arm emergency stop established a firmware `MOVE-J(current_q)` hold, verified
+it in feedback, and on a failed verification escalated to the vendor
+`electronic_emergency_stop()` — which is a **damped descent**, not a hold. The
+stronger-sounding command released the stiffness the weaker one had just
+established.
+
+Two things made it fire when nothing was wrong with the arm: "not verified"
+covered both *measurably moving* and *the measurement produced no evidence*, so a
+feedback hiccup inside the 0.5 s verification window was enough; and the
+no-trustworthy-pose branch answered the same condition the pre-recovery hold
+answers by claiming nothing at all.
+
+Rules: **a safety ladder may only contain commands that are monotonically
+stronger in the direction the ladder exists to move.** Where no stronger command
+of the right kind exists, re-assert the one you have and say the result is
+unverified — the next layer up is a different mechanism (here the external CAN
+watchdog), not a different call on the same device. And **"could not measure" is
+never evidence to act on**; it is evidence to report.
+
+Found by reading the chain on 2026-08-20; neither call site had a test. Detail:
+`sprint_refactor/reference/emergency_stop_ladder.md`.
+
 ### A `now - last >= interval` gate inside a loop paced at that interval loses rate
 
 Third occurrence in this repository. It made a 20 Hz joint readback measure

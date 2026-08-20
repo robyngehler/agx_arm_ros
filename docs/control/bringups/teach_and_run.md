@@ -43,10 +43,13 @@ the right side (`can_nero_right`); the left side and dual-arm mirror the same co
 > MIT zero before every recovery disconnect. If the arm still moves unexpectedly:
 >
 > 1. `ros2 service call /left_arm/emergency_stop std_srvs/srv/Empty` (and/or `/right_arm/...`) —
->    this is now unconditional best-effort AND verified: damped MIT zero (works without feedback),
->    then position-hold, else electronic emergency stop, then it confirms the joints settled in
->    feedback and escalates (electronic stop -> link-reset recovery) instead of logging a phantom
->    success when the stop did not take.
+>    unconditional best-effort AND verified: damped MIT zero as a braking transient (works without
+>    feedback), then a firmware `MOVE-J` hold at the current pose, then it confirms the joints
+>    settled in feedback instead of logging a phantom success. An unverified stop **re-asserts the
+>    same hold** (three attempts) and then requests a link-reset recovery as transport repair. It
+>    never sends the vendor electronic emergency stop — that is a damped descent and would let a
+>    raised arm sink. If no trustworthy pose is available the driver commands nothing and says so;
+>    treat the arm as moving.
 > 2. For a disconnect **while the arm is moving** on the shared side bus, run
 >    `sudo ./scripts/recover_shared_can_arm.sh right` (`ARM_NS=right_arm` for the duo runtime): it
 >    stops the hand and cancels the arm goal, resets the CAN link, waits for feedback, and verifies

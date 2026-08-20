@@ -1006,9 +1006,19 @@ Phase-4 item forward only when it blocks an interface the demo actually uses.
       firmware-hold correction: 3.5e-5 rad drift over six seconds, firmware
       confirmed out of MIT, no `disable()` frame.
 
-Every item is proven on hardware. The `/control/move_j` parallel evidence and
-the production MIT evidence are recorded separately, because they validate
+Every item above is proven on hardware. The `/control/move_j` parallel evidence
+and the production MIT evidence are recorded separately, because they validate
 different contracts.
+
+- [ ] **Re-run the stop case against the hold-only ladder (2026-08-20 change).**
+      The vendor `electronic_emergency_stop()` is gone from every safety path;
+      an unverified stop now re-asserts the `MOVE-J` hold up to three times and
+      a stop without a trustworthy pose commands nothing. The RC gate above is
+      unaffected in substance — it was already met by the hold, and the removed
+      rungs only fired when the hold was *not* verified — but the retry ladder
+      and the `no_hold_commanded` outcome have **L1/L2 evidence only**. Worth
+      one hardware pass that provokes an unverified stop.
+      See `reference/emergency_stop_ladder.md`.
 
 ## Documentation follow-through
 

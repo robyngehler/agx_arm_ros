@@ -3176,6 +3176,10 @@ class AgxArmRosNode(Node):
     # difference means anything; below it encoder quantisation dominates the
     # estimate and a moving arm can read as settled.
     VELOCITY_MIN_SAMPLE_DT_S = 0.01
+    # An unverified stop re-asserts the same hold instead of escalating to a
+    # different command. There is no stronger motion primitive on this side:
+    # see docs/sprint_refactor/reference/emergency_stop_ladder.md.
+    ESTOP_HOLD_ATTEMPTS = 3
 
     def _sample_joint_positions(self):
         """One timestamped joint-position sample, or None when unavailable.
@@ -3272,12 +3276,19 @@ class AgxArmRosNode(Node):
         Deliberately not gated on readiness or enable state: during a runaway
         (stalled feedback, recovery in progress) those checks are exactly what
         is broken, and the firmware keeps executing the last MIT command it
-        received. Order: damped MIT zero (needs no feedback) -> position hold at
-        the current pose when feedback is trustworthy -> electronic emergency
-        stop when it is not. Each stage is then VERIFIED in feedback (joint
-        velocities settle); if not verified it escalates to a hard electronic
-        stop and finally requests a bus-recovery link reset, and it never logs a
-        plain success when the arm is not confirmed stopped.
+        received. Order per attempt: damped MIT zero (needs no feedback) ->
+        MOVE-J hold at the current pose -> VERIFY in feedback that joint
+        velocities settled. An unverified stop re-asserts the same hold, up to
+        ``ESTOP_HOLD_ATTEMPTS`` times, and then asks for a bus-recovery link
+        reset as transport repair. It never logs a plain success when the arm is
+        not confirmed stopped.
+
+        The MOVE-J hold is the whole ladder on this side. The vendor
+        ``electronic_emergency_stop`` is deliberately not used: it is a damped
+        descent, so it releases the stiffness that keeps a raised arm up. Where
+        no hold can be established, the external CAN watchdog is the boundary —
+        it takes the bus when this side stops signalling
+        (``docs/sprint_refactor/reference/emergency_stop_ladder.md``).
 
         Returns a Trigger result so a supervisor can act on the outcome:
         ``success`` is True only when the arm is CONFIRMED stopped in feedback;
@@ -3287,6 +3298,10 @@ class AgxArmRosNode(Node):
         """
         stopped = False
         recovery_requested = False
+        # "No hold was commanded" is not the same failure as "a hold was
+        # commanded and could not be verified", and only the second is about the
+        # measurement. The caller is told which.
+        hold_commanded = False
         # Seeded, because every branch below reports through it. If a stage
         # raises before the settle check runs, the handler used to fall through
         # to an unbound name and the whole callback died — an emergency stop
@@ -3342,80 +3357,73 @@ class AgxArmRosNode(Node):
         try:
             # Every stage goes on the safety lane, which is what puts it in
             # front of the setpoints already queued rather than behind them.
-            if self.is_mit_mode or self._current_motion_mode == 'mit':
-                try:
-                    self._submit_damped_stop_mit()
-                except Exception as e:
-                    self.get_logger().error(f"Damped MIT stop failed: {e}")
+            #
+            # The ladder has exactly one rung, re-tried: MOVE-J at the current
+            # pose. An unverified stop re-asserts that same hold rather than
+            # escalating to a different command, because no stronger motion
+            # primitive exists here that still holds the arm up.
+            for attempt in range(1, self.ESTOP_HOLD_ATTEMPTS + 1):
+                # Braking transient: a kp=0 damped zero needs no feedback and
+                # ends a moving MIT setpoint, but it carries no stiffness and is
+                # never the terminal state.
+                if self.is_mit_mode or self._current_motion_mode == 'mit':
+                    try:
+                        self._submit_damped_stop_mit()
+                    except Exception as e:
+                        self.get_logger().error(f"Damped MIT stop failed: {e}")
 
-            js = None
-            try:
-                js = self._sdk_safety("get_joint_angles", self.agx_arm.get_joint_angles)
-            except Exception:
-                js = None
-
-            if js is not None and js.hz > 0:
-                q = list(js.msg)
-                if not self.is_switch_seamlessly:
-                    self._sdk_safety("move_js", partial(self.agx_arm.move_js, q))
-                    self.is_mit_mode = True
-                    self._current_motion_mode = 'js'
-                else:
-                    # The same bounded re-assertion the hand window uses, not a
-                    # single MOVE-J. One dropped mode frame leaves the firmware
-                    # in MIT executing the kp=0 damped stop above, which has no
-                    # stiffness — the arm sags instead of holding.
-                    left_mit, move_mode, attempts = self._assert_firmware_hold(q)
-                    self.is_mit_mode = False
-                    if not left_mit:
-                        self.get_logger().error(
-                            f"emergency stop: firmware still reports MIT "
-                            f"(move_mode={move_mode}) after {attempts} MOVE-J "
-                            "assertions; the arm is NOT in a firmware hold"
-                        )
-                self.get_logger().info(f"Emergency stop command sent to {self.arm_type}")
-            else:
-                # No trustworthy pose to hold: hard stop is the only safe option.
-                self._sdk_safety(
-                    "electronic_emergency_stop", self.agx_arm.electronic_emergency_stop
-                )
-                self.get_logger().warn(
-                    "Emergency stop without valid feedback: sent electronic emergency stop"
-                )
-
-            # Verify the stop actually took effect in feedback.
-            verification = self._arm_velocities_settled()
-            stopped = verification.verified
-            if stopped:
-                self.get_logger().info(
-                    f"Emergency stop verified: {self.arm_type} joints settled "
-                    f"({verification.detail})"
-                )
-            else:
-                self.get_logger().error(
-                    f"Emergency stop NOT verified ({verification.detail}) — "
-                    "escalating to electronic emergency stop"
-                )
-                try:
-                    self._sdk_safety(
-                        "electronic_emergency_stop",
-                        self.agx_arm.electronic_emergency_stop,
+                hold_pose = self._capture_hold_pose(lane=Lane.SAFETY)
+                if hold_pose is None:
+                    # A pose synthesised from stale feedback would be a wrong
+                    # hold, not a missing one. Nothing is commanded and nothing
+                    # is claimed; the external CAN watchdog owns this regime.
+                    verification = StopVerification(
+                        False, False,
+                        "no trustworthy joint feedback, so no hold was commanded",
                     )
-                except Exception as e:
-                    self.get_logger().error(f"electronic_emergency_stop failed: {e}")
+                    self.get_logger().error(
+                        f"{self.arm_type} emergency stop: no trustworthy joint "
+                        "feedback, so no hold was commanded and none is claimed. "
+                        "The external CAN watchdog is the protective boundary "
+                        "here — use the physical emergency stop."
+                    )
+                    break
+
+                self._command_firmware_hold(hold_pose)
+                hold_commanded = True
+                self.get_logger().info(
+                    f"Emergency stop hold commanded on {self.arm_type} "
+                    f"(attempt {attempt}/{self.ESTOP_HOLD_ATTEMPTS})"
+                )
+
                 verification = self._arm_velocities_settled()
                 stopped = verification.verified
-                if not stopped:
-                    # Last resort: hand the heavyweight link-reset recovery to the
-                    # publish thread (owns the connection). This also flushes a
-                    # stuck moving MIT setpoint the firmware would keep executing.
-                    self.get_logger().error(
-                        "Emergency stop STILL not verified after electronic stop — "
-                        "requesting bus-recovery link reset. Firmware has no MIT "
-                        "command watchdog: use the physical e-stop."
+                if stopped:
+                    self.get_logger().info(
+                        f"Emergency stop verified: {self.arm_type} joints settled "
+                        f"({verification.detail})"
                     )
-                    self._force_recovery = True
-                    recovery_requested = True
+                    break
+                self.get_logger().error(
+                    f"Emergency stop NOT verified on attempt {attempt}/"
+                    f"{self.ESTOP_HOLD_ATTEMPTS} ({verification.detail}) — "
+                    "re-asserting the hold at the pose the arm is at now"
+                )
+
+            if not stopped:
+                # Transport repair, not a further motion escalation: the link
+                # reset re-attempts the hold on its way in and flushes a stuck
+                # MIT setpoint the firmware would keep executing. Beyond it the
+                # external CAN watchdog is the boundary — it takes the bus once
+                # this side stops signalling.
+                self.get_logger().error(
+                    "Emergency stop still not verified after "
+                    f"{self.ESTOP_HOLD_ATTEMPTS} hold attempts — requesting a "
+                    "bus-recovery link reset. Firmware has no MIT command "
+                    "watchdog: use the physical e-stop."
+                )
+                self._force_recovery = True
+                recovery_requested = True
         except Exception as e:
             self.get_logger().error(f"Emergency stop failed: {e}")
         # Three outcomes, not two. "Commanded but unverifiable" is its own
@@ -3434,19 +3442,27 @@ class AgxArmRosNode(Node):
             )
         else:
             response.success = False
-            if not verification.evidence:
+            if not hold_commanded:
+                state = "no_hold_commanded"
+                self.get_logger().error(
+                    f"EMERGENCY STOP COMMANDED NOTHING for {self.arm_type} "
+                    f"({verification.detail}) — no hold could be issued at all; "
+                    "treat the arm as still moving and use the physical e-stop"
+                )
+            elif not verification.evidence:
+                state = "commanded_unverifiable"
                 self.get_logger().error(
                     f"EMERGENCY STOP COMMANDED BUT UNVERIFIABLE for {self.arm_type} "
                     f"({verification.detail}) — no usable velocity evidence; treat "
                     "the arm as still moving and use the physical e-stop"
                 )
             else:
+                state = "unverified"
                 self.get_logger().error(
                     f"EMERGENCY STOP UNVERIFIED for {self.arm_type} "
                     f"({verification.detail}) — do not trust the software stop; "
                     "use the physical e-stop"
                 )
-            state = "commanded_unverifiable" if not verification.evidence else "unverified"
             if recovery_requested:
                 # The publish thread will run _recover_bus and latch a fault
                 # lockout; the caller (supervisor/operator) owns clearing it.
@@ -3476,8 +3492,15 @@ class AgxArmRosNode(Node):
                 home = [0] * self.arm_joint_count
                 self._sdk_write("move_js", lambda: self.agx_arm.move_js(home))
                 time.sleep(2)
-                # Safety lane: this is a stop, and it must not queue behind the
-                # motion this same sequence just issued.
+                # The vendor teach-exit recipe, and the only remaining use of
+                # electronic_emergency_stop in this node: Piper-only, at the home
+                # pose, paired with the reset() below that leaves the state again.
+                # It is a mode transition, not a rung of the safety ladder — that
+                # ladder ends at the MOVE-J hold and never issues this call,
+                # because a damped descent is not a hold.
+                #
+                # Safety lane: it must not queue behind the motion this same
+                # sequence just issued.
                 self._sdk_write(
                     "electronic_emergency_stop",
                     self.agx_arm.electronic_emergency_stop,
@@ -3664,10 +3687,49 @@ class AgxArmRosNode(Node):
             return None
         return status.msg
 
-    def _capture_hold_pose(self):
-        """Current joint pose from trustworthy live feedback, or None."""
+    def _command_firmware_hold(self, hold_pose) -> bool:
+        """Command the firmware to hold ``hold_pose``. The terminal stopped state.
+
+        Returns whether the firmware is confirmed out of MIT. The older Piper
+        firmware that cannot switch seamlessly gets a single MOVE-JS instead and
+        offers no mode readback to confirm.
+        """
+        if not self.is_switch_seamlessly:
+            self._sdk_safety("move_js", partial(self.agx_arm.move_js, hold_pose))
+            self.is_mit_mode = True
+            self._current_motion_mode = 'js'
+            return True
+
+        # The same bounded re-assertion the hand window uses, not a single
+        # MOVE-J. One dropped mode frame leaves the firmware in MIT executing
+        # the kp=0 damped stop, which has no stiffness — the arm sags instead
+        # of holding.
+        left_mit, move_mode, attempts = self._assert_firmware_hold(hold_pose)
+        self.is_mit_mode = False
+        if not left_mit:
+            self.get_logger().error(
+                f"emergency stop: firmware still reports MIT "
+                f"(move_mode={move_mode}) after {attempts} MOVE-J "
+                "assertions; the arm is NOT in a firmware hold"
+            )
+        return left_mit
+
+    def _capture_hold_pose(self, *, lane: Lane = Lane.DIAGNOSTIC):
+        """Current joint pose from trustworthy live feedback, or None.
+
+        The emergency stop reads on the SAFETY lane: a pose read queued behind
+        the control stream the stop is displacing answers "no pose", and no pose
+        means no hold.
+        """
         try:
-            js = self._sdk_read("get_joint_angles", self.agx_arm.get_joint_angles)
+            if lane is Lane.SAFETY:
+                js = self._sdk_safety(
+                    "get_joint_angles", self.agx_arm.get_joint_angles
+                )
+            else:
+                js = self._sdk_read(
+                    "get_joint_angles", self.agx_arm.get_joint_angles
+                )
         except Exception:
             return None
         alive = js is not None and (

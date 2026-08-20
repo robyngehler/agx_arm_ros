@@ -683,7 +683,12 @@ showing itself with a reproducible trigger.
   - driver `emergency_stop` service is now UNCONDITIONAL best-effort (it previously refused
     with "not connected"/"not enabled"/"no valid joint angles" — exactly in the runaway
     conditions): damped MIT zero first (needs no feedback), then position-hold at the current
-    pose when feedback is valid, else `electronic_emergency_stop()` as the hard fallback.
+    pose when feedback is valid.
+    **Superseded 2026-08-20** — this bullet used to end "else `electronic_emergency_stop()`
+    as the hard fallback". That fallback is gone from every safety path: it applies damping
+    without stiffness, so it makes a raised arm descend instead of hold. The ladder now ends
+    at the `MOVE-J` hold, re-asserted when unverified, and no trustworthy pose means nothing
+    is commanded. See `docs/sprint_refactor/reference/emergency_stop_ladder.md`.
   - driver `_recover_bus` sends a damped MIT zero BEFORE disconnecting, so the firmware's
     active setpoint during the recovery gap is a stop, not the last motion.
 - Residual gap (cannot be fixed in software): if the driver process is dead or the bus is

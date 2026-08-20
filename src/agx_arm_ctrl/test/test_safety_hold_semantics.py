@@ -4,6 +4,11 @@ The desired stopped state is: motors enabled, firmware position controller
 active, current pose held, motion authority revoked. A kp=0 damped MIT command
 stops a moving arm but has no stiffness, so leaving it as the terminal state
 sags the arm — it is a braking transient before MOVE-J, never the end state.
+
+The MOVE-J hold is also the whole ladder: no safety path issues the vendor
+``electronic_emergency_stop``, which is a damped descent rather than a hold.
+An unverified stop re-asserts the hold; the external CAN watchdog is the
+boundary beyond it.
 """
 
 import threading
@@ -112,6 +117,7 @@ def _node(arm, *, recovering=False, estop=False, unit_stopped=False,
     node._last_good_feedback_monotonic = 0.0
     node.hand_window_hold_assert_s = 0.3
     node.hand_window_hold_poll_s = 0.01
+    node._force_recovery = False
     node._sdk = SdkWorker("arm_test")
     _WORKERS.append(node._sdk)
     node._unit_safety = UnitSafety("arm_right", writer=True)
@@ -196,6 +202,103 @@ def test_no_safety_path_ever_disables_the_motors():
     node._emergency_stop_callback(None, Trigger.Response())
 
     assert "disable" not in arm.calls
+
+
+class _SettlingArm(_HoldArm):
+    """Feedback whose timestamps advance while the joints stay put.
+
+    Enough for the settle check to reach a verdict: ``_HoldArm`` freezes its
+    timestamp, which yields "no evidence" rather than "settled".
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._ts = 0.0
+
+    def get_joint_angles(self):
+        self._ts += 0.05
+        return type("A", (), {
+            "hz": 100.0, "timestamp": self._ts, "msg": [0.0] * 7,
+        })()
+
+
+def test_no_safety_path_ever_sends_the_vendor_electronic_stop():
+    """It is a damped descent, not a hold.
+
+    The vendor call releases the stiffness that keeps a raised arm up, which is
+    the state the MOVE-J hold exists to produce. The ladder ends at the hold.
+    """
+    arm = _HoldArm()
+    node = _node(arm)
+
+    node._emergency_stop_callback(None, Trigger.Response())
+
+    assert "electronic_emergency_stop" not in arm.calls
+
+
+def test_the_pre_recovery_hold_never_sends_the_vendor_electronic_stop():
+    arm = _SettlingArm()
+    node = _node(arm)
+
+    node._hold_before_teardown()
+
+    assert "electronic_emergency_stop" not in arm.calls
+
+
+def test_an_unverified_stop_reasserts_the_hold_instead_of_escalating():
+    """Feedback that cannot answer is not evidence that the arm is running away.
+
+    ``_HoldArm`` never advances its feedback timestamp, so every settle check
+    returns "no evidence" — the exact case that used to command a descent on
+    top of a hold the firmware had already confirmed.
+    """
+    arm = _HoldArm()
+    node = _node(arm)
+
+    response = Trigger.Response()
+    node._emergency_stop_callback(None, response)
+
+    assert "electronic_emergency_stop" not in arm.calls
+    assert arm.calls.count("move_j") >= node.ESTOP_HOLD_ATTEMPTS, (
+        f"expected one MOVE-J hold per attempt, got {arm.calls}"
+    )
+    assert response.success is False
+    assert node._force_recovery is True, (
+        "transport repair is the only thing left after the hold attempts"
+    )
+
+
+def test_a_verified_stop_holds_once_and_does_not_retry():
+    arm = _SettlingArm()
+    node = _node(arm)
+
+    response = Trigger.Response()
+    node._emergency_stop_callback(None, response)
+
+    assert response.success is True
+    assert "stop=verified" in response.message
+    assert arm.calls.count("move_j") == 1, arm.calls
+    assert node._force_recovery is False
+
+
+def test_a_stop_without_a_trustworthy_pose_commands_nothing():
+    """No pose means no hold, and no hold means no motion command at all.
+
+    The vendor electronic stop used to fill this gap. Commanding nothing and
+    saying so is better than commanding a descent: the external CAN watchdog
+    owns this regime.
+    """
+    arm = _HoldArm()
+    node = _node(arm)
+    node._capture_hold_pose = lambda **_kwargs: None
+
+    response = Trigger.Response()
+    node._emergency_stop_callback(None, response)
+
+    assert arm.calls == [], f"nothing may be commanded without a pose, got {arm.calls}"
+    assert response.success is False
+    assert "no_hold_commanded" in response.message
+    assert any("watchdog" in e for e in node.logger.errors)
 
 
 def test_recovery_does_not_rearm_an_arm_that_was_stopped():

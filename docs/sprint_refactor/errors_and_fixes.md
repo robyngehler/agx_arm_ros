@@ -864,3 +864,48 @@ run on a refusal had never executed.
 - Rule this reinforces: a measurement whose method can fail silently is not
   evidence. The bridge-side call counter and the subscriber-side count disagreed,
   and the disagreement was the signal — one number alone would have been believed.
+
+## 2026-08-20 (found by reading the stop chain end to end)
+
+### The emergency stop escalated to a command that cancels the hold
+
+- Symptom: none observed. Found by tracing the escalation chain after the vendor
+  API note on `electronic_emergency_stop()` — "the arm will **slowly descend
+  with constant damping**" — was read against what the stop path is for.
+- The primary path was already correct: epoch bump, damped MIT braking
+  transient, `MOVE-J(current_q)` re-asserted until the firmware's move-mode
+  readback confirms it left MIT. That is the hold, and L3 on 2026-08-17 verified
+  it on both arms.
+- The defect sat **above** it. Two rungs escalated to
+  `electronic_emergency_stop()`, which sends `ArmMsgMotionCtrl(1)` (CAN `0x150`
+  byte 0 = `0x01`) on both tiers and applies damping without stiffness:
+  - *no trustworthy pose* → descent. The pre-recovery hold answers the identical
+    condition by commanding nothing and leaving the regime to the watchdog, so
+    the two paths contradicted each other. They also read the pose differently:
+    the stop demanded `js.hz > 0`, `_capture_hold_pose` also accepts advancing
+    frames, so the stop could drop an arm for which a hold was available.
+  - *stop not verified* → descent. `verified` is False both when the arm is
+    measurably moving and when the settle check found **no evidence at all**. A
+    positively confirmed firmware hold plus a feedback hiccup inside the 0.5 s
+    window was enough to cancel that hold and command the descent.
+- Second-order defect: nothing ever sent `reset()` (`0x150` byte 0 = `0x02`) on
+  the Nero path — the only call is in the Piper-only teach-mode exit. So the
+  vendor stop latched a firmware state that `clear_fault_lockout` could not
+  clear; it cleared the ROS-side latch and the authority and sent nothing to the
+  arm. An operator would read "emergency stop latch cleared" and find the
+  firmware still refusing motion.
+- Neither call site had a test. The fake `electronic_emergency_stop` existed in
+  `test_safety_hold_semantics.py`; nothing asserted the call.
+- Fix: the vendor call is gone from every safety path. The ladder is the hold,
+  re-asserted up to `ESTOP_HOLD_ATTEMPTS` (3) times at the pose the arm is at
+  now, then bus-recovery link reset as transport repair. No pose means nothing
+  commanded and nothing claimed. The response distinguishes a third outcome,
+  `no_hold_commanded`, from `commanded_unverifiable`. Removing the call also
+  closes the `reset()` asymmetry: no path here leaves a firmware state we never
+  clear.
+- Rule: **a safety ladder may only contain commands that are monotonically
+  stronger in the direction the ladder exists to move.** Where none exists,
+  re-assert what you have and report unverified — the next layer is a different
+  mechanism, not a different call on the same device.
+- Validation: L1/L2 only. `test_safety_hold_semantics.py` pins the four
+  properties; no hardware run. Detail: `reference/emergency_stop_ladder.md`.
