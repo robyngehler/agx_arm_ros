@@ -99,6 +99,39 @@ transition, not a rung of this ladder.
 L1/L2: `src/agx_arm_ctrl/test/test_safety_hold_semantics.py` pins that no safety
 path sends the vendor call, that an unverified stop re-asserts the hold, that a
 verified stop holds once, and that a stop without a trustworthy pose commands
-nothing. Not exercised on hardware — the last hardware record of the stop path
-is `l3_production_estop.md` (2026-08-17), whose gate criteria are unchanged by
-this because they were already met by the hold.
+nothing. The last hardware record of the stop path is `l3_production_estop.md`
+(2026-08-17), whose gate criteria are unchanged by this because they were
+already met by the hold.
+
+### L3 on the wire
+
+"No safety path issues the vendor stop" is a claim about frames, so it is
+settled on frames rather than on logs. `scripts/l3_estop_pcap_run.py` captures
+both arm buses, runs `tea_pour_left_v1`, and fires
+`/{left,right}_arm/emergency_stop` while a **recorded trajectory** is replaying:
+
+```bash
+python3 scripts/l3_estop_pcap_run.py                      # stop during node 160
+python3 scripts/l3_estop_pcap_run.py --trigger-action-no 110 --trigger-delay 8
+```
+
+Node 160 (`left_arm_teapot_handle_release`) is the default because the teapot is
+already down and released, so the arm is moving and empty. Node 110
+(`left_arm_pour_tea`) is the harder case: payload at height, which is exactly
+where a damped descent would have shown.
+
+`scripts/analyze_can_pcap.py --stop-at <ts>` reads the capture back. Pass
+criteria, in order of what they decide:
+
+| Criterion | Frame |
+| --- | --- |
+| **no electronic stop, anywhere** | `0x150` byte 0 = `0x01` must not appear |
+| the control stream ends | `0x15A`–`0x160` (MIT) stop after the stop instant |
+| a hold reaches the arm | `0x155`/`0x156`/`0x157`/`0x170` after the stop instant |
+| the firmware is put in MOVE-J | `0x151` byte 1 = `0x01`, never `0x04`/`0x06` |
+
+The first row is the one this change is about. The other three were already true
+before it and are carried so a regression in either direction is visible.
+
+The run latches both arms and the unit; it prints the `clear_fault_lockout` and
+`unit_safety/rearm` calls needed before anything else runs.

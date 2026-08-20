@@ -8,12 +8,18 @@ the question that motivated it: does the firmware report joint velocity at all?
 
 Usage:
     ./scripts/analyze_can_pcap.py <file.pcap> [more.pcap ...]
+    ./scripts/analyze_can_pcap.py --stop-at <unix_ts> <file.pcap> [more.pcap ...]
+
+``--stop-at`` adds the emergency-stop signature: what crossed the wire around a
+stop, and above all whether the vendor electronic stop did. See
+docs/sprint_refactor/reference/emergency_stop_ladder.md.
 
 Reference: docs/sprint_refactor/reference/phase0_baseline.md
 """
 
 from __future__ import annotations
 
+import argparse
 import collections
 import struct
 import sys
@@ -27,6 +33,19 @@ import sys
 FEEDBACK_HIGH_SPD = range(0x251, 0x258)
 MIT_COMMAND = range(0x15A, 0x161)
 SLL_OUTGOING = 4  # Linux cooked-capture packet type for a frame we sent
+
+# The stop-relevant transmit frames.
+#   0x150  motion ctrl — byte 0: 0x01 electronic emergency stop, 0x02 reset
+#   0x151  mode ctrl   — byte 1: MOVE mode, byte 3: 0xAD MIT
+#   0x155, 0x156, 0x157, 0x170  joint position control, the MOVE-J payload
+MOTION_CTRL = 0x150
+MODE_CTRL = 0x151
+JOINT_CTRL = (0x155, 0x156, 0x157, 0x170)
+ELECTRONIC_STOP = 0x01
+MOTION_RESET = 0x02
+# 0x04 on the default tier, 0x06 on v111. Neither may appear as a hold.
+MIT_MOVE_MODES = (0x04, 0x06)
+MOVE_J = 0x01
 
 
 def frames(path):
@@ -127,17 +146,123 @@ def analyse(path: str) -> None:
         print("           the vendor's zeroing would expose nothing but zeros.")
 
 
+def _move_mode_name(value: int) -> str:
+    if value == MOVE_J:
+        return "MOVE-J"
+    if value in MIT_MOVE_MODES:
+        return "MIT"
+    return f"0x{value:02x}"
+
+
+def stop_signature(path: str, stop_ts: float, window: float = 5.0) -> bool:
+    """Report what the wire shows around a stop. Returns True when it is clean.
+
+    Clean means: no vendor electronic stop, MIT command traffic ends, and a
+    MOVE-J hold is commanded. The first of the three is the one that decides —
+    the electronic stop is a damped descent, so a single such frame contradicts
+    the whole point of the hold.
+    """
+    electronic: list[float] = []
+    resets: list[float] = []
+    modes_after: list[tuple[float, int]] = []
+    joint_ctrl_after = 0
+    mit_before = 0
+    mit_after = 0
+    first = last = None
+
+    for timestamp, _pkttype, can_id, payload in frames(path):
+        if first is None:
+            first = timestamp
+        last = timestamp
+        after = timestamp >= stop_ts
+        near = abs(timestamp - stop_ts) <= window
+        if can_id == MOTION_CTRL and payload:
+            if payload[0] == ELECTRONIC_STOP:
+                electronic.append(timestamp)
+            elif payload[0] == MOTION_RESET:
+                resets.append(timestamp)
+        elif can_id == MODE_CTRL and after and near and len(payload) >= 4:
+            modes_after.append((timestamp, payload[1]))
+        elif can_id in JOINT_CTRL and after and near:
+            joint_ctrl_after += 1
+        elif can_id in MIT_COMMAND:
+            if after:
+                mit_after += 1
+            elif near:
+                mit_before += 1
+
+    print(f"=== stop signature: {path} ===")
+    if first is None:
+        print("  empty capture")
+        return False
+    if not (first <= stop_ts <= last):
+        print(f"  WARNING: stop timestamp {stop_ts:.3f} is outside the capture "
+              f"({first:.3f}..{last:.3f}) — the numbers below mean nothing")
+        return False
+
+    print(f"  MIT command frames: {mit_before} in the {window:.0f}s before the "
+          f"stop, {mit_after} after it")
+    print(f"  joint position control frames after the stop: {joint_ctrl_after}")
+    if modes_after:
+        seen = collections.Counter(_move_mode_name(mode) for _t, mode in modes_after)
+        summary = ", ".join(f"{name} x{count}" for name, count in seen.items())
+        print(f"  MOVE modes commanded after the stop: {summary}")
+    else:
+        print("  no mode frame after the stop")
+
+    clean = True
+    if electronic:
+        offsets = ", ".join(f"{t - stop_ts:+.3f}s" for t in electronic[:5])
+        print(f"  FAIL: {len(electronic)} electronic emergency stop frame(s) "
+              f"(0x150 byte0=0x01) at {offsets}")
+        print("        That command damps without stiffness — a raised arm "
+              "descends. No safety path may issue it.")
+        clean = False
+    else:
+        print("  PASS: no electronic emergency stop frame anywhere in the capture")
+    if resets:
+        print(f"  note: {len(resets)} motion reset frame(s) (0x150 byte0=0x02)")
+    if mit_after:
+        print(f"  FAIL: {mit_after} MIT command frames after the stop — the "
+              "control stream did not end")
+        clean = False
+    if not joint_ctrl_after:
+        print("  FAIL: no joint position control after the stop — no MOVE-J "
+              "hold reached the arm")
+        clean = False
+    if any(mode in MIT_MOVE_MODES for _t, mode in modes_after):
+        print("  FAIL: a MIT move mode was commanded after the stop")
+        clean = False
+
+    print(f"  VERDICT: {'clean' if clean else 'NOT clean'}")
+    return clean
+
+
 def main() -> int:
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-    for path in sys.argv[1:]:
+    parser = argparse.ArgumentParser(
+        description="Analyse SocketCAN pcaps captured from the Nero arms.",
+    )
+    parser.add_argument("pcaps", nargs="+", help="pcap files to read")
+    parser.add_argument(
+        "--stop-at", type=float, default=None, metavar="UNIX_TS",
+        help="also report the emergency-stop signature around this instant",
+    )
+    parser.add_argument(
+        "--window", type=float, default=5.0, metavar="SECONDS",
+        help="how far either side of the stop to look (default 5)",
+    )
+    args = parser.parse_args()
+
+    clean = True
+    for path in args.pcaps:
         try:
             analyse(path)
+            if args.stop_at is not None:
+                clean &= stop_signature(path, args.stop_at, args.window)
         except (OSError, ValueError) as exc:
             print(f"{path}: {exc}", file=sys.stderr)
             return 1
-    return 0
+    return 0 if clean else 3
 
 
 if __name__ == "__main__":
