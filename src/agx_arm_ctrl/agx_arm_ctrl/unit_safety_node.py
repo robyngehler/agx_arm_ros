@@ -17,8 +17,9 @@ stack, not a protective stop. Every part of the path — ROS, this node, the
 drivers, CAN, the Jetson — can fail. A device stops itself without asking anyone
 (that is the fast, unilateral path in the driver, and it must keep working with
 this node dead); what needs a writer is only the *unit-wide* statement that a
-new safety era has begun. The independent hardware emergency stop is a separate
-open question in `docs/open_questions.md` and nothing here addresses it.
+new safety era has begun. This unit has no mechanical emergency stop, and an
+independent protective layer is a separate open question in
+`docs/open_questions.md` that nothing here addresses.
 """
 
 from __future__ import annotations

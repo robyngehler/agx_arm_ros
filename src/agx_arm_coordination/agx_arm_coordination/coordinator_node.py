@@ -547,9 +547,9 @@ class CoordinatorNode(Node):
         """Last-resort stop on every side: damped zero, then the firmware hold.
 
         Only used on an explicit second interrupt. The driver's ladder ends at
-        that hold and issues no descent-type vendor stop, so the physical e-stop
-        remains the only guaranteed stop while the arm firmware has no command
-        watchdog.
+        that hold and issues no descent-type vendor stop. This unit has no
+        mechanical emergency stop: the only guaranteed stop is removing arm
+        power, and that drops the arm, because a de-energized Nero has no brakes.
 
         The driver answers with three outcomes, not two: a stop confirmed in
         feedback, a stop contradicted by feedback, and a stop that was commanded
@@ -570,9 +570,10 @@ class CoordinatorNode(Node):
                 self.get_logger().error(f"emergency stop [{side}]: {msg}")
         if unconfirmed:
             self.get_logger().error(
-                "PHYSICAL E-STOP REQUIRED — software stop not confirmed on "
+                "CUT ARM POWER — software stop not confirmed on "
                 f"{', '.join(unconfirmed)}. A stop that cannot be verified is not "
-                "a stop: treat these arms as still in motion."
+                "a stop: treat these arms as still in motion. Removing power is "
+                "the only remaining stop, and it drops the arm."
             )
 
     # --- dispatch ------------------------------------------------------------

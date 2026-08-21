@@ -80,7 +80,8 @@ free to command a descent. Detail and the reasoning:
 Open: a secondary emergency stop that shares nothing with this software path.
 The shape sketched so far is a small PLC or single-board controller that
 
-- carries the physical e-stop input directly,
+- carries a physical emergency-stop input directly — one would have to be added,
+  because this unit has none today,
 - sits on the CAN bus as a parallel watchdog rather than through our drivers,
 - and takes authority over the devices when it fires, regardless of what the
   software stack believes.

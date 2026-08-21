@@ -694,7 +694,9 @@ showing itself with a reproducible trigger.
 - Residual gap (cannot be fixed in software): if the driver process is dead or the bus is
   down, nothing can reach the firmware and the last command keeps executing. Escalate the
   missing MIT command watchdog (command timeout -> damped stop in firmware) to the arm
-  vendor; until then treat the physical e-stop as the only guaranteed stop.
+  vendor. **Superseded 2026-08-20** — this line used to name the physical e-stop as the only
+  guaranteed stop. There is no mechanical e-stop on this unit: the only guaranteed stop is removing
+  arm power, and it drops the arm.
 
 ### Hand window: the opening burst caused the timeout, and one timeout killed the delivery
 

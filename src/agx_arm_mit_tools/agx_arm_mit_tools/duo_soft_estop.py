@@ -248,7 +248,7 @@ class DuoSoftEstopCoordinator(Node):
 			self.get_logger().warn(response.message)
 		else:
 			response.message = (
-				"duo e-stop NOT verified on all arms — use the physical e-stop. " + summary
+				"duo e-stop NOT verified on all arms — cut arm power. " + summary
 			)
 			self.get_logger().error(response.message)
 		return response

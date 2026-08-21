@@ -39,8 +39,10 @@ trajectory and the hand goal executing with nobody left to cancel them.
 | `Ctrl+C` a second time | escalates to `emergency_stop` on both sides, then exits immediately |
 | the coordinator crashes | **not covered by any of the above.** The MIT controller streams a damped stop on its own shutdown and the driver puts the arm in a firmware MOVE-J hold before a recovery disconnect, but a hard crash of the coordinator alone leaves the MoveIt goal running |
 
-The physical e-stop remains the only guaranteed stop: the Nero firmware has no MIT command watchdog,
-so silence is not a safe state. See `teach_and_run.md` § Emergency stop / runaway.
+**This unit has no mechanical emergency stop.** The arm is either powered or it is not, and the only
+guaranteed stop is removing arm power — which drops the arm, because a de-energized Nero has no
+brakes. The Nero firmware also has no MIT command watchdog, so silence is not a safe state either.
+See `teach_and_run.md` § Emergency stop / runaway.
 
 ## What runs where
 

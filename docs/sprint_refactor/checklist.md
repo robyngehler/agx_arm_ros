@@ -1010,15 +1010,22 @@ Every item above is proven on hardware. The `/control/move_j` parallel evidence
 and the production MIT evidence are recorded separately, because they validate
 different contracts.
 
-- [ ] **Re-run the stop case against the hold-only ladder (2026-08-20 change).**
-      The vendor `electronic_emergency_stop()` is gone from every safety path;
-      an unverified stop now re-asserts the `MOVE-J` hold up to three times and
-      a stop without a trustworthy pose commands nothing. The RC gate above is
-      unaffected in substance — it was already met by the hold, and the removed
-      rungs only fired when the hold was *not* verified — but the retry ladder
-      and the `no_hold_commanded` outcome have **L1/L2 evidence only**. Worth
-      one hardware pass that provokes an unverified stop.
-      See `reference/emergency_stop_ladder.md`.
+- [x] **Re-run the stop case against the hold-only ladder (2026-08-20 change).**
+      Two live runs, both stopping mid-replay of a recorded trajectory — node
+      160 with an empty hand, node 110 with the payload at height. All four
+      captures verdict **clean**: no electronic stop frame anywhere, MOVE-J on
+      the wire 7.6–12.9 ms after the stop call, the held pose behind it, and no
+      MIT traffic outliving the hold. Both arms `stop=verified` in both runs,
+      and the whole stack unwound as designed — unit stop generation allocated
+      once and idempotent on the second request, both hands holding their
+      measured pose, MIT controllers FAULTED, the post-stop `move_mit` refused,
+      MoveIt aborting on `INVALID_GOAL: device authority changed`.
+      See `reference/emergency_stop_ladder.md` § Result.
+- [ ] **Provoke an *unverified* stop.** Both runs above verified on the first
+      attempt, so the retry ladder (`ESTOP_HOLD_ATTEMPTS`) and the
+      `no_hold_commanded` outcome are still L1/L2 only. They are the parts that
+      replaced the removed vendor rungs, so they are exactly what is untested on
+      hardware.
 
 ## Documentation follow-through
 

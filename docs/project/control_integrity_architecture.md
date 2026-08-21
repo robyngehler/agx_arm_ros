@@ -10,6 +10,15 @@ reason about. This is the stable home of the control-integrity layer the V02
 refactor built; `architecture.md` describes the node, launch, and configuration
 surfaces around it.
 
+> **This unit has no mechanical emergency stop.** Every "mechanical E-stop"
+> below belongs to the *proposed* external watchdog, not to the hardware that
+> exists: the arm is either powered or it is not. The only guaranteed stop today
+> is removing arm power, and it **drops** the arm, because a de-energized Nero
+> has no brakes. Nothing on this page may be read as describing an available
+> protective input. See `docs/open_questions.md`, "Independent hardware
+> emergency stop", and
+> `docs/sprint_refactor/reference/emergency_stop_ladder.md`.
+
 **Implementation state.** Sections 1-10 describe implemented, hardware-validated
 behaviour. Sections 11-20 describe the **external watchdog, which does not
 exist**: it is a design and a boundary definition, not a built component. The
@@ -670,7 +679,8 @@ After release, the normal stack must still establish a **new** device authority 
 | physical arm CAN wiring short/open | unavailable | **same bus may also fail** | required for independent coverage |
 | arm transceiver failure | unavailable | same limitation | required |
 | arm power loss | cannot hold | cannot hold | hardware-dependent |
-| mechanical E-stop | software should observe it, but must not be sole path | can react | **preferred final protective layer** |
+| mechanical E-stop (does not exist yet) | software should observe it, but must not be sole path | can react | **preferred final protective layer** |
+| arm power removed (the only guaranteed stop today) | cannot hold — the arm drops | cannot hold | hardware-dependent |
 
 ---
 

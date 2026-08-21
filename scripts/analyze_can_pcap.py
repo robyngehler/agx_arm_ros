@@ -157,39 +157,40 @@ def _move_mode_name(value: int) -> str:
 def stop_signature(path: str, stop_ts: float, window: float = 5.0) -> bool:
     """Report what the wire shows around a stop. Returns True when it is clean.
 
-    Clean means: no vendor electronic stop, MIT command traffic ends, and a
-    MOVE-J hold is commanded. The first of the three is the one that decides —
-    the electronic stop is a damped descent, so a single such frame contradicts
-    the whole point of the hold.
+    The decisive line is the vendor electronic stop: it damps without stiffness,
+    so one such frame contradicts the hold the ladder exists to establish.
+
+    Everything else is read against the **hold**, not against the stop instant.
+    A stop legitimately puts MIT frames on the wire after it — the kp=0 damped
+    zero is a braking transient of one frame per joint, and a control cycle
+    already in flight finishes too. What must not happen is MIT traffic after
+    the hold has been commanded.
     """
     electronic: list[float] = []
     resets: list[float] = []
-    modes_after: list[tuple[float, int]] = []
-    joint_ctrl_after = 0
-    mit_before = 0
-    mit_after = 0
+    modes: list[tuple[float, int]] = []
+    joint_ctrl: list[float] = []
+    mit: list[float] = []
     first = last = None
 
     for timestamp, _pkttype, can_id, payload in frames(path):
         if first is None:
             first = timestamp
         last = timestamp
-        after = timestamp >= stop_ts
-        near = abs(timestamp - stop_ts) <= window
         if can_id == MOTION_CTRL and payload:
             if payload[0] == ELECTRONIC_STOP:
                 electronic.append(timestamp)
             elif payload[0] == MOTION_RESET:
                 resets.append(timestamp)
-        elif can_id == MODE_CTRL and after and near and len(payload) >= 4:
-            modes_after.append((timestamp, payload[1]))
-        elif can_id in JOINT_CTRL and after and near:
-            joint_ctrl_after += 1
+            continue
+        if abs(timestamp - stop_ts) > window:
+            continue
+        if can_id == MODE_CTRL and len(payload) >= 4:
+            modes.append((timestamp, payload[1]))
+        elif can_id in JOINT_CTRL:
+            joint_ctrl.append(timestamp)
         elif can_id in MIT_COMMAND:
-            if after:
-                mit_after += 1
-            elif near:
-                mit_before += 1
+            mit.append(timestamp)
 
     print(f"=== stop signature: {path} ===")
     if first is None:
@@ -199,16 +200,6 @@ def stop_signature(path: str, stop_ts: float, window: float = 5.0) -> bool:
         print(f"  WARNING: stop timestamp {stop_ts:.3f} is outside the capture "
               f"({first:.3f}..{last:.3f}) — the numbers below mean nothing")
         return False
-
-    print(f"  MIT command frames: {mit_before} in the {window:.0f}s before the "
-          f"stop, {mit_after} after it")
-    print(f"  joint position control frames after the stop: {joint_ctrl_after}")
-    if modes_after:
-        seen = collections.Counter(_move_mode_name(mode) for _t, mode in modes_after)
-        summary = ", ".join(f"{name} x{count}" for name, count in seen.items())
-        print(f"  MOVE modes commanded after the stop: {summary}")
-    else:
-        print("  no mode frame after the stop")
 
     clean = True
     if electronic:
@@ -220,19 +211,41 @@ def stop_signature(path: str, stop_ts: float, window: float = 5.0) -> bool:
         clean = False
     else:
         print("  PASS: no electronic emergency stop frame anywhere in the capture")
+
+    print(f"  MIT command frames in the {window:.0f}s before the stop: "
+          f"{sum(1 for t in mit if t < stop_ts)}")
+
+    hold_ts = next((t for t, mode in modes if t >= stop_ts and mode == MOVE_J), None)
+    if hold_ts is None:
+        commanded = collections.Counter(
+            _move_mode_name(mode) for t, mode in modes if t >= stop_ts
+        )
+        detail = ", ".join(f"{n} x{c}" for n, c in commanded.items()) or "none"
+        print(f"  FAIL: no MOVE-J commanded after the stop (modes seen: {detail})"
+              " — no firmware hold reached the arm")
+        print(f"  VERDICT: {'clean' if False else 'NOT clean'}")
+        return False
+
+    braking = sum(1 for t in mit if stop_ts <= t < hold_ts)
+    payload_frames = sum(1 for t in joint_ctrl if t >= hold_ts)
+    print(f"  hold commanded {(hold_ts - stop_ts) * 1e3:.1f} ms after the stop, "
+          f"carrying {payload_frames} joint position frames")
+    print(f"  MIT frames between stop and hold: {braking} (the damped zero is "
+          "one per joint; more means a control cycle was still in flight)")
+
+    late_mit = sum(1 for t in mit if t > hold_ts)
+    if late_mit:
+        print(f"  FAIL: {late_mit} MIT command frames AFTER the hold — the "
+              "control stream outlived it")
+        clean = False
+    if any(mode in MIT_MOVE_MODES for t, mode in modes if t > hold_ts):
+        print("  FAIL: a MIT move mode was commanded after the hold")
+        clean = False
+    if not payload_frames:
+        print("  FAIL: the hold carried no joint position payload")
+        clean = False
     if resets:
         print(f"  note: {len(resets)} motion reset frame(s) (0x150 byte0=0x02)")
-    if mit_after:
-        print(f"  FAIL: {mit_after} MIT command frames after the stop — the "
-              "control stream did not end")
-        clean = False
-    if not joint_ctrl_after:
-        print("  FAIL: no joint position control after the stop — no MOVE-J "
-              "hold reached the arm")
-        clean = False
-    if any(mode in MIT_MOVE_MODES for _t, mode in modes_after):
-        print("  FAIL: a MIT move mode was commanded after the stop")
-        clean = False
 
     print(f"  VERDICT: {'clean' if clean else 'NOT clean'}")
     return clean

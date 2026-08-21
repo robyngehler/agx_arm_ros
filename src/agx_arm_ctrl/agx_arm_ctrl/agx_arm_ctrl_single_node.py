@@ -3341,7 +3341,7 @@ class AgxArmRosNode(Node):
                 "belongs to recovery, so no stop was attempted over it. This "
                 "device is latched and refuses motion, and a unit stop was "
                 "requested. A NEW hardware stop cannot be confirmed until "
-                "recovery ends — use the physical emergency stop if the arm is "
+                "recovery ends — cut arm power if the arm is "
                 "moving."
             )
             self.get_logger().error(
@@ -3385,7 +3385,7 @@ class AgxArmRosNode(Node):
                         f"{self.arm_type} emergency stop: no trustworthy joint "
                         "feedback, so no hold was commanded and none is claimed. "
                         "The external CAN watchdog is the protective boundary "
-                        "here — use the physical emergency stop."
+                        "here — cut arm power to stop the arm."
                     )
                     break
 
@@ -3420,7 +3420,7 @@ class AgxArmRosNode(Node):
                     "Emergency stop still not verified after "
                     f"{self.ESTOP_HOLD_ATTEMPTS} hold attempts — requesting a "
                     "bus-recovery link reset. Firmware has no MIT command "
-                    "watchdog: use the physical e-stop."
+                    "watchdog: cut arm power to stop it."
                 )
                 self._force_recovery = True
                 recovery_requested = True
@@ -3447,21 +3447,21 @@ class AgxArmRosNode(Node):
                 self.get_logger().error(
                     f"EMERGENCY STOP COMMANDED NOTHING for {self.arm_type} "
                     f"({verification.detail}) — no hold could be issued at all; "
-                    "treat the arm as still moving and use the physical e-stop"
+                    "treat the arm as still moving; cutting arm power is the only remaining stop"
                 )
             elif not verification.evidence:
                 state = "commanded_unverifiable"
                 self.get_logger().error(
                     f"EMERGENCY STOP COMMANDED BUT UNVERIFIABLE for {self.arm_type} "
                     f"({verification.detail}) — no usable velocity evidence; treat "
-                    "the arm as still moving and use the physical e-stop"
+                    "the arm as still moving; cutting arm power is the only remaining stop"
                 )
             else:
                 state = "unverified"
                 self.get_logger().error(
                     f"EMERGENCY STOP UNVERIFIED for {self.arm_type} "
                     f"({verification.detail}) — do not trust the software stop; "
-                    "use the physical e-stop"
+                    "cut arm power"
                 )
             if recovery_requested:
                 # The publish thread will run _recover_bus and latch a fault
@@ -3469,13 +3469,13 @@ class AgxArmRosNode(Node):
                 response.message = (
                     f"{self.arm_type} stop={state} ({verification.detail}) — forced "
                     "bus recovery requested; fault_lockout=latched, call "
-                    "clear_fault_lockout before re-arming. Use the physical e-stop "
+                    "clear_fault_lockout before re-arming. Cut arm power "
                     "if it still moves."
                 )
             else:
                 response.message = (
                     f"{self.arm_type} stop={state} ({verification.detail}) — "
-                    "use the physical e-stop"
+                    "cut arm power"
                 )
         return response
 

@@ -55,8 +55,9 @@ the right side (`can_nero_right`); the left side and dual-arm mirror the same co
 >    stops the hand and cancels the arm goal, resets the CAN link, waits for feedback, and verifies
 >    normal mode before allowing motion again. `DRY_RUN=1` prints the sequence without touching
 >    anything.
-> 3. The physical e-stop remains the only guaranteed stop while the firmware lacks a command
->    watchdog (vendor escalation pending).
+> 3. **There is no mechanical emergency stop on this unit.** The only guaranteed stop is removing
+>    arm power, and that drops the arm — a de-energized Nero has no brakes. The firmware also lacks
+>    a command watchdog (vendor escalation pending), so a stopped command stream is not a stop.
 
 ## Primary path: the teach manager
 

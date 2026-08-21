@@ -109,7 +109,7 @@ def test_it_reports_that_a_new_stop_cannot_be_confirmed():
     assert response.success is False, "an unverifiable stop must not report success"
     assert "unverifiable" in response.message
     assert "RECOVERING" in response.message
-    assert "physical emergency stop" in response.message
+    assert "cut arm power" in response.message
     assert node.logger.errors, "this has to be loud"
 
 

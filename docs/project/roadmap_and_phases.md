@@ -883,7 +883,7 @@ The minimum functional setup should include:
 - Dedicated communication adapter for the arm
 - Dedicated CAN-FD or manufacturer-compatible adapter for the OmniHand Pro
 - Stable power supplies for arm and hand
-- Hardware emergency stop
+- Hardware emergency stop (none exists today; the unit has no mechanical e-stop)
 - Local logging storage
 - At least one calibrated RGB-D camera
 
