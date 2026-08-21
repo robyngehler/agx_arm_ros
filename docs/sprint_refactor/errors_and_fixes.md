@@ -203,9 +203,17 @@ pose to 3.5e-5 rad over six seconds, with the firmware confirmed out of MIT.
   immediately (left firmware 1.11 / `NeroFW.V111`, right 1.06 /
   `NeroFW.DEFAULT`).
 
-**How to recognise it.** An unconfigured header is indistinguishable from a
-powered-off arm by `ip link` alone — both read UP, ERROR-ACTIVE, zero counters.
-The discriminator is what happens when something *tries* to send:
+**How to recognise it.** The two cases *are* separable, and the discriminator is
+the bus error counter rather than the packet counter — see the table in
+`docs/errors_and_fixes.md`. In short: with the header unmuxed the frame never
+reaches transmission, so `berr-counter tx` stays at `0` and the interface stays
+`ERROR-ACTIVE`; with the arm unpowered the controller transmits into a bus where
+nobody acknowledges, and the counter walks to `128` / `ERROR-PASSIVE`. Both show
+`TX packets 0`, which is why that number alone was read as conclusive for so
+long. Established 2026-08-20, when both arms were simply not powered and every
+`ip link` reading matched the right-hand column.
+
+The header case's own signature, for reference:
 
 ```text
 RX: packets 0   errors 0  dropped 0

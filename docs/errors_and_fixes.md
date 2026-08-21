@@ -23,6 +23,24 @@ unacknowledged frame rather than retrying it into error-passive. Read TX
 The hands are on USB-CAN FD adapters and do not use the header, so a healthy
 hand bus in the same session does not rule this out.
 
+**The error counter separates this from an unpowered arm** (2026-08-20). Both
+faults show `TX packets 0`, so that number says "nothing got out" and nothing
+more. What differs is whether the controller ever drove the line:
+
+| | header not muxed | arm not powered |
+| --- | --- | --- |
+| state | `ERROR-ACTIVE` | `ERROR-PASSIVE` |
+| `berr-counter tx` | `0` | climbs to `128` |
+| `error-warn` / `error-pass` | `0` / `0` | `1` / `1` |
+| RX packets | 0 | a couple of error frames |
+| driver symptom | sends fail `ENOBUFS` | sends leave, nothing ACKs |
+
+With the pins unrouted the frame never reaches transmission, so the counter
+cannot move. With the arm off, the controller transmits into a bus where nobody
+acknowledges, and the counter walks to error-passive. **There is no mechanical
+e-stop on this unit**, so an arm that answers nothing and is wired correctly is
+an arm without power — that is the one thing to check.
+
 Happened 2026-08-11 (header never configured) and again 2026-08-17 (kernel
 update). The second occurrence cost most of a session and produced two wrong
 diagnoses. Detail and the driver-side diagnostic:
