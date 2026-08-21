@@ -50,7 +50,9 @@ Each stack was ended by `Ctrl+C` on the launches.
 ## What the session does **not** prove
 
 - **Not a cancel of a *moving* arm.** Run 6's cancel landed between children, with nothing in
-  flight — see below. The stop ladder that pins a moving arm is still unexercised.
+  flight — see below. The stop ladder that pins a moving arm is unexercised *by this session*; it
+  was exercised on 2026-08-20 in two dedicated runs
+  (`docs/sprint_refactor/reference/emergency_stop_ladder.md` § Result).
 - **Not coordinator-crash containment.** Graceful cancellation and abrupt process death are
   different failure modes.
 - **Nothing about the Hefeweizen demo**, which is dual-arm and tactile-gated.

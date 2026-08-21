@@ -16,8 +16,9 @@ Decisions and their rationale: `planning/decision_record.md`.
 > category. Some are still hardware or calibration work (the Hefeweizen demo,
 > tactile thresholds, the payload mass); some are architecture or runtime
 > resilience that a successful supervised demo does not touch (coordinator crash
-> containment, the stop ladder mid-motion). Do not read a checked demo as
-> covering either.
+> containment). Do not read a checked demo as covering either. The stop ladder
+> mid-motion left that category on 2026-08-20 — it now has hardware evidence
+> mid-replay, on the wire; only the hand-window case remains.
 >
 > Decisions and rationale: `planning/decision_record.md`; what the refactor
 > changed underneath this sprint is §6 there.
@@ -176,12 +177,18 @@ evidence in `reference/payload_gravity_model.md`.
 - [x] **cancel an activity in flight.** Hardware, 2026-08-17 16:58: a run was cancelled at action
 	150 of 170, two nodes from the end. The activity terminated cleanly and both launches then
 	shut down normally. Read the limit with it — see the next item.
-- [ ] verify the stop ladder on hardware, **mid-replay and mid-hand-window**.
-	*(still hardware-pending. The 16:58 cancel landed in the ~1 s window between the hand child
-	finishing and the coordinator recording it complete, so **nothing was in flight**: no arm goal
-	was open, the hand goal had already succeeded, and `_cancel_children` had no moving child to
-	stop. Cancelling an activity and cancelling a moving arm are different claims, and only the
-	first has hardware evidence.)*
+- [x] **verify the stop ladder on hardware, mid-replay.** Done 2026-08-20, twice, on the four-bus
+	stack: `scripts/l3_estop_pcap_run.py` fired `emergency_stop` on both arms five seconds into a
+	**recorded trajectory replay** — node 160 with an empty hand, node 110 with the teapot payload
+	at height — while both arm buses were captured to pcap. Both arms `stop=verified` in both runs;
+	all four captures verdict clean. This is the claim the 16:58 cancel could not make: an arm that
+	was actually moving, pinned where it stood.
+	*Evidence and the frame-level timeline: `docs/sprint_refactor/reference/emergency_stop_ladder.md`
+	§ Result, captures under `evidence/test_run_estop{,_2}/`.*
+- [ ] verify the stop ladder **mid-hand-window**. Not covered by the 2026-08-20 runs: the hands ran
+	on the mock backend and the stack was `dedicated_per_device`, where no hand window exists. This
+	item now only concerns the degraded `shared_per_side` topology, which is where a stop has to
+	displace an open window rather than a MIT stream.
 - [ ] **make a cancelled activity visible in the log.** Found by reconstructing the 16:58 run:
 	`_abort()` logs `ERROR: aborting '<activity>': <reason>`, but the cancel branch logs nothing
 	at all — it emits a `failed` event on `~/events`, sets the action result, and returns. A
