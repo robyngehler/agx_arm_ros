@@ -1,0 +1,208 @@
+{
+  "activity": "tea_pour_left_v1",
+  "trigger_action_no": 160,
+  "trigger_delay_s": 5.0,
+  "stop_unix_ts": 1787233892.0014503,
+  "stop_results": {
+    "left": {
+      "success": true,
+      "message": "nero stop=verified \u2014 confirmed stopped (peak 0.034 rad/s (dt=19ms)); this device is latched and refuses motion until clear_fault_lockout"
+    },
+    "right": {
+      "success": true,
+      "message": "nero stop=verified \u2014 confirmed stopped (peak 0.048 rad/s (dt=18ms)); this device is latched and refuses motion until clear_fault_lockout"
+    }
+  },
+  "pcaps": {
+    "can_nero_left": "/home/user/workspace/agx_arm_ros/logs/estop_20260820_155013/can_nero_left.pcap",
+    "can_nero_right": "/home/user/workspace/agx_arm_ros/logs/estop_20260820_155013/can_nero_right.pcap"
+  },
+  "feedback": [
+    {
+      "t": 1787233819.0987196,
+      "action_no": 10,
+      "action_id": "left_hand_rest_fist",
+      "state": "running"
+    },
+    {
+      "t": 1787233821.0932226,
+      "action_no": 10,
+      "action_id": "left_hand_rest_fist",
+      "state": "completed"
+    },
+    {
+      "t": 1787233821.6011362,
+      "action_no": 20,
+      "action_id": "left_arm_to_teapot_grip_idle",
+      "state": "running"
+    },
+    {
+      "t": 1787233825.9443655,
+      "action_no": 20,
+      "action_id": "left_arm_to_teapot_grip_idle",
+      "state": "completed"
+    },
+    {
+      "t": 1787233826.4485278,
+      "action_no": 30,
+      "action_id": "left_hand_pre_grip_handle",
+      "state": "running"
+    },
+    {
+      "t": 1787233828.0918221,
+      "action_no": 30,
+      "action_id": "left_hand_pre_grip_handle",
+      "state": "completed"
+    },
+    {
+      "t": 1787233828.6048923,
+      "action_no": 40,
+      "action_id": "left_arm_to_teapot_pre_grip",
+      "state": "running"
+    },
+    {
+      "t": 1787233830.555376,
+      "action_no": 40,
+      "action_id": "left_arm_to_teapot_pre_grip",
+      "state": "completed"
+    },
+    {
+      "t": 1787233831.0699792,
+      "action_no": 50,
+      "action_id": "left_arm_teapot_handle_entry",
+      "state": "running"
+    },
+    {
+      "t": 1787233836.2325573,
+      "action_no": 50,
+      "action_id": "left_arm_teapot_handle_entry",
+      "state": "completed"
+    },
+    {
+      "t": 1787233836.7482655,
+      "action_no": 60,
+      "action_id": "left_arm_to_teapot_grip",
+      "state": "running"
+    },
+    {
+      "t": 1787233838.8875868,
+      "action_no": 60,
+      "action_id": "left_arm_to_teapot_grip",
+      "state": "completed"
+    },
+    {
+      "t": 1787233839.3915873,
+      "action_no": 70,
+      "action_id": "left_hand_grip_handle",
+      "state": "running"
+    },
+    {
+      "t": 1787233840.3661363,
+      "action_no": 70,
+      "action_id": "left_hand_grip_handle",
+      "state": "completed"
+    },
+    {
+      "t": 1787233840.8806508,
+      "action_no": 80,
+      "action_id": "left_arm_to_teapot_post_grip",
+      "state": "running"
+    },
+    {
+      "t": 1787233843.3437233,
+      "action_no": 80,
+      "action_id": "left_arm_to_teapot_post_grip",
+      "state": "completed"
+    },
+    {
+      "t": 1787233843.8610773,
+      "action_no": 90,
+      "action_id": "left_arm_to_pour_init",
+      "state": "running"
+    },
+    {
+      "t": 1787233847.6332002,
+      "action_no": 90,
+      "action_id": "left_arm_to_pour_init",
+      "state": "completed"
+    },
+    {
+      "t": 1787233848.14787,
+      "action_no": 100,
+      "action_id": "left_arm_to_pour_idle",
+      "state": "running"
+    },
+    {
+      "t": 1787233852.7281766,
+      "action_no": 100,
+      "action_id": "left_arm_to_pour_idle",
+      "state": "completed"
+    },
+    {
+      "t": 1787233853.2431607,
+      "action_no": 110,
+      "action_id": "left_arm_pour_tea",
+      "state": "running"
+    },
+    {
+      "t": 1787233873.98521,
+      "action_no": 110,
+      "action_id": "left_arm_pour_tea",
+      "state": "completed"
+    },
+    {
+      "t": 1787233874.4994142,
+      "action_no": 120,
+      "action_id": "left_arm_to_pour_init",
+      "state": "running"
+    },
+    {
+      "t": 1787233878.891114,
+      "action_no": 120,
+      "action_id": "left_arm_to_pour_init",
+      "state": "completed"
+    },
+    {
+      "t": 1787233879.4051425,
+      "action_no": 130,
+      "action_id": "left_arm_to_teapot_pre_place",
+      "state": "running"
+    },
+    {
+      "t": 1787233883.2396557,
+      "action_no": 130,
+      "action_id": "left_arm_to_teapot_pre_place",
+      "state": "completed"
+    },
+    {
+      "t": 1787233883.7532418,
+      "action_no": 140,
+      "action_id": "left_arm_to_teapot_place",
+      "state": "running"
+    },
+    {
+      "t": 1787233885.0503285,
+      "action_no": 140,
+      "action_id": "left_arm_to_teapot_place",
+      "state": "completed"
+    },
+    {
+      "t": 1787233885.5544617,
+      "action_no": 150,
+      "action_id": "left_hand_release_handle",
+      "state": "running"
+    },
+    {
+      "t": 1787233886.483091,
+      "action_no": 150,
+      "action_id": "left_hand_release_handle",
+      "state": "completed"
+    },
+    {
+      "t": 1787233886.996777,
+      "action_no": 160,
+      "action_id": "left_arm_teapot_handle_release",
+      "state": "running"
+    }
+  ]
+}
