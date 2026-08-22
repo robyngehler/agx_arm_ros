@@ -57,7 +57,7 @@ omnihand_skills:
 # timeout_sec come from the action metadata, NOT from here. All values below are
 # placeholders to calibrate on the Pro hardware (proposal §9.2).
 defaults:
-  control_rate_hz: 20.0
+  control_rate_hz: 50.0
   close_step_rad: 0.05        # bounded per-cycle step toward the close target
   open_step_rad: 0.08         # bounded per-cycle step toward the open target
   pose_step_rad: 0.05         # bounded per-cycle step toward a taught `pose` preset

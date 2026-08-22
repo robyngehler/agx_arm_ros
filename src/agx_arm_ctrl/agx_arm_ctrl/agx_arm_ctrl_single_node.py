@@ -280,7 +280,7 @@ class AgxArmRosNode(Node):
         # 100 Hz (C2 targets 200-250 later, at which point this follows it), and
         # the recovery watchdog decides on feedback_timeout, which is seconds.
         # 0 means "keep the old behaviour and follow pub_rate".
-        self.declare_parameter("acquisition_rate_hz", 100.0)
+        self.declare_parameter("acquisition_rate_hz", 200.0)
         # Phase 0 baseline instrumentation (C6): off unless asked for, so an
         # unmeasured deployment pays nothing.
         self.declare_parameter("runtime_metrics_enabled", False)

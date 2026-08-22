@@ -100,11 +100,11 @@ def generate_launch_description():
             description="If true, arm goals are logged but never sent to MoveIt.",
         ),
         DeclareLaunchArgument(
-            "hand_pub_rate", default_value="20.0",
+            "hand_pub_rate", default_value="50.0",
             description="Active hand feedback republish rate (Hz).",
         ),
         DeclareLaunchArgument(
-            "hand_joint_read_rate", default_value="10.0",
+            "hand_joint_read_rate", default_value="50.0",
             description="Active hand SDK joint poll rate (Hz) -- real CAN traffic.",
         ),
         DeclareLaunchArgument(

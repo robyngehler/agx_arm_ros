@@ -1254,7 +1254,10 @@ class CoordinatorNode(Node):
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = CoordinatorNode()
-    executor = MultiThreadedExecutor()
+    # Bounded on purpose: an unbounded MultiThreadedExecutor takes cpu_count()
+    # threads (12 on this Jetson) for a handful of callbacks, which contend on
+    # the GIL and the wait set without buying concurrency Python can use.
+    executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
 
     # Own the interrupt instead of letting rclpy tear the context down on the

@@ -111,7 +111,7 @@ def generate_launch_description():
     )
     joint_read_rate_arg = DeclareLaunchArgument(
         "joint_read_rate",
-        default_value="20.0",
+        default_value="50.0",
         description=(
             "SDK joint readback poll rate in Hz (each poll is a real CAN request "
             "on the shared arm+hand bus). Decoupled from pub_rate, which "

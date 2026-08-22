@@ -905,7 +905,7 @@ class OmniHandBridgeNode(Node):
         # arm+hand bus this competes with the 50 Hz MIT command stream, so the
         # SDK poll rate is decoupled from the ROS publish rate. <= 0 polls on
         # every publish tick (legacy behavior).
-        self.declare_parameter("joint_read_rate", 20.0)
+        self.declare_parameter("joint_read_rate", 50.0)
         self.declare_parameter("tactile_sample_count", 32)
         # Tactile has two cadences because it serves two different consumers.
         # As diagnostics it is a once-a-second sample nobody is waiting for. To
@@ -913,7 +913,7 @@ class OmniHandBridgeNode(Node):
         # closing at 20 Hz cannot act on a reading up to a second old, and the
         # skill controller rejects one that is (`tactile_stale_sec`).
         self.declare_parameter("tactile_read_rate", 1.0)
-        self.declare_parameter("tactile_reactive_read_rate", 20.0)
+        self.declare_parameter("tactile_reactive_read_rate", 50.0)
         self.declare_parameter("joint_states_command_topic", "control/joint_states")
         self.declare_parameter("device_id", 1)
         self.declare_parameter("canfd_id", 0)

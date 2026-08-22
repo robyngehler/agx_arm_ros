@@ -283,7 +283,7 @@ def generate_launch_description():
     )
     control_rate_arg = DeclareLaunchArgument(
         "control_rate_hz",
-        default_value="100.0",
+        default_value="200.0",
         description="MIT controller update rate in hertz.",
     )
     custom_model_arg = DeclareLaunchArgument(

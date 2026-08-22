@@ -1675,7 +1675,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-joints", default="", help="Comma-separated joint names per arm, in stored order (e.g. joint1,...,joint7)")
     parser.add_argument("--source-topic", default="feedback/joint_states", help="Per-arm JointState topic (namespaced automatically)")
     parser.add_argument("--start-mode", choices=[s.value for s in ManagerState], default=ManagerState.IDLE.value)
-    parser.add_argument("--sample-rate", type=float, default=100.0)
+    # Record at the control rate. The recording is the ceiling on what playback
+    # can reproduce: the controller interpolates between samples, it cannot
+    # invent detail the capture never took.
+    parser.add_argument("--sample-rate", type=float, default=200.0)
     parser.add_argument("--hold-timeout", type=float, default=3.0)
     parser.add_argument("--movement-threshold", type=float, default=0.01)
     parser.add_argument("--service-timeout", type=float, default=5.0)

@@ -213,11 +213,14 @@ free-runs without the arm).
 >   received frames — **including the hand's CANFD response frames**, which surface as `请求超时` even with an
 >   open window. Measured: ~108k RX `dropped` per bus over a teach session. The deeper buffer buys ~2 s so a
 >   scheduling hiccup no longer costs hand responses; the CPU load itself is a `sprint_refactor` target.
-> - keep `control_rate_hz` at its 50 Hz default (do **not** drop it — a lower rate risks hold instability);
->   handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`) instead. The MIT
->   launch args (`start_agx_arm_moveit.launch.py`, `start_multi_agx_arm_rviz.launch.py`) default
->   `mit_control_rate_hz` to 50 (was 100), which halves both the per-bus MIT frame load and the driver CPU
->   load that starved the feedback parser.
+> - **`control_rate_hz` is 200 Hz since 2026-08-22** (do **not** drop it — a lower rate risks hold
+>   instability); handle any residual softness with the stiffer/more-damped MIT hold gains (`kp`/`kd`)
+>   instead. This passage previously argued the other way, for 50 Hz, because a lower rate halves both
+>   the per-bus MIT frame load and the driver CPU load that starved the feedback parser. **That cost
+>   did not go away** — 200 Hz puts ~1400 MIT frames/s per arm on the bus against ~700 at 100 Hz, next
+>   to ~2150 f/s of feedback. Measured on the four-bus stack the loop does hold 198-199 Hz, so the
+>   rate is achievable; whether it is worth the bus load is a separate question, and
+>   `scripts/count_topic_messages.py` answers it against a 100 Hz counter-run.
 > - do **not** treat `ONE_SHOT=off` as a normal runtime mode. It is transport-history context only and can
 >   reintroduce retransmission buildup on the arm side.
 > - **TDC/TDCR offset tuning is not a lever here:** `scripts/can_tdc_sweep.py` sweeps showed a wide flat
@@ -312,7 +315,7 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
   positions at playback, velocities recomputed from the smoothed signal. **The window is a duration**
   and is converted to samples with the recording's own rate, so the filter is the same whatever rate
   it was captured at — expressed in samples, raising teach recordings from 50 Hz to 100 Hz silently
-  halved it. Teach recordings sample a feedback cache, so 10–30% of consecutive points are
+  halved it. The recording default is 200 Hz since 2026-08-22, matching the control rate. Teach recordings sample a feedback cache, so 10–30% of consecutive points are
   byte-identical (stale) and the raw finite-difference velocities chatter between ~0 and twice the
   true value — replayed raw, the arm judders even though MoveIt trajectories run smoothly through the
   same controller. Measured on real recordings: velocity chatter drops 8–11×, path deviation ≤ ~50

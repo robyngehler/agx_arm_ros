@@ -683,7 +683,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--library-dir", default="~/agx_arm_trajectories/wakeword", help="Directory that stores taught wakeword trajectories")
 	parser.add_argument("--name-prefix", default="wakeword", help="Prefix for taught trajectory filenames")
 	parser.add_argument("--start-mode", choices=[state.value for state in ManagerState], default=ManagerState.IDLE.value)
-	parser.add_argument("--sample-rate", type=float, default=50.0, help="Recording sample rate in Hz")
+	parser.add_argument("--sample-rate", type=float, default=200.0, help="Recording sample rate in Hz")
 	parser.add_argument("--hold-timeout", type=float, default=3.0, help="Stop recording after this much stationary time")
 	parser.add_argument("--movement-threshold", type=float, default=0.01, help="Movement threshold in rad for recording")
 	parser.add_argument("--service-timeout", type=float, default=5.0, help="Timeout for ROS service calls")

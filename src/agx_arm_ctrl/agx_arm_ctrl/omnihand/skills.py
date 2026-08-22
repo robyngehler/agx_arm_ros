@@ -104,7 +104,7 @@ class SkillControllerDefaults:
     metadata instead.
     """
 
-    control_rate_hz: float = 20.0
+    control_rate_hz: float = 50.0
     close_step_rad: float = 0.05
     open_step_rad: float = 0.08
     # MOTION_POSE ramps to a *taught* preset, including grip poses that press into

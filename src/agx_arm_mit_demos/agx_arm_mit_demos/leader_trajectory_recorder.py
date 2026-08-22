@@ -119,7 +119,7 @@ class LeaderTrajectoryRecorderNode(Node):
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Interactive Nero leader mode trajectory recorder")
 	parser.add_argument("--output-dir", default="~/agx_arm_trajectories", help="Directory for saved recordings")
-	parser.add_argument("--sample-rate", type=float, default=50.0, help="Sampling rate in Hz")
+	parser.add_argument("--sample-rate", type=float, default=200.0, help="Sampling rate in Hz")
 	parser.add_argument("--hold-timeout", type=float, default=3.0, help="Stop after this much stationary time")
 	parser.add_argument("--movement-threshold", type=float, default=0.01, help="Motion threshold in rad")
 	parser.add_argument("--service-timeout", type=float, default=5.0, help="Timeout for ROS service calls")

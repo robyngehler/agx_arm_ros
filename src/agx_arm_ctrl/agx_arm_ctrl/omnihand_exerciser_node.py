@@ -156,7 +156,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--rate",
         type=float,
-        default=20.0,
+        default=50.0,
         help="Publish rate while holding a pose in legacy --topic mode, in Hz.",
     )
     parser.add_argument(

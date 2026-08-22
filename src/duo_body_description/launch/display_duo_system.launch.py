@@ -171,7 +171,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 'pub_rate',
-                default_value='50',
+                default_value='200',
                 description='Joint state publisher rate in Hz.',
             ),
             DeclareLaunchArgument(

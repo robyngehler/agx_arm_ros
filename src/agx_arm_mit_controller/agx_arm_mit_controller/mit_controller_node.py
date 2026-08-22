@@ -99,7 +99,11 @@ class NeroMitControllerNode(Node):
             "joint_names",
             ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         )
-        self.declare_parameter("control_rate_hz", 100.0)
+        self.declare_parameter("control_rate_hz", 200.0)
+        # An unbounded MultiThreadedExecutor takes cpu_count() threads — 12 on
+        # this Jetson, for a handful of callbacks. They contend on the GIL and
+        # the wait set without buying concurrency Python can use.
+        self.declare_parameter("executor_threads", 4)
         self.declare_parameter("feedback_timeout_s", 0.25)
         self.declare_parameter("auto_enable_on_trajectory", True)
         self.declare_parameter("hold_final_point", True)
@@ -158,6 +162,7 @@ class NeroMitControllerNode(Node):
 
         self.joint_names = list(self.get_parameter("joint_names").value)
         self.control_rate_hz = float(self.get_parameter("control_rate_hz").value)
+        self.executor_threads = max(1, int(self.get_parameter("executor_threads").value))
         self.feedback_timeout_s = float(self.get_parameter("feedback_timeout_s").value)
         self.auto_enable_on_trajectory = bool(self.get_parameter("auto_enable_on_trajectory").value)
         self.hold_final_point = bool(self.get_parameter("hold_final_point").value)
@@ -353,6 +358,19 @@ class NeroMitControllerNode(Node):
                 "Debug ~/joint_trajectory input is enabled; keep it disabled "
                 "during production MoveIt execution"
             )
+
+        # Loop instrumentation, in the shape the arm driver already uses. Without
+        # it this node cannot report its own rate, so a shortfall can only be
+        # guessed at from outside — and a subscriber that cannot keep up reads
+        # exactly like a controller that is running slow.
+        self._loop_overrun_threshold_s = max(2.0 / self.control_rate_hz, 0.010)
+        self._last_loop_monotonic = 0.0
+        self._loop_gap_count = 0
+        self._loop_gap_sum_s = 0.0
+        self._max_loop_gap_s = 0.0
+        self._loop_overrun_count = 0
+        self._last_overrun_log_monotonic = 0.0
+        self._last_rate_report_monotonic = time.monotonic()
 
         self.timer = self.create_timer(
             1.0 / self.control_rate_hz,
@@ -1534,7 +1552,50 @@ class NeroMitControllerNode(Node):
             self.holding_final_point = False
         return self.hold_reference
 
+    LOOP_RATE_REPORT_PERIOD_S = 30.0
+
+    def _record_loop_gap(self) -> None:
+        """Measure how late this tick is, and say so periodically.
+
+        The achieved rate is the loop's own business: measured from a subscriber
+        it is confounded by that subscriber's scheduling, which is how a healthy
+        200 Hz loop was once read as 91 Hz.
+        """
+        now = time.monotonic()
+        if self._last_loop_monotonic:
+            gap = now - self._last_loop_monotonic
+            self._loop_gap_count += 1
+            self._loop_gap_sum_s += gap
+            if gap > self._loop_overrun_threshold_s:
+                self._loop_overrun_count += 1
+                self._max_loop_gap_s = max(self._max_loop_gap_s, gap)
+                if now - self._last_overrun_log_monotonic > 5.0:
+                    self._last_overrun_log_monotonic = now
+                    self.get_logger().warn(
+                        f"control-loop overrun: {gap * 1000:.1f} ms gap "
+                        f"(> {self._loop_overrun_threshold_s * 1000:.0f} ms; "
+                        f"count={self._loop_overrun_count}, "
+                        f"peak={self._max_loop_gap_s * 1000:.1f} ms)"
+                    )
+        self._last_loop_monotonic = now
+
+        if now - self._last_rate_report_monotonic >= self.LOOP_RATE_REPORT_PERIOD_S:
+            if self._loop_gap_count:
+                achieved = self._loop_gap_count / self._loop_gap_sum_s
+                self.get_logger().info(
+                    f"control loop {achieved:.1f} Hz achieved of "
+                    f"{self.control_rate_hz:.0f} Hz configured over "
+                    f"{self._loop_gap_sum_s:.0f}s; {self._loop_overrun_count} "
+                    f"overrun(s), peak {self._max_loop_gap_s * 1000:.1f} ms"
+                )
+            self._last_rate_report_monotonic = now
+            self._loop_gap_count = 0
+            self._loop_gap_sum_s = 0.0
+            self._loop_overrun_count = 0
+            self._max_loop_gap_s = 0.0
+
     def _control_loop(self) -> None:
+        self._record_loop_gap()
         with self.state_lock:
             if not self.enabled:
                 self._set_execution_state(ExecutionState.DISABLED)
@@ -1763,7 +1824,7 @@ class NeroMitControllerNode(Node):
 def main(args: Optional[list[str]] = None) -> None:
     rclpy.init(args=args)
     node = NeroMitControllerNode()
-    executor = MultiThreadedExecutor()
+    executor = MultiThreadedExecutor(num_threads=node.executor_threads)
     executor.add_node(node)
     try:
         executor.spin()

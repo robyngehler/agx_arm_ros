@@ -148,10 +148,17 @@ feedback for a bus. Distinguish the three things a "rate" can mean here:
   and vendor round trips;
 - **rendering and planning-scene load** — `use_rviz`, which is pure host CPU.
 
-| Knob | Default here | vs. Hefeweizen | Why it is safe to lower |
+> **Raised 2026-08-22.** The active hand now runs at 50 Hz on both knobs, on the
+> decision that 50 Hz is the floor for record and playback. That reverses the
+> throttling this table was written to justify, and the cost it names is real:
+> `hand_joint_read_rate` is a vendor round trip per sample, so 10 Hz to 50 Hz is
+> five times the SDK load on that hand. Measure the bridge CPU before assuming
+> it is free. The **idle** side stays throttled — it is never addressed.
+
+| Knob | Default here | vs. Hefeweizen | What lowering it used to buy |
 |---|---|---|---|
-| `hand_pub_rate` (left) | 20 Hz | 50 Hz | ROS republish only; nothing closes a loop on it |
-| `hand_joint_read_rate` (left) | 10 Hz | 20 Hz | the one rate that is still real CAN traffic and a vendor round trip |
+| `hand_pub_rate` (left) | 50 Hz | 50 Hz | ROS republish only; nothing closes a loop on it |
+| `hand_joint_read_rate` (left) | 50 Hz | 20 Hz | the one rate that is still real CAN traffic and a vendor round trip |
 | `idle_hand_pub_rate` (right) | 5 Hz | 50 Hz | the right hand is kept alive but never addressed |
 | `idle_hand_joint_read_rate` (right) | 2 Hz | 20 Hz | pure background load |
 | `use_rviz` on the arm bring-up | `false` | `true` | rviz rendering plus its planning-scene monitor is the largest non-node consumer |

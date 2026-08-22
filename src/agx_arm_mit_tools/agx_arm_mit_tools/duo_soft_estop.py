@@ -270,7 +270,10 @@ def main() -> None:
 		raise RuntimeError("ROS runtime dependencies are required to run the duo soft e-stop coordinator")
 	rclpy.init()
 	node = DuoSoftEstopCoordinator()
-	executor = MultiThreadedExecutor()
+	# Bounded on purpose: an unbounded MultiThreadedExecutor takes cpu_count()
+	# threads (12 on this Jetson) for a handful of callbacks, which contend on
+	# the GIL and the wait set without buying concurrency Python can use.
+	executor = MultiThreadedExecutor(num_threads=4)
 	executor.add_node(node)
 	try:
 		executor.spin()

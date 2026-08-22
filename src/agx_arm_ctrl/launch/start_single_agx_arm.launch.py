@@ -163,7 +163,7 @@ def generate_launch_description():
 
     hand_joint_read_rate_arg = DeclareLaunchArgument(
         'hand_joint_read_rate',
-        default_value='20.0',
+        default_value='50.0',
         description='OmniHand SDK joint readback rate in Hz. Each poll is a real CAN '
                     'request, and it is what actually sets the hand feedback rate.'
     )
