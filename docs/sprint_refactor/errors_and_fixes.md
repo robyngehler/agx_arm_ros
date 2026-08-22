@@ -917,3 +917,60 @@ run on a refusal had never executed.
   mechanism, not a different call on the same device.
 - Validation: L1/L2 only. `test_safety_hold_semantics.py` pins the four
   properties; no hardware run. Detail: `reference/emergency_stop_ladder.md`.
+
+## 2026-08-22 (found by measuring the rate chain below the SDK)
+
+### Every rate in the stack was configured above what the arm supplies
+
+- Symptom: a 200 Hz teach recording carried **33.4% identical consecutive
+  samples**, and duo playback on the right arm lagged and skipped setpoints.
+- Acquisition, publication and teach recording were all set to 200 Hz. On the
+  wire the arms deliver ~100 complete state updates/s (right, FW 1.06) and
+  ~137/s (left, FW 1.11). Everything above that was restamping unchanged data.
+- The rate is **not configurable**. The Nero transmit set has no feedback-period
+  message; `0x477` byte 2 toggles only the `0x48X` end-V/acc report, and `0x151`
+  byte 6 is a boolean CAN-push enable the driver already sets to ENABLE.
+- The arithmetic nobody had done: one state update is **eleven CAN frames**
+  (four position, seven motor state), so ~2520 frames/s is ~150 updates/s, not
+  2520. Eleven frames at the ~2 kHz sometimes quoted for these joints would be
+  22,000 frames/s, ~2.75x the whole 1 Mbit/s bus. That 2 kHz is the servo loop
+  *inside* the joint, which MIT closes locally and which never reaches CAN.
+- Why the instrumentation could not see it: the acquisition loop reported ~180 Hz
+  because it *ran* that fast, and its stall threshold
+  (`max(2 / acquisition_rate_hz, 0.2)` = 200 ms) is structurally blind to a 33%
+  shortfall. `0ed2f1e` added the achieved-rate report; this measurement is what
+  showed the report still answers the wrong question on its own.
+- Method rule that came out of it: measure a CAN rate claim **below the SDK**.
+  `candump` on the raw socket cannot be starved by pyAgxArm, and it matched the
+  kernel counters (2551 vs 2556/s, 2517 vs 2520/s). But it does **not** show the
+  TX loopback — reading a capture as "no commands on the bus" was wrong by
+  1582 frames/s of MIT stream, and TX has to come from
+  `/sys/class/net/<iface>/statistics/tx_packets`.
+- Not changed here: the 200 Hz configuration itself. Whether to return recording
+  and playback to the source rate is a deliberate call, not a cleanup.
+- Validation: L3, both arms, full stack up. Detail:
+  `reference/feedback_rate_budget.md`.
+
+### The right arm's motor-state feedback degrades along the joint chain
+
+- Symptom: the right arm was repeatedly described as lagging during duo
+  playback while the left was smooth.
+- `0x251`–`0x257` arrive at a rate that falls monotonically with the joint
+  index on the right arm — 101.0/s at J1 down to **63.4/s at J7** — while the
+  left arm is flat at 136.2/s under the same bus load. Joint *positions*
+  (`0x2A5`–`0x2A9`) stay uniform on both arms; only the motor-state group
+  degrades.
+- Stopping the MIT stream on the right arm alone, with the left still streaming
+  on its own bus as a within-run control, shows **both causes are real**:
+  removing 1353 frames/s of our own traffic lifts J7 to 79.2/s and narrows the
+  J7-vs-J1 deficit from 37% to 25%. The remaining 25% is internal to the arm.
+- The bus is not the limit (~51% load) and the interface is clean (304 drops in
+  18.9M packets, `missed 0`, no bus errors, no arbitration losses).
+- Consequence: velocity and effort in `feedback/joint_states` for the right
+  arm's distal joints are less than half as fresh as the left's.
+- **Unattributed and open.** Right is FW 1.06 and left is FW 1.11, which fits
+  the per-tier rule, but this does not separate firmware from that individual
+  arm — nor establish whether it reaches the control law, since MIT damps in the
+  joint. Recorded in `docs/open_questions.md`.
+- Validation: L3, reversible, arm did not move (TX 1353 -> 0 -> 1347/s, pose
+  unchanged to within 7e-5 rad).

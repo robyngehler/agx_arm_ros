@@ -95,6 +95,16 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   subscribed unless `allow_legacy_hand_command_ingress` is set (default false, development only)
 - the two arms run different, unflashable firmware (right 1.06 default tier, left 1.11 `NeroFW.V111`);
   anything derived from the protocol is per tier, not per robot model, and a measurement names its arm
+- the arm's feedback rate is the ceiling for every rate above it and is not
+  configurable: ~100 complete state updates/s on the right arm, ~137/s on the
+  left (wire, 2026-08-22). A rate set above it manufactures duplicates — 200 Hz
+  recording gave 33.4% identical consecutive samples. One update is eleven CAN
+  frames, so a frame count is not an update count, and the ~2 kHz quoted for
+  these joints is the joint's own servo loop, which never reaches CAN
+  (`docs/sprint_refactor/reference/feedback_rate_budget.md`)
+- measure a CAN rate claim below the SDK with `candump` on the raw socket and
+  cross-check `/sys/class/net/<iface>/statistics`; `candump` does not show the
+  TX loopback, so take TX from `tx_packets`
 - each device owns its own CAN bus: arms on `can_nero_left`/`can_nero_right` (native), hands on
   `hand_left`/`hand_right` (USB-CAN FD adapters); same-side arm and hand motion may run in parallel
   and the shared-bus hand window is a selectable degraded mode

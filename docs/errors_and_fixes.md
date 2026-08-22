@@ -125,6 +125,40 @@ Rules that survive the topology change:
 Current runtime contract: `project/control_integrity_architecture.md` and
 `sprint_refactor/planning/integration_plan.md` (C1, C2).
 
+## A rate configured above the arm's feedback source manufactures duplicates
+
+**Measured 2026-08-22.** Acquisition, publication and teach recording were all
+set to 200 Hz. The arms do not supply data that fast: on the wire, complete
+joint state updates arrive at **~100/s on the right arm (FW 1.06)** and
+**~137/s on the left (FW 1.11)**. A 200 Hz recording from that session carried
+33.4% identical consecutive samples.
+
+A frame count is not an update count. One complete state update is **eleven CAN
+frames** — four position frames (`0x2A5`, `0x2A6`, `0x2A7`, `0x2A9`, two joints
+each) plus seven motor-state frames (`0x251`–`0x257`). So ~2520 frames/s is
+~150 updates/s, and the ~2 kHz figure that gets quoted for these joints belongs
+to the servo loop *inside* the joint, which MIT closes locally and which never
+appears on CAN. Eleven frames at 2 kHz would be 22,000 frames/s, ~2.75x the
+whole 1 Mbit/s bus.
+
+There is no knob for it. `0x477` byte 2 toggles only the `0x48X` end-V/acc
+report, and `0x151` byte 6 is a boolean CAN-push enable that the driver already
+sets to ENABLE.
+
+Why nothing caught it: the driver's acquisition loop ran at ~180 Hz and had no
+way to say that the frames it read had not changed, and its stall threshold
+(`max(2 / acquisition_rate_hz, 0.2)` = 200 ms) cannot see a 33% shortfall at
+all. `0ed2f1e` added the periodic achieved-rate report that makes the loop state
+its own cadence.
+
+Measure this below the SDK. `candump` reads the raw socket, so the SDK cannot be
+the reason a frame is missing from it — but `candump` does **not** show the TX
+loopback, and reading a capture as "no commands on the bus" is a mistake this
+investigation made once. Take TX from
+`/sys/class/net/<iface>/statistics/tx_packets`.
+
+Full budget, per-joint rates and method: `sprint_refactor/reference/feedback_rate_budget.md`.
+
 ## Recurring traps that cost more than one session
 
 Escalated from the sprint records because each one recurred, or generalises past

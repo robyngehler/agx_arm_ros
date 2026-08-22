@@ -230,6 +230,13 @@ free-runs without the arm).
 > - **`pub_rate` is not the bus lever:** it only sets the ROS republish rate of already-cached feedback (the
 >   arm firmware push rate is fixed), so lowering it does not reduce CAN traffic — it only makes teach
 >   recording sample staler feedback. Leave it at its default.
+> - **that fixed push rate is now measured (2026-08-22): ~100 complete state updates/s on the right arm,
+>   ~137/s on the left**, and there is no protocol knob for it. It is the ceiling for `pub_rate`,
+>   `acquisition_rate_hz` and the teach `--sample-rate` alike. A 200 Hz recording made against it carried
+>   **33.4% identical consecutive samples**; for duo work the honest rate is the slower arm's. A frame
+>   count is not an update count — one update is eleven CAN frames — and the ~2 kHz sometimes quoted for
+>   these joints is the servo loop inside the joint, which MIT closes locally and which never reaches CAN.
+>   Budget, per-joint rates and method: `docs/sprint_refactor/reference/feedback_rate_budget.md`.
 > - **the bridge's `joint_read_rate` IS a bus lever** (unlike the arm's `pub_rate`): every hand joint
 >   readback is a real CANFD request/response. It defaults to 20 Hz and is now also what paces the
 >   bridge's timer and its feedback rate, so it is the one number that matters for the hand — still

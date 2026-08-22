@@ -94,3 +94,39 @@ safety-shaped mechanism that is not one, and the gap should stay visible.
 
 Not scheduled in the V02 refactor; it is hardware work with its own
 qualification, and the refactor must not be read as having addressed it.
+
+## Why the right arm's motor-state feedback degrades along the joint chain
+
+**Measured 2026-08-22, unattributed.** The right arm's motor-state frames
+(`0x251`–`0x257`) arrive at a rate that falls monotonically with the joint
+index; the left arm's do not, at a higher rate, under the same bus load.
+
+| motor state | right, MIT on | right, MIT off | left, MIT on |
+| --- | --- | --- | --- |
+| `0x251` (J1) | 101.0/s | 105.1/s | 136.2/s |
+| `0x256` | 83.3/s | 91.5/s | 136.2/s |
+| `0x257` (J7) | 63.4/s | 79.2/s | 136.2/s |
+
+Stopping the MIT stream on the right arm alone (the left kept streaming on its
+own bus as a within-run control) shows **both causes are real**: removing
+1353 frames/s of our own traffic recovers J7 by 25% and narrows the J7-vs-J1
+deficit from 37% to 25%, and the remaining 25% is internal to the arm. Joint
+*positions* (`0x2A5`–`0x2A9`) stay uniform on both arms; only the motor-state
+group degrades.
+
+Right is FW 1.06 and left is FW 1.11, which fits the per-tier rule, but this
+measurement does not separate a firmware difference from a difference in that
+individual arm. The bus is not saturated (~51% load) and the interface is clean
+(304 drops in 18.9M packets, `missed 0`, no bus errors).
+
+Consequence: velocity and effort in `feedback/joint_states` for the right arm's
+distal joints are less than half as fresh as the left arm's. Whether that
+reaches the control law is also open — in MIT mode the joint damps locally, so
+the Jetson-side velocity may never enter the command. It is recorded because it
+is the first measured structural left-right asymmetry in this stack, and it
+shows on the arm that has been described as lagging during duo playback.
+
+Open: whether it is firmware tier or this unit, whether it changes during motion
+(all numbers above are from a holding arm), and whether it affects control or
+only monitoring. Detail and method:
+`sprint_refactor/reference/feedback_rate_budget.md`.
