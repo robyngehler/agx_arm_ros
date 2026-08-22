@@ -3,6 +3,7 @@ from agx_arm_coordination.arm_executor import ArmConfig
 from types import SimpleNamespace
 
 from agx_arm_mit_demos.teach_manager import (
+    TeachManagerNode,
     _allow_bare_joint_match,
     _build_transition_targets,
     _hand_delivery_verdict,
@@ -311,3 +312,64 @@ def test_allow_bare_joint_match_uses_recorded_owner_in_duo():
     assert _allow_bare_joint_match(
         recording_namespace="", arm_namespace="", arm_count=1
     ) is True
+
+
+# --- duo playback dispatch ---------------------------------------------------
+
+class _RecordingPub:
+    """Publisher that appends to a shared event log."""
+
+    def __init__(self, log: list, label: str) -> None:
+        self._log = log
+        self._label = label
+
+    def publish(self, msg) -> None:
+        self._log.append(f"publish:{self._label}")
+
+
+def _dispatch_log(monkeypatch, *, repetitions: int, interval: float) -> list:
+    import agx_arm_mit_demos.teach_manager as teach_manager
+
+    log: list = []
+    node = TeachManagerNode.__new__(TeachManagerNode)
+    node.args = SimpleNamespace(
+        publish_repetitions=repetitions, publish_interval=interval
+    )
+    monkeypatch.setattr(
+        teach_manager.rclpy, "spin_once", lambda *_a, **_k: log.append("spin")
+    )
+    monkeypatch.setattr(
+        teach_manager.time, "sleep", lambda seconds: log.append(f"sleep:{seconds}")
+    )
+    slices = [
+        (SimpleNamespace(trajectory_pub=_RecordingPub(log, side)), object())
+        for side in ("left", "right")
+    ]
+    node._dispatch_slices(slices)
+    return log
+
+
+def test_duo_dispatch_publishes_every_arm_before_it_spins_or_sleeps(monkeypatch):
+    """Whatever sits between two publishes becomes a start-time offset.
+
+    A controller starts the trajectory when the message arrives, so a sleep or
+    a spin inside the per-arm loop desynchronises the arms by exactly its
+    duration. That is what put 671 ms between the two arms on a duo playback.
+    """
+    log = _dispatch_log(monkeypatch, repetitions=1, interval=0.0)
+
+    assert log == ["publish:left", "publish:right", "spin"]
+
+
+def test_a_repetition_restarts_both_arms_together(monkeypatch):
+    """A republish restarts the trajectory rather than reinforcing delivery.
+
+    So it may never be per-arm: repeating one arm's slice alone would restart
+    that arm while the other kept running.
+    """
+    log = _dispatch_log(monkeypatch, repetitions=2, interval=0.2)
+
+    assert log == [
+        "publish:left", "publish:right", "spin", "sleep:0.2",
+        "publish:left", "publish:right", "spin", "sleep:0.2",
+    ]

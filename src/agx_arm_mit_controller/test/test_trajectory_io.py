@@ -6,6 +6,7 @@ from agx_arm_mit_controller.trajectory_io import (
     sanitize_trajectory_name,
     save_recorded_trajectory,
     smooth_recorded_trajectory,
+    smoothing_window_samples,
     trim_trailing_stationary_points,
 )
 
@@ -148,6 +149,50 @@ def test_smooth_recorded_trajectory_flattens_velocity_chatter():
         for s, r in zip(smoothed.points, trajectory.points)
     )
     assert smoothed.metadata["playback_smoothing_window"] == 5
+
+
+def _rated(rate_hz: float, count: int) -> RecordedTrajectory:
+    step = 1.0 / rate_hz
+    return RecordedTrajectory(
+        name="rated", robot="nero", joint_names=["joint1"], sample_rate_hz=rate_hz,
+        recorded_at="2026-08-22T00:00:00+00:00",
+        points=[
+            RecordedTrajectoryPoint(index * step, [index * 0.001], [0.0], [0.0])
+            for index in range(count)
+        ],
+        metadata={},
+    )
+
+
+def test_smoothing_window_is_the_same_duration_at_any_recording_rate():
+    """The filter must not change when the recording rate does.
+
+    Expressed in samples, raising teach recordings from 50 Hz to 100 Hz halved
+    the smoothing without anyone touching the setting.
+    """
+    assert smoothing_window_samples(_rated(50.0, 100), 0.30) == 15
+    assert smoothing_window_samples(_rated(100.0, 200), 0.30) == 30
+    assert smoothing_window_samples(_rated(200.0, 400), 0.30) == 60
+
+
+def test_smoothing_window_falls_back_to_the_recorded_timestamps():
+    """A recording that declares no rate still gets the right window."""
+    trajectory = _rated(100.0, 200)
+    undeclared = RecordedTrajectory(
+        name=trajectory.name, robot=trajectory.robot,
+        joint_names=list(trajectory.joint_names), sample_rate_hz=0.0,
+        recorded_at=trajectory.recorded_at, points=trajectory.points, metadata={},
+    )
+    assert smoothing_window_samples(undeclared, 0.30) == 30
+
+
+def test_smoothing_window_is_zero_when_no_rate_can_be_established():
+    empty = RecordedTrajectory(
+        name="empty", robot="nero", joint_names=["joint1"], sample_rate_hz=0.0,
+        recorded_at="2026-08-22T00:00:00+00:00", points=[], metadata={},
+    )
+    assert smoothing_window_samples(empty, 0.30) == 0
+    assert smoothing_window_samples(_rated(100.0, 200), 0.0) == 0
 
 
 def test_smooth_recorded_trajectory_window_leq_one_is_identity():

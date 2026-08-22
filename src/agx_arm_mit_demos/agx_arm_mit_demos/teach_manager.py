@@ -67,7 +67,7 @@ from agx_arm_mit_controller.trajectory_io import (
     recorded_to_joint_trajectory,
     sanitize_trajectory_name,
     save_recorded_trajectory,
-    smooth_recorded_trajectory,
+    smooth_recorded_trajectory_seconds,
 )
 from agx_arm_coordination.arm_executor import ArmConfig
 
@@ -1189,8 +1189,10 @@ class TeachManagerNode(Node):
 
     # --- playback ------------------------------------------------------------
 
-    def _dispatch_to_arm(self, arm: _ArmEndpoint, trajectory_msg: JointTrajectory, columns: list[int]) -> None:
-        """Publish a per-arm slice to that arm's controller (joint1..7, unprefixed)."""
+    def _build_arm_slice(
+        self, arm: _ArmEndpoint, trajectory_msg: JointTrajectory, columns: list[int]
+    ) -> JointTrajectory:
+        """One arm's columns of a merged recording (joint1..7, unprefixed)."""
         msg = JointTrajectory()
         msg.joint_names = list(arm.source_joints)
         for point in trajectory_msg.points:
@@ -1199,10 +1201,25 @@ class TeachManagerNode(Node):
             ros_point.velocities = [float(point.velocities[i]) for i in columns] if point.velocities else []
             ros_point.time_from_start = point.time_from_start
             msg.points.append(ros_point)
+        return msg
+
+    def _dispatch_slices(self, slices: list[tuple[_ArmEndpoint, JointTrajectory]]) -> None:
+        """Publish every arm's slice back to back — this loop *is* the duo sync.
+
+        A controller starts the trajectory when the message arrives, so anything
+        between two publishes becomes a start-time offset between the arms. The
+        slices are therefore all built before the first one goes out, and
+        nothing sleeps or spins in between.
+
+        A repetition restarts the trajectory rather than reinforcing it, so it
+        repeats the whole set: both arms restart together or not at all.
+        """
         for _ in range(max(1, self.args.publish_repetitions)):
-            arm.trajectory_pub.publish(msg)
+            for arm, msg in slices:
+                arm.trajectory_pub.publish(msg)
             rclpy.spin_once(self, timeout_sec=0.05)
-            time.sleep(max(0.0, self.args.publish_interval))
+            if self.args.publish_interval > 0.0:
+                time.sleep(self.args.publish_interval)
 
     def _arm_columns(
         self,
@@ -1287,17 +1304,21 @@ class TeachManagerNode(Node):
         # Smooth at playback time (raw recordings stay untouched): teach
         # recordings carry stale-sample staircases whose finite-difference
         # velocities chatter, which the MIT controller reproduces as judder.
-        trajectory = smooth_recorded_trajectory(trajectory, self.args.playback_smoothing_window)
+        trajectory = smooth_recorded_trajectory_seconds(
+            trajectory, self.args.playback_smoothing_sec
+        )
         full_msg = recorded_to_joint_trajectory(
             trajectory,
             time_scale=1.0 / self.args.playback_speed_scale,
             current_positions=current_positions,
             lead_in_sec=self.args.playback_lead_in_sec,
         )
-        # Publish each arm's slice back-to-back (per-arm controllers run concurrently);
-        # for a duo recording this is the direct-controller sync path (bypasses MoveIt).
-        for arm, columns in dispatched:
-            self._dispatch_to_arm(arm, full_msg, columns)
+        # Build every slice before publishing any of it; for a duo recording
+        # this is the direct-controller sync path (bypasses MoveIt).
+        self._dispatch_slices([
+            (arm, self._build_arm_slice(arm, full_msg, columns))
+            for arm, columns in dispatched
+        ])
         self.get_logger().info(
             f"Played {path.name} on {[arm.label for arm, _ in dispatched]} "
             "(needs enable_debug_joint_trajectory_topic:=true on the MIT bring-up)"
@@ -1676,14 +1697,15 @@ def parse_args() -> argparse.Namespace:
         help="Blend from the current hold pose to the first recorded waypoint over this many seconds",
     )
     parser.add_argument(
-        "--playback-smoothing-window",
-        type=int,
-        default=15,
+        "--playback-smoothing-sec",
+        type=float,
+        default=0.30,
         help=(
-            "Zero-phase moving-average window (samples) applied to recorded positions at "
-            "playback, with velocities recomputed from the smoothed signal (9 at 50 Hz "
-            "~ 180 ms). Removes the stale-sample staircase that makes raw playback judder; "
-            "<= 1 disables smoothing."
+            "Zero-phase moving-average window (SECONDS) applied to recorded positions at "
+            "playback, with velocities recomputed from the smoothed signal. Converted to "
+            "samples using the recording's own rate, so the filter stays the same whatever "
+            "rate it was captured at. Removes the stale-sample staircase that makes raw "
+            "playback judder; <= 0 disables smoothing."
         ),
     )
     parser.add_argument("--transition-velocity-scaling", type=float, default=0.10,
@@ -1699,8 +1721,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--settle-sec", type=float, default=0.5, help="Averaging window for anchor capture")
     parser.add_argument("--precision", type=int, default=5)
     parser.add_argument("--max-waypoints", type=int, default=8, help="Downsample target for waypoint conversion")
-    parser.add_argument("--publish-repetitions", type=int, default=3)
-    parser.add_argument("--publish-interval", type=float, default=0.2)
+    # A trajectory publish is not idempotent: the controller restarts execution
+    # from t=0 on every message, so a repetition replays the start rather than
+    # reinforcing delivery. The topic is RELIABLE; one publish is a delivered
+    # publish. Above 1 only as a deliberate diagnostic.
+    parser.add_argument("--publish-repetitions", type=int, default=1)
+    parser.add_argument("--publish-interval", type=float, default=0.0)
     parser.add_argument("--auto-enable-arm", action="store_true", help="Call enable_agx_arm before mode switches")
     parser.add_argument("--no-keyboard", action="store_true")
     parser.add_argument("--urdf-path", default="")

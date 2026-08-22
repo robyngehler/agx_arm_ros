@@ -177,6 +177,37 @@ def smooth_recorded_trajectory(
     )
 
 
+def smoothing_window_samples(trajectory: RecordedTrajectory, window_sec: float) -> int:
+    """Samples covering ``window_sec`` at this recording's own rate.
+
+    The window belongs in the time domain: the same sample count is a different
+    filter at a different recording rate, so a count lets a change to the
+    recording rate silently retune the smoothing. Raising teach recordings from
+    50 Hz to 100 Hz halved it exactly that way.
+
+    Falls back to the recording's timestamps when it declares no rate, and to 0
+    (no smoothing) when neither is usable.
+    """
+    if window_sec <= 0.0:
+        return 0
+    rate = float(trajectory.sample_rate_hz or 0.0)
+    if rate <= 0.0 and len(trajectory.points) > 1 and trajectory.duration > 0.0:
+        rate = (len(trajectory.points) - 1) / trajectory.duration
+    if rate <= 0.0:
+        return 0
+    return max(1, int(round(window_sec * rate)))
+
+
+def smooth_recorded_trajectory_seconds(
+    trajectory: RecordedTrajectory,
+    window_sec: float,
+) -> RecordedTrajectory:
+    """:func:`smooth_recorded_trajectory` with the window given as a duration."""
+    return smooth_recorded_trajectory(
+        trajectory, smoothing_window_samples(trajectory, window_sec)
+    )
+
+
 def save_recorded_trajectory(trajectory: RecordedTrajectory, file_path: str | Path) -> Path:
     path = Path(file_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)

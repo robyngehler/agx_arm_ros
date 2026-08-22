@@ -14,7 +14,7 @@ from trajectory_msgs.msg import JointTrajectory
 from agx_arm_mit_controller.trajectory_io import (
 	load_recorded_trajectory,
 	recorded_to_joint_trajectory,
-	smooth_recorded_trajectory,
+	smooth_recorded_trajectory_seconds,
 )
 
 
@@ -84,9 +84,22 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--feedback-timeout", type=float, default=3.0, help="Timeout waiting for fresh feedback/joint_states after mode changes")
 	parser.add_argument("--playback-speed-scale", type=float, default=1.0, help="Playback speed scale (0.25 = quarter-speed, 1.0 = recorded speed)")
 	parser.add_argument("--playback-lead-in-sec", type=float, default=0.0, help="Blend from the current hold pose to the first recorded waypoint over this many seconds")
-	parser.add_argument("--playback-smoothing-window", type=int, default=15, help="Zero-phase moving-average window (samples) applied to recorded positions at playback, velocities recomputed from the smoothed signal; <= 1 disables")
-	parser.add_argument("--publish-repetitions", type=int, default=3, help="How often to republish the trajectory")
-	parser.add_argument("--publish-interval", type=float, default=0.2, help="Seconds between trajectory publishes")
+	parser.add_argument(
+		"--playback-smoothing-sec", type=float, default=0.30,
+		help=(
+			"Zero-phase moving-average window (SECONDS) applied to recorded positions "
+			"at playback, converted to samples using the recording's own rate; "
+			"<= 0 disables"
+		),
+	)
+	# A trajectory publish is not idempotent: the controller restarts execution
+	# from t=0 on every message, so a repetition replays the start rather than
+	# reinforcing delivery. The topic is RELIABLE. Above 1 only as a diagnostic.
+	parser.add_argument(
+		"--publish-repetitions", type=int, default=1,
+		help="How often to republish; each republish RESTARTS the trajectory",
+	)
+	parser.add_argument("--publish-interval", type=float, default=0.0, help="Seconds between trajectory publishes")
 	return parser.parse_args()
 
 
@@ -98,7 +111,7 @@ def execute_recorded_trajectory(
 	feedback_timeout: float,
 	playback_speed_scale: float = 1.0,
 	playback_lead_in_sec: float = 0.0,
-	playback_smoothing_window: int = 9,
+	playback_smoothing_sec: float = 0.30,
 	publish_repetitions: int,
 	publish_interval: float,
 ) -> None:
@@ -125,7 +138,7 @@ def execute_recorded_trajectory(
 	# Smooth at playback time (the saved file stays raw): stale-sample
 	# staircases in the recording chatter the finite-difference velocities,
 	# which the MIT controller reproduces as judder.
-	trajectory = smooth_recorded_trajectory(trajectory, playback_smoothing_window)
+	trajectory = smooth_recorded_trajectory_seconds(trajectory, playback_smoothing_sec)
 	joint_trajectory = recorded_to_joint_trajectory(
 		trajectory,
 		time_scale=1.0 / playback_speed_scale,
@@ -161,7 +174,7 @@ def main() -> None:
 			feedback_timeout=args.feedback_timeout,
 			playback_speed_scale=args.playback_speed_scale,
 			playback_lead_in_sec=args.playback_lead_in_sec,
-			playback_smoothing_window=args.playback_smoothing_window,
+			playback_smoothing_sec=args.playback_smoothing_sec,
 			publish_repetitions=args.publish_repetitions,
 			publish_interval=args.publish_interval,
 		)
