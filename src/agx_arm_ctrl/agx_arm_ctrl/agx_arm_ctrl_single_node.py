@@ -483,6 +483,14 @@ class AgxArmRosNode(Node):
         # is_ok()/hz signals without the CAN bus ever going down. A loop gap this
         # large means the "staleness" the watchdog sees may be local, not the bus.
         self._loop_overrun_threshold_s = max(2.0 / self.acquisition_rate_hz, 0.2)
+        # The overrun threshold is floored at 200 ms because it hunts bus stalls,
+        # which makes it blind to the other failure: a loop that never stalls and
+        # never reaches its rate either. Feedback ran at 135 Hz of a configured
+        # 200 without one warning, and every teach recording inherited the gap as
+        # duplicate samples. So the achieved rate is reported on its own.
+        self._acq_gap_count = 0
+        self._acq_gap_sum_s = 0.0
+        self._last_rate_report_monotonic = time.monotonic()
         self._last_loop_monotonic = 0.0
         self._last_loop_gap_s = 0.0
         self._max_loop_gap_s = 0.0
@@ -1673,6 +1681,8 @@ class AgxArmRosNode(Node):
             now = time.monotonic()
             if self._last_loop_monotonic:
                 self._last_loop_gap_s = now - self._last_loop_monotonic
+                self._acq_gap_count += 1
+                self._acq_gap_sum_s += self._last_loop_gap_s
                 if self._last_loop_gap_s > self._loop_overrun_threshold_s:
                     self._loop_overrun_count += 1
                     self._max_loop_gap_s = max(
@@ -1689,6 +1699,19 @@ class AgxArmRosNode(Node):
                             "'staleness' this cycle may be local starvation, not a dead bus."
                         )
             self._last_loop_monotonic = now
+            if now - self._last_rate_report_monotonic >= self.ACQ_RATE_REPORT_PERIOD_S:
+                if self._acq_gap_count:
+                    achieved = self._acq_gap_count / self._acq_gap_sum_s
+                    # Feedback publication rides this loop, so this number is also
+                    # the ceiling on what a teach recording can capture.
+                    self.get_logger().info(
+                        f"acquisition loop {achieved:.1f} Hz achieved of "
+                        f"{self.acquisition_rate_hz:.0f} Hz configured over "
+                        f"{self._acq_gap_sum_s:.0f}s"
+                    )
+                self._last_rate_report_monotonic = now
+                self._acq_gap_count = 0
+                self._acq_gap_sum_s = 0.0
             # P1: detect a stalled bus (TX ENOBUFS slot leak or stale feedback)
             # and re-establish the link instead of dead-locking until restart.
             # Never let recovery bookkeeping crash the publish loop.
@@ -3170,6 +3193,8 @@ class AgxArmRosNode(Node):
     # An emergency stop is only trustworthy if the arm is confirmed stopped in
     # feedback: under ENOBUFS the SDK silently drops the stop command and still
     # returns success (plan section 1.3.2), so the command alone proves nothing.
+    ACQ_RATE_REPORT_PERIOD_S = 30.0
+
     ESTOP_VELOCITY_THRESHOLD_RAD_S = 0.05
     ESTOP_VERIFY_TIMEOUT_S = 0.5
     # Two feedback frames must be at least this far apart before a finite
