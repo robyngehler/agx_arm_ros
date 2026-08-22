@@ -23,11 +23,15 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
+import threading
 import time
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+
+# How long to wait for the first message before giving up on the window.
+DISCOVERY_TIMEOUT_S = 10.0
 
 
 def _import_message(type_name: str):
@@ -47,27 +51,45 @@ def main(argv=None) -> int:
 
     rclpy.init()
     node = Node("topic_message_counter")
-    counter = {"n": 0}
+    # Timestamps, not a bare count: the rate is then taken over the span the
+    # messages actually spanned, so neither discovery nor subscription matching
+    # is charged to the publisher. Counting over a wall-clock window that starts
+    # at rclpy.init() reported 168/s for a topic running at 197/s.
+    stamps: list[float] = []
     node.create_subscription(
         _import_message(args.message_type),
         args.topic,
-        lambda _msg: counter.__setitem__("n", counter["n"] + 1),
-        QoSProfile(depth=50, reliability=ReliabilityPolicy.RELIABLE),
+        lambda _msg: stamps.append(time.monotonic()),
+        QoSProfile(depth=200, reliability=ReliabilityPolicy.RELIABLE),
     )
 
-    deadline = time.monotonic() + args.seconds
-    while rclpy.ok() and time.monotonic() < deadline:
-        rclpy.spin_once(node, timeout_sec=0.05)
-    node.destroy_node()
+    # Spin properly, on its own thread. A `spin_once` loop handles ONE callback
+    # per iteration and pays the wait-set cost every time, so above ~100 Hz it
+    # cannot keep up and reports its own deafness as the publication rate: it
+    # measured 91-172/s on a topic running at 197/s. That is the failure this
+    # script exists to avoid, so it must not commit it.
+    spinner = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spinner.start()
+
+    deadline = time.monotonic() + DISCOVERY_TIMEOUT_S
+    while not stamps and time.monotonic() < deadline:
+        time.sleep(0.01)
+    time.sleep(args.seconds)
     rclpy.shutdown()
+    spinner.join(timeout=5.0)
+    node.destroy_node()
 
-    count = counter["n"]
+    count = len(stamps)
     label = f"{args.label}: " if args.label else ""
+    span = (stamps[-1] - stamps[0]) if count > 1 else 0.0
+    if span <= 0.0:
+        print(f"{label}{count} messages on {args.topic} (no measurable span)")
+        return 0 if count else 1
     print(
-        f"{label}{count} messages on {args.topic} in {args.seconds:.0f}s "
-        f"({count / args.seconds:.1f}/s)"
+        f"{label}{count} messages on {args.topic} over {span:.1f}s "
+        f"({(count - 1) / span:.1f}/s)"
     )
-    return 0 if count else 1
+    return 0
 
 
 if __name__ == "__main__":
