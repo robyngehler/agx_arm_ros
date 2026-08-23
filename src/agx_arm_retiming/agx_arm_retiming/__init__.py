@@ -11,5 +11,29 @@ Two families of mode, split by what each tool can express:
 """
 
 from agx_arm_retiming._totg import retime_path
+from agx_arm_retiming.planning import (
+    AS_RECORDED,
+    MAXIMIZE_SPEED,
+    MODES,
+    NERO_MAX_VELOCITY,
+    SMOOTH,
+    SPEED_SCALE,
+    RetimedTrajectory,
+    RetimingError,
+    default_acceleration,
+    retime,
+)
 
-__all__ = ["retime_path"]
+__all__ = [
+    "AS_RECORDED",
+    "MAXIMIZE_SPEED",
+    "MODES",
+    "NERO_MAX_VELOCITY",
+    "SMOOTH",
+    "SPEED_SCALE",
+    "RetimedTrajectory",
+    "RetimingError",
+    "default_acceleration",
+    "retime",
+    "retime_path",
+]
