@@ -373,3 +373,32 @@ def test_a_repetition_restarts_both_arms_together(monkeypatch):
         "publish:left", "publish:right", "spin", "sleep:0.2",
         "publish:left", "publish:right", "spin", "sleep:0.2",
     ]
+
+
+def test_hand_window_is_derived_from_the_declared_topology(monkeypatch):
+    """The handshake quiesces an arm for the duration of a hand command. On
+    dedicated per-device buses that arm shares no bus with the hand, so the
+    window costs motion for nothing — and the teach manager used to take it
+    unconditionally while every other node derived it."""
+    import sys
+
+    from agx_arm_ctrl.motion_registry import handshake_required
+    from agx_arm_mit_demos import teach_manager
+
+    monkeypatch.setattr(sys, "argv", ["teach_manager"])
+    assert teach_manager.parse_args().hand_window is handshake_required()
+
+
+def test_a_hand_window_flag_against_the_registry_is_refused(monkeypatch):
+    """Two truths about one wiring loom: the registry wins, loudly."""
+    import sys
+
+    import pytest
+
+    from agx_arm_ctrl.motion_registry import handshake_required
+    from agx_arm_mit_demos import teach_manager
+
+    contradicting = "--no-hand-window" if handshake_required() else "--hand-window"
+    monkeypatch.setattr(sys, "argv", ["teach_manager", contradicting])
+    with pytest.raises(ValueError, match="contradicts bus_topology"):
+        teach_manager.parse_args()

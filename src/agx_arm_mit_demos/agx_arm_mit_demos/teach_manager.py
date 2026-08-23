@@ -70,6 +70,7 @@ from agx_arm_mit_controller.trajectory_io import (
     smooth_recorded_trajectory_seconds,
 )
 from agx_arm_coordination.arm_executor import ArmConfig
+from agx_arm_ctrl.motion_registry import assert_matches_topology, handshake_required
 
 from .capture_anchor_pose import average_joint_positions, update_pose_in_config
 from .leader_trajectory_recorder import RecorderSnapshot, build_recorded_trajectory
@@ -1531,7 +1532,8 @@ class TeachManagerNode(Node):
             "Playback mode: f -> play selected   c -> cancel active trajectory\n"
             "Transitions:  f -> plan selected target, press f again -> execute cached plan, c -> clear cached plan\n"
             "Hand mode:    c -> capture current hand pose as a skill, f -> replay selected skill\n"
-            "              (each wraps in a prepare_hand_window/resume_arm_control handshake)\n"
+            "              (wrapped in a prepare_hand_window/resume_arm_control handshake\n"
+            "               only on the shared-bus topology; parallel otherwise)\n"
             "With two arms, record/anchor ask which resource to save "
             "(both_arms -> merged 14-dim, or one side -> 7-dim).\n"
         )
@@ -1736,8 +1738,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--auto-enable-arm", action="store_true", help="Call enable_agx_arm before mode switches")
     parser.add_argument("--no-keyboard", action="store_true")
     parser.add_argument("--urdf-path", default="")
-    # Hand mode ('g'): capture ('c') / replay ('f') OmniHand skills, each wrapped
-    # in a per-command prepare_hand_window/resume_arm_control handshake.
+    # Hand mode ('g'): capture ('c') / replay ('f') OmniHand skills. Whether each
+    # is wrapped in a prepare_hand_window/resume_arm_control handshake follows
+    # the declared bus topology; see --hand-window below.
     parser.add_argument(
         "--hand-gestures", default="",
         help="Path to omnihand_pro_gestures.yaml; enables hand mode ('g') when set/resolvable",
@@ -1769,14 +1772,29 @@ def parse_args() -> argparse.Namespace:
         help="Max time to hold the hand window waiting for delivery confirmation "
              "before closing it anyway",
     )
-    parser.add_argument(
+    # Derived from the one declared topology, never typed here: on dedicated
+    # per-device buses the handshake quiesces an arm for a hand that shares no
+    # bus with it, and does it silently. The explicit flags stay as
+    # compatibility inputs and are refused when they contradict the registry.
+    window = parser.add_mutually_exclusive_group()
+    window.add_argument(
+        "--hand-window", dest="hand_window", action="store_true",
+        help="Force the arm<->hand prepare/resume handshake (shared-bus topology only)",
+    )
+    window.add_argument(
         "--no-hand-window", dest="hand_window", action="store_false",
         help="Skip the arm<->hand prepare/resume handshake and command the hand "
              "directly. Only safe when the hand has its own CAN bus (parallel "
              "operation); on a shared bus the hand needs the window.",
     )
-    parser.set_defaults(hand_window=True)
-    return parser.parse_args()
+    parser.set_defaults(hand_window=None)
+    args = parser.parse_args()
+    args.hand_window = (
+        handshake_required()
+        if args.hand_window is None
+        else assert_matches_topology("hand_window", args.hand_window)
+    )
+    return args
 
 
 def main() -> None:

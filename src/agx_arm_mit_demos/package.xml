@@ -8,6 +8,7 @@
   <license>Apache-2.0</license>
 
   <depend>agx_arm_coordination</depend>
+  <depend>agx_arm_ctrl</depend>
   <depend>agx_arm_mit_controller</depend>
   <depend>moveit_msgs</depend>
   <depend>rclpy</depend>
