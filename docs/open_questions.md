@@ -130,3 +130,40 @@ Open: whether it is firmware tier or this unit, whether it changes during motion
 (all numbers above are from a holding arm), and whether it affects control or
 only monitoring. Detail and method:
 `sprint_refactor/reference/feedback_rate_budget.md`.
+
+## Three numbers for one joint velocity limit
+
+**Opened 2026-08-24.** The manufacturer specifies 180 deg/s on J1-J3 and
+225 deg/s on J4-J7 — 3.14 and 3.93 rad/s. Two other declarations disagree:
+
+| source | J1-J3 | status |
+| --- | --- | --- |
+| manufacturer manual | 3.14 rad/s | taken as ground truth |
+| `agx_arm_moveit/config/joint_limits.yaml` | 5.0 rad/s | **above spec**, and it governs every MoveIt-planned anchor move |
+| MIT controller `velocity_limit` | 2.0 rad/s | below spec, and it silently clamps |
+
+The planner may therefore plan a motion the controller will not execute: above
+2.0 rad/s the controller clamps the commanded velocity, tracking error grows,
+and `position_error_limit` drops that joint to a hold mid-motion. Nothing has hit
+this yet only because the catalogue runs anchor moves at 0.10-0.15 scaling.
+
+It now matters more, because the time-optimal parameterization saturates
+whatever limit it is given. `agx_arm_retiming` carries the manufacturer figures
+as `NERO_MAX_VELOCITY`; anything it produces above the controller's clamp is
+unexecutable.
+
+**No acceleration is specified at all.** `a_max = 2.5 · v_max` is carried as an
+explicitly conservative stand-in, and since acceleration is the binding
+constraint in every replay measured, that stand-in — not the hardware — is what
+currently sets replay speed.
+
+Open: which number governs, whether the controller's clamp is a deliberate
+safety margin or an unexamined default, and whether an acceleration figure can
+be obtained or has to be measured.
+
+Related: the manual's **joint range** for J2 is quoted in a convention offset by
+90 degrees from what the firmware feedback and the URDF use — shifting it lands
+within 0.3 deg of the URDF bound, and every other joint's centre already agrees.
+Position ranges therefore cannot be applied to feedback values without that
+correction; velocity limits are offset-invariant and are unaffected.
+Detail: `sprint_refactor/reference/trajectory_retiming.md`.

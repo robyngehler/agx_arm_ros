@@ -125,6 +125,53 @@ Rules that survive the topology change:
 Current runtime contract: `project/control_integrity_architecture.md` and
 `sprint_refactor/planning/integration_plan.md` (C1, C2).
 
+## `spin_once` in a paced loop captures at a fraction of the loop rate
+
+**Three sessions, 2026-08-22 to 2026-08-24.** `rclpy.spin_once` delivers **one
+message from one subscription**. A loop paced at a fixed rate that calls it once
+per cycle therefore captures at *loop rate ÷ ready callbacks*. Measured on a node
+with four subscriptions at 96 loops/s: exactly 24 messages/s each.
+
+Where it has bitten:
+
+| | symptom |
+| --- | --- |
+| `count_topic_messages.py` | reported 121 Hz for a topic running at 198 Hz |
+| teach recorder | stored 22 Hz of real content from a 100 Hz clock; a single-arm capture changed every 4th–5th row with *no* gap of 1, 2 or 3 anywhere in the file |
+| the fix for the second | a fixed 32-call drain cost the loop 16% of its rate |
+
+The rate scales with the clock, which is the tell and also the trap: lowering a
+teach `--sample-rate` from 200 to 100 halved what was captured, for a reason
+that had nothing to do with the arm.
+
+Fix: drain the remaining ready callbacks, and **stop as soon as a spin serves
+nothing.** Every spin checks the node's whole wait set, so a fixed drain count is
+paid even when the queues are empty, and the cost scales with the node — 3.6%
+with four subscriptions, 16% with the ten service clients and two action clients
+a real node carries. Either an early-exit drain or a spin on its own thread.
+
+Two signatures worth recognising, because they point in opposite directions:
+
+- **different rates per source** — a real per-source difference, look upstream
+- **identical rates across sources** — the loop, not the sources
+
+## A repeated sample is not data, and the file cannot tell you which it was
+
+**2026-08-24.** A still arm and a missing update produce the same repeated row.
+Once written, no reader can distinguish them — which is why two rounds of
+forensics on stored recordings pointed at the wrong cause here.
+
+Remove repeats where they are produced: the recorder knows whether the arm
+supplied a new frame, a later reader does not. Teach recordings are now
+de-duplicated before the file exists, the stored `sample_rate_hz` becomes the
+rate that survived, and each capture reports the distinct frames the arm
+actually supplied next to the samples stored. `scripts/clean_recording.py`
+applies the same shared logic to files taken earlier.
+
+A finite difference across a repeat alternates between zero and twice the true
+value, and a spline fitted through them reproduces that as acceleration noise —
+so this is not cosmetic.
+
 ## A rate configured above the arm's feedback source manufactures duplicates
 
 **Measured 2026-08-22.** Acquisition, publication and teach recording were all

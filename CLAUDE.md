@@ -102,6 +102,11 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   frames, so a frame count is not an update count, and the ~2 kHz quoted for
   these joints is the joint's own servo loop, which never reaches CAN
   (`docs/sprint_refactor/reference/feedback_rate_budget.md`)
+- `rclpy.spin_once` delivers one message from one subscription, so a paced loop
+  calling it once per cycle captures at loop rate over ready callbacks. Drain the
+  rest and stop as soon as a spin serves nothing — a fixed drain count is paid
+  even on empty queues and scales with the node's wait set. Identical rates
+  across sources point at the loop; differing rates point upstream
 - measure a CAN rate claim below the SDK with `candump` on the raw socket and
   cross-check `/sys/class/net/<iface>/statistics`; `candump` does not show the
   TX loopback, so take TX from `tx_packets`

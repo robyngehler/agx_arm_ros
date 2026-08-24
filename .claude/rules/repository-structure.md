@@ -22,6 +22,7 @@ Use the current workspace layout as the implementation truth during the active D
 - `src/agx_arm_mit_controller`: runtime MIT controller node, shared trajectory/gravity libraries, and curated controller configs
 - `src/agx_arm_mit_demos`: interactive recorder, playback, and wakeword demo workflows around the MIT stack
 - `src/agx_arm_mit_tools`: debug bridges, hold validation, and calibration helpers around the MIT stack
+- `src/agx_arm_retiming`: time parameterization for recorded trajectories; the only C++ package in the runtime path, because MoveIt's TOTG has no Python bindings in Humble
 - `src/agx_arm_msgs`: repo-owned ROS messages
 - `src/agx_arm_coordination`: Activity-DAG coordinator, performer routing, resource model, and YAML graph/catalogue loader for coordinated dual-arm + dual-hand tasks
 - `vendor/OmniHand-Pro-2025`: upstream SDK input, not the public repo contract

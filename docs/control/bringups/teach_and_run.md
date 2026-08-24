@@ -230,6 +230,19 @@ free-runs without the arm).
 > - **`pub_rate` is not the bus lever:** it only sets the ROS republish rate of already-cached feedback (the
 >   arm firmware push rate is fixed), so lowering it does not reduce CAN traffic — it only makes teach
 >   recording sample staler feedback. Leave it at its default.
+> - **playback asks how to replay, it is no longer a launch argument (2026-08-24).** Pressing `f` in
+>   playback mode prompts for one of `as_recorded`, `smooth`, `speed_scale` or `maximize_speed`,
+>   defaulting to the previous choice, and `speed_scale` then asks for the factor relative to the
+>   recorded duration. Which one a recording wants is a property of the motion, not of the session, so
+>   changing your mind no longer needs the stack restarted. `--playback-mode` only sets the starting
+>   default (and is what a `--no-keyboard` run uses). Each replay reports achieved speed, path
+>   deviation and limit utilisation before it moves. Detail:
+>   `docs/sprint_refactor/reference/trajectory_retiming.md`.
+> - **recordings are de-duplicated before they are saved (2026-08-24).** A repeated row is what the
+>   clock stored when the arm had nothing new; kept in the file, no later reader can tell it from a
+>   still arm. The stored `sample_rate_hz` becomes the rate that survived, and each capture logs the
+>   distinct frames the arm actually supplied. `--no-deduplicate-recordings` keeps them;
+>   `scripts/clean_recording.py` applies the same logic to older files.
 > - **that fixed push rate is now measured (2026-08-22): ~100 complete state updates/s on the right arm,
 >   ~137/s on the left**, and there is no protocol knob for it. It is the ceiling for `pub_rate`,
 >   `acquisition_rate_hz` and the teach `--sample-rate` alike. A 200 Hz recording made against it carried
