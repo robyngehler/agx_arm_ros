@@ -2,15 +2,19 @@
 
 The modes split by what the underlying tool can express, not by preference:
 
-* ``as_recorded`` and ``smooth`` keep the taught timing. A spline over the
-  recorded ``(t, q)`` supplies analytic velocity and acceleration, so a motion
-  whose dynamics were taught deliberately — a dwell, a slow pour — survives.
+* ``as_recorded`` and ``smooth`` keep the taught timing and fit nothing. The
+  recorded samples are replayed at their recorded times, with derivatives taken
+  as central differences and, for ``smooth``, a moving-average window over the
+  positions first. A motion whose dynamics were taught deliberately — a dwell, a
+  slow pour — therefore survives, and so does the path.
 * ``speed_scale`` and ``maximize_speed`` hand the geometric path to MoveIt's
   time-optimal parameterization, which computes its own timing and therefore
   discards anything purely temporal in the recording.
 
-Path fidelity belongs to the first pair. The second pair smooths before it
-re-times because the parameterization needs it: fed a dense recording directly,
+Path fidelity belongs to the first pair, and it is why they are blunt: a fitted
+spline has to choose a smoothness for the whole signal and reproduces whatever it
+did not smooth as derivative noise. The second pair fits before it re-times
+because the parameterization needs it: fed a dense recording directly,
 it produces either curvature spikes at every sample or blend radii so small the
 result is slower than the recording
 (``docs/sprint_refactor/reference/trajectory_retiming.md``).
@@ -23,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
-from scipy.interpolate import UnivariateSpline, make_interp_spline
+from scipy.interpolate import UnivariateSpline
 
 from agx_arm_retiming._totg import retime_path
 
@@ -35,9 +39,9 @@ MODES = (AS_RECORDED, SMOOTH, SPEED_SCALE, MAXIMIZE_SPEED)
 
 _DEG = math.pi / 180.0
 
-# Manufacturer maximum joint speeds: J1-J3 180 deg/s, J4-J7 225 deg/s. This is
-# the hardware ground truth; the MIT controller's own velocity_limit is a
-# separate, deliberately lower clamp and the caller decides which one binds.
+# Manufacturer maximum joint speeds: J1-J3 180 deg/s, J4-J7 225 deg/s. The
+# planner config and the MIT controller's clamp declare the same figures, so a
+# plan made here is executable rather than silently clamped.
 NERO_MAX_VELOCITY = (
     180 * _DEG, 180 * _DEG, 180 * _DEG,
     225 * _DEG, 225 * _DEG, 225 * _DEG, 225 * _DEG,
@@ -53,6 +57,11 @@ ACCELERATION_PER_VELOCITY = 2.5
 DEFAULT_WAYPOINTS = 40
 DEFAULT_BLEND_TOLERANCE = 0.01
 DEFAULT_SMOOTHING = 2e-5
+# The blunt modes' window, in seconds and independent of the fit above: one is a
+# spline smoothness feeding the parameterization, the other is a filter width an
+# operator turns. Tying them would make a replay's path depend on a number
+# chosen for a different stage.
+DEFAULT_SMOOTHING_WINDOW_SEC = 0.10
 DEFAULT_RESAMPLE_DT = 0.005
 # TOTG bounds the profile along its path segments, but curvature jumps
 # discontinuously where a straight segment meets a blend arc, so the sampled
@@ -125,34 +134,55 @@ def _utilisation(values, limits):
     return float(np.max(np.abs(np.asarray(values)) / np.asarray(limits)))
 
 
-def _sample_timed_spline(t, q, *, smoothing, degree, resample_dt):
-    """Fit per joint over recorded time and sample with analytic derivatives.
+def _moving_average(q, t, window_sec):
+    """Zero-phase centred moving average over the recorded samples.
 
-    ``smoothing`` of 0 interpolates: the path passes through every recorded
-    sample, so the deviation is zero and only what happens between samples is
-    newly defined.
+    Deliberately not a fitted spline. A fit has to choose a smoothness for the
+    whole signal and then reproduces whatever it did not smooth as derivative
+    noise; a window is blunt, local, and its effect is one number an operator can
+    turn. The half-window shrinks symmetrically at the edges, so the first and
+    last samples stay exactly where they were recorded.
     """
-    joints = q.shape[1]
-    duration = float(t[-1])
-    if smoothing <= 0.0:
-        splines = [make_interp_spline(t, q[:, j], k=degree) for j in range(joints)]
-    else:
-        splines = [
-            UnivariateSpline(t, q[:, j], s=smoothing * len(t), k=degree)
-            for j in range(joints)
-        ]
+    if window_sec <= 0.0:
+        return q.copy(), 0.0
+    spacing = float(np.median(np.diff(t)))
+    half = int(round(0.5 * window_sec / spacing)) if spacing > 0.0 else 0
+    if half < 1:
+        return q.copy(), 0.0
 
-    steps = max(2, int(round(duration / resample_dt)) + 1)
-    tt = np.linspace(0.0, duration, steps)
-    positions = np.column_stack([s(tt) for s in splines])
-    velocities = np.column_stack([s.derivative(1)(tt) for s in splines])
-    accelerations = np.column_stack([s.derivative(2)(tt) for s in splines])
-    deviation = float(np.max(np.abs(np.column_stack([s(t) for s in splines]) - q)))
-    # The arm starts and ends at rest; a spline endpoint derivative is an
-    # artefact of the fit, not taught motion.
-    velocities[0, :] = 0.0
-    velocities[-1, :] = 0.0
-    return tt, positions, velocities, accelerations, deviation
+    count = len(q)
+    smoothed = np.empty_like(q)
+    for index in range(count):
+        reach = min(half, index, count - 1 - index)
+        smoothed[index] = (
+            q[index - reach: index + reach + 1].mean(axis=0) if reach else q[index]
+        )
+    return smoothed, float(np.max(np.abs(smoothed - q)))
+
+
+def _finite_difference_states(t, q):
+    """Central differences over the recorded, possibly uneven spacing.
+
+    Sound only because repeats are removed before a recording is stored: a
+    difference taken across a repeated sample alternates between zero and twice
+    the true value. Endpoints are held at rest, where the arm was.
+    """
+    count = len(q)
+    velocities = np.zeros_like(q)
+    accelerations = np.zeros_like(q)
+    for index in range(1, count - 1):
+        before = t[index] - t[index - 1]
+        after = t[index + 1] - t[index]
+        if before <= 0.0 or after <= 0.0:
+            continue
+        velocities[index] = (q[index + 1] - q[index - 1]) / (before + after)
+        # Straight from the positions, not from the velocities above: those are
+        # pinned to zero at the ends, and differencing across that pin reports an
+        # acceleration spike the motion does not contain.
+        accelerations[index] = 2.0 * (
+            (q[index + 1] - q[index]) / after - (q[index] - q[index - 1]) / before
+        ) / (before + after)
+    return velocities, accelerations
 
 
 def _geometric_path(t, q, *, smoothing, waypoints, degree):
@@ -255,6 +285,7 @@ def retime(
     max_acceleration: Sequence[float] | None = None,
     speed_scale: float = 1.0,
     smoothing: float = DEFAULT_SMOOTHING,
+    smoothing_window_sec: float = DEFAULT_SMOOTHING_WINDOW_SEC,
     waypoints: int = DEFAULT_WAYPOINTS,
     blend_tolerance: float = DEFAULT_BLEND_TOLERANCE,
     resample_dt: float = DEFAULT_RESAMPLE_DT,
@@ -278,13 +309,14 @@ def retime(
     notes: list[str] = []
 
     if mode in (AS_RECORDED, SMOOTH):
-        fit_smoothing = 0.0 if mode == AS_RECORDED else smoothing
-        degree = 3 if mode == AS_RECORDED else 5
-        tt, pos, vel, acc, deviation = _sample_timed_spline(
-            t, q, smoothing=fit_smoothing, degree=degree, resample_dt=resample_dt
-        )
+        window = 0.0 if mode == AS_RECORDED else smoothing_window_sec
+        pos, deviation = _moving_average(q, t, window)
+        vel, acc = _finite_difference_states(t, pos)
+        tt = t
         if mode == AS_RECORDED:
-            notes.append("path passes through every recorded sample")
+            notes.append("every recorded sample replayed unchanged, at its recorded time")
+        else:
+            notes.append(f"{window:.2f}s moving-average window, no fit")
         velocity_use = _utilisation(vel, max_velocity)
         acceleration_use = _utilisation(acc, max_acceleration)
         if velocity_use > 1.0:
@@ -353,6 +385,7 @@ __all__ = [
     "AS_RECORDED",
     "MAXIMIZE_SPEED",
     "MODES",
+    "DEFAULT_SMOOTHING_WINDOW_SEC",
     "NERO_MAX_VELOCITY",
     "SMOOTH",
     "SPEED_SCALE",

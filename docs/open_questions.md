@@ -131,7 +131,7 @@ Open: whether it is firmware tier or this unit, whether it changes during motion
 only monitoring. Detail and method:
 `sprint_refactor/reference/feedback_rate_budget.md`.
 
-## Three numbers for one joint velocity limit
+## Three numbers for one joint velocity limit — resolved 2026-08-24
 
 **Opened 2026-08-24.** The manufacturer specifies 180 deg/s on J1-J3 and
 225 deg/s on J4-J7 — 3.14 and 3.93 rad/s. Two other declarations disagree:
@@ -157,9 +157,16 @@ explicitly conservative stand-in, and since acceleration is the binding
 constraint in every replay measured, that stand-in — not the hardware — is what
 currently sets replay speed.
 
-Open: which number governs, whether the controller's clamp is a deliberate
-safety margin or an unexamined default, and whether an acceleration figure can
-be obtained or has to be measured.
+**Resolved to the manufacturer figures.** `joint_limits.yaml` and the MIT
+controller's `velocity_limit` now both declare 3.14 rad/s on J1-J3 and 3.93 on
+J4-J7, so a MoveIt scaling factor means a real fraction of what the hardware can
+do and the parameterization can no longer produce a plan the controller silently
+clamps. The consequence is that a scaling factor now commands more than it did:
+the catalogue's 0.10-0.15 anchor moves are unchanged in effect only because they
+were already far below every candidate limit.
+
+Still open: no acceleration figure exists, so `2.5 · v_max` remains a stand-in in
+both configs, and it is the binding constraint in every replay measured.
 
 Related: the manual's **joint range** for J2 is quoted in a convention offset by
 90 degrees from what the firmware feedback and the URDF use — shifting it lands

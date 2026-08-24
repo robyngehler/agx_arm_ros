@@ -1,42 +1,48 @@
+# Joint limits are the manufacturer's maximum joint speeds (J1-J3 180 deg/s,
+# J4-J7 225 deg/s). No acceleration is specified for these joints, so 2.5/s of
+# the velocity limit is carried as a deliberately conservative stand-in -- it
+# says a joint may reach full speed in 0.4 s. A scaling factor here therefore
+# means a real fraction of what the hardware can do.
+# See docs/sprint_refactor/reference/trajectory_retiming.md.
 default_velocity_scaling_factor: 0.1
 default_acceleration_scaling_factor: 0.1
 
 joint_limits:
   joint1:
     has_velocity_limits: true
-    max_velocity: 5.0
+    max_velocity: 3.1416
     has_acceleration_limits: true
-    max_acceleration: 5.0
+    max_acceleration: 7.854
   joint2:
     has_velocity_limits: true
-    max_velocity: 5.0
+    max_velocity: 3.1416
     has_acceleration_limits: true
-    max_acceleration: 5.0
+    max_acceleration: 7.854
   joint3:
     has_velocity_limits: true
-    max_velocity: 5.0
+    max_velocity: 3.1416
     has_acceleration_limits: true
-    max_acceleration: 5.0
+    max_acceleration: 7.854
   joint4:
     has_velocity_limits: true
-    max_velocity: 5.0
+    max_velocity: 3.927
     has_acceleration_limits: true
-    max_acceleration: 5.0
+    max_acceleration: 9.8175
   joint5:
     has_velocity_limits: true
-    max_velocity: 5.0
+    max_velocity: 3.927
     has_acceleration_limits: true
-    max_acceleration: 5.0
+    max_acceleration: 9.8175
   joint6:
     has_velocity_limits: true
-    max_velocity: 5.0
+    max_velocity: 3.927
     has_acceleration_limits: true
-    max_acceleration: 5.0
+    max_acceleration: 9.8175
   joint7:
     has_velocity_limits: true
-    max_velocity: 5.0
+    max_velocity: 3.927
     has_acceleration_limits: true
-    max_acceleration: 5.0
+    max_acceleration: 9.8175
   gripper_joint1:
     has_velocity_limits: true
     max_velocity: 1.0

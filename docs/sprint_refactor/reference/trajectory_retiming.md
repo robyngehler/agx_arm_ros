@@ -18,8 +18,8 @@ answer is that both are needed, and that no single tool provides them.
 
 | mode | tool | keeps |
 | --- | --- | --- |
-| `as_recorded` | interpolating spline over recorded `(t, q)` | path exactly, timing exactly |
-| `smooth` | approximating spline, declared deviation | timing exactly |
+| `as_recorded` | recorded samples, central differences | path exactly, timing exactly |
+| `smooth` | moving-average window, then central differences | timing exactly |
 | `speed_scale` | TOTG, limit scale searched for the target duration | path geometry |
 | `maximize_speed` | TOTG at full limits | path geometry |
 
@@ -27,11 +27,18 @@ answer is that both are needed, and that no single tool provides them.
 it discards.** Anything purely temporal in a recording — a dwell, a deliberately
 slow pour — does not survive TOTG, because a dwell is zero path progress and the
 geometric path has no notion of it. That is a property of the method, not a
-setting, and it is why the timing-preserving modes use a spline instead.
+setting, and it is why the timing-preserving modes do not go through it at all.
 
-The reverse also holds: an interpolating spline reproduces the recording
-faithfully *including its noise*, so `as_recorded` is only as executable as the
-capture is clean.
+**The timing-preserving pair fits nothing, deliberately.** A fitted spline has to
+choose one smoothness for the whole signal and reproduces whatever it did not
+smooth as derivative noise; measured on the same recording it was roughly twice
+as rough as central differences over the raw samples (acceleration 148x the limit
+against 74x). A moving-average window is blunt and local, and its width is one
+number an operator turns rather than a fit parameter.
+
+The reverse of path fidelity still holds: replaying the recording faithfully
+replays its noise, so `as_recorded` is only as executable as the capture is
+clean.
 
 ## What the binding actually needs
 
@@ -92,8 +99,9 @@ Fresh duo capture, 26.45 s taught:
 
 | mode | duration | speed | v/limit | a/limit | path deviation |
 | --- | --- | --- | --- | --- | --- |
-| `as_recorded` | 26.45 s | 1.00 | 2.61 | 148 | 0.0000 |
-| `smooth` | 26.45 s | 1.00 | 0.93 | 9.04 | 0.0368 |
+| `as_recorded` | 26.45 s | 1.00 | 1.61 | 74 | 0.0000 |
+| `smooth` 0.10 s | 26.45 s | 1.00 | 0.77 | 8.3 | 0.0488 |
+| `smooth` 0.25 s | 26.45 s | 1.00 | 0.42 | 3.5 | 0.0903 |
 | `speed_scale 1.5` | 18.16 s | 1.46 | 0.30 | 0.31 | 0.0368 |
 | `maximize_speed` | 10.45 s | 2.53 | 0.58 | 0.97 | 0.0368 |
 
@@ -102,17 +110,31 @@ taught motion an unrequested speed-up is the dangerous direction. Requesting
 more than the limits allow returns the fastest feasible plan and says by how
 much it fell short.
 
-`as_recorded` exceeded the limits on every recording measured so far, even ones
-captured at 95 real updates per second. The residual sample noise is enough for
-an interpolating spline to derive unusable accelerations from it. A light
-approximating fit that barely moves the path is the missing piece; smoothing
-tuned for the TOTG path is too aggressive for the timing-preserving one.
+For the timing-preserving pair, **velocity utilisation is the number that
+matters**: velocity is commanded and the controller clamps it, while acceleration
+is never commanded — the MIT frame carries position, velocity, kp, kd and torque.
+The acceleration figure describes how rough the recording is, not how badly the
+plan will execute. Across five de-duplicated recordings:
+
+| window | velocity utilisation |
+| --- | --- |
+| `as_recorded` (none) | 0.30 – 1.75 |
+| `smooth` 0.10 s | 0.23 – 1.24 |
+| `smooth` 0.25 s | **0.21 – 0.73** |
+
+A 0.25 s window brought every recording measured under the limit, at 0.015–0.126
+rad of path deviation. `as_recorded` is honest but only replayable from a clean
+capture.
 
 ## Open
 
-- one acceleration limit is a stand-in, and it is the binding constraint
-- `joint_limits.yaml` declares 5.0 rad/s where the manufacturer says 3.14 (J1-J3)
-  and 3.93 (J4-J7), and the MIT controller clamps at 2.0; three numbers for one
-  quantity, and TOTG output above the controller's clamp is unexecutable
-- the defaults (`smoothing 2e-5`, `40 waypoints`, `blend 0.01`) are tuned on a
-  small number of recordings and have not been swept against a clean capture
+- the acceleration limit is a stand-in (`2.5 · v_max`), and it is the binding
+  constraint for the TOTG modes. The velocity limits are resolved: the manual,
+  `joint_limits.yaml` and the MIT controller now all declare 3.14 rad/s on J1-J3
+  and 3.93 on J4-J7
+- the TOTG defaults (`smoothing 2e-5`, `40 waypoints`, `blend 0.01`) are tuned on
+  a small number of recordings and have not been swept against a clean capture
+- the moving-average window is independent of them on purpose: one is a spline
+  smoothness feeding the parameterization, the other a filter width an operator
+  turns, and tying them would make a replay's path depend on a number chosen for
+  a different stage

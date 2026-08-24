@@ -73,6 +73,7 @@ from agx_arm_coordination.arm_executor import ArmConfig
 from agx_arm_ctrl.motion_registry import assert_matches_topology, handshake_required
 from agx_arm_retiming import (
     AS_RECORDED,
+    DEFAULT_SMOOTHING_WINDOW_SEC,
     MAXIMIZE_SPEED,
     MODES as RETIMING_MODES,
     NERO_MAX_VELOCITY,
@@ -110,6 +111,7 @@ class _PlaybackPlan:
 
     mode: str
     speed_scale: float
+    smoothing_window_sec: float
 
 
 def _duration_msg(seconds: float):
@@ -598,7 +600,9 @@ class TeachManagerNode(Node):
         # whether a spin actually served anything.
         self._callbacks_served = 0
         self._playback_plan = _PlaybackPlan(
-            mode=args.playback_mode, speed_scale=args.playback_speed_scale
+            mode=args.playback_mode,
+            speed_scale=args.playback_speed_scale,
+            smoothing_window_sec=args.playback_smoothing_sec,
         )
         self.library_dir = Path(args.library_dir).expanduser().resolve()
         self.arm_config_path = _resolve_config_path(args.arm_config) if args.arm_config else None
@@ -1364,6 +1368,22 @@ class TeachManagerNode(Node):
                 self.get_logger().warn(f"invalid mode '{raw}'; playback aborted")
                 return None
 
+        window = plan.smoothing_window_sec
+        if mode == SMOOTH:
+            raw = self.prompt_line(
+                key_reader,
+                f"Smoothing window in seconds (default {window:g}, 0 = none): ",
+            ).strip()
+            if raw:
+                try:
+                    window = float(raw)
+                except ValueError:
+                    self.get_logger().warn(f"invalid window '{raw}'; playback aborted")
+                    return None
+                if window < 0.0 or not math.isfinite(window):
+                    self.get_logger().warn("window must be finite and >= 0; playback aborted")
+                    return None
+
         speed_scale = plan.speed_scale
         if mode == SPEED_SCALE:
             raw = self.prompt_line(
@@ -1381,7 +1401,9 @@ class TeachManagerNode(Node):
                     self.get_logger().warn("speed must be finite and > 0; playback aborted")
                     return None
 
-        self._playback_plan = _PlaybackPlan(mode=mode, speed_scale=speed_scale)
+        self._playback_plan = _PlaybackPlan(
+            mode=mode, speed_scale=speed_scale, smoothing_window_sec=window
+        )
         return self._playback_plan
 
     def _plan_playback(self, trajectory, plan: _PlaybackPlan):
@@ -1402,6 +1424,7 @@ class TeachManagerNode(Node):
             max_velocity=max_velocity,
             max_acceleration=default_acceleration(max_velocity),
             speed_scale=plan.speed_scale,
+            smoothing_window_sec=plan.smoothing_window_sec,
             resample_dt=self.args.playback_resample_dt,
         )
 
@@ -1961,6 +1984,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Joint delta below which a sample counts as a repeat (rad). 0 keeps "
             "only exact repeats, which is what a stale feedback cache produces."
+        ),
+    )
+    parser.add_argument(
+        "--playback-smoothing-sec", type=float, default=DEFAULT_SMOOTHING_WINDOW_SEC,
+        help=(
+            "Starting default for the moving-average window asked for in 'smooth' "
+            "mode. A blunt local filter over the recorded positions, not a fit; "
+            "0 disables it and makes 'smooth' identical to 'as_recorded'."
         ),
     )
     parser.add_argument(

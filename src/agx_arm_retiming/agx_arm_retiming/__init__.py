@@ -2,9 +2,10 @@
 
 Two families of mode, split by what each tool can express:
 
-* ``as_recorded`` and ``smooth`` keep the taught timing and only re-derive the
-  derivatives, so a motion whose dynamics were taught deliberately (a dwell, a
-  slow pour) survives.
+* ``as_recorded`` and ``smooth`` keep the taught timing and fit nothing: the
+  recorded samples are replayed at their recorded times, ``smooth`` after a
+  moving-average window over the positions. A motion whose dynamics were taught
+  deliberately (a dwell, a slow pour) survives, and so does the path.
 * ``speed_scale`` and ``maximize_speed`` hand the geometric path to MoveIt's
   time-optimal parameterization, which computes its own timing and therefore
   discards anything purely temporal in the recording.
@@ -13,6 +14,7 @@ Two families of mode, split by what each tool can express:
 from agx_arm_retiming._totg import retime_path
 from agx_arm_retiming.planning import (
     AS_RECORDED,
+    DEFAULT_SMOOTHING_WINDOW_SEC,
     MAXIMIZE_SPEED,
     MODES,
     NERO_MAX_VELOCITY,
@@ -26,6 +28,7 @@ from agx_arm_retiming.planning import (
 
 __all__ = [
     "AS_RECORDED",
+    "DEFAULT_SMOOTHING_WINDOW_SEC",
     "MAXIMIZE_SPEED",
     "MODES",
     "NERO_MAX_VELOCITY",

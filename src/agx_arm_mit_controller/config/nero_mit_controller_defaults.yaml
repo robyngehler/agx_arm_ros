@@ -7,7 +7,11 @@
     hold_final_point: true
     gain_ramp_time_s: 1.0
     position_error_limit: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-    velocity_limit: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+    # Manufacturer maximum joint speeds: J1-J3 180 deg/s, J4-J7 225 deg/s.
+    # A clamp below them silently limits what the planner and the time-optimal
+    # parameterization are allowed to ask for, and the tracking error that
+    # follows trips the per-joint hold.
+    velocity_limit: [3.1416, 3.1416, 3.1416, 3.927, 3.927, 3.927, 3.927]
     torque_limit: [8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0]
     # Hold gains. Bumped stiffer with clearly more damping for the first hardware
     # runs: kp ~+50% (holds the target tighter) and kd ~2.5x (viscous damping to
