@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from enum import Enum
+import math
 from pathlib import Path
 import re
 import time
@@ -64,18 +65,32 @@ from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
 from agx_arm_mit_controller.trajectory_io import (
     RecordedTrajectory,
     load_recorded_trajectory,
-    recorded_to_joint_trajectory,
     sanitize_trajectory_name,
     save_recorded_trajectory,
-    smooth_recorded_trajectory_seconds,
 )
 from agx_arm_coordination.arm_executor import ArmConfig
 from agx_arm_ctrl.motion_registry import assert_matches_topology, handshake_required
+from agx_arm_retiming import (
+    AS_RECORDED,
+    MAXIMIZE_SPEED,
+    MODES as RETIMING_MODES,
+    NERO_MAX_VELOCITY,
+    SMOOTH,
+    SPEED_SCALE,
+    RetimingError,
+    default_acceleration,
+    retime,
+)
 
 from .capture_anchor_pose import average_joint_positions, update_pose_in_config
 from .leader_trajectory_recorder import RecorderSnapshot, build_recorded_trajectory
 from .recorded_to_catalogue import build_duo_trajectory, format_waypoints_block, recorded_to_waypoints
 from .wakeword_motion_manager import TerminalKeyReader
+
+
+#: One Nero arm. A recording's joint count divided by this is how many arms it
+#: covers, which is what maps the per-joint limits onto a duo recording.
+ARM_JOINT_COUNT = 7
 
 
 class ManagerState(str, Enum):
@@ -84,6 +99,54 @@ class ManagerState(str, Enum):
     PLAYBACK = "playback"
     TRANSITIONS = "transitions"
     HAND = "hand"
+
+
+@dataclass
+class _PlaybackPlan:
+    """How the next replay is time-parameterized. Chosen per replay, not per
+    bring-up, so switching between a threading motion and a transit motion does
+    not need the stack restarted."""
+
+    mode: str
+    speed_scale: float
+
+
+def _duration_msg(seconds: float):
+    from builtin_interfaces.msg import Duration
+
+    seconds = max(0.0, float(seconds))
+    return Duration(sec=int(seconds), nanosec=int(round((seconds - int(seconds)) * 1e9)))
+
+
+def retimed_to_joint_trajectory(
+    result,
+    joint_names,
+    *,
+    current_positions: Optional[list[float]] = None,
+    lead_in_sec: float = 0.0,
+) -> JointTrajectory:
+    """Build the ROS message from a re-timed trajectory.
+
+    Velocities come from the parameterization rather than being left empty, which
+    is what gives the controller a feedforward instead of pure position chasing.
+    """
+    msg = JointTrajectory()
+    msg.joint_names = list(joint_names)
+    if current_positions is not None and lead_in_sec > 0.0:
+        lead_in = JointTrajectoryPoint()
+        lead_in.positions = [float(value) for value in current_positions]
+        lead_in.velocities = [0.0] * len(current_positions)
+        lead_in.time_from_start = _duration_msg(0.0)
+        msg.points.append(lead_in)
+    for time_from_start, positions, velocities in zip(
+        result.times, result.positions, result.velocities
+    ):
+        point = JointTrajectoryPoint()
+        point.positions = [float(value) for value in positions]
+        point.velocities = [float(value) for value in velocities]
+        point.time_from_start = _duration_msg(time_from_start + lead_in_sec)
+        msg.points.append(point)
+    return msg
 
 
 @dataclass(frozen=True)
@@ -513,6 +576,9 @@ class TeachManagerNode(Node):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__("agx_arm_teach_manager")
         self.args = args
+        self._playback_plan = _PlaybackPlan(
+            mode=args.playback_mode, speed_scale=args.playback_speed_scale
+        )
         self.library_dir = Path(args.library_dir).expanduser().resolve()
         self.arm_config_path = _resolve_config_path(args.arm_config) if args.arm_config else None
         self.arm_config: Optional[ArmConfig] = None
@@ -1202,6 +1268,90 @@ class TeachManagerNode(Node):
 
     # --- playback ------------------------------------------------------------
 
+    def _prompt_playback_plan(self, key_reader: TerminalKeyReader) -> Optional[_PlaybackPlan]:
+        """Ask how to replay, every time.
+
+        Which mode a recording wants is a property of the motion, not of the
+        bring-up: threading into a handle and crossing the table want different
+        answers on the same running stack. The previous choice is the default so
+        repeating a replay stays one keypress.
+        """
+        plan = self._playback_plan
+        listing = ", ".join(f"{i}={name}" for i, name in enumerate(RETIMING_MODES))
+        default_index = RETIMING_MODES.index(plan.mode)
+        raw = self.prompt_line(
+            key_reader,
+            f"Playback mode [{listing}] (default {default_index}={plan.mode}): ",
+        ).strip()
+        mode = plan.mode
+        if raw:
+            try:
+                mode = RETIMING_MODES[int(raw)]
+            except (ValueError, IndexError):
+                self.get_logger().warn(f"invalid mode '{raw}'; playback aborted")
+                return None
+
+        speed_scale = plan.speed_scale
+        if mode == SPEED_SCALE:
+            raw = self.prompt_line(
+                key_reader,
+                f"Speed relative to the recording (default {speed_scale:g}, "
+                "2 = twice as fast): ",
+            ).strip()
+            if raw:
+                try:
+                    speed_scale = float(raw)
+                except ValueError:
+                    self.get_logger().warn(f"invalid speed '{raw}'; playback aborted")
+                    return None
+                if not (speed_scale > 0.0 and math.isfinite(speed_scale)):
+                    self.get_logger().warn("speed must be finite and > 0; playback aborted")
+                    return None
+
+        self._playback_plan = _PlaybackPlan(mode=mode, speed_scale=speed_scale)
+        return self._playback_plan
+
+    def _plan_playback(self, trajectory, plan: _PlaybackPlan):
+        """Re-time one recording under the chosen mode, against the arm limits."""
+        joint_count = len(trajectory.joint_names)
+        if joint_count % ARM_JOINT_COUNT:
+            raise RuntimeError(
+                f"recording has {joint_count} joints, not a multiple of {ARM_JOINT_COUNT}; "
+                "cannot map the per-joint limits onto it"
+            )
+        max_velocity = list(NERO_MAX_VELOCITY) * (joint_count // ARM_JOINT_COUNT)
+        times = [float(point.time_from_start) for point in trajectory.points]
+        positions = [list(point.positions) for point in trajectory.points]
+        return retime(
+            times,
+            positions,
+            plan.mode,
+            max_velocity=max_velocity,
+            max_acceleration=default_acceleration(max_velocity),
+            speed_scale=plan.speed_scale,
+            resample_dt=self.args.playback_resample_dt,
+        )
+
+    def _report_playback_plan(self, name: str, result) -> None:
+        self.get_logger().info(
+            f"{name}: {result.mode} -> {result.duration:.2f}s "
+            f"({result.speed_achieved:.2f}x recorded), path deviation "
+            f"{result.path_deviation:.4f} rad, velocity {result.velocity_utilisation:.2f} "
+            f"and acceleration {result.acceleration_utilisation:.2f} of limit"
+        )
+        for note in result.notes:
+            self.get_logger().info(f"  {note}")
+        if result.velocity_utilisation > 1.0:
+            # Not refused: the operator chose this replay and is at the keyboard,
+            # and a taught motion at its taught speed is the conservative option.
+            # But the controller clamps what it cannot command, and a large
+            # enough mismatch shows up as a joint dropping to hold mid-motion.
+            self.get_logger().warn(
+                f"commanded velocity reaches {result.velocity_utilisation:.2f}x the joint "
+                "limit; the controller will clamp it and tracking error may trip the "
+                "per-joint hold. 'smooth' or a lower speed avoids that."
+            )
+
     def _build_arm_slice(
         self, arm: _ArmEndpoint, trajectory_msg: JointTrajectory, columns: list[int]
     ) -> JointTrajectory:
@@ -1271,9 +1421,14 @@ class TeachManagerNode(Node):
                 current_positions[column] = position_map[joint_name]
         return current_positions
 
-    def playback_selected(self) -> None:
+    def playback_selected(self, key_reader: Optional[TerminalKeyReader] = None) -> None:
         if self.state != ManagerState.PLAYBACK:
             raise RuntimeError("switch to playback mode first")
+        plan = self._playback_plan
+        if key_reader is not None:
+            plan = self._prompt_playback_plan(key_reader)
+            if plan is None:
+                return
         path = self.selected_trajectory_path()
         if path is None:
             raise RuntimeError(f"no recordings in {self.library_dir}")
@@ -1314,15 +1469,17 @@ class TeachManagerNode(Node):
         current_positions = None
         if self.args.playback_lead_in_sec > 0.0:
             current_positions = self._current_positions_for_trajectory(trajectory, dispatched)
-        # Smooth at playback time (raw recordings stay untouched): teach
-        # recordings carry stale-sample staircases whose finite-difference
-        # velocities chatter, which the MIT controller reproduces as judder.
-        trajectory = smooth_recorded_trajectory_seconds(
-            trajectory, self.args.playback_smoothing_sec
-        )
-        full_msg = recorded_to_joint_trajectory(
-            trajectory,
-            time_scale=1.0 / self.args.playback_speed_scale,
+        # Re-timed at playback (raw recordings stay untouched): the taught
+        # samples carry no usable derivatives, and the mode decides whether the
+        # taught timing survives or the path is traversed on a new one.
+        try:
+            result = self._plan_playback(trajectory, plan)
+        except RetimingError as exc:
+            raise RuntimeError(f"cannot replay '{trajectory.name}': {exc}") from None
+        self._report_playback_plan(trajectory.name, result)
+        full_msg = retimed_to_joint_trajectory(
+            result,
+            trajectory.joint_names,
             current_positions=current_positions,
             lead_in_sec=self.args.playback_lead_in_sec,
         )
@@ -1516,7 +1673,7 @@ class TeachManagerNode(Node):
             self.play_hand_skill(key_reader)
             return
         if self.state == ManagerState.PLAYBACK and key == "f":
-            self.playback_selected()
+            self.playback_selected(key_reader)
             return
         if self.state == ManagerState.PLAYBACK and key == "c":
             self.cancel_active()
@@ -1717,15 +1874,24 @@ def parse_args() -> argparse.Namespace:
         help="Blend from the current hold pose to the first recorded waypoint over this many seconds",
     )
     parser.add_argument(
-        "--playback-smoothing-sec",
-        type=float,
-        default=0.30,
+        "--playback-mode",
+        choices=list(RETIMING_MODES),
+        default=SMOOTH,
         help=(
-            "Zero-phase moving-average window (SECONDS) applied to recorded positions at "
-            "playback, with velocities recomputed from the smoothed signal. Converted to "
-            "samples using the recording's own rate, so the filter stays the same whatever "
-            "rate it was captured at. Removes the stale-sample staircase that makes raw "
-            "playback judder; <= 0 disables smoothing."
+            "Starting default for the mode asked at each replay: 'as_recorded' keeps the "
+            "taught path and timing exactly, 'smooth' trades a small path deviation for "
+            "quieter derivatives, 'speed_scale' re-times to a multiple of the recorded "
+            "duration, 'maximize_speed' runs the path as fast as the joint limits allow"
+        ),
+    )
+    parser.add_argument(
+        "--playback-resample-dt",
+        type=float,
+        default=0.005,
+        help=(
+            "Output sample period for a re-timed replay. The parameterization is analytic, "
+            "so this costs message size and never changes the motion; the controller "
+            "interpolates between the points it is given."
         ),
     )
     parser.add_argument("--transition-velocity-scaling", type=float, default=0.10,
@@ -1817,6 +1983,8 @@ def main() -> None:
         raise ValueError("--playback-speed-scale must be > 0")
     if args.playback_lead_in_sec < 0.0:
         raise ValueError("--playback-lead-in-sec must be >= 0")
+    if args.playback_resample_dt <= 0.0:
+        raise ValueError("--playback-resample-dt must be > 0")
     if not 0.0 < args.transition_velocity_scaling <= 1.0:
         raise ValueError("--transition-velocity-scaling must be in (0, 1]")
     if not 0.0 < args.transition_acceleration_scaling <= 1.0:

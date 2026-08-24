@@ -10,6 +10,7 @@
   <depend>agx_arm_coordination</depend>
   <depend>agx_arm_ctrl</depend>
   <depend>agx_arm_mit_controller</depend>
+  <depend>agx_arm_retiming</depend>
   <depend>moveit_msgs</depend>
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
