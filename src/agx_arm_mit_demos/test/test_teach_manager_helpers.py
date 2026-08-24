@@ -2,6 +2,8 @@ from agx_arm_coordination.arm_executor import ArmConfig
 
 from types import SimpleNamespace
 
+import pytest
+
 from agx_arm_mit_demos.teach_manager import (
     TeachManagerNode,
     _allow_bare_joint_match,
@@ -437,10 +439,10 @@ def _state(stamp_sec, stamp_nsec, positions, names=("joint1", "joint2")):
     )
 
 
-def test_a_capture_stores_one_sample_per_new_frame(monkeypatch):
-    """Every distinct frame is a sample; a republished frame is not. A paced
-    sampler could do neither: it stored the cache whether or not it had moved
-    on."""
+def test_a_capture_stores_one_sample_per_changed_read(monkeypatch):
+    """A read whose positions have not changed is not a sample. The stamp tracks
+    the last CAN frame to touch the driver cache, not the position content, so a
+    stalled cache arrives with an advancing stamp."""
     monkeypatch.setattr(
         "agx_arm_mit_demos.teach_manager.compute_flange_pose_from_mdh",
         lambda positions, robot: None,
@@ -457,6 +459,44 @@ def test_a_capture_stores_one_sample_per_new_frame(monkeypatch):
     assert [s.positions[0] for s in samples] == [0.0, 0.1, 0.2]
     assert arm.capture_moved is True
     assert arm.capture_uses_stamp is True
+    assert arm.capture_stalled == 0
+
+
+def test_a_stalled_cache_is_not_stored_as_a_sample(monkeypatch):
+    """The stall becomes a gap, so playback interpolates the catch-up across it
+    instead of commanding it as one step."""
+    monkeypatch.setattr(
+        "agx_arm_mit_demos.teach_manager.compute_flange_pose_from_mdh",
+        lambda positions, robot: None,
+    )
+    arm = _endpoint()
+    arm.start_capture(movement_threshold=0.001)
+    # Stamp advances every 10 ms; the positions freeze for three of them and
+    # then catch up, which is what a late CAN frame looks like.
+    for index, value in enumerate([0.0, 0.01, 0.01, 0.01, 0.01, 0.08, 0.09]):
+        arm._on_feedback(_state(100, index * 10_000_000, [value, value]))
+    samples = arm.stop_capture()
+
+    assert [s.positions[0] for s in samples] == [0.0, 0.01, 0.08, 0.09]
+    assert arm.capture_stalled == 3
+    # The gap carries the stall, so the catch-up is spread over 40 ms, not 10.
+    assert round(samples[2].time_from_start - samples[1].time_from_start, 4) == 0.04
+
+
+def test_the_worst_implied_velocity_is_reported():
+    """A joint speed above its limit is a stalled cache catching up, not motion
+    the arm performed."""
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+    from agx_arm_mit_demos.leader_trajectory_recorder import RecorderSnapshot
+
+    samples = [
+        RecorderSnapshot(time_from_start=t, positions=p, efforts=[0.0], flange_pose=None)
+        for t, p in ((0.0, [0.0]), (0.01, [0.002]), (0.02, [0.05]), (0.03, [0.052]))
+    ]
+    worst, joint, when = TeachManagerNode._worst_implied_velocity(samples)
+    assert joint == 0
+    assert when == pytest.approx(0.02)
+    assert worst == pytest.approx(4.8, rel=1e-3)
 
 
 def test_a_publisher_without_a_stamp_falls_back_to_arrival_time(monkeypatch):
@@ -527,3 +567,91 @@ def test_mixed_capture_clocks_are_refused():
     node.arms = [left, right]
     with pytest.raises(RuntimeError, match="different clocks"):
         node._rebase_capture_times({left: [], right: []})
+
+
+# --- move to a replay's start pose ---------------------------------------
+
+
+def _recording(joint_names, first_positions):
+    from agx_arm_mit_controller.trajectory_io import (
+        RecordedTrajectory,
+        RecordedTrajectoryPoint,
+    )
+
+    n = len(joint_names)
+    return RecordedTrajectory(
+        name="wave", robot="duo", joint_names=list(joint_names), sample_rate_hz=100.0,
+        recorded_at="", metadata={},
+        points=[
+            RecordedTrajectoryPoint(0.0, list(first_positions), [0.0] * n, [0.0] * n),
+            RecordedTrajectoryPoint(0.01, list(first_positions), [0.0] * n, [0.0] * n),
+        ],
+    )
+
+
+def _manager_with_arms(namespaces, config):
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+
+    node = TeachManagerNode.__new__(TeachManagerNode)
+    node.arm_config = config
+    node.arms = []
+    for ns in namespaces:
+        arm = _endpoint(joints=["j1", "j2"])
+        arm.namespace = ns
+        node.arms.append(arm)
+    return node
+
+
+def test_a_duo_start_pose_fills_the_group_in_registry_side_order():
+    """The planning group declares left joints then right; a target built in the
+    wrong order sends each arm the other's pose."""
+    config = _config()  # groups: both_arms -> l1,l2,r1,r2
+    node = _manager_with_arms(["left_arm", "right_arm"], config)
+    left, right = node.arms
+    recording = _recording(
+        ["left_arm_j1", "left_arm_j2", "right_arm_j1", "right_arm_j2"],
+        [0.1, 0.2, 0.3, 0.4],
+    )
+    # Deliberately hand them over right-first: the target must still be ordered.
+    target = node._start_pose_target(recording, [(right, [2, 3]), (left, [0, 1])])
+    assert target.robot_id == "both_arms"
+    assert target.planning_group == "both_arms"
+    assert target.joint_names == ("l1", "l2", "r1", "r2")
+    assert target.target_positions == (0.1, 0.2, 0.3, 0.4)
+
+
+def test_a_single_arm_start_pose_uses_that_side_group():
+    config = _config()
+    node = _manager_with_arms(["right_arm"], config)
+    recording = _recording(["j1", "j2"], [1.5, 1.6])
+    target = node._start_pose_target(recording, [(node.arms[0], [0, 1])])
+    assert target.robot_id == "right_arm"
+    assert target.planning_group == "right_arm"
+    assert target.target_positions == (1.5, 1.6)
+
+
+def test_a_start_pose_target_refuses_a_group_size_mismatch():
+    config = _config()
+    node = _manager_with_arms(["right_arm"], config)
+    # A 4-joint recording against the 2-joint right_arm group.
+    recording = _recording(["j1", "j2", "j3", "j4"], [0.0, 0.1, 0.2, 0.3])
+    with pytest.raises(RuntimeError, match="planning group"):
+        node._start_pose_target(recording, [(node.arms[0], [0, 1, 2, 3])])
+
+
+def test_start_offsets_name_the_arm_and_joint():
+    """A duo refusal takes its maximum over fourteen joints, so the number alone
+    does not say which arm to move."""
+    node = _manager_with_arms(["left_arm", "right_arm"], _config())
+    left, right = node.arms
+    left.latest = _state(0, 0, [0.10, 0.20], names=("j1", "j2"))
+    right.latest = _state(0, 0, [0.90, 0.30], names=("j1", "j2"))
+    recording = _recording(
+        ["left_arm_j1", "left_arm_j2", "right_arm_j1", "right_arm_j2"],
+        [0.1, 0.2, 0.3, 0.4],
+    )
+    offsets = node._start_offsets(recording, [(left, [0, 1]), (right, [2, 3])])
+    worst = max(offsets, key=lambda item: item[2])
+    assert worst[0] == "right_arm"
+    assert worst[1] == 0
+    assert worst[2] == pytest.approx(0.6)

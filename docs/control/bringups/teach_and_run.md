@@ -247,17 +247,26 @@ free-runs without the arm).
 >   reported per replay. `--playback-resample-dt` is the grid; match it to `control_rate_hz`. The TOTG
 >   modes were never affected. Measurements:
 >   `docs/sprint_refactor/reference/teach_replay_timebase.md`.
-> - **recording is driven by the arm's feedback callbacks (2026-08-24).** One sample per feedback
->   update, timed by the publisher's frame stamp, so the arm's cadence is the recording's cadence.
->   There is no `--sample-rate` any more: a clock above the arm's rate stores repeats and one below it
->   discards updates. `sample_rate_hz` in a new recording is what the arm delivered, and each capture
->   logs the interval median and maximum. A duo capture records each arm from its own callbacks and
->   re-bases both onto one time axis; mixed clocks across arms are refused.
-> - **de-duplication is off by default (2026-08-24).** With callback-driven capture a repeated position
->   means the arm held still at its own cadence, not that a sampler had nothing new, so removing it
->   opens a hole in an otherwise even grid. `--deduplicate-recordings` opts back in.
->   `scripts/clean_recording.py` does the same to a stored file and is no longer part of the recording
->   path.
+> - **recording is driven by the arm's feedback callbacks (2026-08-24).** One sample per *changed*
+>   feedback read, timed by the publisher's frame stamp, so the arm's cadence is the recording's
+>   cadence. There is no `--sample-rate` any more: a clock above the arm's rate stores repeats and one
+>   below it discards updates. `sample_rate_hz` in a new recording is what the arm delivered. A duo
+>   capture records each arm from its own callbacks and re-bases both onto one time axis; mixed clocks
+>   across arms are refused.
+> - **an advancing header stamp does not mean advancing positions.** The stamp is the last CAN frame to
+>   touch the driver cache and a complete joint update is four frames, so a stalled cache arrives
+>   looking valid. Storing it forces the catch-up into one step — on the right arm, six of seven joints
+>   stepped together at 3-7x their typical sample, reaching 4.37 rad/s against a 3.93 limit, while the
+>   left arm had none. Capture now refuses an unchanged read; the stall becomes a gap and playback
+>   interpolates the catch-up across it. **Each capture logs its stalled-read count and warns when the
+>   worst implied joint speed exceeds the limit** — the stored file cannot be read back for this,
+>   because a stall and a still arm look identical in it. There is no de-duplication pass any more, and
+>   `scripts/clean_recording.py` is not part of the recording path.
+> - **`m` in playback mode moves to the selected recording's start pose (2026-08-24).** A gap up to
+>   0.35 rad is bridged by the replay's lead-in; beyond that, `m` plans and runs a collision-checked
+>   MoveIt move to the first waypoint (`both_arms` for a duo recording, that side's group for a single
+>   arm). Separate keypress on purpose: it is motion through free space that was never taught. A duo
+>   refusal now names the arm and joint that is furthest out, not just the distance.
 > - **that fixed push rate is now measured (2026-08-22): ~100 complete state updates/s on the right arm,
 >   ~137/s on the left**, and there is no protocol knob for it. It is the ceiling for `pub_rate` and
 >   `acquisition_rate_hz`; teach recording no longer has a rate to set. A 200 Hz recording made against it carried

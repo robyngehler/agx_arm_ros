@@ -103,8 +103,13 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   these joints is the joint's own servo loop, which never reaches CAN
   (`docs/sprint_refactor/reference/feedback_rate_budget.md`)
 - where a source has its own cadence, take its callbacks rather than sampling it
-  on a clock. Teach recording stores one sample per feedback update, timed by the
-  publisher's frame stamp, so there is no rate to configure
+  on a clock, and store a sample only when the payload changed. Teach recording
+  has no rate to configure
+- a freshness stamp is only as fine-grained as whatever sets it:
+  `feedback/joint_states` carries the receive time of the last CAN frame to touch
+  the driver cache, and one joint update is four position frames, so the stamp
+  advances while the positions need not. Let a stall become a gap the consumer
+  interpolates across, not a sample
 - an operation indexed by sample is the operation you meant only if the samples
   are evenly spaced. A recording's grid is uneven, so a moving average over N
   rows is not a fixed-width filter and a row-index difference is not a

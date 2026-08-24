@@ -204,6 +204,40 @@ The general form: **an operation indexed by sample is only the operation you
 meant if the samples are evenly spaced.** Check the grid before trusting a
 filter width or a derivative, and resample if you cannot guarantee it.
 
+## An advancing timestamp is not advancing data
+
+**2026-08-24.** After the two fixes above, a duo replay was still rough on the
+right arm while the left was smooth and single-arm replays were fine. The
+suspicion was the duo merge's time-axis re-base; it was not — the merged grid
+measured exactly uniform at 9.225 ms.
+
+The right arm's recording contained samples where **six of its seven joints
+stepped together at 3-7x their own typical sample**, reaching 4.37 rad/s on a
+3.93 rad/s joint. The left arm had none anywhere. Six joints accelerating
+fivefold for exactly two samples and back is not a motion a hand can make: the
+driver's position cache had stalled and then caught up.
+
+The recorder captured on `header.stamp` advancing. That stamp is the receive time
+of the **last CAN frame to touch the cache**, and a complete joint update is four
+position frames — so the stamp advances while the positions need not. Storing
+such a read asserts the arm was at that pose at that instant, which forces the
+whole catch-up into one commanded step.
+
+Capture now refuses a read whose positions equal the previous stored one. The
+stall becomes a gap and the playback resample interpolates across it, which
+reconstructs the underlying constant-velocity motion exactly (0.00 rad/s² of
+commanded acceleration against 6.28 when the stall is stored). A genuinely still
+arm interpolates flat between two equal poses, so it costs nothing.
+
+Two lessons worth separating:
+
+- **A freshness signal is only as fine-grained as the thing that sets it.** Ask
+  what advances the timestamp, not whether it advanced.
+- **A recording cannot be read back for this.** A stall and a still arm are the
+  same rows in the file. The recorder is the only place that can report it, so
+  each capture now logs its stalled-read count and warns when the worst implied
+  joint speed exceeds the joint's limit.
+
 ## A rate configured above the arm's feedback source manufactures duplicates
 
 **Measured 2026-08-22.** Acquisition, publication and teach recording were all

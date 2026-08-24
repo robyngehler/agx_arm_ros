@@ -65,7 +65,6 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
 from agx_arm_mit_controller.trajectory_io import (
     RecordedTrajectory,
-    deduplicate_recorded_trajectory,
     load_recorded_trajectory,
     sanitize_trajectory_name,
     save_recorded_trajectory,
@@ -456,6 +455,7 @@ class _ArmEndpoint:
         self._capture_threshold = 0.0
         self._capture_moved = False
         self._capture_last_motion = 0.0
+        self._capture_stalled = 0
         node.create_subscription(JointState, self._name(source_topic), self._on_feedback, 50)
 
     def _name(self, relative: str) -> str:
@@ -502,6 +502,7 @@ class _ArmEndpoint:
         self._capture_threshold = float(movement_threshold)
         self._capture_moved = False
         self._capture_last_motion = time.monotonic()
+        self._capture_stalled = 0
         self.reset_feedback_counters()
         self._capturing = True
 
@@ -520,6 +521,11 @@ class _ArmEndpoint:
     @property
     def capture_uses_stamp(self) -> bool:
         return self._capture_uses_stamp
+
+    @property
+    def capture_stalled(self) -> int:
+        """Reads skipped because the driver's cache had not advanced."""
+        return self._capture_stalled
 
     def _capture_sample(self, msg: JointState, stamp, advanced: bool) -> None:
         # The publisher's stamp is the arm's frame timestamp — when the data was
@@ -550,6 +556,17 @@ class _ArmEndpoint:
         if any(joint not in position_map for joint in self.source_joints):
             return
         positions = [position_map[joint] for joint in self.source_joints]
+        if self._capture and positions == self._capture[-1].positions:
+            # The stamp tracks the last CAN frame that touched the driver's
+            # cache, and a complete joint update is four position frames, so an
+            # advancing stamp does not mean advancing positions. Storing an
+            # unchanged read asserts the arm was here at this instant, which
+            # forces the eventual catch-up into one step: six of seven joints
+            # once moved 3-7x their typical sample together, at 4.4 rad/s on a
+            # 3.93 rad/s joint. Dropping it lets playback interpolate across the
+            # stall instead, and a genuinely still arm interpolates flat.
+            self._capture_stalled += 1
+            return
         if self._capture:
             deltas = [
                 abs(current - previous)
@@ -1255,31 +1272,54 @@ class TeachManagerNode(Node):
         span = arm_samples[-1].time_from_start - arm_samples[0].time_from_start
         return (len(arm_samples) - 1) / span if span > 0.0 else 0.0
 
+    @staticmethod
+    def _worst_implied_velocity(
+        arm_samples: list[RecorderSnapshot],
+    ) -> tuple[float, int, float]:
+        """Fastest joint speed the stored samples imply, and where."""
+        worst, joint, when = 0.0, 0, 0.0
+        for previous, current in zip(arm_samples, arm_samples[1:]):
+            span = current.time_from_start - previous.time_from_start
+            if span <= 0.0:
+                continue
+            for index, (a, b) in enumerate(zip(previous.positions, current.positions)):
+                speed = abs(b - a) / span
+                if speed > worst:
+                    worst, joint, when = speed, index, current.time_from_start
+        return worst, joint, when
+
     def _report_capture(
         self, samples: dict[_ArmEndpoint, list[RecorderSnapshot]], elapsed: float
     ) -> None:
-        """State the cadence each arm actually delivered, and how even it was."""
+        """State the cadence each arm delivered, how even it was, and how clean.
+
+        A recording cannot be read back for this: a stall and a still arm look
+        the same in the file, and the implied velocity is the only thing that
+        separates a taught motion from a cache catching up.
+        """
         if elapsed <= 0.0:
             return
         for arm in self.arms:
             arm_samples = samples[arm]
-            gaps = [
+            gaps = sorted(
                 b.time_from_start - a.time_from_start
                 for a, b in zip(arm_samples, arm_samples[1:])
-            ]
-            gaps.sort()
+            )
             median = gaps[len(gaps) // 2] if gaps else 0.0
             clock = "frame stamp" if arm.capture_uses_stamp else "arrival time"
             self.get_logger().info(
                 f"[{arm.label}] captured {len(arm_samples)} updates at "
                 f"{self._achieved_rate(arm_samples):.1f} Hz over {elapsed:.1f}s "
                 f"({clock}); interval median {median * 1000:.1f} ms, "
-                f"max {gaps[-1] * 1000:.1f} ms"
+                f"max {gaps[-1] * 1000:.1f} ms, {arm.capture_stalled} stalled read(s)"
             )
-            if arm.feedback_messages > arm.feedback_frames:
-                self.get_logger().info(
-                    f"[{arm.label}] {arm.feedback_messages - arm.feedback_frames} "
-                    "republished frame(s) skipped; they carry no new instant"
+            worst, joint, when = self._worst_implied_velocity(arm_samples)
+            limit = NERO_MAX_VELOCITY[joint] if joint < len(NERO_MAX_VELOCITY) else 0.0
+            if limit and worst > limit:
+                self.get_logger().warn(
+                    f"[{arm.label}] joint{joint + 1} implies {worst:.2f} rad/s at "
+                    f"t={when:.2f}s, over its {limit:.2f} rad/s limit — the feedback "
+                    "stalled and caught up rather than the arm moving that fast"
                 )
 
     def _build_arm_trajectory(self, name: str, arm: _ArmEndpoint, arm_samples: list[RecorderSnapshot]) -> RecordedTrajectory:
@@ -1337,21 +1377,9 @@ class TeachManagerNode(Node):
             arm = next((a for a in self.arms if (a.namespace or "nero") == resource), self.arms[0])
             trajectory = self._build_arm_trajectory(name, arm, samples[arm])
 
-        # Off by default: callback-driven capture stores one sample per feedback
-        # update, so a repeated position is an arm that did not move rather than
-        # a sampler that had nothing new. Dropping those would put a hole in an
-        # otherwise even grid.
-        if self.args.deduplicate_recordings:
-            trajectory, removed = deduplicate_recorded_trajectory(
-                trajectory, self.args.deduplicate_tolerance
-            )
-            if removed:
-                self.get_logger().info(
-                    f"removed {removed} repeated sample(s) "
-                    f"({100.0 * removed / (removed + len(trajectory.points)):.1f}%); "
-                    f"stored rate is {trajectory.sample_rate_hz:.1f} Hz of real content"
-                )
-
+        # No de-duplication pass here: capture already refuses a read whose
+        # positions have not changed, and a duo merge output is a uniform grid
+        # that removing rows could only make uneven.
         saved = save_recorded_trajectory(trajectory, self.library_dir / f"{name}.json")
         self.refresh_library()
         if saved in self.trajectory_paths:
@@ -1541,7 +1569,7 @@ class TeachManagerNode(Node):
             resample_dt=self.args.playback_resample_dt,
         )
 
-    def _lead_in_for_start_offset(self, current_positions, result) -> float:
+    def _lead_in_for_start_offset(self, current_positions, result, offsets=()) -> float:
         """Seconds to blend from where the arm is into the replay's first point.
 
         A replay begins at the pose it was taught from. Commanding that pose at
@@ -1553,10 +1581,18 @@ class TeachManagerNode(Node):
         first = result.positions[0]
         offset = max(abs(a - b) for a, b in zip(current_positions, first))
         if offset > self.PLAYBACK_MAX_START_OFFSET:
+            # A duo recording takes this maximum over fourteen joints, so the
+            # number alone does not say which arm to move.
+            worst = max(offsets, key=lambda item: item[2]) if offsets else None
+            where = (
+                f"{worst[0]} joint{worst[1] + 1} is {worst[2]:.3f} rad"
+                if worst
+                else f"an arm is {offset:.3f} rad"
+            )
             raise RuntimeError(
-                f"arm is {offset:.3f} rad from the replay's first waypoint, more than "
-                f"the {self.PLAYBACK_MAX_START_OFFSET:.2f} rad this will bridge; move it "
-                "there first (transitions mode) and replay again"
+                f"{where} from the replay's first waypoint, more than the "
+                f"{self.PLAYBACK_MAX_START_OFFSET:.2f} rad this will bridge; press 'm' "
+                "to plan a move to the start pose, then replay"
             )
         requested = max(0.0, float(self.args.playback_lead_in_sec))
         needed = offset / self.PLAYBACK_LEAD_IN_SPEED
@@ -1656,14 +1692,81 @@ class TeachManagerNode(Node):
                 current_positions[column] = position_map[joint_name]
         return current_positions
 
-    def playback_selected(self, key_reader: Optional[TerminalKeyReader] = None) -> None:
+    def _start_pose_target(self, trajectory, dispatched) -> TransitionTarget:
+        """A MoveIt target at the recording's first waypoint.
+
+        Segments are concatenated in the registry's side order, which is the
+        order the planning group declares its joints in, so a duo recording
+        fills ``both_arms`` and a single-arm one fills that side's group.
+        """
+        if self.arm_config is None:
+            raise RuntimeError("--arm-config not set; cannot plan a move to the start pose")
+        robot_id = (
+            "both_arms"
+            if len(dispatched) > 1
+            else _resource_robot_id(dispatched[0][0].namespace or "right_arm")
+        )
+        group = self.arm_config.groups.get(robot_id)
+        if group is None:
+            raise RuntimeError(
+                f"arm_config declares no '{robot_id}' group; cannot plan the start pose"
+            )
+        first = trajectory.points[0].positions
+        ordered = sorted(dispatched, key=lambda pair: _SIDE_ORDER.get(pair[0].namespace, 99))
+        positions = [float(first[column]) for _, columns in ordered for column in columns]
+        if len(positions) != len(group.joint_names):
+            raise RuntimeError(
+                f"recording covers {len(positions)} joints but planning group "
+                f"'{group.planning_group}' has {len(group.joint_names)}"
+            )
+        return TransitionTarget(
+            label=f"{trajectory.name} start pose",
+            robot_id=robot_id,
+            planning_group=group.planning_group,
+            joint_names=group.joint_names,
+            pose_names=(trajectory.name,),
+            target_positions=tuple(positions),
+        )
+
+    def move_to_recording_start(self) -> None:
+        """Plan and run a collision-checked move to the selected replay's start.
+
+        Separate from playback on purpose: this is a move through free space that
+        was never taught, so it is planned rather than bridged, and it happens
+        only when asked for.
+        """
         if self.state != ManagerState.PLAYBACK:
             raise RuntimeError("switch to playback mode first")
-        plan = self._playback_plan
-        if key_reader is not None:
-            plan = self._prompt_playback_plan(key_reader)
-            if plan is None:
-                return
+        _, trajectory, dispatched = self._resolve_selected_recording()
+        if not self.wait_for_source_feedback(self.args.feedback_timeout):
+            raise RuntimeError("did not receive fresh feedback from all arms")
+        target = self._start_pose_target(trajectory, dispatched)
+        offsets = self._start_offsets(trajectory, dispatched)
+        worst = max(offsets, key=lambda item: item[2])
+        self.get_logger().info(
+            f"moving to '{trajectory.name}' start pose on '{target.planning_group}'; "
+            f"furthest is {worst[0]} joint{worst[1] + 1} at {worst[2]:.3f} rad"
+        )
+        self._execute_plan(self._plan_to_target(target), target.label)
+        self.print_status()
+
+    def _start_offsets(self, trajectory, dispatched) -> list[tuple[str, int, float]]:
+        """Per-arm, per-joint gap between where each arm is and the replay start."""
+        first = trajectory.points[0].positions
+        out: list[tuple[str, int, float]] = []
+        for arm, columns in dispatched:
+            msg = arm.latest
+            if msg is None:
+                raise RuntimeError(f"no feedback for {arm.label}")
+            position_map = {name: float(value) for name, value in zip(msg.name, msg.position)}
+            for index, (joint, column) in enumerate(zip(arm.source_joints, columns)):
+                if joint not in position_map:
+                    raise RuntimeError(f"{arm.label} feedback is missing {joint}")
+                out.append((arm.label, index, abs(position_map[joint] - float(first[column]))))
+        return out
+
+    def _resolve_selected_recording(self):
+        """The selected recording and which arm owns which of its columns."""
         path = self.selected_trajectory_path()
         if path is None:
             raise RuntimeError(f"no recordings in {self.library_dir}")
@@ -1672,8 +1775,7 @@ class TeachManagerNode(Node):
             raise RuntimeError(f"recording '{trajectory.name}' has no points")
 
         recording_namespace = _recording_namespace(trajectory.metadata)
-
-        dispatched = []
+        dispatched: list[tuple[_ArmEndpoint, list[int]]] = []
         for arm in self.arms:
             columns = self._arm_columns(
                 arm,
@@ -1698,6 +1800,17 @@ class TeachManagerNode(Node):
                 f"recording joints {list(trajectory.joint_names)} match none of the arms "
                 f"{[a.label for a in self.arms]}; record it with a matching resource"
             )
+        return path, trajectory, dispatched
+
+    def playback_selected(self, key_reader: Optional[TerminalKeyReader] = None) -> None:
+        if self.state != ManagerState.PLAYBACK:
+            raise RuntimeError("switch to playback mode first")
+        plan = self._playback_plan
+        if key_reader is not None:
+            plan = self._prompt_playback_plan(key_reader)
+            if plan is None:
+                return
+        path, trajectory, dispatched = self._resolve_selected_recording()
         if not self.wait_for_source_feedback(self.args.feedback_timeout):
             raise RuntimeError("did not receive fresh feedback from all arms before playback")
 
@@ -1711,7 +1824,9 @@ class TeachManagerNode(Node):
         self._report_playback_plan(trajectory.name, result)
 
         current_positions = self._current_positions_for_trajectory(trajectory, dispatched)
-        lead_in_sec = self._lead_in_for_start_offset(current_positions, result)
+        lead_in_sec = self._lead_in_for_start_offset(
+            current_positions, result, self._start_offsets(trajectory, dispatched)
+        )
         full_msg = retimed_to_joint_trajectory(
             result,
             trajectory.joint_names,
@@ -1761,12 +1876,13 @@ class TeachManagerNode(Node):
             raise RuntimeError(f"timed out waiting for {label} result")
         return result_future.result()
 
-    def plan_selected_transition(self) -> None:
-        if self.state != ManagerState.TRANSITIONS:
-            raise RuntimeError("switch to transitions mode first")
-        target = self.selected_transition_target()
-        if target is None:
-            raise RuntimeError("no anchor transition target available")
+    def _plan_to_target(self, target: TransitionTarget) -> RobotTrajectory:
+        """Plan a joint-space move to ``target`` through MoveIt.
+
+        Shared by anchor transitions and the move to a replay's start pose: both
+        need a collision-checked path, which a straight joint-space bridge is
+        not.
+        """
         constraints = Constraints()
         for joint_name, position in zip(target.joint_names, target.target_positions):
             jc = JointConstraint()
@@ -1793,20 +1909,46 @@ class TeachManagerNode(Node):
         wrapper = self._send_goal_and_wait(self._move_group_client, goal, "MoveGroup plan")
         result = wrapper.result
         if result.error_code.val != MoveItErrorCodes.SUCCESS:
-            self._clear_transition_plan()
             raise RuntimeError(
-                f"planning transition to {target.label} failed with MoveIt error_code={result.error_code.val}"
+                f"planning a move to {target.label} failed with MoveIt "
+                f"error_code={result.error_code.val}"
             )
         if not result.planned_trajectory.joint_trajectory.points:
-            self._clear_transition_plan()
-            raise RuntimeError(f"planning transition to {target.label} returned an empty trajectory")
-        self.pending_transition_plan = result.planned_trajectory
-        self.pending_transition_target_label = target.label
+            raise RuntimeError(f"planning a move to {target.label} returned an empty trajectory")
         self.get_logger().info(
-            f"Planned transition to {target.label} on '{target.planning_group}' "
-            f"({len(result.planned_trajectory.joint_trajectory.points)} point(s), planning_time={result.planning_time:.3f}s). "
-            "Press 'f' again to execute."
+            f"planned a move to {target.label} on '{target.planning_group}' "
+            f"({len(result.planned_trajectory.joint_trajectory.points)} point(s), "
+            f"planning_time={result.planning_time:.3f}s)"
         )
+        return result.planned_trajectory
+
+    def _execute_plan(self, plan: RobotTrajectory, label: str) -> None:
+        goal = ExecuteTrajectory.Goal()
+        goal.trajectory = plan
+        wrapper = self._send_goal_and_wait(self._execute_trajectory_client, goal, "ExecuteTrajectory")
+        result = wrapper.result
+        status = getattr(wrapper, "status", GoalStatus.STATUS_UNKNOWN)
+        if status != GoalStatus.STATUS_SUCCEEDED or result.error_code.val != MoveItErrorCodes.SUCCESS:
+            raise RuntimeError(
+                f"executing the move to {label} failed with status={status}, "
+                f"MoveIt error_code={result.error_code.val}"
+            )
+        self.get_logger().info(f"executed the move to {label} via MoveIt")
+
+    def plan_selected_transition(self) -> None:
+        if self.state != ManagerState.TRANSITIONS:
+            raise RuntimeError("switch to transitions mode first")
+        target = self.selected_transition_target()
+        if target is None:
+            raise RuntimeError("no anchor transition target available")
+        try:
+            plan = self._plan_to_target(target)
+        except RuntimeError:
+            self._clear_transition_plan()
+            raise
+        self.pending_transition_plan = plan
+        self.pending_transition_target_label = target.label
+        self.get_logger().info("Press 'f' again to execute.")
         self.print_status()
 
     def execute_planned_transition(self) -> None:
@@ -1818,17 +1960,7 @@ class TeachManagerNode(Node):
         if self.pending_transition_plan is None or self.pending_transition_target_label != target.label:
             self.plan_selected_transition()
             return
-        goal = ExecuteTrajectory.Goal()
-        goal.trajectory = self.pending_transition_plan
-        wrapper = self._send_goal_and_wait(self._execute_trajectory_client, goal, "ExecuteTrajectory")
-        result = wrapper.result
-        status = getattr(wrapper, "status", GoalStatus.STATUS_UNKNOWN)
-        if status != GoalStatus.STATUS_SUCCEEDED or result.error_code.val != MoveItErrorCodes.SUCCESS:
-            raise RuntimeError(
-                f"executing transition to {target.label} failed with status={status}, "
-                f"MoveIt error_code={result.error_code.val}"
-            )
-        self.get_logger().info(f"Executed transition to {target.label} via MoveIt")
+        self._execute_plan(self.pending_transition_plan, target.label)
         self._clear_transition_plan()
         self.print_status()
 
@@ -1910,6 +2042,9 @@ class TeachManagerNode(Node):
         if self.state == ManagerState.PLAYBACK and key == "f":
             self.playback_selected(key_reader)
             return
+        if self.state == ManagerState.PLAYBACK and key == "m":
+            self.move_to_recording_start()
+            return
         if self.state == ManagerState.PLAYBACK and key == "c":
             self.cancel_active()
             return
@@ -1933,7 +2068,8 @@ class TeachManagerNode(Node):
             "  [ / ] -> select previous / next item (recording, anchor, or hand skill)\n"
             "  s -> status   h -> help   q -> quit\n"
             "Record mode:   n -> record a new trajectory\n"
-            "Playback mode: f -> play selected   c -> cancel active trajectory\n"
+            "Playback mode: f -> play selected   m -> move to its start pose (MoveIt)\n"
+            "               c -> cancel active trajectory\n"
             "Transitions:  f -> plan selected target, press f again -> execute cached plan, c -> clear cached plan\n"
             "Hand mode:    c -> capture current hand pose as a skill, f -> replay selected skill\n"
             "              (wrapped in a prepare_hand_window/resume_arm_control handshake\n"
@@ -2106,20 +2242,6 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Blend from the current hold pose to the first recorded waypoint over this many seconds",
-    )
-    parser.add_argument(
-        "--deduplicate-recordings",
-        dest="deduplicate_recordings", action="store_true",
-        help=(
-            "Drop samples that repeat the previous position. Off by default: a "
-            "capture stores one sample per feedback update, so a repeat means "
-            "the arm held still, and removing it leaves a hole in an even grid."
-        ),
-    )
-    parser.set_defaults(deduplicate_recordings=False)
-    parser.add_argument(
-        "--deduplicate-tolerance", type=float, default=0.0,
-        help="Joint delta below which a sample counts as a repeat (rad).",
     )
     parser.add_argument(
         "--playback-smoothing-sec", type=float, default=DEFAULT_SMOOTHING_WINDOW_SEC,

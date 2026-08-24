@@ -126,25 +126,75 @@ on `Wave_Left_V02`. The uniform grid is for the timing-preserving modes only.
 
 ## Recording is now callback-driven
 
-The recorder stores one sample per feedback update, on the publisher's frame
-stamp — the arm's cadence is the recording's cadence. There is no `--sample-rate`
-argument any more, because there is no rate to choose: a sampler above the arm's
-rate stores repeats, and one below it discards updates.
+The recorder stores one sample per **changed** feedback read, timed by the
+publisher's frame stamp — the arm's cadence is the recording's cadence. There is
+no `--sample-rate` argument, because there is no rate to choose: a sampler above
+the arm's rate stores repeats, and one below it discards updates.
 
 - `sample_rate_hz` in a new recording is the rate the arm delivered
-- de-duplication is **off** by default. A repeated position now means the arm held
-  still at its own cadence, not that a sampler had nothing new; removing it opens
-  a hole in an otherwise even grid
 - a duo capture records each arm from its own callbacks and re-bases both onto one
-  time axis afterwards. `merge_arm_recordings` already resamples to a common grid,
-  and it takes the faster arm's rate
+  time axis afterwards. `merge_arm_recordings` resamples to a common grid at the
+  faster arm's rate
 - an arm that publishes no header stamp falls back to arrival time; mixed clocks
   across arms are refused rather than silently skewed
+- there is no de-duplication pass after the fact. Capture never stores a repeat,
+  and a duo merge output is a uniform grid that removing rows could only make
+  uneven
 
-This does not make the grid uniform — the arm still jitters, and a dropped frame
-is still a gap. It removes the one source of unevenness that was self-inflicted,
-and makes the stored rate mean something. The playback resample is what the replay
-depends on.
+### An advancing stamp is not advancing data
+
+**Measured 2026-08-24 on `Wave_Both_V1`.** The stamp comes from the last CAN
+frame to touch the driver's cache (`rx_can_frame.timestamp`), and one complete
+joint update is four position frames. So the stamp advances while the positions
+may not, and a capture keyed on the stamp stores the stall as a sample — which
+asserts the arm was at that pose at that instant and forces the eventual
+catch-up into a single step.
+
+On the right arm, at t=3.404 and t=3.413, **six of seven joints stepped together
+at 3-7x their own typical sample**, reaching 4.37 rad/s on joint4 against its
+3.93 rad/s limit. The left arm had no such sample anywhere in the recording. Six
+joints accelerating fivefold for exactly two samples and back is not a motion a
+hand can make.
+
+| | left arm | right arm |
+| --- | --- | --- |
+| position steps over 6x that joint's p95 | 0 | 2 |
+| worst implied joint speed | 1.94 rad/s | 4.37 rad/s (over limit) |
+| samples with ≥4 joints stepping together | 0 | 2 |
+| max commanded accel after `smooth` | 12.4 rad/s² | 39.3 rad/s² |
+
+Capture therefore refuses a read whose positions equal the previous stored one.
+The stall becomes a gap, and the playback resample interpolates the catch-up
+across it. On the measured stall shape — a joint at 0.22 rad/s frozen for three
+reads, then catching up:
+
+| | max commanded accel | v/limit |
+| --- | --- | --- |
+| stall stored as samples | 6.28 rad/s² | 0.086 |
+| stalled reads dropped | **0.00** | 0.070 |
+| the motion actually performed | 0.00 | 0.070 |
+
+Dropping reconstructs the true constant-velocity motion exactly. A genuinely
+still arm is unaffected: its gap interpolates flat between two equal poses.
+
+Each capture reports its stalled-read count and the worst implied joint speed,
+and warns when that speed exceeds the joint's limit — the stored file cannot be
+read back for this, because a stall and a still arm look identical in it.
+
+This does not make the grid uniform: the arm still jitters, and a dropped frame
+is still a gap. The playback resample is what the replay depends on.
+
+## Moving to a replay's start pose
+
+A replay begins at the pose it was taught from. A gap up to
+`PLAYBACK_MAX_START_OFFSET` (0.35 rad) is bridged by a lead-in — a straight
+joint-space move. Beyond it, `m` in playback mode plans and runs a
+collision-checked MoveIt move to the recording's first waypoint, on `both_arms`
+for a duo recording and on that side's group for a single arm. It is a separate
+keypress because it is motion through free space that was never taught.
+
+A duo refusal takes its maximum over fourteen joints, so it now names the arm and
+joint that is furthest out rather than only the distance.
 
 ## Existing recordings
 
