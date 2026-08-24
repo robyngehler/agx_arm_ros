@@ -42,6 +42,39 @@ Rules:
 - If the change alters a claim, matrix, gate, deadline, or contract, state that consequence explicitly and update the canonical docs in the same commit.
 - **Never name co-authorship.** No `Co-Authored-By:` trailer, no tool or model attribution, no "generated with" line — in any commit message, amend, or PR body. The author is the repository owner; the message is about the change, not about who or what typed it.
 
+## Tone: describe, do not narrate
+
+A commit message is a record, not an account of how the work went. State what
+changed, what it was before, and what was measured. Stop there.
+
+**Do not:**
+
+- **Explain what a mistake "really was."** "both were the same mistake: deriving
+  a number instead of using the one that exists" is an interpretation. Write the
+  two values instead.
+- **Chain a consequence into a story.** "the planner could plan what the
+  controller would refuse, and the tracking error that followed would trip the
+  per-joint hold" is three hops of narration. One clause: "the planner could
+  exceed the controller's clamp."
+- **Editorialise a design choice.** "blunt, local, and one number an operator
+  turns rather than a fit parameter" — the reader wants "moving-average window,
+  width in seconds, set at playback."
+- **Justify inside the message.** "deliberately independent, because tying them
+  would make a replay's path depend on a number chosen for a different stage."
+  The rationale belongs in the code comment or the doc. In the commit: "the
+  window is separate from the spline smoothing used for the TOTG path."
+- **Dramatise a defect.** "a spike next to each endpoint that the motion does
+  not contain" → "a ~23 rad/s² spike at the second and second-to-last sample."
+- **Say what a number means to you.** "the number that matters", "which is what
+  finally separated", "bitter", "the tell". Give the number.
+
+**Do:** name the thing, give the before and after value, give the measurement.
+If a sentence could be deleted without losing a fact, delete it.
+
+A plain list of what changed is not a "miniature changelog" — that rule is
+about restating the diff file by file. Grouped, factual statements of behaviour
+change are exactly right.
+
 ## Scopes
 
 Use the scope already established in `git log`: the package or surface the change
@@ -129,6 +162,37 @@ the call landed.
 
 Validation: mock-level only — the epoch and queue behaviour are covered by
 package tests, the CPU effect is not measured until the hardware baseline runs.
+```
+
+Bad — factually correct, but narrating and interpreting throughout:
+
+```text
+feat(retiming): one velocity limit, and a blunt replay that fits nothing
+
+Two changes that belong together, because both were the same mistake: deriving
+a number instead of using the one that exists.
+
+The manufacturer specifies 180 deg/s on J1-J3 and 225 on J4-J7. The planner
+config declared 5.0 rad/s and the MIT controller clamped at 2.0 — three numbers
+for one quantity, where the planner could plan what the controller would refuse
+and the tracking error that followed would trip the per-joint hold.
+```
+
+The same change, described:
+
+```text
+feat(retiming): adopt manufacturer joint velocity limits
+
+joint_limits.yaml declared 5.0 rad/s and the MIT controller clamped at 2.0,
+against a manufacturer maximum of 3.14 (J1-J3) and 3.93 (J4-J7). The planner
+could therefore exceed the controller's clamp.
+
+- Both configs now declare the manufacturer values.
+- No acceleration is specified for these joints; 2.5 * v_max is used as a
+  stand-in and marked as such in both files.
+
+Validation: package tests. Not run on hardware — the raised clamp permits
+faster commanded motion than before.
 ```
 
 ## Final check
