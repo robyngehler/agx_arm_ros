@@ -64,6 +64,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
 from agx_arm_mit_controller.trajectory_io import (
     RecordedTrajectory,
+    deduplicate_recorded_trajectory,
     load_recorded_trajectory,
     sanitize_trajectory_name,
     save_recorded_trajectory,
@@ -1251,6 +1252,20 @@ class TeachManagerNode(Node):
             arm = next((a for a in self.arms if (a.namespace or "nero") == resource), self.arms[0])
             trajectory = self._build_arm_trajectory(name, arm, samples[arm])
 
+        # De-duplicate before the file exists: a repeat is what the clock stored
+        # when the arm had nothing new, and every later reader would have to
+        # decide again whether a repeated row is a still arm or a missing sample.
+        if self.args.deduplicate_recordings:
+            trajectory, removed = deduplicate_recorded_trajectory(
+                trajectory, self.args.deduplicate_tolerance
+            )
+            if removed:
+                self.get_logger().info(
+                    f"removed {removed} repeated sample(s) "
+                    f"({100.0 * removed / (removed + len(trajectory.points)):.1f}%); "
+                    f"stored rate is {trajectory.sample_rate_hz:.1f} Hz of real content"
+                )
+
         saved = save_recorded_trajectory(trajectory, self.library_dir / f"{name}.json")
         self.refresh_library()
         if saved in self.trajectory_paths:
@@ -1930,6 +1945,23 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Blend from the current hold pose to the first recorded waypoint over this many seconds",
+    )
+    parser.add_argument(
+        "--no-deduplicate-recordings",
+        dest="deduplicate_recordings", action="store_false",
+        help=(
+            "Keep repeated samples in a new recording. They are what the clock "
+            "stored when the arm had nothing new, so keeping them means every "
+            "later reader has to tell a still arm from a missing sample itself."
+        ),
+    )
+    parser.set_defaults(deduplicate_recordings=True)
+    parser.add_argument(
+        "--deduplicate-tolerance", type=float, default=0.0,
+        help=(
+            "Joint delta below which a sample counts as a repeat (rad). 0 keeps "
+            "only exact repeats, which is what a stale feedback cache produces."
+        ),
     )
     parser.add_argument(
         "--playback-mode",

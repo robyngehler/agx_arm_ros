@@ -51,6 +51,94 @@ class RecordedTrajectory:
         return self.points[-1].time_from_start
 
 
+def deduplicate_recorded_trajectory(
+    trajectory: RecordedTrajectory,
+    tolerance: float = 0.0,
+) -> tuple[RecordedTrajectory, int]:
+    """Drop samples that repeat the previous position, and say how many.
+
+    A recorder samples the feedback cache on a fixed clock, so wherever the clock
+    runs faster than the arm supplies frames it stores the previous sample again.
+    Those rows carry no information and actively harm what reads them: a finite
+    difference across a repeat alternates between zero and twice the true value,
+    and a spline fitted through them reproduces that as acceleration noise.
+
+    Removing them leaves the sampling uneven, which the trajectory buffer and the
+    retiming pipeline both handle -- they interpolate and fit on
+    ``time_from_start``. Positions, times, efforts and flange poses of the
+    surviving samples are untouched, so the taught path is exactly the one that
+    was recorded; only velocities are recomputed, as central differences over
+    the new spacing.
+
+    ``sample_rate_hz`` becomes the rate that survived, because that field is what
+    a later reader believes about the data.
+    """
+    points = trajectory.points
+    if len(points) < 3:
+        return trajectory, 0
+
+    kept = [points[0]]
+    for point in points[1:]:
+        previous = kept[-1].positions
+        if max(abs(a - b) for a, b in zip(point.positions, previous)) > tolerance:
+            kept.append(point)
+    # The last sample is where the motion ended; dropping it as a repeat would
+    # leave the replay short of the taught end pose.
+    if kept[-1] is not points[-1]:
+        kept.append(points[-1])
+
+    removed = len(points) - len(kept)
+    if not removed:
+        return trajectory, 0
+
+    joint_count = len(points[0].positions)
+    rebuilt: list[RecordedTrajectoryPoint] = []
+    for index, point in enumerate(kept):
+        if index == 0 or index == len(kept) - 1:
+            velocities = [0.0] * joint_count
+        else:
+            span = kept[index + 1].time_from_start - kept[index - 1].time_from_start
+            velocities = (
+                [
+                    (kept[index + 1].positions[j] - kept[index - 1].positions[j]) / span
+                    for j in range(joint_count)
+                ]
+                if span > 0.0
+                else [0.0] * joint_count
+            )
+        rebuilt.append(
+            RecordedTrajectoryPoint(
+                time_from_start=point.time_from_start,
+                positions=list(point.positions),
+                velocities=velocities,
+                efforts=list(point.efforts),
+                flange_pose=point.flange_pose,
+            )
+        )
+
+    duration = rebuilt[-1].time_from_start - rebuilt[0].time_from_start
+    effective = (len(rebuilt) - 1) / duration if duration > 0.0 else 0.0
+    metadata = dict(trajectory.metadata)
+    metadata["deduplicated"] = {
+        "removed_repeats": removed,
+        "original_samples": len(points),
+        "original_sample_rate_hz": trajectory.sample_rate_hz,
+        "tolerance_rad": tolerance,
+    }
+    return (
+        RecordedTrajectory(
+            name=trajectory.name,
+            robot=trajectory.robot,
+            joint_names=list(trajectory.joint_names),
+            sample_rate_hz=round(effective, 3),
+            recorded_at=trajectory.recorded_at,
+            points=rebuilt,
+            metadata=metadata,
+        ),
+        removed,
+    )
+
+
 def trim_trailing_stationary_points(
     points: list[RecordedTrajectoryPoint],
     movement_threshold_rad: float,

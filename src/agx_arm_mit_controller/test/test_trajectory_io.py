@@ -1,3 +1,5 @@
+import pytest
+
 from agx_arm_mit_controller.trajectory_io import (
     RecordedTrajectory,
     RecordedTrajectoryPoint,
@@ -200,3 +202,85 @@ def test_smooth_recorded_trajectory_window_leq_one_is_identity():
 
     assert smooth_recorded_trajectory(trajectory, smoothing_window=1) is trajectory
     assert smooth_recorded_trajectory(trajectory, smoothing_window=0) is trajectory
+
+def test_deduplicate_drops_repeats_and_keeps_the_taught_path():
+    """A repeat is what the clock stored when the arm had nothing new. Removing
+    it must not move a single surviving sample."""
+    from agx_arm_mit_controller.trajectory_io import deduplicate_recorded_trajectory
+
+    points = [
+        RecordedTrajectoryPoint(0.00, [0.0], [0.0], [0.0]),
+        RecordedTrajectoryPoint(0.01, [0.0], [0.0], [0.0]),   # repeat
+        RecordedTrajectoryPoint(0.02, [0.1], [0.0], [0.0]),
+        RecordedTrajectoryPoint(0.03, [0.1], [0.0], [0.0]),   # repeat
+        RecordedTrajectoryPoint(0.04, [0.2], [0.0], [0.0]),
+    ]
+    trajectory = RecordedTrajectory(
+        name="dup", robot="nero", joint_names=["joint1"], sample_rate_hz=100.0,
+        recorded_at="now", points=points, metadata={},
+    )
+    cleaned, removed = deduplicate_recorded_trajectory(trajectory)
+
+    assert removed == 2
+    assert [p.time_from_start for p in cleaned.points] == [0.0, 0.02, 0.04]
+    assert [p.positions for p in cleaned.points] == [[0.0], [0.1], [0.2]]
+    # The stored rate becomes what survived, since that is what a reader believes.
+    assert cleaned.sample_rate_hz == pytest.approx(50.0)
+    assert cleaned.metadata["deduplicated"]["removed_repeats"] == 2
+    assert cleaned.metadata["deduplicated"]["original_sample_rate_hz"] == 100.0
+
+
+def test_deduplicate_keeps_the_final_pose_even_when_it_repeats():
+    """Dropping a trailing repeat would leave a replay short of the taught end."""
+    from agx_arm_mit_controller.trajectory_io import deduplicate_recorded_trajectory
+
+    points = [
+        RecordedTrajectoryPoint(0.00, [0.0], [0.0], [0.0]),
+        RecordedTrajectoryPoint(0.01, [0.5], [0.0], [0.0]),
+        RecordedTrajectoryPoint(0.02, [0.5], [0.0], [0.0]),
+        RecordedTrajectoryPoint(0.03, [0.5], [0.0], [0.0]),
+    ]
+    trajectory = RecordedTrajectory(
+        name="tail", robot="nero", joint_names=["joint1"], sample_rate_hz=100.0,
+        recorded_at="now", points=points, metadata={},
+    )
+    cleaned, removed = deduplicate_recorded_trajectory(trajectory)
+    # Two interior repeats drop, the last one comes back as the end point, so the
+    # net removal is one and the recording keeps the duration it was taught with.
+    assert removed == 1
+    assert cleaned.points[-1].time_from_start == pytest.approx(0.03)
+    assert cleaned.points[-1].positions == [0.5]
+    assert cleaned.duration == pytest.approx(trajectory.duration)
+
+
+def test_deduplicate_recomputes_velocities_over_the_new_spacing():
+    from agx_arm_mit_controller.trajectory_io import deduplicate_recorded_trajectory
+
+    points = [
+        RecordedTrajectoryPoint(0.0, [0.0], [99.0], [0.0]),
+        RecordedTrajectoryPoint(0.1, [0.0], [99.0], [0.0]),
+        RecordedTrajectoryPoint(0.2, [1.0], [99.0], [0.0]),
+        RecordedTrajectoryPoint(0.4, [3.0], [99.0], [0.0]),
+    ]
+    trajectory = RecordedTrajectory(
+        name="v", robot="nero", joint_names=["joint1"], sample_rate_hz=10.0,
+        recorded_at="now", points=points, metadata={},
+    )
+    cleaned, _ = deduplicate_recorded_trajectory(trajectory)
+    # Middle sample: central difference over 0.0 -> 0.4, i.e. (3.0 - 0.0) / 0.4.
+    assert cleaned.points[1].velocities[0] == pytest.approx(7.5)
+    assert cleaned.points[0].velocities == [0.0]
+    assert cleaned.points[-1].velocities == [0.0]
+
+
+def test_a_recording_without_repeats_is_returned_untouched():
+    from agx_arm_mit_controller.trajectory_io import deduplicate_recorded_trajectory
+
+    points = [RecordedTrajectoryPoint(i * 0.01, [i * 0.1], [0.0], [0.0]) for i in range(5)]
+    trajectory = RecordedTrajectory(
+        name="clean", robot="nero", joint_names=["joint1"], sample_rate_hz=100.0,
+        recorded_at="now", points=points, metadata={},
+    )
+    cleaned, removed = deduplicate_recorded_trajectory(trajectory)
+    assert removed == 0
+    assert cleaned is trajectory
