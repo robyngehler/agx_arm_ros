@@ -238,14 +238,29 @@ free-runs without the arm).
 >   default (and is what a `--no-keyboard` run uses). Each replay reports achieved speed, path
 >   deviation and limit utilisation before it moves. Detail:
 >   `docs/sprint_refactor/reference/trajectory_retiming.md`.
-> - **recordings are de-duplicated before they are saved (2026-08-24).** A repeated row is what the
->   clock stored when the arm had nothing new; kept in the file, no later reader can tell it from a
->   still arm. The stored `sample_rate_hz` becomes the rate that survived, and each capture logs the
->   distinct frames the arm actually supplied. `--no-deduplicate-recordings` keeps them;
->   `scripts/clean_recording.py` applies the same logic to older files.
+> - **every replay is resampled onto a uniform grid first, `as_recorded` included (2026-08-24).** A
+>   recording sits on an uneven time grid and the controller interpolates linearly between trajectory
+>   points, so an uneven knot is a step in commanded velocity — 27-43 rad/s² of commanded acceleration
+>   against 6 resampled, at ~50 sign changes per second per joint. `as_recorded` therefore means the
+>   taught path and pace at the smallest filter that executes (0.06 s floor), **not** an unprocessed
+>   sample dump; `smooth` widens that filter. `path_deviation` is non-zero in every mode and is
+>   reported per replay. `--playback-resample-dt` is the grid; match it to `control_rate_hz`. The TOTG
+>   modes were never affected. Measurements:
+>   `docs/sprint_refactor/reference/teach_replay_timebase.md`.
+> - **recording is driven by the arm's feedback callbacks (2026-08-24).** One sample per feedback
+>   update, timed by the publisher's frame stamp, so the arm's cadence is the recording's cadence.
+>   There is no `--sample-rate` any more: a clock above the arm's rate stores repeats and one below it
+>   discards updates. `sample_rate_hz` in a new recording is what the arm delivered, and each capture
+>   logs the interval median and maximum. A duo capture records each arm from its own callbacks and
+>   re-bases both onto one time axis; mixed clocks across arms are refused.
+> - **de-duplication is off by default (2026-08-24).** With callback-driven capture a repeated position
+>   means the arm held still at its own cadence, not that a sampler had nothing new, so removing it
+>   opens a hole in an otherwise even grid. `--deduplicate-recordings` opts back in.
+>   `scripts/clean_recording.py` does the same to a stored file and is no longer part of the recording
+>   path.
 > - **that fixed push rate is now measured (2026-08-22): ~100 complete state updates/s on the right arm,
->   ~137/s on the left**, and there is no protocol knob for it. It is the ceiling for `pub_rate`,
->   `acquisition_rate_hz` and the teach `--sample-rate` alike. A 200 Hz recording made against it carried
+>   ~137/s on the left**, and there is no protocol knob for it. It is the ceiling for `pub_rate` and
+>   `acquisition_rate_hz`; teach recording no longer has a rate to set. A 200 Hz recording made against it carried
 >   **33.4% identical consecutive samples**; for duo work the honest rate is the slower arm's. A frame
 >   count is not an update count — one update is eleven CAN frames — and the ~2 kHz sometimes quoted for
 >   these joints is the servo loop inside the joint, which MIT closes locally and which never reaches CAN.

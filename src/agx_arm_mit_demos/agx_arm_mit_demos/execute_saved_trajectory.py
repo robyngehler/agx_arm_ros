@@ -11,11 +11,21 @@ from std_srvs.srv import Trigger
 from std_srvs.srv import SetBool
 from trajectory_msgs.msg import JointTrajectory
 
-from agx_arm_mit_controller.trajectory_io import (
-	load_recorded_trajectory,
-	recorded_to_joint_trajectory,
-	smooth_recorded_trajectory_seconds,
+from agx_arm_mit_controller.trajectory_io import load_recorded_trajectory
+from agx_arm_retiming import (
+	DEFAULT_RESAMPLE_DT,
+	DEFAULT_SMOOTHING_WINDOW_SEC,
+	NERO_MAX_VELOCITY,
+	SMOOTH,
+	default_acceleration,
+	retime,
 )
+
+from .playback import retimed_to_joint_trajectory
+
+#: One Nero arm. A recording's joint count divided by this is how many arms it
+#: covers, which is what maps the per-joint limits onto a duo recording.
+ARM_JOINT_COUNT = 7
 
 
 class SavedTrajectoryExecutorNode(Node):
@@ -85,11 +95,11 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--playback-speed-scale", type=float, default=1.0, help="Playback speed scale (0.25 = quarter-speed, 1.0 = recorded speed)")
 	parser.add_argument("--playback-lead-in-sec", type=float, default=0.0, help="Blend from the current hold pose to the first recorded waypoint over this many seconds")
 	parser.add_argument(
-		"--playback-smoothing-sec", type=float, default=0.30,
+		"--playback-smoothing-sec", type=float, default=DEFAULT_SMOOTHING_WINDOW_SEC,
 		help=(
-			"Zero-phase moving-average window (SECONDS) applied to recorded positions "
-			"at playback, converted to samples using the recording's own rate; "
-			"<= 0 disables"
+			"Zero-phase moving-average window (SECONDS) applied to the recorded "
+			"positions after they are resampled onto the replay grid. A value below "
+			"the reconstruction floor has no effect."
 		),
 	)
 	# A trajectory publish is not idempotent: the controller restarts execution
@@ -111,7 +121,7 @@ def execute_recorded_trajectory(
 	feedback_timeout: float,
 	playback_speed_scale: float = 1.0,
 	playback_lead_in_sec: float = 0.0,
-	playback_smoothing_sec: float = 0.30,
+	playback_smoothing_sec: float = DEFAULT_SMOOTHING_WINDOW_SEC,
 	publish_repetitions: int,
 	publish_interval: float,
 ) -> None:
@@ -135,15 +145,33 @@ def execute_recorded_trajectory(
 			raise RuntimeError(
 				"Cannot build playback lead-in because feedback/joint_states does not cover the recorded joint names"
 			)
-	# Smooth at playback time (the saved file stays raw): stale-sample
-	# staircases in the recording chatter the finite-difference velocities,
-	# which the MIT controller reproduces as judder.
-	trajectory = smooth_recorded_trajectory_seconds(trajectory, playback_smoothing_sec)
-	joint_trajectory = recorded_to_joint_trajectory(
-		trajectory,
-		time_scale=1.0 / playback_speed_scale,
+	# Re-timed at playback (the saved file stays raw): a recording sits on an
+	# uneven grid, and the controller interpolates linearly between the points it
+	# is given, so an uneven knot becomes a step in commanded velocity.
+	joint_count = len(trajectory.joint_names)
+	if joint_count % ARM_JOINT_COUNT:
+		raise RuntimeError(
+			f"recording has {joint_count} joints, not a multiple of {ARM_JOINT_COUNT}; "
+			"cannot map the per-joint limits onto it"
+		)
+	max_velocity = list(NERO_MAX_VELOCITY) * (joint_count // ARM_JOINT_COUNT)
+	result = retime(
+		[float(point.time_from_start) for point in trajectory.points],
+		[list(point.positions) for point in trajectory.points],
+		SMOOTH,
+		max_velocity=max_velocity,
+		max_acceleration=default_acceleration(max_velocity),
+		smoothing_window_sec=playback_smoothing_sec,
+		resample_dt=DEFAULT_RESAMPLE_DT,
+	)
+	for note in result.notes:
+		node.get_logger().info(f"  {note}")
+	joint_trajectory = retimed_to_joint_trajectory(
+		result,
+		list(trajectory.joint_names),
 		current_positions=current_positions,
 		lead_in_sec=playback_lead_in_sec,
+		time_scale=1.0 / playback_speed_scale,
 	)
 
 	for _ in range(max(1, publish_repetitions)):

@@ -1,7 +1,8 @@
 """The mode layer decides whether a taught motion keeps its timing or is
-re-timed, so these pin the property each mode is chosen for -- above all that
-``as_recorded`` does not move the path, which is what makes it safe for a replay
-that has to thread into something."""
+re-timed, so these pin the property each mode is chosen for: that the
+timing-preserving pair keeps the taught duration and stays near the taught path,
+and that every mode emits a uniform grid the controller can interpolate without
+stepping."""
 
 import math
 
@@ -10,8 +11,10 @@ import pytest
 
 from agx_arm_retiming import (
     AS_RECORDED,
+    DEFAULT_RESAMPLE_DT,
     MAXIMIZE_SPEED,
     NERO_MAX_VELOCITY,
+    RECONSTRUCTION_WINDOW_SEC,
     SMOOTH,
     SPEED_SCALE,
     RetimingError,
@@ -42,12 +45,79 @@ def peak_ratio(rows, limits):
     return float(np.max(np.abs(np.asarray(rows)) / np.asarray(limits)))
 
 
-def test_as_recorded_keeps_the_path_and_the_duration():
+def uneven_motion(seed=3):
+    """A taught motion whose samples land on an uneven grid, as a real capture
+    does: the feedback cadence jitters and a still arm produces no update."""
+    rng = np.random.default_rng(seed)
+    t, q = taught_motion(noise=2e-4, seed=seed)
+    keep = [0] + [i for i in range(1, len(t) - 1) if rng.random() > 0.35] + [len(t) - 1]
+    return [t[i] for i in keep], [q[i] for i in keep]
+
+
+def commanded_acceleration(result, control_dt=0.005):
+    """Peak acceleration of the position stream a linearly interpolating
+    controller walks, which is what the arm reproduces as judder."""
+    times = np.asarray(result.times)
+    grid = np.arange(0.0, times[-1], control_dt)
+    walked = np.column_stack([
+        np.interp(grid, times, np.asarray(result.positions)[:, j])
+        for j in range(np.asarray(result.positions).shape[1])
+    ])
+    return float(np.max(np.abs(np.diff(walked, n=2, axis=0)))) / control_dt ** 2
+
+
+def test_as_recorded_keeps_the_duration_and_stays_on_the_taught_path():
     t, q = taught_motion()
     result = retime(t, q, AS_RECORDED)
-    assert result.path_deviation == pytest.approx(0.0, abs=1e-9)
     assert result.duration == pytest.approx(t[-1], rel=1e-9)
     assert result.speed_achieved == pytest.approx(1.0)
+    # Filtered, so not bit-exact, but a smooth taught motion is barely moved.
+    assert 0.0 < result.path_deviation < 5e-3
+
+
+def test_every_mode_emits_a_uniform_grid():
+    """The controller interpolates linearly between trajectory points, so an
+    uneven knot is a step in commanded velocity regardless of the mode. Only the
+    final step may be short, where the grid does not divide the duration."""
+    t, q = uneven_motion()
+    for mode, kwargs in (
+        (AS_RECORDED, {}), (SMOOTH, {}),
+        (SPEED_SCALE, {"speed_scale": 1.0}), (MAXIMIZE_SPEED, {}),
+    ):
+        gaps = np.diff(retime(t, q, mode, **kwargs).times)[:-1]
+        assert gaps.max() - gaps.min() < 1e-9, f"{mode} emitted an uneven grid"
+
+
+def test_an_uneven_recording_does_not_reach_the_commanded_motion():
+    """An uneven grid replayed as knots makes the commanded velocity a
+    staircase. Resampling removes it; without that step the timing-preserving
+    modes are an order of magnitude rougher than the same motion sampled
+    evenly."""
+    even = retime(*taught_motion(noise=2e-4, seed=3), AS_RECORDED)
+    uneven = retime(*uneven_motion(seed=3), AS_RECORDED)
+    assert commanded_acceleration(uneven) < 3.0 * commanded_acceleration(even)
+
+
+def test_as_recorded_filters_at_the_floor_and_smooth_may_widen_it():
+    t, q = uneven_motion()
+    floor = retime(t, q, AS_RECORDED)
+    # A window under the floor cannot make a replay rougher than the floor.
+    assert retime(t, q, SMOOTH, smoothing_window_sec=0.0).path_deviation == pytest.approx(
+        floor.path_deviation, rel=1e-9
+    )
+    assert retime(t, q, AS_RECORDED, smoothing_window_sec=0.5).path_deviation == pytest.approx(
+        floor.path_deviation, rel=1e-9
+    )
+    wider = retime(t, q, SMOOTH, smoothing_window_sec=4 * RECONSTRUCTION_WINDOW_SEC)
+    assert wider.path_deviation > floor.path_deviation
+    assert commanded_acceleration(wider) < commanded_acceleration(floor)
+
+
+def test_the_output_grid_follows_the_requested_resample_dt():
+    t, q = taught_motion()
+    for dt in (DEFAULT_RESAMPLE_DT, 0.01):
+        result = retime(t, q, AS_RECORDED, resample_dt=dt)
+        assert np.diff(result.times).mean() == pytest.approx(dt, rel=0.02)
 
 
 def test_as_recorded_supplies_derivatives_the_recording_did_not():

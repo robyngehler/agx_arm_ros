@@ -97,11 +97,23 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   anything derived from the protocol is per tier, not per robot model, and a measurement names its arm
 - the arm's feedback rate is the ceiling for every rate above it and is not
   configurable: ~100 complete state updates/s on the right arm, ~137/s on the
-  left (wire, 2026-08-22). A rate set above it manufactures duplicates — 200 Hz
+  left (wire, 2026-08-22). A rate set above it manufactures duplicates — a 200 Hz
   recording gave 33.4% identical consecutive samples. One update is eleven CAN
   frames, so a frame count is not an update count, and the ~2 kHz quoted for
   these joints is the joint's own servo loop, which never reaches CAN
   (`docs/sprint_refactor/reference/feedback_rate_budget.md`)
+- where a source has its own cadence, take its callbacks rather than sampling it
+  on a clock. Teach recording stores one sample per feedback update, timed by the
+  publisher's frame stamp, so there is no rate to configure
+- an operation indexed by sample is the operation you meant only if the samples
+  are evenly spaced. A recording's grid is uneven, so a moving average over N
+  rows is not a fixed-width filter and a row-index difference is not a
+  derivative. Resample onto a uniform grid before filtering or differentiating
+  and emit on that grid — the MIT controller interpolates linearly, so an uneven
+  knot is a step in commanded velocity. Every replay mode does this,
+  `as_recorded` included, which therefore means the taught path and pace at the
+  smallest filter that executes
+  (`docs/sprint_refactor/reference/teach_replay_timebase.md`)
 - `rclpy.spin_once` delivers one message from one subscription, so a paced loop
   calling it once per cycle captures at loop rate over ready callbacks. Drain the
   rest and stop as soon as a spin serves nothing — a fixed drain count is paid

@@ -1,22 +1,31 @@
 """Turn a recording into an executable trajectory, under one of four modes.
 
-The modes split by what the underlying tool can express, not by preference:
+The modes split by what the underlying tool can express:
 
-* ``as_recorded`` and ``smooth`` keep the taught timing and fit nothing. The
-  recorded samples are replayed at their recorded times, with derivatives taken
-  as central differences and, for ``smooth``, a moving-average window over the
-  positions first. A motion whose dynamics were taught deliberately — a dwell, a
-  slow pour — therefore survives, and so does the path.
+* ``as_recorded`` and ``smooth`` keep the taught duration and the taught pace.
+  Both resample the recording onto a uniform grid, filter it there, and take
+  derivatives there; they differ only in filter width.
 * ``speed_scale`` and ``maximize_speed`` hand the geometric path to MoveIt's
-  time-optimal parameterization, which computes its own timing and therefore
-  discards anything purely temporal in the recording.
+  time-optimal parameterization, which computes its own timing and so discards
+  anything purely temporal in the recording — a dwell is zero path progress.
 
 Nothing here fits a curve. Every smoothing step is a moving average or a bin
-mean, so a planned pose is always a convex combination of recorded ones and
-cannot leave the range the recording covers. The parameterization still needs a
-smoothed, sparse path — fed a dense recording it produces either curvature
-spikes at every sample or blend radii so small the result is slower than the
-recording (``docs/sprint_refactor/reference/trajectory_retiming.md``).
+mean, so a planned pose is a convex combination of recorded ones and cannot
+leave the range the recording covers.
+
+**Both timing-preserving modes resample and filter, ``as_recorded`` included.**
+A recording carries an uneven time grid, and the controller interpolates linearly
+between trajectory points, so an uneven knot is a step in commanded velocity: 27-43
+rad/s² of commanded acceleration against 6 on the same recording resampled.
+``RECONSTRUCTION_WINDOW_SEC`` is the filter floor below which sample noise
+dominates. ``as_recorded`` therefore means the taught path and pace at the
+smallest filter that executes, not an unprocessed sample dump
+(``docs/sprint_refactor/reference/teach_replay_timebase.md``).
+
+The parameterization needs a smoothed, sparse path: fed a dense recording it
+produces either curvature spikes at every sample or blend radii so small the
+result is slower than the recording
+(``docs/sprint_refactor/reference/trajectory_retiming.md``).
 """
 
 from __future__ import annotations
@@ -57,6 +66,11 @@ DEFAULT_BLEND_TOLERANCE = 0.01
 # the geometric path handed to the parameterization.
 DEFAULT_SMOOTHING_WINDOW_SEC = 0.10
 DEFAULT_RESAMPLE_DT = 0.005
+# Smallest filter width the timing-preserving modes apply, `as_recorded`
+# included. Commanded acceleration on two 7-joint recordings: 27-43 rad/s²
+# unfiltered, 6 here, 4 at the 0.10 s default. Costs 0.01-0.05 rad of path
+# deviation.
+RECONSTRUCTION_WINDOW_SEC = 0.06
 # How far past the recorded per-joint range a plan may still land, on top of
 # whatever the smoothing moved it. Corner blending cuts inside the path, so the
 # margin only has to absorb rounding.
@@ -87,8 +101,9 @@ class RetimedTrajectory:
     accelerations: list[list[float]]
     duration: float
     recorded_duration: float
-    #: Largest deviation of the planned path from the recording, in rad. Zero by
-    #: construction for ``as_recorded``.
+    #: Largest deviation of the planned path from the recording, in rad,
+    #: measured at the recorded sample times. Non-zero in every mode: all four
+    #: filter the recording before they emit it.
     path_deviation: float
     #: Achieved speed relative to the recording (2.0 = twice as fast).
     speed_achieved: float
@@ -137,38 +152,72 @@ def _utilisation(values, limits):
     return float(np.max(np.abs(np.asarray(values)) / np.asarray(limits)))
 
 
-def _moving_average(q, t, window_sec):
-    """Zero-phase centred moving average over the recorded samples.
+def _uniform_resample(t, q, dt):
+    """Linearly interpolate a recording onto a uniform grid of step ``dt``.
 
-    Deliberately not a fitted spline. A fit has to choose a smoothness for the
-    whole signal and then reproduces whatever it did not smooth as derivative
-    noise; a window is blunt, local, and its effect is one number an operator can
-    turn. The half-window shrinks symmetrically at the edges, so the first and
-    last samples stay exactly where they were recorded.
+    The grid spans the recorded duration exactly, so the taught pace is
+    preserved. Linear interpolation keeps every output pose a convex combination
+    of two recorded ones, and the recorded endpoints land on the grid ends.
+
+    A uniform grid is what makes the filter below a time-domain filter and the
+    differences below true derivatives; on the recorded grid both are index
+    operations over unequal intervals.
+    """
+    duration = float(t[-1])
+    if duration <= 0.0 or not (dt > 0.0) or not math.isfinite(dt):
+        return np.asarray(t, dtype=float), q.copy()
+    # At least four points, so a central difference over the grid has something
+    # to work with however coarse the step asked for was.
+    steps = max(3, int(math.ceil(duration / dt - 1e-9)))
+    grid = np.linspace(0.0, duration, steps + 1)
+    resampled = np.stack(
+        [np.interp(grid, t, q[:, joint]) for joint in range(q.shape[1])], axis=1
+    )
+    return grid, resampled
+
+
+def _moving_average(q, t, window_sec):
+    """Zero-phase centred moving average, width given in seconds.
+
+    Not a fitted spline: a fit chooses one smoothness for the whole signal and
+    reproduces whatever it did not smooth as derivative noise.
+
+    The ends are extended by odd reflection through the endpoint
+    (``q[-k] = 2*q[0] - q[k]``), which holds the window at full width and keeps
+    the first and last samples exactly where they were. A window that shrinks at
+    the edges instead leaves the outermost samples unfiltered, at 109 rad/s² of
+    commanded acceleration against 5.8 over the rest of the same replay.
+
+    ``t`` must be uniformly spaced: the width is converted to samples through the
+    median spacing, which is the requested width only when every interval equals
+    it.
     """
     if window_sec <= 0.0:
         return q.copy(), 0.0
     spacing = float(np.median(np.diff(t)))
     half = int(round(0.5 * window_sec / spacing)) if spacing > 0.0 else 0
-    if half < 1:
-        return q.copy(), 0.0
-
     count = len(q)
-    smoothed = np.empty_like(q)
-    for index in range(count):
-        reach = min(half, index, count - 1 - index)
-        smoothed[index] = (
-            q[index - reach: index + reach + 1].mean(axis=0) if reach else q[index]
-        )
+    if half < 1 or count < 2:
+        return q.copy(), 0.0
+    half = min(half, count - 1)
+
+    reflection = np.arange(half, 0, -1)
+    padded = np.concatenate([
+        2.0 * q[0] - q[reflection],
+        q,
+        2.0 * q[-1] - q[count - 1 - reflection[::-1]],
+    ])
+    window = 2 * half + 1
+    cumulative = np.cumsum(np.vstack([np.zeros((1, q.shape[1])), padded]), axis=0)
+    smoothed = (cumulative[window:] - cumulative[:-window]) / window
     return smoothed, float(np.max(np.abs(smoothed - q)))
 
 
 def _finite_difference_states(t, q):
-    """Central differences over the recorded, possibly uneven spacing.
+    """Central differences over ``t``. Endpoints are held at rest.
 
-    Sound only because repeats are removed before a recording is stored: a
-    difference taken across a repeated sample alternates between zero and twice
-    the true value. Endpoints are held at rest, where the arm was.
+    Accurate to second order on a uniform grid and first order otherwise, so
+    callers resample before differencing.
     """
     count = len(q)
     velocities = np.zeros_like(q)
@@ -179,24 +228,36 @@ def _finite_difference_states(t, q):
         if before <= 0.0 or after <= 0.0:
             continue
         velocities[index] = (q[index + 1] - q[index - 1]) / (before + after)
-        # Straight from the positions, not from the velocities above: those are
+        # Taken from the positions, not from the velocities above: those are
         # pinned to zero at the ends, and differencing across that pin reports an
-        # acceleration spike the motion does not contain.
+        # acceleration the motion does not contain.
         accelerations[index] = 2.0 * (
             (q[index + 1] - q[index]) / after - (q[index] - q[index - 1]) / before
         ) / (before + after)
     return velocities, accelerations
 
 
+def _deviation_at_recorded_times(grid, planned, t, q):
+    """Largest gap between the planned path and the recording, at its own times."""
+    interpolated = np.stack(
+        [np.interp(t, grid, planned[:, joint]) for joint in range(planned.shape[1])],
+        axis=1,
+    )
+    return float(np.max(np.abs(interpolated - q)))
+
+
 def _geometric_path(t, q, *, smoothing_window_sec, waypoints):
     """Smooth with a window, then reduce to a sparse waypoint set by binning.
 
     Both steps are averages, so every waypoint is a convex combination of
-    recorded samples and the path cannot leave the range the recording covers.
-    A fitted spline can and did: a quintic smoothing spline over one recording
-    overshot joint 4 by 2.48 rad, putting a commanded pose 142 degrees outside
-    anything taught. Binning rather than decimating also keeps sample noise from
-    aliasing into the sparse path.
+    recorded samples and the path cannot leave the range the recording covers —
+    the guarantee `_assert_within_recorded_range` checks. Binning rather than
+    decimating keeps sample noise from aliasing into the sparse path.
+
+    On the recorded grid, not the uniform one the timing-preserving modes use:
+    TOTG re-times the path, so the grid's unevenness cannot reach its output,
+    and equal-sample bins put more waypoints where the arm was moving. Binning a
+    uniform grid spends them on dwells instead, at 20-28% slower at full limits.
     """
     smoothed, deviation = _moving_average(q, t, smoothing_window_sec)
     count = len(smoothed)
@@ -388,14 +449,28 @@ def retime(
     notes: list[str] = []
 
     if mode in (AS_RECORDED, SMOOTH):
-        window = 0.0 if mode == AS_RECORDED else smoothing_window_sec
-        pos, deviation = _moving_average(q, t, window)
-        vel, acc = _finite_difference_states(t, pos)
-        tt = t
-        if mode == AS_RECORDED:
-            notes.append("every recorded sample replayed unchanged, at its recorded time")
-        else:
-            notes.append(f"{window:.2f}s moving-average window, no fit")
+        # The floor applies to both modes: the recorded grid is uneven, and the
+        # controller's linear interpolation turns an uneven knot into a step in
+        # commanded velocity.
+        window = (
+            RECONSTRUCTION_WINDOW_SEC
+            if mode == AS_RECORDED
+            else max(RECONSTRUCTION_WINDOW_SEC, smoothing_window_sec)
+        )
+        tt, resampled = _uniform_resample(t, q, resample_dt)
+        pos, _ = _moving_average(resampled, tt, window)
+        deviation = _deviation_at_recorded_times(tt, pos, t, q)
+        vel, acc = _finite_difference_states(tt, pos)
+        recorded_spacing = float(np.median(np.diff(t)))
+        notes.append(
+            f"taught timing kept; resampled from {1.0 / recorded_spacing:.0f} Hz median "
+            f"to {1.0 / resample_dt:.0f} Hz uniform, {window:.2f}s moving-average window"
+        )
+        if mode == AS_RECORDED and smoothing_window_sec > RECONSTRUCTION_WINDOW_SEC:
+            notes.append(
+                f"as_recorded ignores the {smoothing_window_sec:.2f}s window; "
+                f"use 'smooth' to widen it"
+            )
         velocity_use = _utilisation(vel, max_velocity)
         acceleration_use = _utilisation(acc, max_acceleration)
         if velocity_use > 1.0:
@@ -467,8 +542,10 @@ __all__ = [
     "AS_RECORDED",
     "MAXIMIZE_SPEED",
     "MODES",
+    "DEFAULT_RESAMPLE_DT",
     "DEFAULT_SMOOTHING_WINDOW_SEC",
     "NERO_MAX_VELOCITY",
+    "RECONSTRUCTION_WINDOW_SEC",
     "SMOOTH",
     "SPEED_SCALE",
     "RetimedTrajectory",

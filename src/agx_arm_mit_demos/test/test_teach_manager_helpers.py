@@ -402,3 +402,128 @@ def test_a_hand_window_flag_against_the_registry_is_refused(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["teach_manager", contradicting])
     with pytest.raises(ValueError, match="contradicts bus_topology"):
         teach_manager.parse_args()
+
+
+# --- callback-driven recording -------------------------------------------
+
+
+def _endpoint(joints=("joint1", "joint2")):
+    """An _ArmEndpoint with its capture state, without a ROS graph."""
+    from agx_arm_mit_demos.teach_manager import _ArmEndpoint
+
+    arm = _ArmEndpoint.__new__(_ArmEndpoint)
+    arm.source_joints = list(joints)
+    arm.node = SimpleNamespace(_callbacks_served=0)
+    arm.latest = None
+    arm.feedback_messages = 0
+    arm.feedback_frames = 0
+    arm._last_feedback_stamp = None
+    arm._capturing = False
+    arm._capture = []
+    arm._capture_origin = None
+    arm._capture_wall_origin = 0.0
+    arm._capture_uses_stamp = True
+    arm._capture_threshold = 0.0
+    arm._capture_moved = False
+    arm._capture_last_motion = 0.0
+    return arm
+
+
+def _state(stamp_sec, stamp_nsec, positions, names=("joint1", "joint2")):
+    return SimpleNamespace(
+        header=SimpleNamespace(stamp=SimpleNamespace(sec=stamp_sec, nanosec=stamp_nsec)),
+        name=list(names),
+        position=list(positions),
+    )
+
+
+def test_a_capture_stores_one_sample_per_new_frame(monkeypatch):
+    """Every distinct frame is a sample; a republished frame is not. A paced
+    sampler could do neither: it stored the cache whether or not it had moved
+    on."""
+    monkeypatch.setattr(
+        "agx_arm_mit_demos.teach_manager.compute_flange_pose_from_mdh",
+        lambda positions, robot: None,
+    )
+    arm = _endpoint()
+    arm.start_capture(movement_threshold=0.001)
+    for index, (nsec, value) in enumerate(
+        [(0, 0.0), (0, 0.0), (10_000_000, 0.1), (20_000_000, 0.2), (20_000_000, 0.3)]
+    ):
+        arm._on_feedback(_state(100, nsec, [value, value]))
+    samples = arm.stop_capture()
+
+    assert [round(s.time_from_start - 100.0, 4) for s in samples] == [0.0, 0.01, 0.02]
+    assert [s.positions[0] for s in samples] == [0.0, 0.1, 0.2]
+    assert arm.capture_moved is True
+    assert arm.capture_uses_stamp is True
+
+
+def test_a_publisher_without_a_stamp_falls_back_to_arrival_time(monkeypatch):
+    monkeypatch.setattr(
+        "agx_arm_mit_demos.teach_manager.compute_flange_pose_from_mdh",
+        lambda positions, robot: None,
+    )
+    now = {"t": 10.0}
+    monkeypatch.setattr("agx_arm_mit_demos.teach_manager.time.monotonic", lambda: now["t"])
+    arm = _endpoint()
+    arm.start_capture(movement_threshold=0.001)
+    for index, value in enumerate((0.0, 0.1, 0.2)):
+        now["t"] = 10.0 + index * 0.01
+        arm._on_feedback(_state(0, 0, [value, value]))
+    samples = arm.stop_capture()
+
+    assert arm.capture_uses_stamp is False
+    assert len(samples) == 3
+    assert [round(s.time_from_start - 10.0, 4) for s in samples] == [0.0, 0.01, 0.02]
+
+
+def test_a_capture_ignores_a_frame_whose_stamp_went_backwards(monkeypatch):
+    """The retiming pipeline requires strictly increasing times."""
+    monkeypatch.setattr(
+        "agx_arm_mit_demos.teach_manager.compute_flange_pose_from_mdh",
+        lambda positions, robot: None,
+    )
+    arm = _endpoint()
+    arm.start_capture(movement_threshold=0.001)
+    for nsec, value in [(20_000_000, 0.0), (10_000_000, 0.1), (30_000_000, 0.2)]:
+        arm._on_feedback(_state(100, nsec, [value, value]))
+    times = [s.time_from_start for s in arm.stop_capture()]
+
+    assert times == sorted(times)
+    assert len(times) == 2
+
+
+def test_arms_are_rebased_onto_one_time_axis():
+    """Each arm's first frame lands at a different instant; a duo recording has
+    to be one time axis or the merge skews the arms against each other."""
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+    from agx_arm_mit_demos.leader_trajectory_recorder import RecorderSnapshot
+
+    left, right = _endpoint(), _endpoint()
+    left._capture_uses_stamp = right._capture_uses_stamp = True
+    node = TeachManagerNode.__new__(TeachManagerNode)
+    node.arms = [left, right]
+
+    def samples(start):
+        return [
+            RecorderSnapshot(time_from_start=start + i * 0.01, positions=[0.0], efforts=[0.0], flange_pose=None)
+            for i in range(3)
+        ]
+
+    rebased = node._rebase_capture_times({left: samples(100.05), right: samples(100.00)})
+    assert [round(s.time_from_start, 6) for s in rebased[right]] == [0.0, 0.01, 0.02]
+    assert [round(s.time_from_start, 6) for s in rebased[left]] == [0.05, 0.06, 0.07]
+
+
+def test_mixed_capture_clocks_are_refused():
+    import pytest
+
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+
+    left, right = _endpoint(), _endpoint()
+    left._capture_uses_stamp, right._capture_uses_stamp = True, False
+    node = TeachManagerNode.__new__(TeachManagerNode)
+    node.arms = [left, right]
+    with pytest.raises(RuntimeError, match="different clocks"):
+        node._rebase_capture_times({left: [], right: []})

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Drop the repeated samples an existing teach recording carries, in place.
 
-New recordings are de-duplicated before they are saved. This is for files taken
-before that, or for re-running with a different tolerance. The logic is the
-shared one in ``agx_arm_mit_controller.trajectory_io`` -- the reasoning for it
-lives in that docstring, not here.
+**Not part of the recording or replay path.** Recording is driven by the arm's
+feedback callbacks, so a repeat means the arm held still rather than that a
+sampler had nothing new, and replay resamples onto a uniform grid regardless.
+Removing rows here leaves the survivors on the times they were taken, which makes
+the grid *less* even -- see
+``docs/sprint_refactor/reference/teach_replay_timebase.md``.
 
-    python3 scripts/clean_recording.py ~/agx_arm_trajectories/teach/*.json
+Kept for inspecting how much of a file is repeats (``--dry-run``) and for
+recordings taken with ``--deduplicate-recordings`` deliberately off.
+
+    python3 scripts/clean_recording.py --dry-run ~/agx_arm_trajectories/teach/*.json
 
 The original is copied into a ``raw/`` subdirectory before the cleaned version
 is written, so nothing is destroyed.

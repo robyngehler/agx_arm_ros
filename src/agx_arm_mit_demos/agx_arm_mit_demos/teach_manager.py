@@ -14,9 +14,10 @@ covers the whole teach loop for the coordinated demo from a single process:
 Arm-count-aware: pass one namespace per arm via ``--arms``. Each arm is its own
 namespaced MIT stack (``/<ns>/mit_controller/...``, ``/<ns>/feedback/...``) that
 internally uses the **unprefixed** joints ``joint1..7`` — the namespace, not a
-joint prefix, separates the arms. With two arms the record path captures both on
-one clock; at save time you choose the resource the recording is stored as
-(``both_arms`` -> merged 14-dim, or one side -> 7-dim).
+joint prefix, separates the arms. Recording is driven by each arm's feedback
+callbacks, so an arm's own cadence is its recording's cadence; the two arms are
+put on one time axis afterwards. At save time you choose the resource the
+recording is stored as (``both_arms`` -> merged 14-dim, or one side -> 7-dim).
 
 Single right arm (backward-compatible default, empty namespace)::
 
@@ -73,10 +74,12 @@ from agx_arm_coordination.arm_executor import ArmConfig
 from agx_arm_ctrl.motion_registry import assert_matches_topology, handshake_required
 from agx_arm_retiming import (
     AS_RECORDED,
+    DEFAULT_RESAMPLE_DT,
     DEFAULT_SMOOTHING_WINDOW_SEC,
     MAXIMIZE_SPEED,
     MODES as RETIMING_MODES,
     NERO_MAX_VELOCITY,
+    RECONSTRUCTION_WINDOW_SEC,
     SMOOTH,
     SPEED_SCALE,
     RetimingError,
@@ -86,6 +89,7 @@ from agx_arm_retiming import (
 
 from .capture_anchor_pose import average_joint_positions, update_pose_in_config
 from .leader_trajectory_recorder import RecorderSnapshot, build_recorded_trajectory
+from .playback import retimed_to_joint_trajectory
 from .recorded_to_catalogue import build_duo_trajectory, format_waypoints_block, recorded_to_waypoints
 from .wakeword_motion_manager import TerminalKeyReader
 
@@ -112,44 +116,6 @@ class _PlaybackPlan:
     mode: str
     speed_scale: float
     smoothing_window_sec: float
-
-
-def _duration_msg(seconds: float):
-    from builtin_interfaces.msg import Duration
-
-    seconds = max(0.0, float(seconds))
-    return Duration(sec=int(seconds), nanosec=int(round((seconds - int(seconds)) * 1e9)))
-
-
-def retimed_to_joint_trajectory(
-    result,
-    joint_names,
-    *,
-    current_positions: Optional[list[float]] = None,
-    lead_in_sec: float = 0.0,
-) -> JointTrajectory:
-    """Build the ROS message from a re-timed trajectory.
-
-    Velocities come from the parameterization rather than being left empty, which
-    is what gives the controller a feedforward instead of pure position chasing.
-    """
-    msg = JointTrajectory()
-    msg.joint_names = list(joint_names)
-    if current_positions is not None and lead_in_sec > 0.0:
-        lead_in = JointTrajectoryPoint()
-        lead_in.positions = [float(value) for value in current_positions]
-        lead_in.velocities = [0.0] * len(current_positions)
-        lead_in.time_from_start = _duration_msg(0.0)
-        msg.points.append(lead_in)
-    for time_from_start, positions, velocities in zip(
-        result.times, result.positions, result.velocities
-    ):
-        point = JointTrajectoryPoint()
-        point.positions = [float(value) for value in positions]
-        point.velocities = [float(value) for value in velocities]
-        point.time_from_start = _duration_msg(time_from_start + lead_in_sec)
-        msg.points.append(point)
-    return msg
 
 
 @dataclass(frozen=True)
@@ -481,7 +447,16 @@ class _ArmEndpoint:
         self.feedback_messages = 0
         self.feedback_frames = 0
         self._last_feedback_stamp = None
-        node.create_subscription(JointState, self._name(source_topic), self._on_feedback, 20)
+        # Capture state, owned by the feedback callback (see start_capture).
+        self._capturing = False
+        self._capture: list[RecorderSnapshot] = []
+        self._capture_origin: Optional[tuple[int, int]] = None
+        self._capture_wall_origin = 0.0
+        self._capture_uses_stamp = True
+        self._capture_threshold = 0.0
+        self._capture_moved = False
+        self._capture_last_motion = 0.0
+        node.create_subscription(JointState, self._name(source_topic), self._on_feedback, 50)
 
     def _name(self, relative: str) -> str:
         return f"/{self.namespace}/{relative}" if self.namespace else relative
@@ -498,34 +473,98 @@ class _ArmEndpoint:
     def _on_feedback(self, msg: JointState) -> None:
         self.latest = msg
         self.node._callbacks_served += 1
-        # Counted so a recording can state what it actually saw. Sampling faster
-        # than this arrives stores repeats, and which of the two is the ceiling
-        # is not visible from the stored file alone.
         self.feedback_messages += 1
         stamp = (msg.header.stamp.sec, msg.header.stamp.nanosec)
-        if stamp != self._last_feedback_stamp:
+        advanced = stamp != self._last_feedback_stamp
+        if advanced:
             self._last_feedback_stamp = stamp
             self.feedback_frames += 1
+        if self._capturing:
+            self._capture_sample(msg, stamp, advanced)
 
     def reset_feedback_counters(self) -> None:
         self.feedback_messages = 0
         self.feedback_frames = 0
         self._last_feedback_stamp = None
 
-    def snapshot(self, time_from_start: float) -> Optional[RecorderSnapshot]:
-        msg = self.latest
-        if msg is None:
-            return None
+    # --- recording -----------------------------------------------------------
+
+    def start_capture(self, movement_threshold: float) -> None:
+        """Arm this arm's feedback callback to store every new update.
+
+        The arm's own cadence sets the sample times, so a stored sample is always
+        an update the arm produced and every update it produced is stored.
+        """
+        self._capture = []
+        self._capture_origin = None
+        self._capture_wall_origin = 0.0
+        self._capture_uses_stamp = True
+        self._capture_threshold = float(movement_threshold)
+        self._capture_moved = False
+        self._capture_last_motion = time.monotonic()
+        self.reset_feedback_counters()
+        self._capturing = True
+
+    def stop_capture(self) -> list[RecorderSnapshot]:
+        self._capturing = False
+        return self._capture
+
+    @property
+    def capture_moved(self) -> bool:
+        return self._capture_moved
+
+    @property
+    def capture_last_motion(self) -> float:
+        return self._capture_last_motion
+
+    @property
+    def capture_uses_stamp(self) -> bool:
+        return self._capture_uses_stamp
+
+    def _capture_sample(self, msg: JointState, stamp, advanced: bool) -> None:
+        # The publisher's stamp is the arm's frame timestamp — when the data was
+        # produced, not when the executor delivered it. A zero stamp means the
+        # publisher does not fill it; arrival time is then the only clock, and
+        # every delivered message is a sample.
+        #
+        # Times are stored absolute and re-based against all arms at once, so a
+        # duo capture stays on one time axis even though each arm's first frame
+        # lands at a different instant.
+        if self._capture_origin is None:
+            self._capture_uses_stamp = stamp != (0, 0)
+            self._capture_origin = stamp
+            self._capture_wall_origin = time.monotonic()
+        elif self._capture_uses_stamp and not advanced:
+            return
+
+        if self._capture_uses_stamp:
+            elapsed = stamp[0] + stamp[1] * 1e-9
+        else:
+            elapsed = time.monotonic()
+        if self._capture and elapsed <= self._capture[-1].time_from_start:
+            # A stamp that does not move forward carries no new instant, and the
+            # retiming pipeline requires strictly increasing times.
+            return
+
         position_map = {name: float(value) for name, value in zip(msg.name, msg.position)}
         if any(joint not in position_map for joint in self.source_joints):
-            return None
+            return
         positions = [position_map[joint] for joint in self.source_joints]
-        flange_pose = compute_flange_pose_from_mdh(positions, robot="nero")
-        return RecorderSnapshot(
-            time_from_start=time_from_start,
-            positions=positions,
-            efforts=[0.0] * len(self.source_joints),
-            flange_pose=flange_pose,
+        if self._capture:
+            deltas = [
+                abs(current - previous)
+                for current, previous in zip(positions, self._capture[-1].positions)
+            ]
+            if max(deltas, default=0.0) >= self._capture_threshold:
+                self._capture_moved = True
+                self._capture_last_motion = time.monotonic()
+        self._capture.append(
+            RecorderSnapshot(
+                time_from_start=elapsed,
+                positions=positions,
+                efforts=[0.0] * len(self.source_joints),
+                flange_pose=compute_flange_pose_from_mdh(positions, robot="nero"),
+            )
         )
 
     # --- service calls (spin on the owning node) ---------------------------
@@ -1139,100 +1178,128 @@ class TeachManagerNode(Node):
     # --- teach actions -------------------------------------------------------
 
     def _record_all_arms(self) -> dict[_ArmEndpoint, list[RecorderSnapshot]]:
-        """Capture every arm on one shared clock until motion stops on all arms.
+        """Capture every arm from its own feedback callbacks until motion stops.
 
-        Recording starts once any arm moves and stops after ``hold_timeout`` with
-        no arm moving, so both arms share identical sample timestamps — the basis
-        for a time-synced duo merge.
+        Each arm stores one sample per feedback update it receives, so the arm's
+        cadence is the recording's cadence: nothing is stored twice, and the
+        stored rate is the rate the arm delivered. Recording stops after
+        ``hold_timeout`` with no arm moving.
         """
-        period = 1.0 / self.args.sample_rate
-        samples: dict[_ArmEndpoint, list[RecorderSnapshot]] = {arm: [] for arm in self.arms}
         for arm in self.arms:
-            arm.reset_feedback_counters()
+            arm.start_capture(self.args.movement_threshold)
         recording_start = time.monotonic()
-        last_motion_time = recording_start
-        motion_started = False
-        while rclpy.ok():
-            loop_start = time.monotonic()
-            rclpy.spin_once(self, timeout_sec=min(period, 0.1))
-            # Drain the rest: one spin_once delivers a single message from a
-            # single subscription, so the capture rate was the loop rate divided
-            # by the number of ready callbacks -- 22 Hz of real content out of a
-            # 100 Hz recording with one arm and its hand. Sampling faster made it
-            # worse, not better, because nothing here was ever bound by the arm.
-            #
-            # Stop as soon as nothing was served: every spin_once checks the
-            # whole wait set, and this node holds service and action clients as
-            # well as its subscriptions, so draining a fixed count costs the
-            # loop its period.
-            for _ in range(self.RECORD_DRAIN_LIMIT):
-                served = self._callbacks_served
-                rclpy.spin_once(self, timeout_sec=0.0)
-                if self._callbacks_served == served:
+        try:
+            while rclpy.ok():
+                rclpy.spin_once(self, timeout_sec=0.02)
+                # Serve everything ready before looping: the subscription queue
+                # is finite, and a message dropped there is a sample the arm
+                # produced and the recording will not contain. Stop as soon as a
+                # spin serves nothing — every spin checks the node's whole wait
+                # set, so a fixed drain count is paid even on empty queues.
+                for _ in range(self.RECORD_DRAIN_LIMIT):
+                    served = self._callbacks_served
+                    rclpy.spin_once(self, timeout_sec=0.0)
+                    if self._callbacks_served == served:
+                        break
+                if not any(arm.capture_moved for arm in self.arms):
+                    continue
+                idle = time.monotonic() - max(arm.capture_last_motion for arm in self.arms)
+                if idle >= self.args.hold_timeout:
                     break
-            frame = {arm: arm.snapshot(loop_start - recording_start) for arm in self.arms}
-            if any(snap is None for snap in frame.values()):
-                continue
-            moved = False
-            for arm in self.arms:
-                if samples[arm]:
-                    deltas = [
-                        abs(current - previous)
-                        for current, previous in zip(frame[arm].positions, samples[arm][-1].positions)
-                    ]
-                    if max(deltas, default=0.0) >= self.args.movement_threshold:
-                        moved = True
-            if moved:
-                motion_started = True
-                last_motion_time = loop_start
-            for arm in self.arms:
-                samples[arm].append(frame[arm])
-            if motion_started and (loop_start - last_motion_time) >= self.args.hold_timeout:
-                break
-            sleep_time = max(0.0, period - (time.monotonic() - loop_start))
-            if sleep_time > 0.0:
-                time.sleep(sleep_time)
-        if not motion_started:
+        finally:
+            samples = {arm: arm.stop_capture() for arm in self.arms}
+
+        if not any(arm.capture_moved for arm in self.arms):
             raise RuntimeError("No joint movement detected during recording")
+        thin = [arm.label for arm in self.arms if len(samples[arm]) < 4]
+        if thin:
+            raise RuntimeError(
+                f"too few feedback updates captured on {thin}; the arm is not "
+                "publishing feedback/joint_states with an advancing header stamp"
+            )
+        samples = self._rebase_capture_times(samples)
         self._report_capture(samples, time.monotonic() - recording_start)
         return samples
+
+    def _rebase_capture_times(
+        self, samples: dict[_ArmEndpoint, list[RecorderSnapshot]]
+    ) -> dict[_ArmEndpoint, list[RecorderSnapshot]]:
+        """Put every arm's absolute capture times on one axis starting at zero.
+
+        Both clocks a capture can use are process-global, so arms are comparable
+        as long as they chose the same one. Mixing them would silently skew a duo
+        recording against itself.
+        """
+        clocks = {arm.capture_uses_stamp for arm in self.arms}
+        if len(clocks) > 1:
+            raise RuntimeError(
+                "arms captured on different clocks (one publishes a header stamp, "
+                "one does not); a duo recording cannot be put on one time axis"
+            )
+        origin = min(samples[arm][0].time_from_start for arm in self.arms)
+        return {
+            arm: [
+                RecorderSnapshot(
+                    time_from_start=sample.time_from_start - origin,
+                    positions=sample.positions,
+                    efforts=sample.efforts,
+                    flange_pose=sample.flange_pose,
+                )
+                for sample in arm_samples
+            ]
+            for arm, arm_samples in samples.items()
+        }
+
+    @staticmethod
+    def _achieved_rate(arm_samples: list[RecorderSnapshot]) -> float:
+        span = arm_samples[-1].time_from_start - arm_samples[0].time_from_start
+        return (len(arm_samples) - 1) / span if span > 0.0 else 0.0
 
     def _report_capture(
         self, samples: dict[_ArmEndpoint, list[RecorderSnapshot]], elapsed: float
     ) -> None:
-        """State what the capture actually saw, per arm.
-
-        Whether a recording is bound by the sample rate or by the arm is not
-        visible in the stored file: both look like repeated rows. Reporting the
-        source rate next to the stored rate names which one it was.
-        """
+        """State the cadence each arm actually delivered, and how even it was."""
         if elapsed <= 0.0:
             return
         for arm in self.arms:
-            stored = len(samples[arm])
-            source = arm.feedback_frames / elapsed
+            arm_samples = samples[arm]
+            gaps = [
+                b.time_from_start - a.time_from_start
+                for a, b in zip(arm_samples, arm_samples[1:])
+            ]
+            gaps.sort()
+            median = gaps[len(gaps) // 2] if gaps else 0.0
+            clock = "frame stamp" if arm.capture_uses_stamp else "arrival time"
             self.get_logger().info(
-                f"[{arm.label}] captured {stored / elapsed:.1f} samples/s of "
-                f"{self.args.sample_rate:.0f} Hz configured; the arm supplied "
-                f"{source:.1f} distinct frames/s over {elapsed:.1f}s"
+                f"[{arm.label}] captured {len(arm_samples)} updates at "
+                f"{self._achieved_rate(arm_samples):.1f} Hz over {elapsed:.1f}s "
+                f"({clock}); interval median {median * 1000:.1f} ms, "
+                f"max {gaps[-1] * 1000:.1f} ms"
             )
-            if source < 0.9 * self.args.sample_rate:
-                self.get_logger().warn(
-                    f"[{arm.label}] the arm is the ceiling here: sampling above "
-                    f"{source:.0f} Hz stores repeats, not detail"
+            if arm.feedback_messages > arm.feedback_frames:
+                self.get_logger().info(
+                    f"[{arm.label}] {arm.feedback_messages - arm.feedback_frames} "
+                    "republished frame(s) skipped; they carry no new instant"
                 )
 
     def _build_arm_trajectory(self, name: str, arm: _ArmEndpoint, arm_samples: list[RecorderSnapshot]) -> RecordedTrajectory:
         return build_recorded_trajectory(
             name=name,
+            # The rate the arm delivered, not one that was configured: with
+            # callback-driven capture there is no configured rate to store.
+            sample_rate=round(self._achieved_rate(arm_samples), 3),
             joint_names=list(arm.source_joints),
-            sample_rate=self.args.sample_rate,
             hold_timeout=self.args.hold_timeout,
             movement_threshold=self.args.movement_threshold,
             samples=arm_samples,
             raw_sample_count=len(arm_samples),
             urdf_path=self.args.urdf_path or None,
-            metadata={"manager": "agx_arm_teach_manager", "namespace": arm.namespace},
+            metadata={
+                "manager": "agx_arm_teach_manager",
+                "namespace": arm.namespace,
+                "capture": "event_driven",
+                "capture_clock": "frame_stamp" if arm.capture_uses_stamp else "arrival_time",
+            },
         )
 
     def record_sample(self, key_reader: TerminalKeyReader) -> None:
@@ -1255,21 +1322,25 @@ class TeachManagerNode(Node):
         if resource == "both_arms":
             ordered = sorted(self.arms, key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
             per_arm = [self._build_arm_trajectory(f"{name}_{arm.namespace}", arm, samples[arm]) for arm in ordered]
+            # The arms deliver at different rates, so the merge grid takes the
+            # faster one: resampling the slower arm up interpolates, resampling
+            # the faster one down discards updates it did deliver.
             trajectory = build_duo_trajectory(
                 per_arm[0],
                 per_arm[1],
                 name=name,
                 left_prefix=f"{ordered[0].namespace}_",
                 right_prefix=f"{ordered[1].namespace}_",
-                rate_hz=self.args.sample_rate,
+                rate_hz=max(recording.sample_rate_hz for recording in per_arm),
             )
         else:
             arm = next((a for a in self.arms if (a.namespace or "nero") == resource), self.arms[0])
             trajectory = self._build_arm_trajectory(name, arm, samples[arm])
 
-        # De-duplicate before the file exists: a repeat is what the clock stored
-        # when the arm had nothing new, and every later reader would have to
-        # decide again whether a repeated row is a still arm or a missing sample.
+        # Off by default: callback-driven capture stores one sample per feedback
+        # update, so a repeated position is an arm that did not move rather than
+        # a sampler that had nothing new. Dropping those would put a hole in an
+        # otherwise even grid.
         if self.args.deduplicate_recordings:
             trajectory, removed = deduplicate_recorded_trajectory(
                 trajectory, self.args.deduplicate_tolerance
@@ -1383,7 +1454,8 @@ class TeachManagerNode(Node):
         if mode == SMOOTH:
             raw = self.prompt_line(
                 key_reader,
-                f"Smoothing window in seconds (default {window:g}, 0 = none): ",
+                f"Smoothing window in seconds (default {window:g}, floor "
+                f"{RECONSTRUCTION_WINDOW_SEC:g}): ",
             ).strip()
             if raw:
                 try:
@@ -1512,7 +1584,7 @@ class TeachManagerNode(Node):
             self.get_logger().warn(
                 f"commanded velocity reaches {result.velocity_utilisation:.2f}x the joint "
                 "limit; the controller will clamp it and tracking error may trip the "
-                "per-joint hold. 'smooth' or a lower speed avoids that."
+                "per-joint hold. A wider 'smooth' window or a lower speed avoids that."
             )
 
     def _build_arm_slice(
@@ -2009,13 +2081,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-joints", default="", help="Comma-separated joint names per arm, in stored order (e.g. joint1,...,joint7)")
     parser.add_argument("--source-topic", default="feedback/joint_states", help="Per-arm JointState topic (namespaced automatically)")
     parser.add_argument("--start-mode", choices=[s.value for s in ManagerState], default=ManagerState.IDLE.value)
-    # Record at the arm's feedback rate, not the control rate: the arm is the
-    # ceiling on what a capture can contain, and sampling above it only repeats
-    # samples. The recording is in turn the ceiling on what playback can
-    # reproduce — the controller interpolates between samples, it cannot invent
-    # detail the capture never took.
+    # Recording has no rate argument: a capture stores one sample per feedback
+    # update, so the arm's cadence is the recording's cadence and the stored
+    # sample_rate_hz is what it delivered. The recording is in turn the ceiling
+    # on what playback can reproduce — the controller interpolates between
+    # samples, it cannot invent detail the capture never took.
     # See docs/sprint_refactor/reference/feedback_rate_budget.md.
-    parser.add_argument("--sample-rate", type=float, default=100.0)
     parser.add_argument("--hold-timeout", type=float, default=3.0)
     parser.add_argument("--movement-threshold", type=float, default=0.01)
     parser.add_argument("--service-timeout", type=float, default=5.0)
@@ -2037,28 +2108,26 @@ def parse_args() -> argparse.Namespace:
         help="Blend from the current hold pose to the first recorded waypoint over this many seconds",
     )
     parser.add_argument(
-        "--no-deduplicate-recordings",
-        dest="deduplicate_recordings", action="store_false",
+        "--deduplicate-recordings",
+        dest="deduplicate_recordings", action="store_true",
         help=(
-            "Keep repeated samples in a new recording. They are what the clock "
-            "stored when the arm had nothing new, so keeping them means every "
-            "later reader has to tell a still arm from a missing sample itself."
+            "Drop samples that repeat the previous position. Off by default: a "
+            "capture stores one sample per feedback update, so a repeat means "
+            "the arm held still, and removing it leaves a hole in an even grid."
         ),
     )
-    parser.set_defaults(deduplicate_recordings=True)
+    parser.set_defaults(deduplicate_recordings=False)
     parser.add_argument(
         "--deduplicate-tolerance", type=float, default=0.0,
-        help=(
-            "Joint delta below which a sample counts as a repeat (rad). 0 keeps "
-            "only exact repeats, which is what a stale feedback cache produces."
-        ),
+        help="Joint delta below which a sample counts as a repeat (rad).",
     )
     parser.add_argument(
         "--playback-smoothing-sec", type=float, default=DEFAULT_SMOOTHING_WINDOW_SEC,
         help=(
             "Starting default for the moving-average window asked for in 'smooth' "
-            "mode. A blunt local filter over the recorded positions, not a fit; "
-            "0 disables it and makes 'smooth' identical to 'as_recorded'."
+            f"mode. A blunt local filter, not a fit. Values below the "
+            f"{RECONSTRUCTION_WINDOW_SEC:.2f}s reconstruction floor have no effect: "
+            "every timing-preserving replay filters at least that much."
         ),
     )
     parser.add_argument(
@@ -2067,19 +2136,20 @@ def parse_args() -> argparse.Namespace:
         default=SMOOTH,
         help=(
             "Starting default for the mode asked at each replay: 'as_recorded' keeps the "
-            "taught path and timing exactly, 'smooth' trades a small path deviation for "
-            "quieter derivatives, 'speed_scale' re-times to a multiple of the recorded "
-            "duration, 'maximize_speed' runs the path as fast as the joint limits allow"
+            "taught path and pace at the smallest filter that executes, 'smooth' widens "
+            "that filter to trade path deviation for quieter derivatives, 'speed_scale' "
+            "re-times to a multiple of the recorded duration, 'maximize_speed' runs the "
+            "path as fast as the joint limits allow"
         ),
     )
     parser.add_argument(
         "--playback-resample-dt",
         type=float,
-        default=0.005,
+        default=DEFAULT_RESAMPLE_DT,
         help=(
-            "Output sample period for a re-timed replay. The parameterization is analytic, "
-            "so this costs message size and never changes the motion; the controller "
-            "interpolates between the points it is given."
+            "Output sample period for a replay, in every mode. Match it to the MIT "
+            "control period: the controller interpolates linearly between the points "
+            "it is given, so this is the grid the commanded motion is built on."
         ),
     )
     parser.add_argument("--transition-velocity-scaling", type=float, default=0.10,
@@ -2165,8 +2235,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.sample_rate <= 0.0:
-        raise ValueError("--sample-rate must be > 0")
     if args.playback_speed_scale <= 0.0:
         raise ValueError("--playback-speed-scale must be > 0")
     if args.playback_lead_in_sec < 0.0:

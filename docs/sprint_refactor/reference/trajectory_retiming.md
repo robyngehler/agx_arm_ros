@@ -14,14 +14,25 @@ that raised a question the codebase had never answered: whether a replay should
 keep the timing it was taught with, or traverse the same path on a new one. The
 answer is that both are needed, and that no single tool provides them.
 
+> **Superseded in part, 2026-08-24.** The claim below that `as_recorded` keeps
+> the path *exactly* no longer holds, and the "0.30 s window brought every
+> recording under the limit" figures were measured through a filter applied in
+> sample space on an uneven grid. Every mode now resamples onto a uniform grid
+> before it filters or differentiates, and `as_recorded` carries a 0.06 s filter
+> floor. See `teach_replay_timebase.md`. Everything about TOTG itself stands.
+
 ## The split is forced by the tools, not chosen
 
 | mode | tool | keeps |
 | --- | --- | --- |
-| `as_recorded` | recorded samples, central differences | path exactly, timing exactly |
-| `smooth` | moving-average window, then central differences | timing exactly |
+| `as_recorded` | uniform resample, 0.06 s window, central differences | timing exactly, path to ~0.05 rad |
+| `smooth` | same, operator-chosen window ≥ 0.06 s | timing exactly |
 | `speed_scale` | TOTG, limit scale searched for the target duration | path geometry |
 | `maximize_speed` | TOTG at full limits | path geometry |
+
+No mode replays raw samples. The controller interpolates linearly between
+trajectory points, so a knot at an uneven timestamp is a step in commanded
+velocity whatever the mode intends.
 
 **A path parameterization computes the timing; the taught timing is exactly what
 it discards.** Anything purely temporal in a recording — a dwell, a deliberately
@@ -37,8 +48,8 @@ against 74x). A moving-average window is blunt and local, and its width is one
 number an operator turns rather than a fit parameter.
 
 The reverse of path fidelity still holds: replaying the recording faithfully
-replays its noise, so `as_recorded` is only as executable as the capture is
-clean.
+replays its noise. That is why `as_recorded` filters at all — see the floor in
+`teach_replay_timebase.md`.
 
 ## What the binding actually needs
 
@@ -114,17 +125,14 @@ For the timing-preserving pair, **velocity utilisation is the number that
 matters**: velocity is commanded and the controller clamps it, while acceleration
 is never commanded — the MIT frame carries position, velocity, kp, kd and torque.
 The acceleration figure describes how rough the recording is, not how badly the
-plan will execute. Across five de-duplicated recordings:
+plan will execute.
 
-| window | velocity utilisation |
-| --- | --- |
-| `as_recorded` (none) | 0.30 – 1.75 |
-| `smooth` 0.10 s | 0.23 – 1.24 |
-| `smooth` 0.25 s | **0.21 – 0.73** |
-
-A 0.25 s window brought every recording measured under the limit, at 0.015–0.126
-rad of path deviation. `as_recorded` is honest but only replayable from a clean
-capture.
+The velocity-utilisation figures previously recorded here (`as_recorded`
+0.30-1.75, `smooth` 0.10 s 0.23-1.24) were taken before the uniform resample and
+are superseded. On the two recordings re-measured 2026-08-24, `as_recorded` moved
+from 1.75 to 0.84 on the right arm — the excess was the sample-to-sample noise the
+floor now removes, not the taught motion. What still holds is the direction: a
+wider window lowers utilisation and raises path deviation.
 
 ## Open
 
@@ -134,7 +142,5 @@ capture.
   and 3.93 on J4-J7
 - the TOTG defaults (`smoothing 2e-5`, `40 waypoints`, `blend 0.01`) are tuned on
   a small number of recordings and have not been swept against a clean capture
-- the moving-average window is independent of them on purpose: one is a spline
-  smoothness feeding the parameterization, the other a filter width an operator
-  turns, and tying them would make a replay's path depend on a number chosen for
-  a different stage
+- the moving-average window is independent of them on purpose: one feeds the
+  parameterization, the other is the filter width an operator turns

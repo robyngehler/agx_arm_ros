@@ -140,9 +140,10 @@ Where it has bitten:
 | teach recorder | stored 22 Hz of real content from a 100 Hz clock; a single-arm capture changed every 4th–5th row with *no* gap of 1, 2 or 3 anywhere in the file |
 | the fix for the second | a fixed 32-call drain cost the loop 16% of its rate |
 
-The rate scales with the clock, which is the tell and also the trap: lowering a
-teach `--sample-rate` from 200 to 100 halved what was captured, for a reason
-that had nothing to do with the arm.
+The rate scales with the clock, which is the tell and also the trap: lowering the
+teach sample rate from 200 to 100 halved what was captured, for a reason that had
+nothing to do with the arm. (Teach recording has since moved off a paced loop
+entirely and has no rate argument.)
 
 Fix: drain the remaining ready callbacks, and **stop as soon as a spin serves
 nothing.** Every spin checks the node's whole wait set, so a fixed drain count is
@@ -161,16 +162,47 @@ Two signatures worth recognising, because they point in opposite directions:
 Once written, no reader can distinguish them — which is why two rounds of
 forensics on stored recordings pointed at the wrong cause here.
 
-Remove repeats where they are produced: the recorder knows whether the arm
-supplied a new frame, a later reader does not. Teach recordings are now
-de-duplicated before the file exists, the stored `sample_rate_hz` becomes the
-rate that survived, and each capture reports the distinct frames the arm
-actually supplied next to the samples stored. `scripts/clean_recording.py`
-applies the same shared logic to files taken earlier.
-
 A finite difference across a repeat alternates between zero and twice the true
-value, and a spline fitted through them reproduces that as acceleration noise —
-so this is not cosmetic.
+value, so this is not cosmetic. The fix is to stop producing them: the recorder
+knows whether the arm supplied a new frame, a later reader does not.
+
+**Superseded 2026-08-24, same day:** the first fix removed the repeats *after*
+the fact, by de-duplicating before the file was written. That leaves the
+survivors on the times they were taken, which turns a uniform grid into a
+bimodal 10/20/30 ms one — see the next entry. The recorder is now driven by the
+arm's feedback callbacks instead, so a repeat is never stored, and
+de-duplication is off by default. `scripts/clean_recording.py` still exists but
+is no longer part of the recording path, and running it makes a grid less even.
+
+## Removing rows from a recording is not the same as removing them from its grid
+
+**2026-08-24.** Teach replay in `as_recorded` and `smooth` became too rough to
+run, while the TOTG modes stayed smooth. Both timing-preserving modes filtered
+and differentiated in **sample index space** — positions made comparable by
+index, then divided by unequal intervals. That is a time-domain filter only on a
+uniform grid, and de-duplication had just removed the uniformity.
+
+`JointTrajectoryBuffer.sample()` interpolates linearly, so commanded velocity is
+piecewise constant with one step per knot: 27-43 rad/s² of commanded
+acceleration, ~50 sign changes per second per joint, a ~25 Hz excitation.
+
+Three plausible causes that measured as nothing:
+
+| suspected | measured |
+| --- | --- |
+| recording rate ≠ control rate | resampling 60-72 Hz → 200 Hz: 27.27 → 27.27, exactly no change |
+| filter too narrow | 0.10 s → 0.30 s window: 12.5 → 11.6 |
+| a regression from adding TOTG | the pre-TOTG path reconstructed measures 5.1-6.2, and never offered `as_recorded` |
+
+Fix: **resample onto a uniform grid before filtering or differentiating, and
+emit on that grid.** `as_recorded` keeps its name and carries a 0.06 s filter
+floor — the taught path and pace at the smallest filter that executes.
+Measurements and the mode table:
+`docs/sprint_refactor/reference/teach_replay_timebase.md`.
+
+The general form: **an operation indexed by sample is only the operation you
+meant if the samples are evenly spaced.** Check the grid before trusting a
+filter width or a derivative, and resample if you cannot guarantee it.
 
 ## A rate configured above the arm's feedback source manufactures duplicates
 

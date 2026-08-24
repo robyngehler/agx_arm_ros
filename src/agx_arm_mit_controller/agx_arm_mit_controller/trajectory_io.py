@@ -212,6 +212,11 @@ def smooth_recorded_trajectory(
     ``smoothing_window`` is the full window in samples (9 at 50 Hz ~ 180 ms,
     ~2.5 Hz cutoff — well above hand-taught motion content). Values <= 1
     return the trajectory unchanged.
+
+    Filters in sample space, so it is a time-domain filter only on a recording
+    whose samples are evenly spaced, and it leaves the times untouched. Replay
+    goes through ``agx_arm_retiming.retime`` instead, which resamples onto a
+    uniform grid first.
     """
     if smoothing_window <= 1 or len(trajectory.points) < 3:
         return trajectory
