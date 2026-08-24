@@ -139,6 +139,54 @@ def deduplicate_recorded_trajectory(
     )
 
 
+#: Longest hold treated as a stalled cache rather than as a dwell the operator
+#: taught. A stall is a missed CAN cycle or a few; anything longer is a joint
+#: that was actually standing still, and spreading a step back across it would
+#: turn a sharp start of motion into a long ramp.
+MAX_STALL_HOLD_SEC = 0.1
+
+
+def reconstruct_stalled_joints(
+    times: list[float],
+    positions: list[list[float]],
+    max_hold_sec: float = MAX_STALL_HOLD_SEC,
+) -> tuple[list[list[float]], list[int]]:
+    """Spread a joint's catch-up back over the short stall that produced it.
+
+    The driver assembles one joint vector from several CAN frames, so a single
+    joint can hold its previous value while its neighbours update. The vector
+    then differs, the read is stored as a sample, and that joint's next update
+    arrives as one step. Dropping the whole read cannot fix this: the read is
+    genuinely new for the other joints.
+
+    A moving joint covers tens of encoder quanta per sample, so two consecutive
+    samples holding a bit-identical value is the cache, not the joint. Holds
+    longer than ``max_hold_sec`` are left alone as dwells.
+
+    Returns the corrected positions and a per-joint count of what was spread.
+    """
+    count = len(positions)
+    if count < 3:
+        return positions, [0] * (len(positions[0]) if positions else 0)
+
+    columns = [list(column) for column in zip(*positions)]
+    spread = [0] * len(columns)
+    for index, column in enumerate(columns):
+        run_start = 0
+        for sample in range(1, count):
+            if column[sample] == column[sample - 1]:
+                continue
+            span = times[sample] - times[run_start]
+            if sample - 1 > run_start and 0.0 < span <= max_hold_sec:
+                start, end = column[run_start], column[sample]
+                for filled in range(run_start + 1, sample):
+                    ratio = (times[filled] - times[run_start]) / span
+                    column[filled] = start + ratio * (end - start)
+                spread[index] += 1
+            run_start = sample
+    return [list(row) for row in zip(*columns)], spread
+
+
 def trim_trailing_stationary_points(
     points: list[RecordedTrajectoryPoint],
     movement_threshold_rad: float,

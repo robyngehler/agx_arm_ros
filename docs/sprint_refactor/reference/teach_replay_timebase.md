@@ -177,9 +177,79 @@ reads, then catching up:
 Dropping reconstructs the true constant-velocity motion exactly. A genuinely
 still arm is unaffected: its gap interpolates flat between two equal poses.
 
-Each capture reports its stalled-read count and the worst implied joint speed,
-and warns when that speed exceeds the joint's limit — the stored file cannot be
-read back for this, because a stall and a still arm look identical in it.
+### A stall is per joint, not per read
+
+Refusing an unchanged read only catches a stall of the **whole** vector. The
+driver assembles that vector from four position frames covering joint pairs, so
+one pair can hold while another updates — the read is genuinely new for the rest
+of the arm and cannot be dropped. Measured 2026-08-24 on the next two duo takes,
+after whole-vector stalls were already being refused (929 and 525 of them):
+
+```
+[right_arm] joint6 implies 11.76 rad/s at t=5.06s, over its 3.93 rad/s limit
+```
+
+Each arm's samples therefore get a per-joint pass before the recording is built:
+a joint that holds a bit-identical value and then steps has that step spread
+linearly back over the hold. A moving joint covers tens of encoder quanta per
+sample, so two consecutive bit-identical values are the cache, not the joint.
+
+Holds longer than `MAX_STALL_HOLD_SEC` (0.1 s) are left alone — that is a joint
+standing still, and ramping a step back across it would turn a sharp start of
+motion into a slow one. The cap is a duration, not a sample count, so a change of
+recording rate does not retune it.
+
+On a synthesised stall of the observed shape — one joint frozen for four reads
+while its neighbours update, then catching up:
+
+| | implied joint speed | max commanded accel | error vs the true motion |
+| --- | --- | --- | --- |
+| stall stored | 1.30 rad/s | 9.86 rad/s² | 0.014 rad |
+| reconstructed | 0.26 rad/s | **0.00** | **0.000 rad** |
+| the motion actually made | 0.26 rad/s | 0.00 | — |
+
+Note that this stall was **under** the joint's velocity limit and still cost
+9.86 rad/s². Gating the reconstruction on the velocity limit was tried and
+rejected for that reason: duration separates a stall from a dwell, speed does
+not.
+
+Each capture reports its stalled-read count, its per-joint spread count, and the
+worst implied joint speed — the stored file cannot be read back for this, because
+a stall and a still arm look identical in it.
+
+## Not every over-limit sample is a stall
+
+**Measured 2026-08-24.** In freedrive the arm is back-driven by hand, and a hand
+can move a joint faster than the joint will accept as a setpoint: the 3.93 rad/s
+figure is a commanded-velocity limit, not a mechanical bound on back-driving. So
+a sample implying more than the limit is *not* evidence of a stalled cache.
+
+The two shapes separate cleanly:
+
+| shape | reading |
+| --- | --- |
+| an isolated step whose neighbours are near zero | the cache stalled and caught up |
+| a run of consecutive large steps | the arm really was moved that fast |
+
+Across the two takes, 11 of 14 over-limit samples were runs — a bell-shaped ramp
+over six samples reaching 8.3 rad/s on `right_arm_joint6`. Only 3 were isolated.
+The recording is honest; the taught pace is simply faster than the arm can
+reproduce. Reconstructing the stalls leaves those runs untouched, by design, and
+leaves the commanded acceleration where it was:
+
+| | left arm | right arm |
+| --- | --- | --- |
+| `smooth` 0.10 s, p95 / max commanded accel | 2.2 / 9.7 | 3.2 / **72.9** |
+| `smooth` 0.10 s, velocity utilisation | 0.20 | **0.81** |
+| `smooth` 0.30 s, max commanded accel | 5.1 | 27.1 |
+| `speed_scale` 1.0, max commanded accel | 1.7 | 1.7 |
+
+**`speed_scale` is the answer to a take that was taught too fast**, because TOTG
+re-times against the limits by construction. A wider `smooth` window helps but
+cannot fully remove content the recording genuinely contains. The capture warning
+names the joint and the speed and says the replay will have to slow down or
+smooth it away; it no longer asserts which of the two causes it was, because
+speed alone cannot tell.
 
 This does not make the grid uniform: the arm still jitters, and a dropped frame
 is still a gap. The playback resample is what the replay depends on.

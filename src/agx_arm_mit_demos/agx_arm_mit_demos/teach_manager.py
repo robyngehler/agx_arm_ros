@@ -66,6 +66,7 @@ from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
 from agx_arm_mit_controller.trajectory_io import (
     RecordedTrajectory,
     load_recorded_trajectory,
+    reconstruct_stalled_joints,
     sanitize_trajectory_name,
     save_recorded_trajectory,
 )
@@ -1316,13 +1317,39 @@ class TeachManagerNode(Node):
             worst, joint, when = self._worst_implied_velocity(arm_samples)
             limit = NERO_MAX_VELOCITY[joint] if joint < len(NERO_MAX_VELOCITY) else 0.0
             if limit and worst > limit:
+                # Freedrive back-drives the arm by hand, and a hand can move a
+                # joint faster than the joint can be commanded, so speed alone
+                # does not say which of the two this was. Name both and let the
+                # replay's velocity utilisation settle it.
                 self.get_logger().warn(
-                    f"[{arm.label}] joint{joint + 1} implies {worst:.2f} rad/s at "
-                    f"t={when:.2f}s, over its {limit:.2f} rad/s limit — the feedback "
-                    "stalled and caught up rather than the arm moving that fast"
+                    f"[{arm.label}] joint{joint + 1} reaches {worst:.2f} rad/s at "
+                    f"t={when:.2f}s, past the {limit:.2f} rad/s it can be commanded "
+                    "at; the replay will have to slow down or smooth it away"
                 )
 
     def _build_arm_trajectory(self, name: str, arm: _ArmEndpoint, arm_samples: list[RecorderSnapshot]) -> RecordedTrajectory:
+        # A whole-vector stall is already refused at capture, but the driver
+        # assembles a joint vector from several CAN frames, so one joint can
+        # stall while its neighbours update — a read that is genuinely new for
+        # the rest of the arm and cannot be dropped.
+        times = [sample.time_from_start for sample in arm_samples]
+        corrected, spread = reconstruct_stalled_joints(
+            times, [list(sample.positions) for sample in arm_samples]
+        )
+        if any(spread):
+            self.get_logger().info(
+                f"[{arm.label}] spread {sum(spread)} single-joint stall(s) back over "
+                f"the hold that produced them: per joint {spread}"
+            )
+            arm_samples = [
+                RecorderSnapshot(
+                    time_from_start=sample.time_from_start,
+                    positions=positions,
+                    efforts=sample.efforts,
+                    flange_pose=sample.flange_pose,
+                )
+                for sample, positions in zip(arm_samples, corrected)
+            ]
         return build_recorded_trajectory(
             name=name,
             # The rate the arm delivered, not one that was configured: with

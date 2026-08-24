@@ -229,14 +229,55 @@ reconstructs the underlying constant-velocity motion exactly (0.00 rad/s² of
 commanded acceleration against 6.28 when the stall is stored). A genuinely still
 arm interpolates flat between two equal poses, so it costs nothing.
 
-Two lessons worth separating:
+**That first fix was half of it.** Refusing an unchanged read catches a stall of
+the *whole* vector, and the next two takes still warned at 11.76 rad/s on a
+3.93 rad/s joint. The vector is four position frames covering joint pairs, so one
+pair can hold while another updates — a read that is genuinely new for the rest of
+the arm and cannot be dropped. Each arm's samples now get a per-joint pass that
+spreads such a step back over the hold that produced it, capped at 0.1 s so a
+real dwell is not ramped.
+
+Gating that pass on the velocity limit was tried and rejected: the observed stall
+implied 1.30 rad/s, well under the limit, and still cost 9.86 rad/s² of commanded
+acceleration. **Duration separates a stall from a dwell; speed does not.**
+
+Three lessons worth separating:
 
 - **A freshness signal is only as fine-grained as the thing that sets it.** Ask
   what advances the timestamp, not whether it advanced.
+- **Fix an artefact at the granularity it occurs at.** The stall is per joint, so
+  a per-read remedy could only ever catch the subset where every joint stalled
+  at once.
 - **A recording cannot be read back for this.** A stall and a still arm are the
   same rows in the file. The recorder is the only place that can report it, so
-  each capture now logs its stalled-read count and warns when the worst implied
-  joint speed exceeds the joint's limit.
+  each capture logs its stalled-read count, its per-joint spread count, and the
+  worst implied joint speed.
+
+## An over-limit sample in a teach recording is not proof of bad data
+
+**2026-08-24.** The warning added above read "the feedback stalled and caught up
+rather than the arm moving that fast". That asserts a cause the speed alone
+cannot establish. **Freedrive back-drives the arm by hand, and a hand can move a
+joint faster than the joint will accept as a setpoint** — 3.93 rad/s is a
+commanded-velocity limit, not a mechanical bound on back-driving.
+
+The two shapes separate cleanly, and it is the shape that carries the answer:
+
+| shape | reading |
+| --- | --- |
+| an isolated step whose neighbours are near zero | the cache stalled and caught up |
+| a run of consecutive large steps | the arm really was moved that fast |
+
+Across two duo takes, 11 of 14 over-limit samples were runs — a bell-shaped ramp
+over six samples reaching 8.3 rad/s. The recordings were honest; the right arm
+was simply taught faster than it can be replayed, which `smooth` faithfully
+preserves (velocity utilisation 0.81, max commanded acceleration 72.9 rad/s²
+against the left arm's 9.7). `speed_scale` re-times against the limits by
+construction and flattens both arms to 1.7.
+
+The lesson is about diagnostics, not about the arm: **a threshold tells you a
+sample is unusual, never why.** Say what was measured and what it costs, and
+leave the cause to whatever can actually discriminate it.
 
 ## A rate configured above the arm's feedback source manufactures duplicates
 

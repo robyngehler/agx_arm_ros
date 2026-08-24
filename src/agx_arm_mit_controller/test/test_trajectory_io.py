@@ -284,3 +284,74 @@ def test_a_recording_without_repeats_is_returned_untouched():
     cleaned, removed = deduplicate_recorded_trajectory(trajectory)
     assert removed == 0
     assert cleaned is trajectory
+
+
+# --- per-joint stall reconstruction ---------------------------------------
+
+
+def test_a_single_joint_stall_is_spread_back_over_its_hold():
+    """The driver assembles a joint vector from several CAN frames, so one joint
+    can hold while its neighbours update. Dropping the read is not an option:
+    it is genuinely new for the rest of the arm."""
+    from agx_arm_mit_controller.trajectory_io import reconstruct_stalled_joints
+
+    dt = 0.0135
+    times = [i * dt for i in range(10)]
+    moving = [0.001 * i for i in range(10)]
+    stalling = [0.01 * i for i in range(10)]
+    for held in (4, 5, 6):
+        stalling[held] = stalling[3]
+    positions = [[m, s] for m, s in zip(moving, stalling)]
+
+    corrected, spread = reconstruct_stalled_joints(times, positions)
+
+    assert spread == [0, 1]
+    column = [row[1] for row in corrected]
+    steps = [b - a for a, b in zip(column, column[1:])]
+    # The catch-up is gone: every step across the hold is the same size.
+    assert max(steps[3:7]) == pytest.approx(min(steps[3:7]), rel=1e-9)
+    # Endpoints of the hold are untouched.
+    assert column[3] == pytest.approx(positions[3][1])
+    assert column[7] == pytest.approx(positions[7][1])
+    # The moving joint is not touched at all.
+    assert [row[0] for row in corrected] == pytest.approx(moving)
+
+
+def test_a_dwell_longer_than_the_cap_is_left_as_taught():
+    """A long hold is a joint standing still, not a stalled cache; ramping a
+    step back across it would turn a sharp start of motion into a slow one."""
+    from agx_arm_mit_controller.trajectory_io import reconstruct_stalled_joints
+
+    dt = 0.0135
+    times = [i * dt for i in range(40)]
+    column = [0.0] * 30 + [0.004 * i for i in range(1, 11)]
+    positions = [[value] for value in column]
+
+    corrected, spread = reconstruct_stalled_joints(times, positions)
+
+    assert spread == [0]
+    assert [row[0] for row in corrected] == pytest.approx(column)
+
+
+def test_the_stall_cap_is_a_duration_not_a_sample_count():
+    from agx_arm_mit_controller.trajectory_io import reconstruct_stalled_joints
+
+    def spread_for(hold_samples, dt):
+        times = [i * dt for i in range(40)]
+        column = [0.01 * i for i in range(40)]
+        for held in range(20, 20 + hold_samples):
+            column[held] = column[19]
+        return reconstruct_stalled_joints(times, [[v] for v in column])[1][0]
+
+    # Same sample count, different rate: only the shorter hold is a stall.
+    assert spread_for(5, 0.010) == 1
+    assert spread_for(5, 0.050) == 0
+
+
+def test_reconstruction_needs_at_least_three_samples():
+    from agx_arm_mit_controller.trajectory_io import reconstruct_stalled_joints
+
+    positions = [[0.0], [0.0]]
+    corrected, spread = reconstruct_stalled_joints([0.0, 0.01], positions)
+    assert corrected == positions
+    assert spread == [0]

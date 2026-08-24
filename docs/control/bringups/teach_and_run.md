@@ -262,6 +262,18 @@ free-runs without the arm).
 >   worst implied joint speed exceeds the limit** — the stored file cannot be read back for this,
 >   because a stall and a still arm look identical in it. There is no de-duplication pass any more, and
 >   `scripts/clean_recording.py` is not part of the recording path.
+> - **a stall is per joint, not per read.** The vector is four position frames covering joint pairs, so
+>   one pair can hold while another updates — that read is genuinely new for the rest of the arm and
+>   cannot be dropped. Each arm's samples get a per-joint pass that spreads such a step back over the
+>   hold that produced it. Holds longer than 0.1 s are left alone: that is a joint standing still, and
+>   ramping a step back across it would turn a sharp start of motion into a slow one.
+> - **an over-limit sample is not proof of a stall.** Freedrive back-drives the arm by hand, and a hand
+>   can move a joint faster than it can be commanded — 3.93 rad/s is a setpoint limit, not a mechanical
+>   bound. An isolated step whose neighbours are near zero is a cache catching up; a run of consecutive
+>   large steps is a motion that really was taught that fast. In two duo takes, 11 of 14 over-limit
+>   samples were runs. **A take that was taught too fast replays cleanly under `speed_scale`,** which
+>   re-times against the limits by construction; a wider `smooth` window helps but cannot remove
+>   content the recording genuinely contains.
 > - **`m` in playback mode moves to the selected recording's start pose (2026-08-24).** A gap up to
 >   0.35 rad is bridged by the replay's lead-in; beyond that, `m` plans and runs a collision-checked
 >   MoveIt move to the first waypoint (`both_arms` for a duo recording, that side's group for a single
