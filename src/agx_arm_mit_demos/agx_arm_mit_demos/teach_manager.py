@@ -475,6 +475,9 @@ class _ArmEndpoint:
         self.trajectory_pub = node.create_publisher(
             JointTrajectory, self._name("mit_controller/joint_trajectory"), 10
         )
+        self.feedback_messages = 0
+        self.feedback_frames = 0
+        self._last_feedback_stamp = None
         node.create_subscription(JointState, self._name(source_topic), self._on_feedback, 20)
 
     def _name(self, relative: str) -> str:
@@ -491,6 +494,19 @@ class _ArmEndpoint:
 
     def _on_feedback(self, msg: JointState) -> None:
         self.latest = msg
+        # Counted so a recording can state what it actually saw. Sampling faster
+        # than this arrives stores repeats, and which of the two is the ceiling
+        # is not visible from the stored file alone.
+        self.feedback_messages += 1
+        stamp = (msg.header.stamp.sec, msg.header.stamp.nanosec)
+        if stamp != self._last_feedback_stamp:
+            self._last_feedback_stamp = stamp
+            self.feedback_frames += 1
+
+    def reset_feedback_counters(self) -> None:
+        self.feedback_messages = 0
+        self.feedback_frames = 0
+        self._last_feedback_stamp = None
 
     def snapshot(self, time_from_start: float) -> Optional[RecorderSnapshot]:
         msg = self.latest
@@ -1109,6 +1125,8 @@ class TeachManagerNode(Node):
         """
         period = 1.0 / self.args.sample_rate
         samples: dict[_ArmEndpoint, list[RecorderSnapshot]] = {arm: [] for arm in self.arms}
+        for arm in self.arms:
+            arm.reset_feedback_counters()
         recording_start = time.monotonic()
         last_motion_time = recording_start
         motion_started = False
@@ -1146,7 +1164,33 @@ class TeachManagerNode(Node):
                 time.sleep(sleep_time)
         if not motion_started:
             raise RuntimeError("No joint movement detected during recording")
+        self._report_capture(samples, time.monotonic() - recording_start)
         return samples
+
+    def _report_capture(
+        self, samples: dict[_ArmEndpoint, list[RecorderSnapshot]], elapsed: float
+    ) -> None:
+        """State what the capture actually saw, per arm.
+
+        Whether a recording is bound by the sample rate or by the arm is not
+        visible in the stored file: both look like repeated rows. Reporting the
+        source rate next to the stored rate names which one it was.
+        """
+        if elapsed <= 0.0:
+            return
+        for arm in self.arms:
+            stored = len(samples[arm])
+            source = arm.feedback_frames / elapsed
+            self.get_logger().info(
+                f"[{arm.label}] captured {stored / elapsed:.1f} samples/s of "
+                f"{self.args.sample_rate:.0f} Hz configured; the arm supplied "
+                f"{source:.1f} distinct frames/s over {elapsed:.1f}s"
+            )
+            if source < 0.9 * self.args.sample_rate:
+                self.get_logger().warn(
+                    f"[{arm.label}] the arm is the ceiling here: sampling above "
+                    f"{source:.0f} Hz stores repeats, not detail"
+                )
 
     def _build_arm_trajectory(self, name: str, arm: _ArmEndpoint, arm_samples: list[RecorderSnapshot]) -> RecordedTrajectory:
         return build_recorded_trajectory(
