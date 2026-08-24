@@ -593,12 +593,23 @@ class TeachManagerNode(Node):
     #: of subscriptions one bring-up has.
     RECORD_DRAIN_LIMIT = 32
 
+    #: Largest gap between the arm and a replay's first waypoint this will
+    #: bridge. Beyond it the arm is somewhere the replay was not taught from and
+    #: a planned move belongs first.
+    PLAYBACK_MAX_START_OFFSET = 0.35
+    #: Joint speed used to size that bridge, well under the limit: the lead-in
+    #: is a positioning move, not part of the taught motion.
+    PLAYBACK_LEAD_IN_SPEED = 0.25
+    #: Re-timed replays kept in memory, keyed on recording and settings.
+    PLAYBACK_CACHE_ENTRIES = 8
+
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__("agx_arm_teach_manager")
         self.args = args
         # Advanced by every subscription callback, so the recording loop can see
         # whether a spin actually served anything.
         self._callbacks_served = 0
+        self._playback_cache: dict[tuple, object] = {}
         self._playback_plan = _PlaybackPlan(
             mode=args.playback_mode,
             speed_scale=args.playback_speed_scale,
@@ -1406,8 +1417,38 @@ class TeachManagerNode(Node):
         )
         return self._playback_plan
 
-    def _plan_playback(self, trajectory, plan: _PlaybackPlan):
-        """Re-time one recording under the chosen mode, against the arm limits."""
+    def _plan_playback(self, trajectory, plan: _PlaybackPlan, path=None):
+        """Re-time one recording under the chosen mode, against the arm limits.
+
+        Cached on the recording and the settings: the time-optimal search runs
+        the parameterization several times and takes 0.5-2.3 s on a 20 s
+        recording, which is a visible pause between the keypress and the motion.
+        Repeating a replay, or stepping a speed back and forth, then costs
+        nothing. The file's modification time is part of the key, so a re-recorded
+        trajectory is re-planned.
+        """
+        key = None
+        if path is not None:
+            try:
+                key = (
+                    str(path), path.stat().st_mtime_ns, plan.mode, plan.speed_scale,
+                    plan.smoothing_window_sec, self.args.playback_resample_dt,
+                )
+            except OSError:
+                key = None
+        if key is not None and key in self._playback_cache:
+            return self._playback_cache[key]
+
+        result = self._retime_trajectory(trajectory, plan)
+        if key is not None:
+            # One entry per recording+settings; a handful covers a teach session
+            # and each holds a few thousand points.
+            if len(self._playback_cache) >= self.PLAYBACK_CACHE_ENTRIES:
+                self._playback_cache.pop(next(iter(self._playback_cache)))
+            self._playback_cache[key] = result
+        return result
+
+    def _retime_trajectory(self, trajectory, plan: _PlaybackPlan):
         joint_count = len(trajectory.joint_names)
         if joint_count % ARM_JOINT_COUNT:
             raise RuntimeError(
@@ -1427,6 +1468,32 @@ class TeachManagerNode(Node):
             smoothing_window_sec=plan.smoothing_window_sec,
             resample_dt=self.args.playback_resample_dt,
         )
+
+    def _lead_in_for_start_offset(self, current_positions, result) -> float:
+        """Seconds to blend from where the arm is into the replay's first point.
+
+        A replay begins at the pose it was taught from. Commanding that pose at
+        t=0 from somewhere else makes the controller close the whole gap in one
+        cycle. The gap is measured here and covered by a lead-in long enough to
+        cross it well under the joint speed limit, so the arm travels there
+        instead of lunging.
+        """
+        first = result.positions[0]
+        offset = max(abs(a - b) for a, b in zip(current_positions, first))
+        if offset > self.PLAYBACK_MAX_START_OFFSET:
+            raise RuntimeError(
+                f"arm is {offset:.3f} rad from the replay's first waypoint, more than "
+                f"the {self.PLAYBACK_MAX_START_OFFSET:.2f} rad this will bridge; move it "
+                "there first (transitions mode) and replay again"
+            )
+        requested = max(0.0, float(self.args.playback_lead_in_sec))
+        needed = offset / self.PLAYBACK_LEAD_IN_SPEED
+        lead_in = max(requested, needed)
+        if lead_in > 0.0:
+            self.get_logger().info(
+                f"blending {offset:.3f} rad into the first waypoint over {lead_in:.2f}s"
+            )
+        return lead_in
 
     def _report_playback_plan(self, name: str, result) -> None:
         self.get_logger().info(
@@ -1562,22 +1629,22 @@ class TeachManagerNode(Node):
         if not self.wait_for_source_feedback(self.args.feedback_timeout):
             raise RuntimeError("did not receive fresh feedback from all arms before playback")
 
-        current_positions = None
-        if self.args.playback_lead_in_sec > 0.0:
-            current_positions = self._current_positions_for_trajectory(trajectory, dispatched)
         # Re-timed at playback (raw recordings stay untouched): the taught
         # samples carry no usable derivatives, and the mode decides whether the
         # taught timing survives or the path is traversed on a new one.
         try:
-            result = self._plan_playback(trajectory, plan)
+            result = self._plan_playback(trajectory, plan, path)
         except RetimingError as exc:
             raise RuntimeError(f"cannot replay '{trajectory.name}': {exc}") from None
         self._report_playback_plan(trajectory.name, result)
+
+        current_positions = self._current_positions_for_trajectory(trajectory, dispatched)
+        lead_in_sec = self._lead_in_for_start_offset(current_positions, result)
         full_msg = retimed_to_joint_trajectory(
             result,
             trajectory.joint_names,
             current_positions=current_positions,
-            lead_in_sec=self.args.playback_lead_in_sec,
+            lead_in_sec=lead_in_sec,
         )
         # Build every slice before publishing any of it; for a duo recording
         # this is the direct-controller sync path (bypasses MoveIt).

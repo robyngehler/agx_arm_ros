@@ -157,3 +157,24 @@ def test_speed_scale_never_returns_faster_than_requested():
         assert result.speed_achieved <= requested * 1.01, (
             f"asked for {requested}x, got {result.speed_achieved}x"
         )
+
+
+def test_planned_path_never_leaves_the_recorded_range():
+    """A quintic smoothing spline overshot joint 4 by 2.48 rad on a real
+    recording and commanded a pose 142 degrees outside anything taught. Every
+    smoothing step is now an average, and the result is checked besides."""
+    t, q = taught_motion(noise=5e-3, seed=7)
+    recorded = np.asarray(q)
+    for mode, kwargs in ((MAXIMIZE_SPEED, {}), (SPEED_SCALE, {"speed_scale": 1.5})):
+        planned = np.asarray(retime(t, q, mode, **kwargs).positions)
+        assert planned.min(axis=0).min() >= recorded.min(axis=0).min() - 0.05
+        assert planned.max(axis=0).max() <= recorded.max(axis=0).max() + 0.05
+
+
+def test_an_excursion_past_the_recorded_range_is_refused():
+    from agx_arm_retiming.planning import _assert_within_recorded_range
+
+    recorded = np.array([[0.0], [1.0], [0.5]])
+    _assert_within_recorded_range(np.array([[0.2], [0.9]]), recorded, 0.02)
+    with pytest.raises(RetimingError, match="leaves the recorded range on joint 1"):
+        _assert_within_recorded_range(np.array([[0.2], [1.6]]), recorded, 0.02)

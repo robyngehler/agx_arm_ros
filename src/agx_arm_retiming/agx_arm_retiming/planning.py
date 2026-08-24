@@ -11,13 +11,12 @@ The modes split by what the underlying tool can express, not by preference:
   time-optimal parameterization, which computes its own timing and therefore
   discards anything purely temporal in the recording.
 
-Path fidelity belongs to the first pair, and it is why they are blunt: a fitted
-spline has to choose a smoothness for the whole signal and reproduces whatever it
-did not smooth as derivative noise. The second pair fits before it re-times
-because the parameterization needs it: fed a dense recording directly,
-it produces either curvature spikes at every sample or blend radii so small the
-result is slower than the recording
-(``docs/sprint_refactor/reference/trajectory_retiming.md``).
+Nothing here fits a curve. Every smoothing step is a moving average or a bin
+mean, so a planned pose is always a convex combination of recorded ones and
+cannot leave the range the recording covers. The parameterization still needs a
+smoothed, sparse path — fed a dense recording it produces either curvature
+spikes at every sample or blend radii so small the result is slower than the
+recording (``docs/sprint_refactor/reference/trajectory_retiming.md``).
 """
 
 from __future__ import annotations
@@ -27,8 +26,6 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
-from scipy.interpolate import UnivariateSpline
-
 from agx_arm_retiming._totg import retime_path
 
 AS_RECORDED = "as_recorded"
@@ -56,19 +53,25 @@ ACCELERATION_PER_VELOCITY = 2.5
 # sweep and its limits as evidence.
 DEFAULT_WAYPOINTS = 40
 DEFAULT_BLEND_TOLERANCE = 0.01
-DEFAULT_SMOOTHING = 2e-5
-# The blunt modes' window, in seconds and independent of the fit above: one is a
-# spline smoothness feeding the parameterization, the other is a filter width an
-# operator turns. Tying them would make a replay's path depend on a number
-# chosen for a different stage.
+# Moving-average width in seconds, used by the timing-preserving modes and by
+# the geometric path handed to the parameterization.
 DEFAULT_SMOOTHING_WINDOW_SEC = 0.10
 DEFAULT_RESAMPLE_DT = 0.005
+# How far past the recorded per-joint range a plan may still land, on top of
+# whatever the smoothing moved it. Corner blending cuts inside the path, so the
+# margin only has to absorb rounding.
+PATH_EXCURSION_TOLERANCE = 0.02
 # TOTG bounds the profile along its path segments, but curvature jumps
 # discontinuously where a straight segment meets a blend arc, so the sampled
 # acceleration overshoots there — measured at 1.3x with a fixed derating. The
 # limits handed to it are corrected against the sampled peak instead of by a
 # guessed factor, which is what lets this promise a bound on its output.
 LIMIT_CORRECTION_ROUNDS = 6
+# Bounds on the scale search that hits a requested duration. With the seed
+# below it converges in a handful of runs; a blind bisection over the same
+# range cost 24 and took 3.5 s on a 20 s recording.
+SCALE_SEARCH_STEPS = 8
+SCALE_SEARCH_TOLERANCE = 0.01
 
 
 class RetimingError(ValueError):
@@ -185,16 +188,52 @@ def _finite_difference_states(t, q):
     return velocities, accelerations
 
 
-def _geometric_path(t, q, *, smoothing, waypoints, degree):
-    """Smooth, then resample to a sparse waypoint set for the parameterization."""
-    joints = q.shape[1]
-    splines = [
-        UnivariateSpline(t, q[:, j], s=smoothing * len(t), k=degree) for j in range(joints)
-    ]
-    tt = np.linspace(0.0, float(t[-1]), waypoints)
-    path = np.column_stack([s(tt) for s in splines])
-    deviation = float(np.max(np.abs(np.column_stack([s(t) for s in splines]) - q)))
+def _geometric_path(t, q, *, smoothing_window_sec, waypoints):
+    """Smooth with a window, then reduce to a sparse waypoint set by binning.
+
+    Both steps are averages, so every waypoint is a convex combination of
+    recorded samples and the path cannot leave the range the recording covers.
+    A fitted spline can and did: a quintic smoothing spline over one recording
+    overshot joint 4 by 2.48 rad, putting a commanded pose 142 degrees outside
+    anything taught. Binning rather than decimating also keeps sample noise from
+    aliasing into the sparse path.
+    """
+    smoothed, deviation = _moving_average(q, t, smoothing_window_sec)
+    count = len(smoothed)
+    waypoints = max(2, min(int(waypoints), count))
+    edges = np.linspace(0, count, waypoints + 1).round().astype(int)
+    path = np.stack([
+        smoothed[max(lo, 0): max(hi, lo + 1)].mean(axis=0)
+        for lo, hi in zip(edges[:-1], edges[1:])
+    ])
+    # The taught endpoints are where the motion starts and stops; a bin mean
+    # would move both inward.
+    path[0] = smoothed[0]
+    path[-1] = smoothed[-1]
     return path, deviation
+
+
+def _assert_within_recorded_range(planned, recorded, tolerance):
+    """Refuse a plan that commands a pose outside the taught envelope.
+
+    The parameterization only re-times a path, so its output belongs inside the
+    recording's per-joint range. Anything else is a defect in how the path was
+    built, and the arm is the wrong place to discover it.
+    """
+    lower = recorded.min(axis=0) - tolerance
+    upper = recorded.max(axis=0) + tolerance
+    below = lower - planned.min(axis=0)
+    above = planned.max(axis=0) - upper
+    excursion = np.maximum(below, above)
+    worst = int(np.argmax(excursion))
+    if excursion[worst] > 0.0:
+        raise RetimingError(
+            f"planned path leaves the recorded range on joint {worst + 1} by "
+            f"{excursion[worst]:.4f} rad (recorded "
+            f"[{recorded[:, worst].min():+.4f}, {recorded[:, worst].max():+.4f}], "
+            f"planned [{planned[:, worst].min():+.4f}, {planned[:, worst].max():+.4f}]); "
+            "refusing to command it"
+        )
 
 
 def _run_totg(path, max_velocity, max_acceleration, scale, blend_tolerance, resample_dt):
@@ -249,31 +288,72 @@ def _search_scale_for_duration(path, max_velocity, max_acceleration, target,
         return fastest, 1.0
 
     # Never return something faster than was asked for: on a taught motion an
-    # unrequested speed-up is the dangerous direction. Among everything
-    # evaluated, take the candidate closest to the target from the slow side,
-    # and fall back to the fastest feasible plan only if nothing reaches it.
-    low, high = 1e-3, 1.0
-    evaluated: list[tuple[float, dict]] = []
-    for _ in range(24):
-        mid = 0.5 * (low + high)
-        candidate = _run_totg(path, max_velocity, max_acceleration, mid,
+    # unrequested speed-up is the dangerous direction. Past the check above a
+    # slow-enough scale is known to exist, so the search keeps a bracket around
+    # it and only ever returns a candidate from the slow side.
+    #
+    # Duration follows scale as a power law -- exponent 1/2 while acceleration
+    # binds, 1 while velocity does -- so two evaluations identify the exponent
+    # and the next scale is solved rather than halved, with bisection whenever
+    # the solve falls outside the bracket. Blind bisection cost 24 runs and
+    # 3.5 s on a 20 s recording.
+    slow, fast = 1e-3, 1.0
+    samples: list[tuple[float, float]] = [(1.0, fastest["duration"])]
+    best: tuple[float, dict] | None = None
+    scale = min(1.0, max(1e-3, (fastest["duration"] / target) ** 2))
+
+    for _ in range(SCALE_SEARCH_STEPS):
+        candidate = _run_totg(path, max_velocity, max_acceleration, scale,
                               blend_tolerance, resample_dt)
         if candidate is None:
-            low = mid
+            fast = scale
+            scale = 0.5 * (slow + fast)
             continue
-        evaluated.append((mid, candidate))
-        if abs(candidate["duration"] - target) < 1e-3:
-            return candidate, mid
-        if candidate["duration"] > target:
-            low = mid
-        else:
-            high = mid
 
-    at_or_slower = [(s, c) for s, c in evaluated if c["duration"] >= target]
-    if at_or_slower:
-        scale, candidate = min(at_or_slower, key=lambda item: item[1]["duration"])
+        duration = candidate["duration"]
+        samples.append((scale, duration))
+        if duration >= target:
+            slow = scale
+            if best is None or duration < best[1]["duration"]:
+                best = (scale, candidate)
+            if duration - target <= SCALE_SEARCH_TOLERANCE * target:
+                return best[1], best[0]
+        else:
+            fast = scale
+
+        scale = _next_scale(samples, target, slow, fast)
+
+    if best is not None:
+        return best[1], best[0]
+    # No slow-side candidate landed within the step budget; bisect for one
+    # rather than handing back the fastest plan, which is the wrong direction.
+    for _ in range(SCALE_SEARCH_STEPS):
+        scale = 0.5 * (slow + fast)
+        candidate = _run_totg(path, max_velocity, max_acceleration, scale,
+                              blend_tolerance, resample_dt)
+        if candidate is None or candidate["duration"] < target:
+            fast = scale
+            continue
         return candidate, scale
     return fastest, 1.0
+
+
+def _next_scale(samples, target, slow, fast):
+    """Solve the power law through the last two evaluations, inside the bracket."""
+    midpoint = 0.5 * (slow + fast)
+    previous, current = samples[-2], samples[-1]
+    if previous[0] == current[0] or previous[1] <= 0.0 or current[1] <= 0.0:
+        return midpoint
+    ratio = math.log(current[0] / previous[0])
+    if abs(ratio) < 1e-12:
+        return midpoint
+    exponent = math.log(previous[1] / current[1]) / ratio
+    if not math.isfinite(exponent) or exponent <= 1e-6:
+        return midpoint
+    solved = current[0] * (current[1] / target) ** (1.0 / exponent)
+    if not math.isfinite(solved) or not (slow < solved < fast):
+        return midpoint
+    return solved
 
 
 def retime(
@@ -284,7 +364,6 @@ def retime(
     max_velocity: Sequence[float] | None = None,
     max_acceleration: Sequence[float] | None = None,
     speed_scale: float = 1.0,
-    smoothing: float = DEFAULT_SMOOTHING,
     smoothing_window_sec: float = DEFAULT_SMOOTHING_WINDOW_SEC,
     waypoints: int = DEFAULT_WAYPOINTS,
     blend_tolerance: float = DEFAULT_BLEND_TOLERANCE,
@@ -340,7 +419,7 @@ def retime(
         )
 
     path, deviation = _geometric_path(
-        t, q, smoothing=max(smoothing, 1e-9), waypoints=waypoints, degree=5
+        t, q, smoothing_window_sec=smoothing_window_sec, waypoints=waypoints
     )
     if mode == MAXIMIZE_SPEED:
         result = _run_totg(path, max_velocity, max_acceleration, 1.0,
@@ -364,6 +443,9 @@ def retime(
             "near-duplicate waypoints; raise smoothing or lower the waypoint count"
         )
 
+    _assert_within_recorded_range(
+        np.asarray(result["positions"], dtype=float), q, deviation + PATH_EXCURSION_TOLERANCE
+    )
     notes.append(f"taught timing discarded; limits used at {scale:.3f} of maximum")
     return RetimedTrajectory(
         mode=mode,
