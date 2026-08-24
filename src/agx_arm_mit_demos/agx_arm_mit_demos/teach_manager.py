@@ -494,6 +494,7 @@ class _ArmEndpoint:
 
     def _on_feedback(self, msg: JointState) -> None:
         self.latest = msg
+        self.node._callbacks_served += 1
         # Counted so a recording can state what it actually saw. Sampling faster
         # than this arrives stores repeats, and which of the two is the ceiling
         # is not visible from the stored file alone.
@@ -592,6 +593,9 @@ class TeachManagerNode(Node):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__("agx_arm_teach_manager")
         self.args = args
+        # Advanced by every subscription callback, so the recording loop can see
+        # whether a spin actually served anything.
+        self._callbacks_served = 0
         self._playback_plan = _PlaybackPlan(
             mode=args.playback_mode, speed_scale=args.playback_speed_scale
         )
@@ -713,10 +717,12 @@ class TeachManagerNode(Node):
 
     def _on_hand_feedback(self, arm_label: str, msg: JointState) -> None:
         self.hand_feedback_by_arm[arm_label] = msg
+        self._callbacks_served += 1
 
     def _on_hand_status(self, arm_label: str, msg: OmniHandStatus) -> None:
         self.hand_status_by_arm[arm_label] = msg
         self.hand_status_monotonic[arm_label] = time.monotonic()
+        self._callbacks_served += 1
 
     def _await_hand_delivery(self, arm_label: str, published_at: float) -> None:
         """Hold the caller (and thus the open window) until the OmniHand bridge
@@ -1138,8 +1144,16 @@ class TeachManagerNode(Node):
             # by the number of ready callbacks -- 22 Hz of real content out of a
             # 100 Hz recording with one arm and its hand. Sampling faster made it
             # worse, not better, because nothing here was ever bound by the arm.
+            #
+            # Stop as soon as nothing was served: every spin_once checks the
+            # whole wait set, and this node holds service and action clients as
+            # well as its subscriptions, so draining a fixed count costs the
+            # loop its period.
             for _ in range(self.RECORD_DRAIN_LIMIT):
+                served = self._callbacks_served
                 rclpy.spin_once(self, timeout_sec=0.0)
+                if self._callbacks_served == served:
+                    break
             frame = {arm: arm.snapshot(loop_start - recording_start) for arm in self.arms}
             if any(snap is None for snap in frame.values()):
                 continue
