@@ -505,6 +505,11 @@ class _ArmEndpoint:
 
 
 class TeachManagerNode(Node):
+    #: Callbacks drained per recording cycle after the blocking spin. Bounded so
+    #: a publisher faster than the loop cannot stall it; well above the handful
+    #: of subscriptions one bring-up has.
+    RECORD_DRAIN_LIMIT = 32
+
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__("agx_arm_teach_manager")
         self.args = args
@@ -1044,6 +1049,13 @@ class TeachManagerNode(Node):
         while rclpy.ok():
             loop_start = time.monotonic()
             rclpy.spin_once(self, timeout_sec=min(period, 0.1))
+            # Drain the rest: one spin_once delivers a single message from a
+            # single subscription, so the capture rate was the loop rate divided
+            # by the number of ready callbacks -- 22 Hz of real content out of a
+            # 100 Hz recording with one arm and its hand. Sampling faster made it
+            # worse, not better, because nothing here was ever bound by the arm.
+            for _ in range(self.RECORD_DRAIN_LIMIT):
+                rclpy.spin_once(self, timeout_sec=0.0)
             frame = {arm: arm.snapshot(loop_start - recording_start) for arm in self.arms}
             if any(snap is None for snap in frame.values()):
                 continue
