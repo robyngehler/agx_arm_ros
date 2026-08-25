@@ -26,6 +26,7 @@ Example::
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from agx_arm_mit_controller.duo_trajectory import ArmSegment, merge_arm_recordings
@@ -124,6 +125,41 @@ def recorded_to_waypoints(
     return waypoints
 
 
+
+def recording_sidecar(trajectory: RecordedTrajectory, decimals: int = 5) -> dict:
+    """The lean form a catalogue action references.
+
+    Only joint names, times and positions: the retiming recomputes velocities,
+    playback zeroes efforts and the flange pose is diagnostic. Dropping them took
+    a 2320 KB recording to 279 KB and its parse from 30 ms to 4.6 ms, and keeps
+    the full taught density that decimating into the catalogue would lose.
+    """
+    return {
+        "joint_names": list(trajectory.joint_names),
+        "sample_rate_hz": trajectory.sample_rate_hz,
+        "recorded_at": trajectory.recorded_at,
+        "source_recording": trajectory.name,
+        "times": [round(float(point.time_from_start), 4) for point in trajectory.points],
+        "positions": [
+            [round(float(value), decimals) for value in point.positions]
+            for point in trajectory.points
+        ],
+    }
+
+
+def format_recording_reference(action_id: str, trajectory: RecordedTrajectory,
+                               reference: str, indent: int = 6) -> str:
+    """Render a paste-ready ``recording:`` line in place of a waypoint block."""
+    pad = " " * indent
+    return (
+        f"{pad}# full taught density from '{trajectory.name}' "
+        f"({len(trajectory.points)} pts), resolved at catalogue load\n"
+        f"{pad}# recorded joint order: {list(trajectory.joint_names)}\n"
+        f"{pad}# -> must match the catalogue group's joint_names for '{action_id}'\n"
+        f"{pad}recording: {reference}\n"
+    )
+
+
 def format_waypoints_block(
     action_id: str, trajectory: RecordedTrajectory, waypoints: list[dict], indent: int = 6
 ) -> str:
@@ -172,6 +208,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-points", type=int, default=8, help="Downsample to at most this many waypoints"
     )
+    parser.add_argument(
+        "--emit-recording",
+        default="",
+        help=(
+            "Write a lean recording sidecar to this path (relative to the coordinator's "
+            "config dir, e.g. config/recordings/pour.json) and emit a 'recording:' line "
+            "instead of a waypoint block. Keeps the full taught density, which "
+            "downsampling into the catalogue cannot be undone from."
+        ),
+    )
     parser.add_argument("--decimals", type=int, default=5, help="Rounding for positions")
     parser.add_argument(
         "--out",
@@ -212,8 +258,20 @@ def main() -> None:
             f"({trajectory.duration:.2f}s @ {trajectory.sample_rate_hz:.0f} Hz)"
         )
 
-    waypoints = recorded_to_waypoints(trajectory, args.max_points, args.decimals)
-    block = format_waypoints_block(args.action_id, trajectory, waypoints)
+    if args.emit_recording:
+        sidecar_path = Path(args.emit_recording).expanduser().resolve()
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar = recording_sidecar(trajectory, args.decimals)
+        sidecar_path.write_text(json.dumps(sidecar, separators=(",", ":")), encoding="utf-8")
+        reference = args.emit_recording
+        block = format_recording_reference(args.action_id, trajectory, reference)
+        print(
+            f"wrote {sidecar_path} ({sidecar_path.stat().st_size / 1024:.0f} KB, "
+            f"{len(trajectory.points)} pts at full density)"
+        )
+    else:
+        waypoints = recorded_to_waypoints(trajectory, args.max_points, args.decimals)
+        block = format_waypoints_block(args.action_id, trajectory, waypoints)
 
     out_path = (
         Path(args.out).expanduser().resolve()
@@ -232,6 +290,8 @@ def main() -> None:
 
 __all__ = [
     "catalogue_indices",
+    "format_recording_reference",
+    "recording_sidecar",
     "downsample_indices",
     "recorded_to_waypoints",
     "format_waypoints_block",

@@ -8,6 +8,14 @@
 # --- Goal ---
 string activity_id        # e.g. hefeweizen_pour_v1
 string metadata_json      # optional run-time overrides as a JSON object; may be empty
+                          #
+                          # {"playback": {...}} replays every recorded action in
+                          # this run under those settings, merged over whatever
+                          # each action declares in the catalogue. Same keys as
+                          # PerformAction's "playback"; the catalogue is left
+                          # unchanged, so the next run is unaffected. Example:
+                          #   {"playback": {"mode": "tempo_scale",
+                          #                 "speed_scale": 0.6}}
 ---
 # --- Result ---
 bool success

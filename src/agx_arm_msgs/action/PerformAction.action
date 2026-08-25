@@ -13,6 +13,23 @@ string actiontype_id      # Gripper | Trajectory
 string robot_id           # left_hand | right_hand | both_arms | left_arm | right_arm
 string activity_id        # owning activity (for events/diagnostics; may be empty)
 string metadata_json      # JSON object: skill_name, contact_*, *_policy, poses, scaling, ...
+                          #
+                          # Trajectory actions replayed from a recording carry an
+                          # optional "playback" object choosing how the taught
+                          # data becomes commands. Defaults to
+                          #   {"mode": "smooth", "smoothing_window_sec": 0.3}
+                          # mode: as_recorded | smooth | tempo_scale
+                          #     | speed_scale | maximize_speed
+                          #   the first three keep the taught timing; tempo_scale
+                          #   also scales the clock ("speed_scale": 0.6 = slower,
+                          #   dwells and reversals kept). The last two re-time
+                          #   through the parameterization and discard it.
+                          # smoothing_window_sec: moving-average width in replay
+                          #   seconds; a floor applies, see agx_arm_retiming.
+                          # resample_dt: output grid, default 0.005 (the MIT
+                          #   control period, so no knot is interpolated).
+                          # An unusable request is refused, never silently
+                          # defaulted.
 ---
 # --- Result ---
 bool success

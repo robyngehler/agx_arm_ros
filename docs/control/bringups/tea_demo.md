@@ -313,6 +313,47 @@ Regenerate a block with `agx_arm_recorded_to_catalogue` after re-teaching; a
 block pasted before 2026-08-25 still carries evenly-spaced waypoints. Detail:
 `docs/sprint_refactor/reference/teach_replay_timebase.md`.
 
+### Choosing the playback mode, and keeping the full density
+
+Both limitations above are addressable per action. A recorded action may name how
+it is replayed, and may reference its recording instead of inlining a decimation:
+
+```yaml
+metadata:
+  source: recorded
+  recording: recordings/tea_pour_left.json   # relative to the config dir
+  playback: { mode: tempo_scale, speed_scale: 0.6 }
+```
+
+`mode` is one of `as_recorded`, `smooth` (the default, 0.3 s window),
+`tempo_scale`, `speed_scale`, `maximize_speed`. The first three keep the taught
+timing; `tempo_scale` also scales the clock, which is what a pour taught too
+briskly needs. An unusable request is refused when the catalogue loads.
+
+Write the sidecar with:
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_recorded_to_catalogue \
+  ~/agx_arm_trajectories/teach/CanFill02.json \
+  --action-id left_arm_pour_tea \
+  --emit-recording src/agx_arm_coordination/config/recordings/tea_pour_left.json
+```
+
+It writes a lean file (times and positions only — 12% of the recording, full
+density) and prints a `recording:` line to paste in place of the waypoint block.
+
+To try a different tempo without touching the catalogue, override for one run:
+
+```bash
+ros2 run agx_arm_coordination agx_arm_run_activity \
+  --activity tea_pour_left_v1 \
+  --metadata-json '{"playback": {"mode": "tempo_scale", "speed_scale": 0.6}}'
+```
+
+Every recorded action is planned before the first one moves, so a recording that
+cannot be replayed under the requested mode fails at the start rather than three
+actions in.
+
 ## Re-teaching a segment
 
 ```bash

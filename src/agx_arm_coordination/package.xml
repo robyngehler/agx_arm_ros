@@ -9,6 +9,7 @@
 
   <depend>rclpy</depend>
   <depend>agx_arm_msgs</depend>
+  <depend>agx_arm_retiming</depend>
   <exec_depend>agx_arm_description</exec_depend>
   <depend>moveit_msgs</depend>
   <depend>trajectory_msgs</depend>

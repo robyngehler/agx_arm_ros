@@ -51,6 +51,10 @@ class ArmGroup:
 class TrajectoryPoint:
     positions: tuple[float, ...]
     time_from_start_sec: float
+    #: Feedforward for this point. Empty when the plan carries bare waypoints, in
+    #: which case the dispatcher derives it — the MIT controller reads a missing
+    #: velocity as a commanded zero and brakes against its own position command.
+    velocities: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -185,6 +189,80 @@ class ArmConfig:
         return cls.from_dict(data)
 
 
+#: How a taught trajectory is turned into commands when the action does not say.
+#: `smooth` because a replay has to execute, and 0.3 s because that is the window
+#: the hardware session settled on (`docs/sprint_refactor/reference/teach_replay_timebase.md`).
+PLAYBACK_DEFAULT_MODE = "smooth"
+PLAYBACK_DEFAULT_WINDOW_SEC = 0.3
+#: Output grid. The MIT controller runs at 200 Hz and interpolates linearly, so a
+#: 5 ms knot lands on a control tick and nothing is interpolated; 10 ms doubled
+#: the peak commanded acceleration (11.2 -> 20.3 rad/s²).
+PLAYBACK_RESAMPLE_DT = 0.005
+
+
+@dataclass(frozen=True)
+class PlaybackSpec:
+    """How a recorded action is re-timed for playback.
+
+    Read from the action's ``metadata['playback']``, the same place a grip action
+    declares ``payload_update``: a property of this step in this activity, not of
+    the recording.
+    """
+
+    mode: str = PLAYBACK_DEFAULT_MODE
+    smoothing_window_sec: float = PLAYBACK_DEFAULT_WINDOW_SEC
+    speed_scale: float = 1.0
+    resample_dt: float = PLAYBACK_RESAMPLE_DT
+
+    def cache_key(self) -> tuple:
+        return (self.mode, self.smoothing_window_sec, self.speed_scale, self.resample_dt)
+
+
+def playback_spec(metadata: dict[str, Any], action_id: str = "") -> PlaybackSpec:
+    """Parse ``metadata['playback']``, defaulting to smooth playback.
+
+    Rejects an unusable request rather than falling back to the default: a replay
+    that silently ran under a different mode than the activity asked for is worse
+    than one that refused to start.
+    """
+    from agx_arm_retiming import MODES
+
+    raw = metadata.get("playback") or {}
+    if not isinstance(raw, dict):
+        raise ArmConfigError(
+            f"action '{action_id}': 'playback' must be a mapping, got {type(raw).__name__}"
+        )
+    unknown = set(raw) - {"mode", "smoothing_window_sec", "speed_scale", "resample_dt"}
+    if unknown:
+        raise ArmConfigError(
+            f"action '{action_id}': unknown playback key(s) {sorted(unknown)}; "
+            f"expected mode, smoothing_window_sec, speed_scale, resample_dt"
+        )
+    mode = str(raw.get("mode", PLAYBACK_DEFAULT_MODE))
+    if mode not in MODES:
+        raise ArmConfigError(
+            f"action '{action_id}': unknown playback mode '{mode}'; "
+            f"expected one of {', '.join(MODES)}"
+        )
+
+    def positive(key: str, default: float) -> float:
+        value = float(raw.get(key, default))
+        if not (value > 0.0) or value != value or value in (float("inf"), float("-inf")):
+            raise ArmConfigError(
+                f"action '{action_id}': playback {key} must be finite and > 0, got {value}"
+            )
+        return value
+
+    return PlaybackSpec(
+        mode=mode,
+        smoothing_window_sec=float(
+            raw.get("smoothing_window_sec", PLAYBACK_DEFAULT_WINDOW_SEC)
+        ),
+        speed_scale=positive("speed_scale", 1.0),
+        resample_dt=positive("resample_dt", PLAYBACK_RESAMPLE_DT),
+    )
+
+
 def _scaling(metadata: dict[str, Any], key: str) -> float:
     value = float(metadata.get(key, 1.0) or 1.0)
     return min(max(value, 1e-3), 1.0)
@@ -201,6 +279,11 @@ def _recorded_time_scale(metadata: dict[str, Any]) -> float:
 class ArmTrajectoryPlanner:
     def __init__(self, config: ArmConfig) -> None:
         self.config = config
+        # Retimed command streams, keyed on the action and its playback spec.
+        self._retimed: dict[tuple, tuple[TrajectoryPoint, ...]] = {}
+        # Run-level playback override, merged over each action's own block. Set
+        # per activity run; the catalogue keeps what the action normally does.
+        self.playback_override: dict[str, Any] = {}
 
     def _group(self, robot_id: str) -> ArmGroup:
         try:
@@ -279,6 +362,7 @@ class ArmTrajectoryPlanner:
             raise NotTaughtError(
                 f"recorded trajectory '{action.action_id}' has an empty waypoint list"
             )
+        points = self._retime(action, group, points)
         return RecordedTrajectoryPlan(
             action_id=action.action_id,
             robot_id=action.robot_id,
@@ -286,6 +370,63 @@ class ArmTrajectoryPlanner:
             joint_names=group.joint_names,
             points=tuple(points),
         )
+
+    def _retime(self, action: Action, group: ArmGroup,
+                points: list[TrajectoryPoint]) -> list[TrajectoryPoint]:
+        """Turn taught waypoints into a command stream under the action's mode.
+
+        Cached on the action and its spec: `speed_scale` searches the limit scale
+        and measured 11 s on a 30 s duo recording, which is a stall if it happens
+        while the activity is already running.
+
+        Four waypoints are the minimum the retiming needs; below that the taught
+        points are dispatched as they are, with velocities derived downstream.
+        """
+        merged = dict(action.metadata.get("playback") or {})
+        merged.update(self.playback_override)
+        spec = playback_spec({**action.metadata, "playback": merged}, action.action_id)
+        key = (action.action_id, spec.cache_key(), len(points))
+        cached = self._retimed.get(key)
+        if cached is not None:
+            return list(cached)
+        if len(points) < 4:
+            return points
+
+        from agx_arm_retiming import NERO_MAX_VELOCITY, RetimingError, default_acceleration, retime
+
+        arms = max(1, len(group.joint_names) // len(NERO_MAX_VELOCITY))
+        max_velocity = list(NERO_MAX_VELOCITY) * arms
+        if len(max_velocity) != len(group.joint_names):
+            # A group this planner has no joint limits for: dispatch it as taught
+            # rather than inventing a limit for it.
+            return points
+        try:
+            result = retime(
+                [point.time_from_start_sec for point in points],
+                [list(point.positions) for point in points],
+                spec.mode,
+                max_velocity=max_velocity,
+                max_acceleration=default_acceleration(max_velocity),
+                speed_scale=spec.speed_scale,
+                smoothing_window_sec=spec.smoothing_window_sec,
+                resample_dt=spec.resample_dt,
+            )
+        except RetimingError as exc:
+            raise ArmConfigError(
+                f"action '{action.action_id}': cannot replay under mode "
+                f"'{spec.mode}': {exc}"
+            ) from None
+
+        retimed = [
+            TrajectoryPoint(
+                positions=tuple(position),
+                time_from_start_sec=float(when),
+                velocities=tuple(velocity),
+            )
+            for when, position, velocity in zip(result.times, result.positions, result.velocities)
+        ]
+        self._retimed[key] = tuple(retimed)
+        return retimed
 
 
 # --- duo dispatch merge --

@@ -75,13 +75,40 @@ from agx_arm_coordination.performer import KIND_ARM, KIND_HAND, RoutingError, ro
 from agx_arm_coordination.unit_activity import UnitActivity
 
 
-def _waypoint_velocities(points) -> list[tuple[float, ...]]:
-    """Central differences over the waypoint times, endpoints at rest.
+def _playback_override(metadata_json: str) -> dict:
+    """Run-level playback settings from a PerformActivity goal.
 
-    A catalogue block is sparse, so these are the slopes of the polyline the
-    controller will actually walk rather than the taught derivative — which is
-    what a feedforward wants: it should agree with the commanded path.
+    ``{"playback": {"mode": "tempo_scale", "speed_scale": 0.6}}`` replays every
+    recorded action in this run at that tempo, leaving the catalogue's own per
+    action settings in place for the next run. Anything else in the object is
+    ignored here rather than rejected, so the field stays open for other
+    run-time overrides.
     """
+    if not metadata_json or not metadata_json.strip():
+        return {}
+    try:
+        payload = json.loads(metadata_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"not a JSON object: {exc}") from None
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected a JSON object, got {type(payload).__name__}")
+    playback = payload.get("playback", {})
+    if not isinstance(playback, dict):
+        raise ValueError(f"'playback' must be an object, got {type(playback).__name__}")
+    return dict(playback)
+
+
+def _waypoint_velocities(points) -> list[tuple[float, ...]]:
+    """Feedforward for each point: the plan's own, or central differences.
+
+    A retimed plan carries velocities that match the path it emits. A plan built
+    straight from sparse catalogue waypoints does not, and the slopes of the
+    polyline the controller will walk are then the right feedforward — it should
+    agree with the commanded path.
+    """
+    if points and all(len(point.velocities) == len(point.positions) for point in points):
+        return [tuple(point.velocities) for point in points]
+
     count = len(points)
     width = len(points[0].positions) if count else 0
     rest = (0.0,) * width
@@ -1059,6 +1086,32 @@ class CoordinatorNode(Node):
             if self.stop_requested:
                 self._shutdown_event.set()
 
+    def _prewarm_recorded(self, graph, activity_id: str) -> list[str]:
+        """Plan every recorded action in the graph, returning what refused.
+
+        Populates the planner's cache, so the dispatch that follows is a lookup.
+        """
+        problems: list[str] = []
+        seen: set[str] = set()
+        for node in graph.nodes.values():
+            action = self.catalogue.actions.get(node.action_id)
+            if action is None or action.action_id in seen:
+                continue
+            if action.actiontype_id != ACTIONTYPE_TRAJECTORY:
+                continue
+            if not (action.metadata or {}).get("waypoints"):
+                continue
+            seen.add(action.action_id)
+            try:
+                self.arm_planner.plan(action)
+            except (ArmConfigError, NotTaughtError, PlanMergeError) as exc:
+                problems.append(f"{action.action_id}: {exc}")
+        if seen and not problems:
+            self.get_logger().info(
+                f"activity '{activity_id}': {len(seen)} recorded action(s) planned"
+            )
+        return problems
+
     def _execute_activity(self, goal_handle) -> PerformActivity.Result:
         activity_id = goal_handle.request.activity_id
         result = PerformActivity.Result()
@@ -1072,7 +1125,37 @@ class CoordinatorNode(Node):
             goal_handle.abort()
             return result
 
+        # Both steps concern arm trajectories only; an activity that never
+        # addresses an arm runs without a planner and needs neither.
+        planner = getattr(self, "arm_planner", None)
+        try:
+            # Optional by contract ("may be empty"), so it is read as optional:
+            # a client or harness that omits it gets the catalogue's own modes.
+            override = _playback_override(getattr(goal_handle.request, "metadata_json", "") or "")
+            if planner is not None:
+                planner.playback_override = override
+        except ValueError as exc:
+            result.success = False
+            result.message = f"invalid metadata_json: {exc}"
+            self.get_logger().error(result.message)
+            self._event("failed", activity_id=activity_id, message=result.message)
+            goal_handle.abort()
+            return result
+
         graph = self.catalogue.get_activity_plan(activity_id)
+        # Plan every recorded action before the first one moves. Retiming a taught
+        # trajectory costs up to 11 s under `speed_scale`, which is a stall in the
+        # middle of a sequence, and a recording that cannot be replayed under the
+        # requested mode has to fail here rather than three actions in.
+        problems = self._prewarm_recorded(graph, activity_id) if planner is not None else []
+        if problems:
+            result.success = False
+            result.message = "playback planning failed: " + "; ".join(problems)
+            self.get_logger().error(result.message)
+            self._event("failed", activity_id=activity_id, message=result.message)
+            goal_handle.abort()
+            return result
+
         scheduler = Scheduler(graph, self.catalogue.actions, self.robot_units)
         total = len(graph.nodes)
         result.total_nodes = total

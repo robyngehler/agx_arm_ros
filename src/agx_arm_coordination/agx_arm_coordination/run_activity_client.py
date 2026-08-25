@@ -65,12 +65,13 @@ class RunActivityClient(Node):
 
     # --- run -----------------------------------------------------------------
 
-    def run(self, activity_id: str, timeout_sec: float) -> int:
+    def run(self, activity_id: str, timeout_sec: float, metadata_json: str = "") -> int:
         if not self._client.wait_for_server(timeout_sec=timeout_sec):
             self.get_logger().error("coordinator execute_activity action not available")
             return 2
         goal = PerformActivity.Goal()
         goal.activity_id = activity_id
+        goal.metadata_json = metadata_json
         send_future = self._client.send_goal_async(goal, feedback_callback=self._on_feedback)
         if not self._spin_until(send_future, timeout_sec=timeout_sec):
             self.get_logger().error("goal was never accepted or rejected")
@@ -136,6 +137,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--activity", required=True, help="activity_id to run")
     parser.add_argument("--server", default="execute_activity", help="action server name")
     parser.add_argument("--timeout-sec", type=float, default=10.0)
+    parser.add_argument(
+        "--metadata-json",
+        default="",
+        help=(
+            "Run-time overrides as a JSON object, applied to this run only. "
+            "Playback: --metadata-json "
+            "'{\"playback\": {\"mode\": \"tempo_scale\", \"speed_scale\": 0.6}}'"
+        ),
+    )
     args = parser.parse_args(argv)
 
     rclpy.init()
@@ -143,7 +153,7 @@ def main(argv: list[str] | None = None) -> None:
     try:
         node = RunActivityClient(args.server)
         node.install_interrupt_handler()
-        code = node.run(args.activity, args.timeout_sec)
+        code = node.run(args.activity, args.timeout_sec, args.metadata_json)
     except KeyboardInterrupt:
         code = 130
     finally:

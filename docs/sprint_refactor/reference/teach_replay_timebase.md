@@ -482,18 +482,58 @@ clock: it spends the budget on dwells. `recorded_to_waypoints` now uses the same
 chord-error selection as the geometric path, which costs nothing in storage and
 measured 1.1-4.2x less chord error at the same count across five recordings.
 
+### Both gaps closed 2026-08-25
+
+**The modes.** A recorded action carries an optional `playback` block, declared
+where `payload_update` is declared — a property of this step in this activity,
+not of the recording:
+
+```yaml
+metadata:
+  source: recorded
+  recording: recordings/tea_pour_left.json
+  playback: { mode: tempo_scale, speed_scale: 0.6 }
+```
+
+Default is `smooth` at a 0.3 s window. An unusable request is refused at load,
+never silently defaulted: a replay that ran under a mode the activity did not ask
+for is worse than one that refused to start. A run-level override travels in
+`PerformActivity.metadata_json` — `{"playback": {...}}` applies to every recorded
+action in that run and leaves the catalogue alone.
+
+Planning happens **before the first action moves**, not at dispatch: `speed_scale`
+searches the limit scale and measured 11 s on a 30 s duo recording, which would be
+a stall in the middle of a sequence. The result is cached per action and spec.
+
+**The density.** An action may reference a recording instead of inlining
+waypoints. The reference is resolved when the catalogue is read, so a missing or
+malformed file stops the coordinator coming up rather than failing an activity
+that is already running.
+
+The sidecar carries only joint names, times and positions — the retiming
+recomputes velocities, playback zeroes efforts, the flange pose is diagnostic:
+
+| | size | parse | density |
+| --- | --- | --- | --- |
+| full teach recording | 2320 KB | 30 ms | 2236 pts |
+| lean sidecar | **277 KB** (12%) | **8.5 ms** | 2236 pts |
+| inlined catalogue waypoints | 27 KB | — | 73 pts (10:1 loss) |
+
+**Not a database.** There is one row per action, fetched by name — an index buys
+nothing. What the data does need is to be diffable and versioned with the
+catalogue that references it, because a demo is reproducible only if its
+trajectories are in git alongside the graph that plays them. A binary store would
+trade that for a lookup nobody performs.
+
+Inline `waypoints` still work; declaring both is refused.
+
 ### What is still not shared
 
-- **the retiming modes.** A catalogue action has `velocity_scaling`, which for a
-  recorded action is a replay time-stretch — closest in spirit to `tempo_scale`,
-  but it stretches sparse waypoints rather than a reconstructed trajectory, and
-  there is no `smooth`, `speed_scale` or `maximize_speed` at activity level
-- **the taught density.** The catalogue inlines waypoints because the dense
-  recording would drown the YAML, so a 10:1 decimation is structural. No
-  downstream retiming recovers what decimation removed; the deeper fix is for a
-  catalogue action to *reference* its recording and let the coordinator retime
-  the full data, which would give the activity path every mode the teach path has
-- **the stall reconstruction and the pre-motion trim** apply at record time, so
-  an activity assembled from a recording taken after 2026-08-25 gets them for
-  free — but a catalogue block pasted before then still carries whatever the
-  recorder produced at the time
+- **the stall reconstruction and the pre-motion trim** apply at record time, so an
+  activity assembled from a recording taken after 2026-08-25 gets them for free —
+  a catalogue block pasted before then still carries whatever the recorder
+  produced at the time
+- **`velocity_scaling` on a recorded action** remains a separate time stretch
+  applied to the taught waypoint times before retiming. It predates
+  `tempo_scale`, overlaps it, and the two multiply rather than one superseding
+  the other
