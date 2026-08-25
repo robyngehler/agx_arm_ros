@@ -621,7 +621,10 @@ def retime(
     _assert_within_recorded_range(
         np.asarray(result["positions"], dtype=float), q, deviation + PATH_EXCURSION_TOLERANCE
     )
-    notes.append(f"taught timing discarded; limits used at {scale:.3f} of maximum")
+    notes.append(
+        f"taught timing discarded; limits used at {scale:.3f} of maximum, geometric "
+        f"path from a {smoothing_window_sec:.2f}s window and {len(path)} waypoints"
+    )
     return RetimedTrajectory(
         mode=mode,
         times=list(result["times"]),

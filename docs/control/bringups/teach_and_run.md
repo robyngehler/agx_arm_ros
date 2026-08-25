@@ -280,7 +280,14 @@ free-runs without the arm).
 >   `speed_scale`: correlation of the taught joint-speed profile is 0.977 for `tempo_scale` 0.6x
 >   against 0.242 for `speed_scale`. It also plans in 0.1 s rather than 1-10 s, because there is no
 >   search. The smoothing window is in *replay* seconds, so a slower tempo filters less of the taught
->   path; widen the window if that is not what you want.
+>   path; widen the window if that is not what you want — doubling the tempo raised velocity
+>   utilisation 0.35 to 0.50 rather than 0.70 for that reason. At 1.0x it is identical to `smooth`
+>   at the same window, which is the check worth knowing: 1.0x *is* `smooth`.
+> - **the smoothing window persists across mode switches, and the parameterized modes use it too.**
+>   A window set for a `smooth` or `tempo_scale` replay shapes the geometric path the next
+>   `speed_scale` run hands to TOTG, even though that prompt does not ask about it (0.30 gave
+>   15.68 s and 0.097 rad against 15.41 s and 0.069 rad at 0.10). Their note now states the window
+>   and waypoint count the path came from.
 > - **recording starts at the motion, not at the keypress (2026-08-25).** The still interval between
 >   arming the recorder and moving is dropped, keeping `--pre-roll-sec` (0.25 s) so the physical start
 >   is not clipped. One cut instant for all arms, taken from the earliest onset, so a duo recording

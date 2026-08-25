@@ -6,7 +6,9 @@ method: offline, against two real 7-joint teach recordings
 (`Wave_Right_V01`, `Wave_Left_V02`). The retiming output is fed through
 `JointTrajectoryBuffer.sample()` on the MIT controller's 200 Hz grid, and the
 metric is the acceleration of the position stream the controller actually walks.
-Not exercised on hardware.
+
+**Confirmed on hardware 2026-08-25** — both arms, a duo teach-and-replay session
+across all five modes. See "What the hardware run showed" at the end.
 
 ## The metric
 
@@ -320,8 +322,10 @@ recording path.
 - the reconstruction floor is set from two recordings. It is a filter width, so a
   motion with real content above ~8 Hz would be cut by it; nothing taught by hand
   has come close
-- none of this is measured on hardware. The prediction is that `as_recorded` and
-  `smooth` become executable at the same duration they were taught at
+- the acceleration limit is still `2.5 · v_max`, an admitted stand-in, and it is
+  what sets every TOTG duration in this note
+- per-joint freshness at the source is not implemented; the reconstruction stays
+  an inference
 
 ## `tempo_scale`: replay slower without re-planning
 
@@ -395,3 +399,48 @@ a coarser step aliases them away and under-corrects: the same path at scale 0.5
 returns 18.94 s at `resample_dt` 0.005 and 13.11 s at 0.05. A cheap coarse probe
 during the search is therefore not available — the duration it would report is
 not the duration the plan has.
+
+## What the hardware run showed
+
+2026-08-25, both arms, one duo teach-and-replay session over all five modes. The
+recording is `Wave_Both_V01-01` (1067 samples, 14.82 s, 71.9 Hz merged).
+
+**The offline pipeline reproduces the run exactly.** Re-planning the saved
+recording with the parameters the session used returns the same duration, path
+deviation and utilisation figures the node logged, to the digit, in all five
+cases. Everything measured in this note therefore describes what the arms
+actually received.
+
+**Per-joint stalls are frequent, and not only on the right arm.** Of the reads
+that survived whole-vector rejection, the reconstruction spread a stall on:
+
+| | whole-vector reads dropped | stored samples | per-joint stalls spread | per joint |
+| --- | --- | --- | --- | --- |
+| left arm | 905 | 1229 | 669 | 137, 85, 96, 76, 94, 97, 84 |
+| right arm | 596 | 1081 | 401 | 88, 75, 37, 51, 61, 47, 42 |
+
+Roughly 7-11% of stored samples carry a stall on any given joint, and the left
+arm carries *more* of them than the right despite replaying cleanly all along —
+the per-joint stall is a property of how the vector is assembled, not of one
+arm's health. That is the strongest argument yet for publishing per-group
+freshness at the source rather than inferring it.
+
+**The reconstruction is measurable on a real capture.** The capture warned that
+`right_arm` joint4 reached 6.89 rad/s on the raw samples; the saved recording's
+worst implied speed is 5.72 rad/s. Resampling upward preserves segment slopes, so
+that 17% is the reconstruction, not the merge.
+
+**`tempo_scale` behaves as designed.** At 2.0x it returned exactly 7.41 s against
+14.82 s, and at 1.0x it is bit-identical to `smooth` at the same window — which
+is the correctness check worth having, since 1.0x *is* `smooth`.
+
+The window-in-replay-seconds effect is visible in the numbers: doubling the tempo
+raised velocity utilisation 0.35 → 0.50, a factor of 1.43 rather than 2, because
+the 0.30 s window covers twice as much taught content at the faster tempo.
+
+**One transparency gap the run exposed.** The smoothing window persists across
+mode switches, and `speed_scale` uses it for the geometric path while its prompt
+never mentions it: a window of 0.30 set for a `tempo_scale` replay silently
+shaped the next `speed_scale` plan (15.68 s and 0.097 rad deviation against
+15.41 s and 0.069 rad at the 0.10 default). The parameterized modes' note now
+states the window and waypoint count that produced their path.
