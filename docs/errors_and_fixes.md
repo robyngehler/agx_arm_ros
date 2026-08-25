@@ -224,6 +224,43 @@ the clock: it spends a scarce budget on dwells rather than on corners. Chord-err
 selection costs nothing in storage and measured 1.1-4.2x less chord error at the
 same count.
 
+## A knob whose units are the wrong time base
+
+**2026-08-25.** `tempo_scale` reconstructed the recording in *replay* seconds:
+the time axis was scaled first, then resampled and filtered. The filter width
+therefore meant a different fraction of the taught motion at every tempo, so
+asking for a faster replay silently smoothed more of the taught path — the
+normalised path moved up to 0.126 rad (7°) at 3x and 0.027 rad at 0.5x on
+`Push_Up_V01`. It showed up as commanded acceleration falling by *less* than
+tempo² (33.2 → 15.4 at 0.5x rather than 8.3), which had been written down as a
+property of the mode rather than read as the symptom it was: the shape was
+changing, not just the clock.
+
+Reconstructing in taught time and scaling the axis afterwards holds the path
+fixed — drift 2e-4 rad across 0.25-3x, acceleration exactly tempo²
+(33.1 → 20.6 → 11.9 → 8.5 against 21.2 / 11.9 / 8.3 predicted), taught
+speed-profile correlation 1.000 rather than 0.977. The output grid step stays in
+replay seconds, because *that* one is a property of the controller.
+
+The general form: **a width belongs to the time base of whatever it describes.**
+A filter window describes the recording; a grid step describes the consumer. When
+one operation mixes two time bases, do each part in the base it belongs to and
+transform last.
+
+Two smaller versions of the same class, found alongside it:
+
+- `velocity_scaling` stretched a recorded action's taught times *before* the
+  playback mode saw them, so `tempo_scale: 0.5` under `velocity_scaling: 0.5` ran
+  at a quarter speed with both numbers reading 0.5. **Two knobs that scale the
+  same quantity multiply, and neither one reports it** — the pair is now refused,
+  with the legacy knob still working alone so existing catalogue entries migrate
+  rather than break.
+- the guard that refuses an over-limit tempo extrapolates the largest admissible
+  one, and the first version printed the exact boundary — which the same check
+  then refused, because utilisation is not quite linear in the tempo (0.18% over
+  1-6x). **A suggested value has to be one the caller can actually pass**: it is
+  given margin and floored to the precision it is printed at.
+
 The lesson is about where a contract lives: **two dispatch paths to one
 controller will drift unless the thing they share is code, not a convention.**
 The teach path and the coordinator both build a `JointTrajectory` for the same

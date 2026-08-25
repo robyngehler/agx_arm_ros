@@ -116,6 +116,20 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   unless what they share is code — the coordinator kept that defect months after
   the teach path was fixed. Catalogue waypoints are chosen by chord error, not
   even sample index (`docs/sprint_refactor/reference/teach_replay_timebase.md`)
+- an assembled activity replays under the same modes and density as the teach
+  loop: a recorded action's `playback` block (default `smooth` at 0.3 s),
+  overridable per run through `PerformActivity.metadata_json`, over a
+  `recording:` reference that keeps the full taught density. `playback` is the
+  single timing authority there — the legacy `velocity_scaling` scales the taught
+  times before the mode sees them, so the pair is refused rather than multiplied
+- a width belongs to the time base of what it describes: a filter window is a
+  property of the recording and applies in taught time, an output grid step is a
+  property of the controller and applies in replay time. Reconstruct in the
+  source's base and scale the axis last, so a tempo walks the same path
+- a limit check may only refuse where something was requested. `tempo_scale`
+  carries a speed request and is refused past the joint limits; `as_recorded` and
+  `smooth` can only report, because a hand back-driving a joint can exceed a
+  setpoint limit. A stand-in limit cannot carry a rejection at all
 - an operation indexed by sample is the operation you meant only if the samples
   are evenly spaced. A recording's grid is uneven, so a moving average over N
   rows is not a fixed-width filter and a row-index difference is not a

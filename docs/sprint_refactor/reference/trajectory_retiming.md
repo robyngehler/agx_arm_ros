@@ -27,15 +27,22 @@ answer is that both are needed, and that no single tool provides them.
 | --- | --- | --- |
 | `as_recorded` | uniform resample, 0.06 s window, central differences | timing exactly, path to ~0.05 rad |
 | `smooth` | same, operator-chosen window ≥ 0.06 s | timing exactly |
-| `tempo_scale` | same, on a time axis scaled by the factor | timing *structure* — dwells, reversals, duo phase |
+| `tempo_scale` | same in taught time, then the axis is scaled | timing *structure* — dwells, reversals, duo phase |
 | `speed_scale` | TOTG, limit scale searched for the target duration | path geometry |
 | `maximize_speed` | TOTG at full limits | path geometry |
 
 `tempo_scale` is the answer to "replay this slower" and TOTG is not: scaling the
 clock keeps every ratio in the recording, while a parameterization recomputes
 them. Measured as the correlation of the normalised joint-speed profile against
-the taught one: `tempo_scale` 0.5x gives r = 0.977, `speed_scale` 1.0x gives
-r = 0.242.
+the taught one: `tempo_scale` gives r = 1.000, `speed_scale` 1.0x gives r = 0.242.
+
+The reconstruction happens in **taught** time and the axis is scaled afterwards,
+so the path is the same path at every tempo and commanded acceleration falls as
+tempo² exactly. The grid step is taken in replay seconds, so the controller still
+gets `resample_dt` knots whatever the clock was scaled by. A tempo that would
+drive a joint past its speed limit is refused, naming the joint and the largest
+tempo that would pass — it is the one timing-preserving mode carrying a speed
+request, so it is the one with something to refuse.
 
 No mode replays raw samples. The controller interpolates linearly between
 trajectory points, so a knot at an uneven timestamp is a step in commanded

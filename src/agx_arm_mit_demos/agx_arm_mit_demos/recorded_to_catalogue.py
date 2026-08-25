@@ -126,16 +126,22 @@ def recorded_to_waypoints(
 
 
 
-def recording_sidecar(trajectory: RecordedTrajectory, decimals: int = 5) -> dict:
+def recording_sidecar(trajectory: RecordedTrajectory, decimals: int = 5,
+                      joint_prefix: str = "") -> dict:
     """The lean form a catalogue action references.
 
     Only joint names, times and positions: the retiming recomputes velocities,
     playback zeroes efforts and the flange pose is diagnostic. Dropping them took
     a 2320 KB recording to 279 KB and its parse from 30 ms to 4.6 ms, and keeps
     the full taught density that decimating into the catalogue would lose.
+
+    ``joint_prefix`` writes the side into the joint names. A single-arm recording
+    stores them unprefixed, which is the right shape for either arm; prefixed,
+    the file states which arm it was taught on and the planner can check it
+    against the group instead of taking the catalogue's word for it.
     """
     return {
-        "joint_names": list(trajectory.joint_names),
+        "joint_names": [f"{joint_prefix}{name}" for name in trajectory.joint_names],
         "sample_rate_hz": trajectory.sample_rate_hz,
         "recorded_at": trajectory.recorded_at,
         "source_recording": trajectory.name,
@@ -218,6 +224,17 @@ def parse_args() -> argparse.Namespace:
             "downsampling into the catalogue cannot be undone from."
         ),
     )
+    parser.add_argument(
+        "--joint-prefix",
+        default="",
+        help=(
+            "Prefix written into the sidecar's joint names (e.g. left_arm_). A "
+            "single-arm recording stores them unprefixed and so does not say which "
+            "arm it was taught on; prefixing lets the planner check that against "
+            "the group it is about to command. Ignored with --merge-with, which "
+            "prefixes each side already."
+        ),
+    )
     parser.add_argument("--decimals", type=int, default=5, help="Rounding for positions")
     parser.add_argument(
         "--out",
@@ -261,7 +278,9 @@ def main() -> None:
     if args.emit_recording:
         sidecar_path = Path(args.emit_recording).expanduser().resolve()
         sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        sidecar = recording_sidecar(trajectory, args.decimals)
+        # The duo merge has already prefixed each side's joints.
+        prefix = "" if args.merge_with else args.joint_prefix
+        sidecar = recording_sidecar(trajectory, args.decimals, prefix)
         sidecar_path.write_text(json.dumps(sidecar, separators=(",", ":")), encoding="utf-8")
         reference = args.emit_recording
         block = format_recording_reference(args.action_id, trajectory, reference)

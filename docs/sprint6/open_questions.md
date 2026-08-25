@@ -84,10 +84,17 @@
 	as a *commanded zero*, so the kd term braked against the position command (`|v_des - dp/dt|` 0.224
 	rad/s against the teach path's 0.004). It now supplies central differences, and catalogue waypoints
 	are selected by chord error rather than by even sample index.
-- **Still open: the activity path has no retiming modes and no access to the taught density.** The
-	teach loop gained `as_recorded`/`smooth`/`tempo_scale`/`speed_scale`/`maximize_speed` over a
-	uniformly resampled trajectory; a catalogue action has only `velocity_scaling` over an inlined
-	~10:1 decimation. No downstream retiming recovers what decimation removed. The shape of the fix is
-	for a catalogue action to *reference* its recording rather than inline waypoints, which would give
-	an assembled activity every mode the teach path has. See
+- **Closed 2026-08-25: the activity path has the retiming modes and the taught density.** *(Superseded
+	reading: "a catalogue action has only `velocity_scaling` over an inlined ~10:1 decimation, and no
+	downstream retiming recovers what decimation removed.")* A recorded action carries an optional
+	`playback` block — mode plus its parameters, defaulting to `smooth` at 0.3 s — and
+	`PerformActivity.metadata_json` overrides it for one run. It may also `recording:`-reference a lean
+	sidecar instead of inlining waypoints, which keeps the full taught density at 12% of the
+	recording's size. `velocity_scaling` on a recorded action is now deprecated and refused alongside
+	an explicit `playback` block, because both stretch the taught timing and would multiply. See
 	`docs/sprint_refactor/reference/teach_replay_timebase.md`.
+- **Still open: an unprefixed single-arm sidecar does not record which arm it was taught on.** The
+	planner checks the recorded joint names against the group it is about to command, but a teach
+	recording stores them unprefixed (`joint1..7`), which fits either arm — so the ordering is checked
+	and the side is taken on the catalogue's word. `--joint-prefix` on `agx_arm_recorded_to_catalogue`
+	closes it for new sidecars; existing ones would have to be re-emitted.

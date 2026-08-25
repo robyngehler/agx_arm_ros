@@ -299,10 +299,8 @@ consequences the teach loop does not have:
   knots over 14.5 s almost every control tick sits inside a linear segment, so
   all the acceleration lands on the knots — 98 rad/s² of commanded acceleration
   against 16 for the same recording replayed through the teach loop.
-- **the replay modes are not available here.** `velocity_scaling` on a recorded
-  action is a time stretch over the sparse waypoints; there is no `smooth`,
-  `tempo_scale`, `speed_scale` or `maximize_speed` at activity level. To change
-  how a taught action executes, re-teach it or change `--max-points`.
+- **an inlined block is still a decimation.** Reference the recording instead
+  (below) to keep the full taught density.
 - **velocities are now dispatched** (they were not before 2026-08-25, and the MIT
   controller reads a missing velocity as a commanded zero — the kd term braked
   against the position command). Regenerating a waypoint block also now places
@@ -328,7 +326,16 @@ metadata:
 `mode` is one of `as_recorded`, `smooth` (the default, 0.3 s window),
 `tempo_scale`, `speed_scale`, `maximize_speed`. The first three keep the taught
 timing; `tempo_scale` also scales the clock, which is what a pour taught too
-briskly needs. An unusable request is refused when the catalogue loads.
+briskly needs. An unusable request is refused when the catalogue loads, and a
+`tempo_scale` that would drive a joint past its speed limit is refused too,
+naming the joint and the largest tempo that would pass.
+
+**`playback` is the only timing authority on a recorded action.** The older
+`velocity_scaling` / `acceleration_scaling` stretch the taught times before the
+mode sees them, so the two would multiply — `tempo_scale: 0.5` under
+`velocity_scaling: 0.5` is a quarter speed and neither number says so. Declaring
+both is refused. An action with no `playback` block keeps the old behaviour;
+those entries are deprecated and migrate over time.
 
 Write the sidecar with:
 
@@ -336,11 +343,20 @@ Write the sidecar with:
 ros2 run agx_arm_mit_demos agx_arm_recorded_to_catalogue \
   ~/agx_arm_trajectories/teach/CanFill02.json \
   --action-id left_arm_pour_tea \
+  --joint-prefix left_arm_ \
   --emit-recording src/agx_arm_coordination/config/recordings/tea_pour_left.json
 ```
 
 It writes a lean file (times and positions only — 12% of the recording, full
 density) and prints a `recording:` line to paste in place of the waypoint block.
+
+`--joint-prefix` matters for a single-arm recording: the teach loop stores joint
+names unprefixed (`joint1..7`), which is the right shape for *either* arm, so the
+file does not say which one it was taught on. Prefixed, it does, and the planner
+checks it against the group before commanding — a left-arm recording replayed on
+the right arm is refused instead of mirrored. A duo merge prefixes both sides
+already. Without it the ordering is still checked; only the side is taken on the
+catalogue's word.
 
 To try a different tempo without touching the catalogue, override for one run:
 
@@ -352,7 +368,8 @@ ros2 run agx_arm_coordination agx_arm_run_activity \
 
 Every recorded action is planned before the first one moves, so a recording that
 cannot be replayed under the requested mode fails at the start rather than three
-actions in.
+actions in. That preplanning is cancellable between actions — Ctrl+C during a
+`speed_scale` prewarm abandons the rest of the graph instead of running it out.
 
 ## Re-teaching a segment
 

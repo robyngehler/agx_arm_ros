@@ -1,10 +1,13 @@
-"""Turn a recording into an executable trajectory, under one of four modes.
+"""Turn a recording into an executable trajectory, under one of five modes.
 
 The modes split by what the underlying tool can express:
 
-* ``as_recorded`` and ``smooth`` keep the taught duration and the taught pace.
-  Both resample the recording onto a uniform grid, filter it there, and take
-  derivatives there; they differ only in filter width.
+* ``as_recorded``, ``smooth`` and ``tempo_scale`` keep the taught pace. All
+  three resample the recording onto a uniform grid, filter it there, and take
+  derivatives there; ``as_recorded`` and ``smooth`` differ only in filter width,
+  and ``tempo_scale`` scales the time axis afterwards, so every ratio in the
+  recording — dwells, reversals, the phase between two arms — is preserved and
+  the path is the same shape at every tempo.
 * ``speed_scale`` and ``maximize_speed`` hand the geometric path to MoveIt's
   time-optimal parameterization, which computes its own timing and so discards
   anything purely temporal in the recording — a dwell is zero path progress.
@@ -247,6 +250,33 @@ def _finite_difference_states(t, q):
             (q[index + 1] - q[index]) / after - (q[index] - q[index - 1]) / before
         ) / (before + after)
     return velocities, accelerations
+
+
+def _refuse_over_speed_tempo(velocities, max_velocity, tempo, utilisation):
+    """Refuse a tempo whose commanded velocity leaves the joint speed limits.
+
+    Only `tempo_scale` is refused this way: it is the one timing-preserving mode
+    that carries a speed request, so there is something to refuse. `as_recorded`
+    and `smooth` reproduce whatever was taught, and a hand back-driving a joint
+    can exceed a setpoint limit, so an over-limit recording is reported there
+    rather than rejected.
+    """
+    per_joint = np.max(np.abs(np.asarray(velocities)), axis=0) / np.asarray(max_velocity)
+    joint = int(np.argmax(per_joint))
+    peak = float(np.max(np.abs(np.asarray(velocities))[:, joint]))
+    # Extrapolated, then given 1% of margin and floored to the precision it is
+    # printed at, so the tempo named here is one the caller can actually pass.
+    # Utilisation is very nearly linear in the tempo but not exactly — the grid
+    # step is `resample_dt * tempo`, so the filter's sample width moves with it,
+    # measured at 0.18% over 1-6x — and the exact boundary comes back refused.
+    admissible = math.floor(99.0 * tempo / utilisation) / 100.0
+    raise RetimingError(
+        f"tempo_scale {tempo:.2f}x drives joint {joint + 1} to {peak:.2f} rad/s "
+        f"against its {float(max_velocity[joint]):.2f} rad/s limit "
+        f"({per_joint[joint]:.2f}x); the largest admissible tempo for this "
+        f"recording is {admissible:.2f}x. A recording already over the limit as "
+        f"taught replays under 'smooth', which makes no speed request"
+    )
 
 
 def _deviation_at_recorded_times(grid, planned, t, q):
@@ -494,7 +524,6 @@ def _search_scale_for_duration(path, max_velocity, max_acceleration, target,
     return best[1], best[0]
 
 
-
 def retime(
     times: Sequence[float],
     positions: Sequence[Sequence[float]],
@@ -537,15 +566,18 @@ def retime(
             if mode == AS_RECORDED
             else max(RECONSTRUCTION_WINDOW_SEC, smoothing_window_sec)
         )
-        # Everything happens in the *output* time base, so the window and the
-        # grid mean the same thing whatever the tempo. Scaling the axis is the
-        # whole of the operation: relative dwells, reversals and the phase
-        # between two arms are ratios, and a ratio survives it.
         tempo = speed_scale if mode == TEMPO_SCALE else 1.0
-        scaled = t / tempo
-        tt, resampled = _uniform_resample(scaled, q, resample_dt)
+        # Reconstruct in taught time, then scale the axis. The window is a
+        # property of the recording, so the reconstructed path is the same path
+        # at every tempo and q(t/duration) is tempo-invariant; the grid step is
+        # taken in replay seconds, so the output still lands on `resample_dt`
+        # whatever the tempo. Scaling the axis is then the whole of the
+        # operation, and relative dwells, reversals and the phase between two
+        # arms are ratios that survive it.
+        tt, resampled = _uniform_resample(t, q, resample_dt * tempo)
         pos, _ = _moving_average(resampled, tt, window)
-        deviation = _deviation_at_recorded_times(tt, pos, scaled, q)
+        deviation = _deviation_at_recorded_times(tt, pos, t, q)
+        tt = tt / tempo
         vel, acc = _finite_difference_states(tt, pos)
         recorded_spacing = float(np.median(np.diff(t)))
         notes.append(
@@ -554,8 +586,8 @@ def retime(
         )
         if mode == TEMPO_SCALE:
             notes.append(
-                f"taught timing scaled by {tempo:.2f}x, not re-planned; the window "
-                "is in replay seconds, so a faster tempo filters more of the path"
+                f"taught timing scaled by {tempo:.2f}x, not re-planned; the window is "
+                "in taught seconds, so the path is the same shape at every tempo"
             )
         if mode == AS_RECORDED and smoothing_window_sec > RECONSTRUCTION_WINDOW_SEC:
             notes.append(
@@ -564,14 +596,19 @@ def retime(
             )
         velocity_use = _utilisation(vel, max_velocity)
         acceleration_use = _utilisation(acc, max_acceleration)
+        if mode == TEMPO_SCALE and velocity_use > 1.0:
+            _refuse_over_speed_tempo(vel, max_velocity, tempo, velocity_use)
         if velocity_use > 1.0:
             notes.append(
                 f"commanded velocity reaches {velocity_use:.2f}x the limit; "
-                + (
-                    f"a tempo below {tempo / velocity_use:.2f}x would bring it under"
-                    if mode == TEMPO_SCALE
-                    else "the recording, not the plan, is what exceeds it"
-                )
+                "the recording, not the plan, is what exceeds it"
+            )
+        if acceleration_use > 1.0:
+            # Reported, not refused: the acceleration limit is a stand-in
+            # (ACCELERATION_PER_VELOCITY), so it cannot carry a rejection.
+            notes.append(
+                f"commanded acceleration reaches {acceleration_use:.2f}x the "
+                f"stand-in limit ({ACCELERATION_PER_VELOCITY:.1f}/s of velocity)"
             )
         return RetimedTrajectory(
             mode=mode,

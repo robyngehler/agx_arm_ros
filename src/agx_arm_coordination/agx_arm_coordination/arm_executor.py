@@ -20,6 +20,7 @@ values are placeholders until measured/taught on hardware.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -200,13 +201,22 @@ PLAYBACK_DEFAULT_WINDOW_SEC = 0.3
 PLAYBACK_RESAMPLE_DT = 0.005
 
 
+#: Keys a ``playback`` block may carry.
+PLAYBACK_KEYS = ("mode", "smoothing_window_sec", "speed_scale", "resample_dt")
+#: Timing knobs that predate the playback block. They stretch the taught times
+#: before the mode ever sees them, so on a recorded action they are deprecated
+#: and cannot be combined with an explicit ``playback`` block.
+LEGACY_TIMING_KEYS = ("velocity_scaling", "acceleration_scaling")
+
+
 @dataclass(frozen=True)
 class PlaybackSpec:
     """How a recorded action is re-timed for playback.
 
     Read from the action's ``metadata['playback']``, the same place a grip action
-    declares ``payload_update``: a property of this step in this activity, not of
-    the recording.
+    declares ``payload_update``: an Action-level default, not a property of the
+    recording and not of one node in one activity. A run may override it
+    activity-wide through the ``PerformActivity`` goal's ``metadata_json``.
     """
 
     mode: str = PLAYBACK_DEFAULT_MODE
@@ -232,11 +242,11 @@ def playback_spec(metadata: dict[str, Any], action_id: str = "") -> PlaybackSpec
         raise ArmConfigError(
             f"action '{action_id}': 'playback' must be a mapping, got {type(raw).__name__}"
         )
-    unknown = set(raw) - {"mode", "smoothing_window_sec", "speed_scale", "resample_dt"}
+    unknown = set(raw) - set(PLAYBACK_KEYS)
     if unknown:
         raise ArmConfigError(
             f"action '{action_id}': unknown playback key(s) {sorted(unknown)}; "
-            f"expected mode, smoothing_window_sec, speed_scale, resample_dt"
+            f"expected {', '.join(PLAYBACK_KEYS)}"
         )
     mode = str(raw.get("mode", PLAYBACK_DEFAULT_MODE))
     if mode not in MODES:
@@ -245,22 +255,49 @@ def playback_spec(metadata: dict[str, Any], action_id: str = "") -> PlaybackSpec
             f"expected one of {', '.join(MODES)}"
         )
 
-    def positive(key: str, default: float) -> float:
-        value = float(raw.get(key, default))
-        if not (value > 0.0) or value != value or value in (float("inf"), float("-inf")):
+    def number(key: str, default: float, *, allow_zero: bool = False) -> float:
+        try:
+            value = float(raw.get(key, default))
+        except (TypeError, ValueError):
             raise ArmConfigError(
-                f"action '{action_id}': playback {key} must be finite and > 0, got {value}"
+                f"action '{action_id}': playback {key} must be a number, "
+                f"got {raw.get(key)!r}"
+            ) from None
+        bound = ">= 0" if allow_zero else "> 0"
+        if not math.isfinite(value) or value < 0.0 or (value == 0.0 and not allow_zero):
+            raise ArmConfigError(
+                f"action '{action_id}': playback {key} must be finite and "
+                f"{bound}, got {value}"
             )
         return value
 
     return PlaybackSpec(
         mode=mode,
-        smoothing_window_sec=float(
-            raw.get("smoothing_window_sec", PLAYBACK_DEFAULT_WINDOW_SEC)
+        # Zero is usable and means "no window beyond the reconstruction floor
+        # every timing-preserving mode applies anyway".
+        smoothing_window_sec=number(
+            "smoothing_window_sec", PLAYBACK_DEFAULT_WINDOW_SEC, allow_zero=True
         ),
-        speed_scale=positive("speed_scale", 1.0),
-        resample_dt=positive("resample_dt", PLAYBACK_RESAMPLE_DT),
+        speed_scale=number("speed_scale", 1.0),
+        resample_dt=number("resample_dt", PLAYBACK_RESAMPLE_DT),
     )
+
+
+def _shares_one_prefix(expected: tuple[str, ...], recorded: tuple[str, ...]) -> bool:
+    """Report whether each group joint is one shared prefix plus its recorded name.
+
+    One prefix for all of them, in the group's order — so `joint1..7` matches
+    `left_arm_joint1..7`, and a duo group's two different prefixes do not match a
+    single arm's names repeated.
+    """
+    if len(expected) != len(recorded) or not recorded:
+        return False
+    prefixes = set()
+    for name, short in zip(expected, recorded):
+        if len(name) <= len(short) or not name.endswith(short):
+            return False
+        prefixes.add(name[: len(name) - len(short)])
+    return len(prefixes) == 1
 
 
 def _scaling(metadata: dict[str, Any], key: str) -> float:
@@ -268,8 +305,29 @@ def _scaling(metadata: dict[str, Any], key: str) -> float:
     return min(max(value, 1e-3), 1.0)
 
 
-def _recorded_time_scale(metadata: dict[str, Any]) -> float:
-    """Stretch recorded waypoint timing by the more conservative metadata scale."""
+def _recorded_time_scale(
+    metadata: dict[str, Any], action_id: str, explicit_playback: bool
+) -> float:
+    """Stretch recorded waypoint timing by the more conservative metadata scale.
+
+    Deprecated on a recorded action: it scales the taught times before the mode
+    sees them, so combined with a `playback` block the timing is scaled twice —
+    `tempo_scale: 0.5` under `velocity_scaling: 0.5` runs at a quarter speed and
+    neither number says so. `playback` is the single authority, and the pair is
+    refused rather than multiplied.
+    """
+    declared = [
+        key for key in LEGACY_TIMING_KEYS
+        if key in metadata and float(metadata[key] or 1.0) != 1.0
+    ]
+    if explicit_playback and declared:
+        raise ArmConfigError(
+            f"action '{action_id}': {' and '.join(declared)} cannot be combined "
+            f"with an explicit 'playback' block — both scale the taught timing, "
+            f"so the replay would run at the product of the two. Express the "
+            f"speed as playback.speed_scale under mode 'tempo_scale' or "
+            f"'speed_scale' and drop {' and '.join(declared)}"
+        )
     return 1.0 / min(
         _scaling(metadata, "velocity_scaling"),
         _scaling(metadata, "acceleration_scaling"),
@@ -342,8 +400,51 @@ class ArmTrajectoryPlanner:
             acceleration_scaling=_scaling(action.metadata, "acceleration_scaling"),
         )
 
+    def playback_for(self, action: Action) -> tuple[PlaybackSpec, bool]:
+        """Resolve how this action replays, and whether a mode was asked for.
+
+        Three levels, most specific first: the run-level override from the
+        activity goal, the action's own block, then the default. The override is
+        merged key by key, so a run can change only the tempo and leave the mode
+        the catalogue chose.
+        """
+        merged = dict(action.metadata.get("playback") or {})
+        merged.update(self.playback_override)
+        return playback_spec({"playback": merged}, action.action_id), bool(merged)
+
+    def _assert_recorded_joints(self, action: Action, group: ArmGroup) -> None:
+        """Refuse a recording taught on different joints than the group commands.
+
+        Matching the joint *count* is not enough: a left-arm recording is the
+        right shape for the right arm and would replay a mirrored path onto it,
+        and a duo recording concatenated in the other side order is the right
+        shape for `both_arms`.
+
+        Two spellings are accepted. Names equal to the group's are an exact
+        match. Names the group's own carry a single shared prefix over
+        (``joint1`` against ``left_arm_joint1``) are the side-prefix convention:
+        a single-arm teach recording stores unprefixed joint names, so it names
+        the joints and their order while the catalogue names the side. That side
+        is then the catalogue's claim and is not checked — emit the sidecar with
+        `--joint-prefix` to make it the recording's claim too.
+        """
+        recorded = action.metadata.get("recording_joint_names")
+        if not recorded:
+            return
+        recorded = tuple(str(name) for name in recorded)
+        expected = tuple(group.joint_names)
+        if recorded == expected or _shares_one_prefix(expected, recorded):
+            return
+        raise ArmConfigError(
+            f"action '{action.action_id}': recording was taught on "
+            f"{list(recorded)}, group '{action.robot_id}' commands "
+            f"{list(expected)}; refusing to replay it"
+        )
+
     def _plan_recorded(self, action: Action, group: ArmGroup) -> RecordedTrajectoryPlan:
-        time_scale = _recorded_time_scale(action.metadata)
+        self._assert_recorded_joints(action, group)
+        spec, explicit = self.playback_for(action)
+        time_scale = _recorded_time_scale(action.metadata, action.action_id, explicit)
         points: list[TrajectoryPoint] = []
         for index, wp in enumerate(action.metadata["waypoints"]):
             positions = tuple(float(v) for v in wp.get("positions", []))
@@ -362,7 +463,7 @@ class ArmTrajectoryPlanner:
             raise NotTaughtError(
                 f"recorded trajectory '{action.action_id}' has an empty waypoint list"
             )
-        points = self._retime(action, group, points)
+        points = self._retime(action, group, points, spec, time_scale)
         return RecordedTrajectoryPlan(
             action_id=action.action_id,
             robot_id=action.robot_id,
@@ -371,21 +472,19 @@ class ArmTrajectoryPlanner:
             points=tuple(points),
         )
 
-    def _retime(self, action: Action, group: ArmGroup,
-                points: list[TrajectoryPoint]) -> list[TrajectoryPoint]:
+    def _retime(self, action: Action, group: ArmGroup, points: list[TrajectoryPoint],
+                spec: PlaybackSpec, time_scale: float) -> list[TrajectoryPoint]:
         """Turn taught waypoints into a command stream under the action's mode.
 
-        Cached on the action and its spec: `speed_scale` searches the limit scale
-        and measured 11 s on a 30 s duo recording, which is a stall if it happens
-        while the activity is already running.
+        Cached on everything that determines the output — the action, the spec
+        and the legacy time scale applied before it: `speed_scale` searches the
+        limit scale and measured 11 s on a 30 s duo recording, which is a stall
+        if it happens while the activity is already running.
 
         Four waypoints are the minimum the retiming needs; below that the taught
         points are dispatched as they are, with velocities derived downstream.
         """
-        merged = dict(action.metadata.get("playback") or {})
-        merged.update(self.playback_override)
-        spec = playback_spec({**action.metadata, "playback": merged}, action.action_id)
-        key = (action.action_id, spec.cache_key(), len(points))
+        key = (action.action_id, spec.cache_key(), len(points), time_scale)
         cached = self._retimed.get(key)
         if cached is not None:
             return list(cached)

@@ -1086,14 +1086,24 @@ class CoordinatorNode(Node):
             if self.stop_requested:
                 self._shutdown_event.set()
 
-    def _prewarm_recorded(self, graph, activity_id: str) -> list[str]:
+    def _prewarm_recorded(self, graph, activity_id: str, goal_handle=None):
         """Plan every recorded action in the graph, returning what refused.
 
         Populates the planner's cache, so the dispatch that follows is a lookup.
+        Cancellation is checked between actions: one retiming is a single library
+        call that runs to completion, so an action is the finest granularity
+        available here — under `speed_scale` that call is seconds, not the whole
+        prewarm.
         """
         problems: list[str] = []
         seen: set[str] = set()
         for node in graph.nodes.values():
+            if self._prewarm_interrupted(goal_handle):
+                self.get_logger().info(
+                    f"activity '{activity_id}': planning stopped after "
+                    f"{len(seen)} recorded action(s)"
+                )
+                return problems, True
             action = self.catalogue.actions.get(node.action_id)
             if action is None or action.action_id in seen:
                 continue
@@ -1110,7 +1120,12 @@ class CoordinatorNode(Node):
             self.get_logger().info(
                 f"activity '{activity_id}': {len(seen)} recorded action(s) planned"
             )
-        return problems
+        return problems, False
+
+    def _prewarm_interrupted(self, goal_handle) -> bool:
+        if self.stop_requested:
+            return True
+        return goal_handle is not None and goal_handle.is_cancel_requested
 
     def _execute_activity(self, goal_handle) -> PerformActivity.Result:
         activity_id = goal_handle.request.activity_id
@@ -1147,7 +1162,21 @@ class CoordinatorNode(Node):
         # trajectory costs up to 11 s under `speed_scale`, which is a stall in the
         # middle of a sequence, and a recording that cannot be replayed under the
         # requested mode has to fail here rather than three actions in.
-        problems = self._prewarm_recorded(graph, activity_id) if planner is not None else []
+        problems, interrupted = (
+            self._prewarm_recorded(graph, activity_id, goal_handle)
+            if planner is not None
+            else ([], False)
+        )
+        if interrupted:
+            # Nothing has been dispatched yet, so there is nothing to stop —
+            # only the goal to close out.
+            reason = self._stop_reason if self.stop_requested else "canceled"
+            result.success = False
+            result.message = reason
+            self.get_logger().info(f"activity '{activity_id}': {reason} while planning")
+            self._event("failed", activity_id=activity_id, message=reason)
+            goal_handle.canceled()
+            return result
         if problems:
             result.success = False
             result.message = "playback planning failed: " + "; ".join(problems)

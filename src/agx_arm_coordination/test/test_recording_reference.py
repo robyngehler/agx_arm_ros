@@ -104,3 +104,73 @@ def test_an_action_without_a_reference_is_left_alone(tmp_path):
     actions = {"left_arm_pour": _action({"source": "recorded", "waypoints": inline})}
     resolve_recordings(actions, tmp_path)
     assert actions["left_arm_pour"].metadata["waypoints"] == inline
+
+
+# --- what the sidecar has to prove before an activity starts ----------------
+
+
+def test_the_taught_joint_names_travel_with_the_waypoints(tmp_path):
+    """The planner compares them against the group it is about to command; only
+    it knows which group that is."""
+    _lean(tmp_path / "r.json")
+    actions = {"left_arm_pour": _action({"source": "recorded", "recording": "r.json"})}
+    resolve_recordings(actions, tmp_path)
+    assert actions["left_arm_pour"].metadata["recording_joint_names"] == ["j1", "j2"]
+
+
+@pytest.mark.parametrize("payload, message", [
+    ({"joint_names": ["j1", "j2"], "times": [0.0, 0.1],
+      "positions": [[0.0, 0.0], [0.1]]}, "sample 1 has 1 positions"),
+    ({"joint_names": ["j1", "j2", "j3"], "times": [0.0, 0.1],
+      "positions": [[0.0, 0.0], [0.1, 0.1]]}, "against 3 declared joint names"),
+    ({"times": [0.0, 0.1, 0.05], "positions": [[0.0], [0.1], [0.2]]},
+     "must strictly increase"),
+    ({"times": [0.0, 0.1, 0.1], "positions": [[0.0], [0.1], [0.2]]},
+     "must strictly increase"),
+])
+def test_a_sidecar_that_cannot_be_replayed_is_refused_at_load(tmp_path, payload, message):
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        load_recording_waypoints(path)
+
+
+@pytest.mark.parametrize("bad", ["NaN", "Infinity"])
+def test_non_finite_values_are_refused(tmp_path, bad):
+    """`json.loads` accepts NaN and Infinity, and a clamp downstream would map
+    either onto a limit — a plausible-looking maximum command."""
+    path = tmp_path / "r.json"
+    path.write_text(
+        '{"times": [0.0, 0.1, %s], "positions": [[0.0], [0.1], [0.2]]}' % bad,
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="non-finite time"):
+        load_recording_waypoints(path)
+
+    path.write_text(
+        '{"times": [0.0, 0.1, 0.2], "positions": [[0.0], [%s], [0.2]]}' % bad,
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="non-finite position"):
+        load_recording_waypoints(path)
+
+
+# --- static playback configuration ------------------------------------------
+
+
+def test_a_malformed_playback_block_fails_at_catalogue_load():
+    """Prewarming would catch it too, but only once someone runs an activity
+    that happens to use the action."""
+    from agx_arm_coordination.graph_loader import validate_playback
+
+    actions = {"left_arm_pour": _action({"source": "recorded", "playback": {"mode": "warp"}})}
+    with pytest.raises(ValueError, match="unknown playback mode"):
+        validate_playback(actions)
+
+
+def test_a_valid_playback_block_passes_catalogue_load():
+    from agx_arm_coordination.graph_loader import validate_playback
+
+    validate_playback({"left_arm_pour": _action(
+        {"source": "recorded", "playback": {"mode": "tempo_scale", "speed_scale": 0.6}}
+    )})

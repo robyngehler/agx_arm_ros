@@ -308,6 +308,62 @@ def test_tempo_scale_rejects_an_unusable_factor():
         retime(t, q, TEMPO_SCALE, speed_scale=0.0)
 
 
+def _normalised_path(result, samples=400):
+    """The planned path against normalised time, so two tempos are comparable."""
+    times = np.asarray(result.times)
+    positions = np.asarray(result.positions)
+    grid = np.linspace(0.0, 1.0, samples)
+    return np.column_stack([
+        np.interp(grid, times / times[-1], positions[:, joint])
+        for joint in range(positions.shape[1])
+    ])
+
+
+@pytest.mark.parametrize("tempo", [0.25, 0.5, 2.0, 3.0])
+def test_tempo_scale_walks_the_same_path_at_every_tempo(tempo):
+    """The filter width is in taught seconds, so the tempo moves the clock and
+    nothing else. Filtering in replay seconds instead made the path a function of
+    the tempo: 6.6e-3 rad of drift at 3x against 7e-5 here."""
+    t, q = uneven_motion()
+    reference = _normalised_path(retime(t, q, TEMPO_SCALE, speed_scale=1.0))
+    scaled = _normalised_path(retime(t, q, TEMPO_SCALE, speed_scale=tempo))
+    assert np.max(np.abs(scaled - reference)) < 2e-4
+
+
+def test_tempo_scale_keeps_the_output_grid_at_the_controller_step():
+    """The grid step is in replay seconds: a tempo must not hand the controller a
+    coarser knot spacing than it was asked for."""
+    t, q = taught_motion()
+    for tempo in (0.5, 1.0, 2.0, 3.0):
+        result = retime(t, q, TEMPO_SCALE, speed_scale=tempo)
+        gaps = np.diff(np.asarray(result.times))
+        assert gaps.max() <= DEFAULT_RESAMPLE_DT + 1e-9
+
+
+def test_tempo_scale_refuses_a_tempo_that_leaves_the_joint_limits():
+    """`tempo_scale` is the one timing-preserving mode carrying a speed request,
+    so there is something to refuse; the refusal names the joint and the largest
+    tempo that would pass."""
+    t, q = taught_motion()
+    with pytest.raises(RetimingError, match=r"largest admissible tempo") as excinfo:
+        retime(t, q, TEMPO_SCALE, speed_scale=6.0)
+    message = str(excinfo.value)
+    assert "joint" in message and "rad/s limit" in message
+
+    admissible = float(message.split("recording is ")[1].split("x")[0])
+    assert retime(t, q, TEMPO_SCALE, speed_scale=admissible).velocity_utilisation <= 1.0
+
+
+def test_an_over_taught_recording_still_replays_under_smooth():
+    """A hand can back-drive a joint past a setpoint limit, so an over-limit
+    recording is reported by the modes that make no speed request, not refused."""
+    t, q = taught_motion()
+    fast = [[8.0 * value for value in row] for row in q]
+    result = retime(t, fast, SMOOTH)
+    assert result.velocity_utilisation > 1.0
+    assert any("the recording, not the plan" in note for note in result.notes)
+
+
 def test_the_geometric_path_is_robust_to_the_sampling_pattern():
     """The same motion sampled evenly and unevenly must produce approximately
     the same geometric path — the smoothing is a time-domain filter only after
@@ -326,6 +382,7 @@ def test_the_geometric_path_is_robust_to_the_sampling_pattern():
         smoothing_window_sec=0.10, waypoints=40, resample_dt=DEFAULT_RESAMPLE_DT,
     )
     # Compare as paths: the farthest either polyline strays from the other.
+
     def gap(a, b):
         worst = 0.0
         for point in a:

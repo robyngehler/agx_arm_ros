@@ -22,6 +22,7 @@ methods below.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import json
@@ -39,10 +40,13 @@ from agx_arm_coordination.graph_model import (
 
 #: Key an action uses instead of inlining ``waypoints``.
 RECORDING_KEY = "recording"
+#: Where the loader records the joint names a referenced recording was taught on,
+#: for the planner to check against the group it is about to command.
+RECORDING_JOINTS_KEY = "recording_joint_names"
 
 
-def load_recording_waypoints(path: Path) -> list[dict]:
-    """Read a taught trajectory sidecar into catalogue waypoints.
+def load_recording(path: Path) -> tuple[list[str], list[dict]]:
+    """Read a taught trajectory sidecar into joint names and catalogue waypoints.
 
     The sidecar carries only what a replay needs — joint names, times and
     positions. Velocities are recomputed by the retiming, efforts are zeroed at
@@ -52,6 +56,10 @@ def load_recording_waypoints(path: Path) -> list[dict]:
     A recording is referenced rather than inlined because a catalogue that
     carried it would be unreadable, and decimating it to fit is what a replay
     then cannot undo.
+
+    Everything a replay would otherwise discover on the arm is checked here: a
+    non-finite or non-increasing time, a ragged row, a row that is not as wide as
+    the declared joint names.
     """
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -62,24 +70,58 @@ def load_recording_waypoints(path: Path) -> list[dict]:
     if not isinstance(payload, dict):
         raise ValueError(f"recording '{path}': expected a JSON object")
 
+    joint_names = [str(name) for name in payload.get("joint_names") or []]
     # A full teach recording works too, so a file can be referenced straight from
     # the teach library without being converted first.
-    if "points" in payload:
-        points = payload.get("points") or []
-        times = [float(point["time_from_start"]) for point in points]
-        positions = [[float(v) for v in point["positions"]] for point in points]
-    else:
-        times = [float(t) for t in payload.get("times") or []]
-        positions = [[float(v) for v in row] for row in payload.get("positions") or []]
+    try:
+        if "points" in payload:
+            points = payload.get("points") or []
+            times = [float(point["time_from_start"]) for point in points]
+            positions = [[float(v) for v in point["positions"]] for point in points]
+        else:
+            times = [float(t) for t in payload.get("times") or []]
+            positions = [[float(v) for v in row] for row in payload.get("positions") or []]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"recording '{path}': unreadable sample ({exc})") from None
 
     if not times or len(times) != len(positions):
         raise ValueError(
             f"recording '{path}': {len(times)} times against {len(positions)} position rows"
         )
-    return [
+    for index, when in enumerate(times):
+        if not math.isfinite(when):
+            raise ValueError(f"recording '{path}': sample {index} has a non-finite time")
+        if index and when <= times[index - 1]:
+            raise ValueError(
+                f"recording '{path}': time goes from {times[index - 1]} to {when} at "
+                f"sample {index}; recorded times must strictly increase"
+            )
+    width = len(positions[0])
+    if joint_names and width != len(joint_names):
+        raise ValueError(
+            f"recording '{path}': {width} positions per sample against "
+            f"{len(joint_names)} declared joint names {joint_names}"
+        )
+    for index, row in enumerate(positions):
+        if len(row) != width:
+            raise ValueError(
+                f"recording '{path}': sample {index} has {len(row)} positions, "
+                f"sample 0 has {width}"
+            )
+        if not all(math.isfinite(value) for value in row):
+            raise ValueError(
+                f"recording '{path}': sample {index} has a non-finite position"
+            )
+
+    return joint_names, [
         {"positions": row, "time_from_start_sec": when}
         for when, row in zip(times, positions)
     ]
+
+
+def load_recording_waypoints(path: Path) -> list[dict]:
+    """Catalogue waypoints from a taught trajectory sidecar."""
+    return load_recording(path)[1]
 
 
 def resolve_recordings(actions: dict[str, Action], config_dir: Path) -> None:
@@ -87,6 +129,8 @@ def resolve_recordings(actions: dict[str, Action], config_dir: Path) -> None:
 
     Done here, at load, so a missing or unreadable recording stops the
     coordinator coming up instead of failing an activity that is already running.
+    The joint names travel with the waypoints; only the planner knows the group
+    the action will be commanded on, so that comparison happens there.
     """
     for action_id, action in actions.items():
         reference = (action.metadata or {}).get(RECORDING_KEY)
@@ -101,9 +145,31 @@ def resolve_recordings(actions: dict[str, Action], config_dir: Path) -> None:
         if not path.is_absolute():
             path = config_dir / path
         try:
-            action.metadata["waypoints"] = load_recording_waypoints(path)
+            joint_names, waypoints = load_recording(path)
         except ValueError as exc:
             raise ValueError(f"action '{action_id}': {exc}") from None
+        action.metadata["waypoints"] = waypoints
+        if joint_names:
+            action.metadata[RECORDING_JOINTS_KEY] = joint_names
+
+
+def validate_playback(actions: dict[str, Action]) -> None:
+    """Parse every action's ``playback`` block, so a bad one fails at load.
+
+    A run-level override is checked when the activity goal arrives; this is the
+    static half. Prewarming would catch it too, but only once someone runs an
+    activity that happens to use the action.
+    """
+    from agx_arm_coordination.arm_executor import ArmConfigError, playback_spec
+
+    for action_id, action in actions.items():
+        metadata = action.metadata or {}
+        if "playback" not in metadata:
+            continue
+        try:
+            playback_spec(metadata, action_id)
+        except ArmConfigError as exc:
+            raise ValueError(str(exc)) from None
 
 
 class ActivityCatalogue:
@@ -144,6 +210,7 @@ class ActivityCatalogue:
                 )
             actions.update(extra)
         resolve_recordings(actions, config_dir)
+        validate_playback(actions)
         return cls(
             actions=actions,
             activities_dir=config_dir / "activities",

@@ -334,30 +334,44 @@ A take taught faster than the arm can command has two possible answers, and unti
 the motion under the limits but discards the taught timing — a dwell is zero path
 progress, so the parameterization has no notion of it.
 
-`tempo_scale` scales the time axis and nothing else: everything happens in the
-*output* time base, so the grid and the filter window mean the same thing at any
-tempo. Relative dwells, reversal timing and the phase between two arms are all
-ratios, and a ratio survives a scaled clock.
+`tempo_scale` scales the time axis and nothing else. The recording is
+reconstructed in **taught** time — resampled onto a uniform grid, then filtered —
+and only then is the axis divided by the tempo. Relative dwells, reversal timing
+and the phase between two arms are all ratios, and a ratio survives a scaled
+clock. The grid step is taken in *replay* seconds, so the controller is handed
+`resample_dt` knots however the clock was scaled.
 
 Measured on the duo take whose right arm was taught too fast (30.16 s):
 
 | mode | duration | v/limit (right) | max commanded accel | deviation |
 | --- | --- | --- | --- | --- |
-| `smooth` 0.10 s | 30.16 s | 0.40 | 33.2 rad/s² | 0.023 |
-| `tempo_scale` 0.8 | 37.70 s | 0.35 | 26.5 | 0.019 |
-| `tempo_scale` 0.6 | 50.27 s | 0.31 | 19.8 | 0.015 |
-| `speed_scale` 1.0 | 30.66 s | 0.12 | 1.2 | 0.048 |
+| `smooth` 0.10 s | 30.16 s | 0.40 | 33.1 rad/s² | 0.023 |
+| `tempo_scale` 0.8 | 37.70 s | 0.32 | 20.6 | 0.024 |
+| `tempo_scale` 0.6 | 50.27 s | 0.24 | 11.9 | 0.023 |
+| `tempo_scale` 0.5 | 60.32 s | 0.20 | 8.5 | 0.023 |
+| `speed_scale` 1.0 | 30.49 s | 0.12 | 1.2 | 0.048 |
 
 Correlation of the right arm's normalised speed profile with the taught one:
-**`tempo_scale` 0.6 gives r = 0.977, `speed_scale` gives r = 0.242.** That
-difference is the whole reason the mode exists.
+**`tempo_scale` gives r = 1.000, `speed_scale` gives r = 0.242.** That difference
+is the whole reason the mode exists.
 
-Two consequences worth knowing:
+Three consequences worth knowing:
 
-- the window is in **replay** seconds, so a slower tempo filters *less* of the
-  taught path. Commanded acceleration falls by less than tempo² (33.2 → 15.4 at
-  0.5x, not 8.3) because more taught detail survives. Widen the window if that is
-  not what you want; both knobs are exposed.
+- **the path is the same path at every tempo.** Commanded acceleration falls as
+  tempo² exactly (33.1 → 20.6 → 11.9 → 8.5 against 21.2 / 11.9 / 8.3 predicted),
+  and the deviation column does not move. Filtering in *replay* seconds instead —
+  the behaviour until 2026-08-25 — made the window a function of the tempo, so a
+  faster replay smoothed more of the taught path and a slower one less: the
+  normalised path moved by up to 0.126 rad at 3x and 0.027 rad at 0.5x on
+  `Push_Up_V01`, against 0.002 rad now. A tempo dialled at replay time must not
+  change what was taught.
+- **a tempo that leaves the joint speed limits is refused**, naming the joint and
+  the largest tempo that would pass. It is the one timing-preserving mode that
+  carries a speed request, so there is something to refuse; `as_recorded` and
+  `smooth` reproduce whatever was taught and report an over-limit recording
+  instead, because a hand back-driving a joint can exceed a setpoint limit.
+  Acceleration is reported and never refused — `2.5 · v_max` is a stand-in and
+  cannot carry a rejection.
 - it costs 0.1-0.2 s to plan against 1-10 s for `speed_scale`, because there is
   no search — it is a resample.
 
@@ -527,13 +541,36 @@ trade that for a lookup nobody performs.
 
 Inline `waypoints` still work; declaring both is refused.
 
+### What the catalogue proves before an activity runs (2026-08-25)
+
+The refusals below all happen before the first action moves — at catalogue load
+where the input allows it, at preplanning otherwise.
+
+- **the sidecar has to be replayable**: finite and strictly increasing times,
+  finite positions, one row width, as many positions as declared joint names.
+- **the recording has to belong to the group it will be commanded on.** Names
+  equal to the group's match; names the group's own carry a single shared prefix
+  over (`joint1` against `left_arm_joint1`) match too, because a single-arm teach
+  recording stores joint names unprefixed. That spelling names the joints and
+  their order but *not* the side, which is then the catalogue's claim — emit the
+  sidecar with `--joint-prefix left_arm_` to make it the recording's claim and
+  have it checked. A duo recording is already prefixed by the merge.
+- **every static `playback` block is parsed at catalogue load.** Preplanning
+  would catch it too, but only once someone ran an activity that used the action.
+  A run-level override is checked when the goal arrives.
+- **`playback` is the single authority over a recorded action's timing.**
+  `velocity_scaling` / `acceleration_scaling` predate it and stretch the taught
+  times before the mode sees them, so `tempo_scale: 0.5` under
+  `velocity_scaling: 0.5` would run at a quarter speed with neither number saying
+  so. The pair is refused. On an action with no `playback` block the legacy knobs
+  still apply, deprecated: catalogue entries migrate over time.
+- **preplanning is cancellable between actions.** One retiming is a single
+  library call that runs to completion, so an action is the finest granularity
+  available; under `speed_scale` that call is seconds, not the whole graph.
+
 ### What is still not shared
 
 - **the stall reconstruction and the pre-motion trim** apply at record time, so an
   activity assembled from a recording taken after 2026-08-25 gets them for free —
   a catalogue block pasted before then still carries whatever the recorder
   produced at the time
-- **`velocity_scaling` on a recorded action** remains a separate time stretch
-  applied to the taught waypoint times before retiming. It predates
-  `tempo_scale`, overlaps it, and the two multiply rather than one superseding
-  the other

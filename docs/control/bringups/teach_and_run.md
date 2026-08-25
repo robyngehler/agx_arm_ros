@@ -277,12 +277,18 @@ free-runs without the arm).
 > - **`tempo_scale` replays a taught motion slower or faster without re-planning it (2026-08-25).**
 >   It scales the time axis and nothing else, so dwells, reversal timing and the phase between the two
 >   arms all survive — they are ratios. **This is what a take taught too fast needs**, not
->   `speed_scale`: correlation of the taught joint-speed profile is 0.977 for `tempo_scale` 0.6x
->   against 0.242 for `speed_scale`. It also plans in 0.1 s rather than 1-10 s, because there is no
->   search. The smoothing window is in *replay* seconds, so a slower tempo filters less of the taught
->   path; widen the window if that is not what you want — doubling the tempo raised velocity
->   utilisation 0.35 to 0.50 rather than 0.70 for that reason. At 1.0x it is identical to `smooth`
->   at the same window, which is the check worth knowing: 1.0x *is* `smooth`.
+>   `speed_scale`: correlation of the taught joint-speed profile is 1.000 for `tempo_scale` against
+>   0.242 for `speed_scale`. It also plans in 0.1 s rather than 1-10 s, because there is no search.
+>   At 1.0x it is identical to `smooth` at the same window, which is the check worth knowing.
+>   The smoothing window is in **taught** seconds *(superseded 2026-08-25: it was in replay seconds,
+>   which made a faster replay smooth more of the taught path — the normalised path moved up to
+>   0.126 rad at 3x)*, so the path is the same path at every tempo and velocity utilisation scales
+>   exactly with the tempo: 0.40 taught, 0.32 at 0.8x, 0.24 at 0.6x, 0.20 at 0.5x. Widen the window
+>   if you want more filtering; it no longer arrives as a side effect of the tempo.
+>   **A tempo that leaves the joint speed limits is refused**, naming the joint and the largest tempo
+>   that would pass. `as_recorded` and `smooth` still only warn: a hand back-driving a joint can
+>   exceed a setpoint limit, so an over-limit recording is not proof of bad data, and neither mode
+>   carries a speed request there would be anything to refuse.
 > - **the smoothing window persists across mode switches, and the parameterized modes use it too.**
 >   A window set for a `smooth` or `tempo_scale` replay shapes the geometric path the next
 >   `speed_scale` run hands to TOTG, even though that prompt does not ask about it (0.30 gave
@@ -296,14 +302,19 @@ free-runs without the arm).
 >   corners and reversals instead of on dwells. 2-3x more faithful at the same count, 8-18% slower
 >   through TOTG. The default count is 80, and `path_deviation` now includes the chord error, which
 >   was previously invisible and understated the deviation by up to 0.14 rad.
-> - **an assembled activity does not get the replay modes (2026-08-25).** The coordinator reaches the
->   same controller through `recorded_to_catalogue` -> catalogue `waypoints:` -> `ExecuteTrajectory`, and
->   that path has only `velocity_scaling` (a time stretch) over an inlined ~10:1 decimation of the
->   recording. It now dispatches **velocities** — it emitted positions and times only, which the MIT
->   buffer reads as a commanded zero, so the kd term braked against the position command — and
->   `agx_arm_recorded_to_catalogue` now picks waypoints by chord error rather than by even sample index.
->   What is still not shared: the retiming modes and the taught density. Tune a tea-demo-style replay by
->   re-teaching or by `--max-points`, not by expecting `tempo_scale` at activity level.
+> - **an assembled activity replays under the same modes and the same density as the teach loop
+>   (2026-08-25)** *(superseded: until that date the coordinator had only `velocity_scaling` over an
+>   inlined ~10:1 decimation, and a tea-demo replay could only be tuned by re-teaching or
+>   `--max-points`)*. A recorded action carries an optional `playback: { mode, smoothing_window_sec,
+>   speed_scale, resample_dt }` block, defaulting to `smooth` at 0.3 s, and
+>   `PerformActivity.metadata_json` overrides it for one run. It also dispatches **velocities** — it
+>   emitted positions and times only, which the MIT buffer reads as a commanded zero, so the kd term
+>   braked against the position command — and `agx_arm_recorded_to_catalogue` picks waypoints by chord
+>   error rather than by even sample index. Full taught density comes from `--emit-recording`, which
+>   writes a sidecar the action references instead of inlining waypoints. Every recorded action is
+>   planned before the first one moves, and that preplanning can be cancelled between actions.
+>   `velocity_scaling` is deprecated on a recorded action and refused alongside an explicit `playback`
+>   block: both stretch the taught timing and would multiply.
 > - **`m` in playback mode moves to the selected recording's start pose (2026-08-24).** A gap up to
 >   0.35 rad is bridged by the replay's lead-in; beyond that, `m` plans and runs a collision-checked
 >   MoveIt move to the first waypoint (`both_arms` for a duo recording, that side's group for a single
