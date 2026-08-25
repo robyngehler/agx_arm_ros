@@ -75,6 +75,33 @@ from agx_arm_coordination.performer import KIND_ARM, KIND_HAND, RoutingError, ro
 from agx_arm_coordination.unit_activity import UnitActivity
 
 
+def _waypoint_velocities(points) -> list[tuple[float, ...]]:
+    """Central differences over the waypoint times, endpoints at rest.
+
+    A catalogue block is sparse, so these are the slopes of the polyline the
+    controller will actually walk rather than the taught derivative — which is
+    what a feedforward wants: it should agree with the commanded path.
+    """
+    count = len(points)
+    width = len(points[0].positions) if count else 0
+    rest = (0.0,) * width
+    if count < 3:
+        return [rest] * count
+
+    velocities = [rest]
+    for index in range(1, count - 1):
+        span = points[index + 1].time_from_start_sec - points[index - 1].time_from_start_sec
+        if span <= 0.0:
+            velocities.append(rest)
+            continue
+        velocities.append(tuple(
+            (points[index + 1].positions[joint] - points[index - 1].positions[joint]) / span
+            for joint in range(width)
+        ))
+    velocities.append(rest)
+    return velocities
+
+
 class DispatchError(RuntimeError):
     """A node could not be dispatched (routing/planning failure)."""
 
@@ -792,9 +819,16 @@ class CoordinatorNode(Node):
     ) -> ExecuteTrajectory.Goal:
         traj = JointTrajectory()
         traj.joint_names = list(plan.joint_names)
-        for point in plan.points:
+        # Velocities are supplied, not left empty: the MIT controller reads a
+        # missing velocity as a commanded zero, so the kd term brakes against the
+        # motion the position term is asking for. Central differences over the
+        # waypoint times, endpoints at rest — the same convention the teach
+        # replay path uses (`agx_arm_retiming`).
+        velocities = _waypoint_velocities(plan.points)
+        for point, velocity in zip(plan.points, velocities):
             jp = JointTrajectoryPoint()
             jp.positions = list(point.positions)
+            jp.velocities = list(velocity)
             sec = int(point.time_from_start_sec)
             nsec = int((point.time_from_start_sec - sec) * 1e9)
             jp.time_from_start = Duration(sec=sec, nanosec=nsec)

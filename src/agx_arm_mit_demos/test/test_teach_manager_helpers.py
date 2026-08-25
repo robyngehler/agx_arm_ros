@@ -774,3 +774,67 @@ def test_an_arm_that_never_moved_is_not_trimmed_to_a_stub():
         right: _snapshots(times, [[0.0]] * 100),
     })
     assert len(trimmed[right]) >= 4
+
+
+# --- catalogue waypoint selection ----------------------------------------
+
+
+def test_catalogue_waypoints_land_on_the_corner_not_on_the_dwell():
+    """A catalogue block is sparse because the dense one would drown the YAML, so
+    which samples survive decides what the replay can still be. Even spacing
+    decides that by the clock."""
+    from agx_arm_mit_demos.recorded_to_catalogue import catalogue_indices, downsample_indices
+
+    # Half the recording is a dwell, then a sharp corner in the moving half.
+    dwell = [[0.0, 0.0]] * 60
+    ramp = [[i / 40.0, abs(i - 20) / 40.0] for i in range(40)]
+    positions = dwell + ramp
+
+    even = downsample_indices(len(positions), 6)
+    chord = catalogue_indices(positions, 6)
+
+    # Even spacing puts most of its budget in the dwell; chord error does not.
+    assert sum(1 for i in even if i < 60) > sum(1 for i in chord if i < 60)
+    # The corner at index 80 has to survive.
+    assert min(abs(i - 80) for i in chord) <= 2
+
+
+def test_catalogue_waypoints_keep_the_endpoints_and_the_count():
+    from agx_arm_mit_demos.recorded_to_catalogue import catalogue_indices
+
+    positions = [[i * 0.01, (i % 7) * 0.02] for i in range(200)]
+    for count in (2, 8, 40):
+        chosen = catalogue_indices(positions, count)
+        assert chosen[0] == 0 and chosen[-1] == 199
+        assert len(chosen) <= count
+        assert chosen == sorted(set(chosen))
+
+
+def test_catalogue_waypoints_pass_a_short_recording_through():
+    from agx_arm_mit_demos.recorded_to_catalogue import catalogue_indices
+
+    positions = [[0.0], [0.1], [0.2]]
+    assert catalogue_indices(positions, 8) == [0, 1, 2]
+    assert catalogue_indices([], 8) == []
+
+
+def test_recorded_to_waypoints_keeps_the_taught_time_of_each_kept_sample():
+    from agx_arm_mit_controller.trajectory_io import RecordedTrajectory, RecordedTrajectoryPoint
+    from agx_arm_mit_demos.recorded_to_catalogue import recorded_to_waypoints
+
+    points = [
+        RecordedTrajectoryPoint(i * 0.05, [i * 0.01, abs(i - 25) * 0.01], [0.0, 0.0], [0.0, 0.0])
+        for i in range(50)
+    ]
+    trajectory = RecordedTrajectory(
+        name="x", robot="nero", joint_names=["j1", "j2"], sample_rate_hz=20.0,
+        recorded_at="", points=points, metadata={},
+    )
+    waypoints = recorded_to_waypoints(trajectory, 8)
+    times = [wp["time_from_start_sec"] for wp in waypoints]
+    assert times == sorted(times)
+    assert times[0] == 0.0
+    assert times[-1] == pytest.approx(49 * 0.05, abs=1e-3)
+    # Every emitted time is a taught sample time, not an interpolated one.
+    taught = {round(p.time_from_start, 3) for p in points}
+    assert all(t in taught for t in times)
