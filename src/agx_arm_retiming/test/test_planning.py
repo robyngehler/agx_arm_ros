@@ -17,6 +17,7 @@ from agx_arm_retiming import (
     RECONSTRUCTION_WINDOW_SEC,
     SMOOTH,
     SPEED_SCALE,
+    TEMPO_SCALE,
     RetimingError,
     default_acceleration,
     retime,
@@ -157,10 +158,15 @@ def test_retimed_output_respects_the_limits_it_was_given():
 
 
 def test_speed_scale_hits_the_requested_multiple_of_the_recording():
+    """Asked for a multiple the path can reach, it lands near it on the slow
+    side. Duration is not monotone in the limit scale, so 'near' is a few
+    percent rather than the search tolerance."""
     t, q = taught_motion()
-    result = retime(t, q, SPEED_SCALE, speed_scale=1.5)
-    assert result.speed_achieved == pytest.approx(1.5, rel=0.05)
-    assert result.duration == pytest.approx(result.recorded_duration / 1.5, rel=0.05)
+    ceiling = retime(t, q, MAXIMIZE_SPEED).speed_achieved
+    requested = 0.95 * ceiling
+    result = retime(t, q, SPEED_SCALE, speed_scale=requested)
+    assert result.speed_achieved == pytest.approx(requested, rel=0.05)
+    assert result.duration == pytest.approx(result.recorded_duration / requested, rel=0.05)
 
 
 def test_speed_scale_below_one_slows_the_motion_down():
@@ -173,7 +179,7 @@ def test_an_unreachable_speed_returns_the_fastest_plan_and_says_so():
     t, q = taught_motion()
     result = retime(t, q, SPEED_SCALE, speed_scale=500.0)
     assert result.speed_achieved < 500.0
-    assert any("fastest feasible" in note for note in result.notes)
+    assert any("reached" in note for note in result.notes)
     assert result.velocity_utilisation <= 1.0
 
 
@@ -248,3 +254,118 @@ def test_an_excursion_past_the_recorded_range_is_refused():
     _assert_within_recorded_range(np.array([[0.2], [0.9]]), recorded, 0.02)
     with pytest.raises(RetimingError, match="leaves the recorded range on joint 1"):
         _assert_within_recorded_range(np.array([[0.2], [1.6]]), recorded, 0.02)
+
+
+# --- tempo_scale and the geometric path -----------------------------------
+
+
+def test_tempo_scale_stretches_the_clock_and_keeps_the_shape():
+    """The mode exists because a path parameterization cannot preserve local
+    tempo: dwells and reversals are not part of its objective."""
+    t, q = taught_motion()
+    base = retime(t, q, SMOOTH)
+    slow = retime(t, q, TEMPO_SCALE, speed_scale=0.5)
+
+    assert slow.duration == pytest.approx(2.0 * base.duration, rel=1e-6)
+    assert slow.speed_achieved == pytest.approx(0.5)
+    # Same path, walked at half the pace.
+    assert np.allclose(
+        np.asarray(slow.positions)[:: 2][: len(base.positions)],
+        np.asarray(base.positions)[: len(np.asarray(slow.positions)[:: 2])],
+        atol=2e-3,
+    )
+
+
+def test_tempo_scale_lowers_commanded_velocity_by_the_factor():
+    """This is the lever for a take taught faster than the arm can command."""
+    t, q = taught_motion()
+    fast = retime(t, q, TEMPO_SCALE, speed_scale=1.0)
+    slow = retime(t, q, TEMPO_SCALE, speed_scale=0.5)
+    assert slow.velocity_utilisation < 0.6 * fast.velocity_utilisation
+
+
+def test_tempo_scale_preserves_the_taught_speed_profile():
+    """A dwell stays a dwell relative to the motion around it — the property
+    TOTG discards, measured as the correlation of the normalised speed."""
+    t, q = taught_motion()
+
+    def profile(result, samples=200):
+        speed = np.linalg.norm(np.asarray(result.velocities), axis=1)
+        resampled = np.interp(
+            np.linspace(0.0, 1.0, samples),
+            np.linspace(0.0, 1.0, len(speed)),
+            speed,
+        )
+        return resampled / max(resampled.max(), 1e-9)
+
+    taught = profile(retime(t, q, SMOOTH))
+    assert np.corrcoef(taught, profile(retime(t, q, TEMPO_SCALE, speed_scale=0.5)))[0, 1] > 0.95
+
+
+def test_tempo_scale_rejects_an_unusable_factor():
+    t, q = taught_motion()
+    with pytest.raises(RetimingError, match="speed_scale"):
+        retime(t, q, TEMPO_SCALE, speed_scale=0.0)
+
+
+def test_the_geometric_path_is_robust_to_the_sampling_pattern():
+    """The same motion sampled evenly and unevenly must produce approximately
+    the same geometric path — the smoothing is a time-domain filter only after
+    the uniform resample, and the waypoints are chosen by chord error, so
+    neither depends on where the samples happened to land."""
+    from agx_arm_retiming.planning import _geometric_path
+
+    t, q = taught_motion(noise=2e-4, seed=5)
+    even, _ = _geometric_path(
+        np.asarray(t), np.asarray(q),
+        smoothing_window_sec=0.10, waypoints=40, resample_dt=DEFAULT_RESAMPLE_DT,
+    )
+    ut, uq = uneven_motion(seed=5)
+    uneven, _ = _geometric_path(
+        np.asarray(ut), np.asarray(uq),
+        smoothing_window_sec=0.10, waypoints=40, resample_dt=DEFAULT_RESAMPLE_DT,
+    )
+    # Compare as paths: the farthest either polyline strays from the other.
+    def gap(a, b):
+        worst = 0.0
+        for point in a:
+            worst = max(worst, float(np.min(np.linalg.norm(b - point, axis=1))))
+        return worst
+
+    assert max(gap(even, uneven), gap(uneven, even)) < 0.05
+
+
+def test_chord_waypoints_land_where_the_path_bends():
+    from agx_arm_retiming.planning import _chord_waypoints
+
+    # A path that is straight for most of its length with one sharp corner.
+    straight = np.linspace(0.0, 1.0, 100)
+    path = np.column_stack([straight, np.abs(straight - 0.5)])
+    chosen = _chord_waypoints(path, 6)
+
+    assert chosen[0] == 0 and chosen[-1] == len(path) - 1
+    # The corner is at index 49/50; a waypoint must land on it.
+    assert min(abs(index - 49) for index in chosen) <= 2
+
+
+def test_path_deviation_covers_the_sparse_path_too():
+    """The chord error was previously invisible: only the smoothing stage was
+    reported, while the waypoints cut whatever their chords cut."""
+    t, q = taught_motion(noise=1e-3, seed=11)
+    coarse = retime(t, q, MAXIMIZE_SPEED, waypoints=6)
+    fine = retime(t, q, MAXIMIZE_SPEED, waypoints=80)
+    assert coarse.path_deviation > fine.path_deviation
+
+
+def test_the_scale_search_survives_a_non_monotone_duration():
+    """`_run_totg` corrects its limits against the peak it samples, and that
+    correction moves with the blend radii, so a higher scale can produce a
+    longer trajectory. A bisection reports its own dead end as the hardware's."""
+    t, q = taught_motion()
+    ceiling = retime(t, q, MAXIMIZE_SPEED).speed_achieved
+    for fraction in (0.75, 0.85, 0.95):
+        result = retime(t, q, SPEED_SCALE, speed_scale=fraction * ceiling)
+        # Never faster than asked, and never so far short that it implies a
+        # ceiling well below the one maximize_speed measured.
+        assert result.speed_achieved <= fraction * ceiling * 1.01
+        assert result.speed_achieved > 0.85 * fraction * ceiling

@@ -39,9 +39,12 @@ from agx_arm_retiming._totg import retime_path
 
 AS_RECORDED = "as_recorded"
 SMOOTH = "smooth"
+TEMPO_SCALE = "tempo_scale"
 SPEED_SCALE = "speed_scale"
 MAXIMIZE_SPEED = "maximize_speed"
-MODES = (AS_RECORDED, SMOOTH, SPEED_SCALE, MAXIMIZE_SPEED)
+MODES = (AS_RECORDED, SMOOTH, TEMPO_SCALE, SPEED_SCALE, MAXIMIZE_SPEED)
+#: Modes that keep the taught timing structure and never reach the parameterization.
+TIMING_PRESERVING = (AS_RECORDED, SMOOTH, TEMPO_SCALE)
 
 _DEG = math.pi / 180.0
 
@@ -58,9 +61,12 @@ NERO_MAX_VELOCITY = (
 # speed in 0.4 s.
 ACCELERATION_PER_VELOCITY = 2.5
 
-# Defaults tuned on one 14-joint duo recording; see the reference note for the
-# sweep and its limits as evidence.
-DEFAULT_WAYPOINTS = 40
+# Waypoints handed to the parameterization. Chosen by chord error, so they land
+# on corners and reversals and extra ones refine rather than add noise: across
+# four recordings the worst chord error falls 0.076 rad at 40 to 0.024 at 80,
+# for 0.2% more duration. A count above ~80 keeps buying fidelity but the
+# planning cost grows.
+DEFAULT_WAYPOINTS = 80
 DEFAULT_BLEND_TOLERANCE = 0.01
 # Moving-average width in seconds, used by the timing-preserving modes and by
 # the geometric path handed to the parameterization.
@@ -81,10 +87,14 @@ PATH_EXCURSION_TOLERANCE = 0.02
 # limits handed to it are corrected against the sampled peak instead of by a
 # guessed factor, which is what lets this promise a bound on its output.
 LIMIT_CORRECTION_ROUNDS = 6
-# Bounds on the scale search that hits a requested duration. With the seed
-# below it converges in a handful of runs; a blind bisection over the same
-# range cost 24 and took 3.5 s on a 20 s recording.
-SCALE_SEARCH_STEPS = 8
+# Bounds on the scale search that hits a requested duration. Duration is not
+# monotone in the scale, so the range is scanned before it is refined; a
+# bisection alone reported 1.13x on a path that reaches 1.38x.
+SCALE_SCAN_POINTS = 10
+SCALE_REFINE_STEPS = 5
+SCALE_SEARCH_FLOOR = 0.02
+# Shortfall above which the cheap descending scan is abandoned for the full grid.
+SCALE_SCAN_FALLBACK = 0.05
 SCALE_SEARCH_TOLERANCE = 0.01
 
 
@@ -101,9 +111,11 @@ class RetimedTrajectory:
     accelerations: list[list[float]]
     duration: float
     recorded_duration: float
-    #: Largest deviation of the planned path from the recording, in rad,
-    #: measured at the recorded sample times. Non-zero in every mode: all four
-    #: filter the recording before they emit it.
+    #: Largest deviation of the planned path from the recording, in rad.
+    #: Non-zero in every mode: all of them filter the recording before they emit
+    #: it. For the parameterized modes it also carries the chord error of the
+    #: sparse path, so it bounds the whole geometric deviation rather than only
+    #: the smoothing stage.
     path_deviation: float
     #: Achieved speed relative to the recording (2.0 = twice as fast).
     speed_achieved: float
@@ -246,32 +258,88 @@ def _deviation_at_recorded_times(grid, planned, t, q):
     return float(np.max(np.abs(interpolated - q)))
 
 
-def _geometric_path(t, q, *, smoothing_window_sec, waypoints):
-    """Smooth with a window, then reduce to a sparse waypoint set by binning.
+def _chord_waypoints(path, count):
+    """Indices of ``count`` samples placed where the path bends.
 
-    Both steps are averages, so every waypoint is a convex combination of
-    recorded samples and the path cannot leave the range the recording covers —
-    the guarantee `_assert_within_recorded_range` checks. Binning rather than
-    decimating keeps sample noise from aliasing into the sparse path.
+    Douglas-Peucker refinement: start from the two endpoints and repeatedly
+    split the segment whose farthest sample deviates most from its chord. The
+    result bounds the geometric error of the sparse path directly, and spends
+    waypoints on corners and reversals rather than on however long the arm
+    happened to spend somewhere.
 
-    On the recorded grid, not the uniform one the timing-preserving modes use:
-    TOTG re-times the path, so the grid's unevenness cannot reach its output,
-    and equal-sample bins put more waypoints where the arm was moving. Binning a
-    uniform grid spends them on dwells instead, at 20-28% slower at full limits.
+    Selecting by time or by sample index instead spends them on dwells, which a
+    geometric path has no notion of, and measured 20-28% slower at full limits.
     """
-    smoothed, deviation = _moving_average(q, t, smoothing_window_sec)
-    count = len(smoothed)
-    waypoints = max(2, min(int(waypoints), count))
-    edges = np.linspace(0, count, waypoints + 1).round().astype(int)
-    path = np.stack([
-        smoothed[max(lo, 0): max(hi, lo + 1)].mean(axis=0)
-        for lo, hi in zip(edges[:-1], edges[1:])
-    ])
-    # The taught endpoints are where the motion starts and stops; a bin mean
-    # would move both inward.
-    path[0] = smoothed[0]
-    path[-1] = smoothed[-1]
+    total = len(path)
+    count = max(2, min(int(count), total))
+    if count >= total:
+        return np.arange(total)
+
+    def worst(lo, hi):
+        """Index between lo and hi farthest from the chord, and that distance."""
+        if hi - lo < 2:
+            return -1, 0.0
+        anchor = path[lo]
+        chord = path[hi] - anchor
+        offsets = path[lo + 1: hi] - anchor
+        length = float(np.dot(chord, chord))
+        if length <= 0.0:
+            distances = np.linalg.norm(offsets, axis=1)
+        else:
+            projected = np.outer(offsets @ chord / length, chord)
+            distances = np.linalg.norm(offsets - projected, axis=1)
+        index = int(np.argmax(distances))
+        return lo + 1 + index, float(distances[index])
+
+    chosen = [0, total - 1]
+    segments = [(lo, hi, *worst(lo, hi)) for lo, hi in ((0, total - 1),)]
+    while len(chosen) < count:
+        segments.sort(key=lambda segment: segment[3])
+        lo, hi, split, error = segments.pop()
+        if split < 0 or error <= 0.0:
+            break
+        chosen.append(split)
+        segments.extend([
+            (lo, split, *worst(lo, split)),
+            (split, hi, *worst(split, hi)),
+        ])
+    return np.array(sorted(chosen))
+
+
+def _geometric_path(t, q, *, smoothing_window_sec, waypoints, resample_dt):
+    """Resample, smooth in the time domain, then pick a sparse geometric path.
+
+    The smoothing is a time-domain filter only on a uniform grid, so the
+    resample comes first. Every step is an average or a linear interpolation of
+    recorded samples, so each waypoint stays a convex combination of them and
+    the path cannot leave the range the recording covers — the guarantee
+    `_assert_within_recorded_range` checks.
+    """
+    grid, resampled = _uniform_resample(t, q, resample_dt)
+    smoothed, _ = _moving_average(resampled, grid, smoothing_window_sec)
+    path = smoothed[_chord_waypoints(smoothed, waypoints)]
+    # Both stages move the path away from the recording, and only the first was
+    # ever reported: the sparse path cuts whatever its chords cut. Their sum
+    # bounds the total, which is what `_assert_within_recorded_range` is handed.
+    deviation = _deviation_at_recorded_times(grid, smoothed, t, q) + _chord_error(path, smoothed)
     return path, deviation
+
+
+def _chord_error(sparse, dense):
+    """Farthest a dense sample lies from the sparse polyline through it."""
+    worst = np.zeros(len(dense))
+    worst[:] = np.inf
+    for start, end in zip(sparse[:-1], sparse[1:]):
+        segment = end - start
+        offsets = dense - start
+        length = float(segment @ segment)
+        if length <= 0.0:
+            distances = np.linalg.norm(offsets, axis=1)
+        else:
+            ratio = np.clip(offsets @ segment / length, 0.0, 1.0)
+            distances = np.linalg.norm(offsets - np.outer(ratio, segment), axis=1)
+        worst = np.minimum(worst, distances)
+    return float(worst.max())
 
 
 def _assert_within_recorded_range(planned, recorded, tolerance):
@@ -337,9 +405,16 @@ def _search_scale_for_duration(path, max_velocity, max_acceleration, target,
                                blend_tolerance, resample_dt):
     """Find the limit scale whose parameterization lands closest to ``target``.
 
-    Duration falls monotonically as the limits rise, so a bisection on the scale
-    converges. Where even full limits cannot reach the target the fastest
-    feasible result is returned and the caller is told by how much it fell short.
+    **Duration is not monotone in the scale.** `_run_totg` corrects the limits
+    against the peak it actually samples, and that correction depends on the
+    blend radii, which change with the scale — measured non-monotone over
+    0.49-0.57 (3.54 s, then 4.09 s at higher limits). A bisection therefore
+    converges onto whichever local branch it started on and reports its own
+    dead end as the hardware's: it returned 1.13x on a path that reaches 1.38x.
+
+    So: scan the scale range, then refine either side of the best sample. Only
+    slow-side candidates are ever returned — on a taught motion an unrequested
+    speed-up is the dangerous direction.
     """
     fastest = _run_totg(path, max_velocity, max_acceleration, 1.0,
                         blend_tolerance, resample_dt)
@@ -348,73 +423,76 @@ def _search_scale_for_duration(path, max_velocity, max_acceleration, target,
     if fastest["duration"] >= target:
         return fastest, 1.0
 
-    # Never return something faster than was asked for: on a taught motion an
-    # unrequested speed-up is the dangerous direction. Past the check above a
-    # slow-enough scale is known to exist, so the search keeps a bracket around
-    # it and only ever returns a candidate from the slow side.
-    #
-    # Duration follows scale as a power law -- exponent 1/2 while acceleration
-    # binds, 1 while velocity does -- so two evaluations identify the exponent
-    # and the next scale is solved rather than halved, with bisection whenever
-    # the solve falls outside the bracket. Blind bisection cost 24 runs and
-    # 3.5 s on a 20 s recording.
-    slow, fast = 1e-3, 1.0
-    samples: list[tuple[float, float]] = [(1.0, fastest["duration"])]
-    best: tuple[float, dict] | None = None
-    scale = min(1.0, max(1e-3, (fastest["duration"] / target) ** 2))
+    def best_slow_side(pool):
+        slow_side = [entry for entry in pool if entry[1]["duration"] >= target]
+        return min(slow_side, key=lambda entry: entry[1]["duration"]) if slow_side else None
 
-    for _ in range(SCALE_SEARCH_STEPS):
-        candidate = _run_totg(path, max_velocity, max_acceleration, scale,
+    def close_enough(entry):
+        return entry is not None and entry[1]["duration"] - target <= SCALE_SEARCH_TOLERANCE * target
+
+    # Descending, because a requested tempo usually sits just under the ceiling
+    # and the answer is then the first grid point tried. The scan stops at the
+    # first slow-side hit; refinement runs between it and the faster neighbour
+    # above, which is already evaluated and brackets the crossing.
+    evaluated: list[tuple[float, dict]] = [(1.0, fastest)]
+    grid = list(np.geomspace(SCALE_SEARCH_FLOOR, 1.0, SCALE_SCAN_POINTS)[:-1])[::-1]
+    low, high = SCALE_SEARCH_FLOOR, 1.0
+    best = None
+    for scale in grid:
+        candidate = _run_totg(path, max_velocity, max_acceleration, float(scale),
                               blend_tolerance, resample_dt)
         if candidate is None:
-            fast = scale
-            scale = 0.5 * (slow + fast)
+            high = float(scale)
             continue
+        evaluated.append((float(scale), candidate))
+        if candidate["duration"] >= target:
+            best = best_slow_side(evaluated)
+            low = float(scale)
+            break
+        high = float(scale)
 
-        duration = candidate["duration"]
-        samples.append((scale, duration))
-        if duration >= target:
-            slow = scale
-            if best is None or duration < best[1]["duration"]:
-                best = (scale, candidate)
-            if duration - target <= SCALE_SEARCH_TOLERANCE * target:
-                return best[1], best[0]
-        else:
-            fast = scale
-
-        scale = _next_scale(samples, target, slow, fast)
-
-    if best is not None:
+    if best is None:
+        return fastest, 1.0
+    if close_enough(best):
         return best[1], best[0]
-    # No slow-side candidate landed within the step budget; bisect for one
-    # rather than handing back the fastest plan, which is the wrong direction.
-    for _ in range(SCALE_SEARCH_STEPS):
-        scale = 0.5 * (slow + fast)
-        candidate = _run_totg(path, max_velocity, max_acceleration, scale,
+
+    # The early exit assumes the crossing is where the descent found it, which
+    # only holds while duration falls with the scale. When the bracket it
+    # produced is far off the target, the crossing is somewhere the descent
+    # stepped over: evaluate the rest of the grid before refining.
+    if best[1]["duration"] - target > SCALE_SCAN_FALLBACK * target:
+        seen = {round(scale, 9) for scale, _ in evaluated}
+        for scale in grid:
+            if round(float(scale), 9) in seen:
+                continue
+            candidate = _run_totg(path, max_velocity, max_acceleration, float(scale),
+                                  blend_tolerance, resample_dt)
+            if candidate is not None:
+                evaluated.append((float(scale), candidate))
+        best = best_slow_side(evaluated) or best
+        if close_enough(best):
+            return best[1], best[0]
+        scales = sorted(scale for scale, _ in evaluated)
+        index = scales.index(best[0])
+        low = scales[index - 1] if index > 0 else SCALE_SEARCH_FLOOR
+        high = scales[index + 1] if index + 1 < len(scales) else 1.0
+    for _ in range(SCALE_REFINE_STEPS):
+        if best[1]["duration"] - target <= SCALE_SEARCH_TOLERANCE * target:
+            break
+        probe = 0.5 * (low + high)
+        candidate = _run_totg(path, max_velocity, max_acceleration, probe,
                               blend_tolerance, resample_dt)
-        if candidate is None or candidate["duration"] < target:
-            fast = scale
+        if candidate is None:
+            high = probe
             continue
-        return candidate, scale
-    return fastest, 1.0
+        evaluated.append((probe, candidate))
+        if candidate["duration"] >= target:
+            low = probe
+        else:
+            high = probe
+        best = best_slow_side(evaluated) or best
+    return best[1], best[0]
 
-
-def _next_scale(samples, target, slow, fast):
-    """Solve the power law through the last two evaluations, inside the bracket."""
-    midpoint = 0.5 * (slow + fast)
-    previous, current = samples[-2], samples[-1]
-    if previous[0] == current[0] or previous[1] <= 0.0 or current[1] <= 0.0:
-        return midpoint
-    ratio = math.log(current[0] / previous[0])
-    if abs(ratio) < 1e-12:
-        return midpoint
-    exponent = math.log(previous[1] / current[1]) / ratio
-    if not math.isfinite(exponent) or exponent <= 1e-6:
-        return midpoint
-    solved = current[0] * (current[1] / target) ** (1.0 / exponent)
-    if not math.isfinite(solved) or not (slow < solved < fast):
-        return midpoint
-    return solved
 
 
 def retime(
@@ -441,15 +519,17 @@ def retime(
         max_velocity = list(NERO_MAX_VELOCITY)
     if max_acceleration is None:
         max_acceleration = default_acceleration(max_velocity)
-    if mode == SPEED_SCALE and not (speed_scale > 0.0 and math.isfinite(speed_scale)):
+    if mode in (SPEED_SCALE, TEMPO_SCALE) and not (
+        speed_scale > 0.0 and math.isfinite(speed_scale)
+    ):
         raise RetimingError("speed_scale must be finite and > 0")
 
     t, q = _validate(times, positions, max_velocity, max_acceleration)
     recorded_duration = float(t[-1])
     notes: list[str] = []
 
-    if mode in (AS_RECORDED, SMOOTH):
-        # The floor applies to both modes: the recorded grid is uneven, and the
+    if mode in TIMING_PRESERVING:
+        # The floor applies to all three: the recorded grid is uneven, and the
         # controller's linear interpolation turns an uneven knot into a step in
         # commanded velocity.
         window = (
@@ -457,15 +537,26 @@ def retime(
             if mode == AS_RECORDED
             else max(RECONSTRUCTION_WINDOW_SEC, smoothing_window_sec)
         )
-        tt, resampled = _uniform_resample(t, q, resample_dt)
+        # Everything happens in the *output* time base, so the window and the
+        # grid mean the same thing whatever the tempo. Scaling the axis is the
+        # whole of the operation: relative dwells, reversals and the phase
+        # between two arms are ratios, and a ratio survives it.
+        tempo = speed_scale if mode == TEMPO_SCALE else 1.0
+        scaled = t / tempo
+        tt, resampled = _uniform_resample(scaled, q, resample_dt)
         pos, _ = _moving_average(resampled, tt, window)
-        deviation = _deviation_at_recorded_times(tt, pos, t, q)
+        deviation = _deviation_at_recorded_times(tt, pos, scaled, q)
         vel, acc = _finite_difference_states(tt, pos)
         recorded_spacing = float(np.median(np.diff(t)))
         notes.append(
             f"taught timing kept; resampled from {1.0 / recorded_spacing:.0f} Hz median "
             f"to {1.0 / resample_dt:.0f} Hz uniform, {window:.2f}s moving-average window"
         )
+        if mode == TEMPO_SCALE:
+            notes.append(
+                f"taught timing scaled by {tempo:.2f}x, not re-planned; the window "
+                "is in replay seconds, so a faster tempo filters more of the path"
+            )
         if mode == AS_RECORDED and smoothing_window_sec > RECONSTRUCTION_WINDOW_SEC:
             notes.append(
                 f"as_recorded ignores the {smoothing_window_sec:.2f}s window; "
@@ -475,8 +566,12 @@ def retime(
         acceleration_use = _utilisation(acc, max_acceleration)
         if velocity_use > 1.0:
             notes.append(
-                f"recorded motion already demands {velocity_use:.2f}x the velocity "
-                "limit; the recording, not the plan, is what exceeds it"
+                f"commanded velocity reaches {velocity_use:.2f}x the limit; "
+                + (
+                    f"a tempo below {tempo / velocity_use:.2f}x would bring it under"
+                    if mode == TEMPO_SCALE
+                    else "the recording, not the plan, is what exceeds it"
+                )
             )
         return RetimedTrajectory(
             mode=mode,
@@ -484,17 +579,20 @@ def retime(
             positions=pos.tolist(),
             velocities=vel.tolist(),
             accelerations=acc.tolist(),
-            duration=recorded_duration,
+            duration=recorded_duration / tempo,
             recorded_duration=recorded_duration,
             path_deviation=deviation,
-            speed_achieved=1.0,
+            speed_achieved=tempo,
             velocity_utilisation=velocity_use,
             acceleration_utilisation=acceleration_use,
             notes=notes,
         )
 
     path, deviation = _geometric_path(
-        t, q, smoothing_window_sec=smoothing_window_sec, waypoints=waypoints
+        t, q,
+        smoothing_window_sec=smoothing_window_sec,
+        waypoints=waypoints,
+        resample_dt=resample_dt,
     )
     if mode == MAXIMIZE_SPEED:
         result = _run_totg(path, max_velocity, max_acceleration, 1.0,
@@ -509,8 +607,10 @@ def retime(
             achieved = recorded_duration / result["duration"]
             if achieved < speed_scale * 0.99:
                 notes.append(
-                    f"requested {speed_scale:.2f}x but the limits allow {achieved:.2f}x; "
-                    "returned the fastest feasible plan"
+                    f"requested {speed_scale:.2f}x, reached {achieved:.2f}x; the search "
+                    "returns only the slow side, and duration is not monotone in the "
+                    "limit scale, so this is the best it found rather than a hardware "
+                    "ceiling — 'maximize_speed' is what measures that"
                 )
     if result is None:
         raise RetimingError(
@@ -540,6 +640,8 @@ def retime(
 
 __all__ = [
     "AS_RECORDED",
+    "TEMPO_SCALE",
+    "TIMING_PRESERVING",
     "MAXIMIZE_SPEED",
     "MODES",
     "DEFAULT_RESAMPLE_DT",
