@@ -274,6 +274,21 @@ free-runs without the arm).
 >   samples were runs. **A take that was taught too fast replays cleanly under `speed_scale`,** which
 >   re-times against the limits by construction; a wider `smooth` window helps but cannot remove
 >   content the recording genuinely contains.
+> - **`tempo_scale` replays a taught motion slower or faster without re-planning it (2026-08-25).**
+>   It scales the time axis and nothing else, so dwells, reversal timing and the phase between the two
+>   arms all survive — they are ratios. **This is what a take taught too fast needs**, not
+>   `speed_scale`: correlation of the taught joint-speed profile is 0.977 for `tempo_scale` 0.6x
+>   against 0.242 for `speed_scale`. It also plans in 0.1 s rather than 1-10 s, because there is no
+>   search. The smoothing window is in *replay* seconds, so a slower tempo filters less of the taught
+>   path; widen the window if that is not what you want.
+> - **recording starts at the motion, not at the keypress (2026-08-25).** The still interval between
+>   arming the recorder and moving is dropped, keeping `--pre-roll-sec` (0.25 s) so the physical start
+>   is not clipped. One cut instant for all arms, taken from the earliest onset, so a duo recording
+>   keeps its relative phase.
+> - **replay waypoints are chosen by chord error (2026-08-25),** not by equal-sample bins: they land on
+>   corners and reversals instead of on dwells. 2-3x more faithful at the same count, 8-18% slower
+>   through TOTG. The default count is 80, and `path_deviation` now includes the chord error, which
+>   was previously invisible and understated the deviation by up to 0.14 rad.
 > - **`m` in playback mode moves to the selected recording's start pose (2026-08-24).** A gap up to
 >   0.35 rad is bridged by the replay's lead-in; beyond that, `m` plans and runs a collision-checked
 >   MoveIt move to the first waypoint (`both_arms` for a duo recording, that side's group for a single

@@ -27,8 +27,15 @@ answer is that both are needed, and that no single tool provides them.
 | --- | --- | --- |
 | `as_recorded` | uniform resample, 0.06 s window, central differences | timing exactly, path to ~0.05 rad |
 | `smooth` | same, operator-chosen window ≥ 0.06 s | timing exactly |
+| `tempo_scale` | same, on a time axis scaled by the factor | timing *structure* — dwells, reversals, duo phase |
 | `speed_scale` | TOTG, limit scale searched for the target duration | path geometry |
 | `maximize_speed` | TOTG at full limits | path geometry |
+
+`tempo_scale` is the answer to "replay this slower" and TOTG is not: scaling the
+clock keeps every ratio in the recording, while a parameterization recomputes
+them. Measured as the correlation of the normalised joint-speed profile against
+the taught one: `tempo_scale` 0.5x gives r = 0.977, `speed_scale` 1.0x gives
+r = 0.242.
 
 No mode replays raw samples. The controller interpolates linearly between
 trajectory points, so a knot at an uneven timestamp is a step in commanded
@@ -82,7 +89,22 @@ everything. **The smoothing stage is a prerequisite for the retiming stage, not
 an alternative to it.** TOTG is built for planner output — a handful of
 waypoints — not for hundreds of noisy samples.
 
-Waypoint count matters more than expected: 40 beat 80 and 160 consistently.
+> **Superseded 2026-08-25.** "40 beat 80 and 160" held while waypoints were
+> equal-sample bin means, where more bins meant less averaging, sharper corners
+> and a slower result. Waypoints are now placed by chord error (Douglas-Peucker
+> refinement), so extra ones refine corners instead of adding noise: across four
+> recordings the worst chord error falls from 0.076 rad at 40 to 0.024 at 80 for
+> 0.2% more duration. The default is 80.
+
+Against the old equal-sample binning at the same count, chord selection is 2-3x
+more faithful (worst chord error 0.116 → 0.038 rad on one recording) and 8-18%
+slower, because the corners it preserves are corners TOTG has to brake for. The
+binning was doing two jobs at once — sparse representation and extra smoothing —
+and only the first is wanted here.
+
+`path_deviation` now carries the chord error as well as the smoothing. It
+previously reported only the smoothing stage, understating the geometric
+deviation of the path actually handed to TOTG by up to 0.14 rad.
 
 ## Two properties worth knowing before tuning
 

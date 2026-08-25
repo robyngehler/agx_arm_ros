@@ -117,12 +117,20 @@ outermost samples unfiltered, which put the peak commanded acceleration there �
 endpoint (`q[-k] = 2*q[0] - q[k]`) holds the window at full width **and**
 reproduces the endpoint exactly, because the reflected pairs sum to `2*q[0]`.
 
-### `_geometric_path` stays on the recorded grid
+### `_geometric_path` resamples too, and picks by chord error
 
-TOTG re-times the path, so grid unevenness cannot reach its output, and
-equal-sample bins put more waypoints where the arm was moving. Binning a uniform
-grid instead spends waypoints on dwells: `maximize_speed` measured 6.28 s → 8.02 s
-on `Wave_Left_V02`. The uniform grid is for the timing-preserving modes only.
+**Superseded 2026-08-25.** This section previously said the geometric path stays
+on the recorded grid, because resampling it and then binning by equal samples
+spent waypoints on dwells and measured 20-28% slower at full limits — `Wave_Left_V02`
+went 6.28 s → 8.02 s.
+
+That was the wrong conclusion from a correct measurement: the problem was the
+*selection*, not the resample. `_moving_average` is a time-domain filter only on
+a uniform grid, so it belongs after the resample there as much as anywhere. The
+sparse path is now chosen by **chord error** (Douglas-Peucker refinement), which
+places waypoints where the path bends rather than where the arm spent time, and
+bounds the geometric error of the sparse path directly. Detail and the
+fidelity/duration trade in `trajectory_retiming.md`.
 
 ## Recording is now callback-driven
 
@@ -254,6 +262,40 @@ speed alone cannot tell.
 This does not make the grid uniform: the arm still jitters, and a dropped frame
 is still a gap. The playback resample is what the replay depends on.
 
+## Recording starts at the motion, not at the keypress
+
+Arming the recorder and starting to move are seconds apart, and that interval was
+persisted: every replay opened with a dead hold. Capture now drops it and keeps a
+`--pre-roll-sec` window (0.25 s) before the first threshold crossing, because a
+cut at the crossing itself clips the physical start of the motion.
+
+**One cut instant for every arm**, taken from the earliest onset across them. Per
+arm it would shift the arms against each other; the pair's relative phase is what
+a duo replay is for. An arm that never crossed the threshold is not trimmed to a
+stub — it still has to start where it was standing, and the retiming needs four
+samples.
+
+## Where per-joint freshness could come from
+
+`reconstruct_stalled_joints()` is a recovery mechanism, not a source of truth.
+The information it reconstructs **already exists one layer down**:
+`get_joint_angles()` in the vendor driver
+(`pyAgxArm/protocols/can_protocol/drivers/nero/default/driver.py`) reassembles the
+7-joint vector from four separately cached frames — `joint_12`, `joint_34`,
+`joint_56`, `joint_7` — each carrying its own `timestamp` from the CAN frame that
+filled it. Assembly then collapses them:
+
+```python
+self._joint_angles.timestamp = joint_angles.timestamp   # the last group present
+```
+
+So the composite stamp is one group's, not the newest and not per joint, and the
+per-group freshness is discarded at exactly the point where a consumer could use
+it. Publishing it — a four-entry freshness vector or per-group stamps alongside
+`feedback/joint_states` — would turn the reconstruction from an inference into a
+read. That is an arm-bridge change needing hardware validation, and it is the
+recommended next step rather than more post-processing.
+
 ## Moving to a replay's start pose
 
 A replay begins at the pose it was taught from. A gap up to
@@ -280,3 +322,76 @@ recording path.
   has come close
 - none of this is measured on hardware. The prediction is that `as_recorded` and
   `smooth` become executable at the same duration they were taught at
+
+## `tempo_scale`: replay slower without re-planning
+
+A take taught faster than the arm can command has two possible answers, and until
+2026-08-25 only one existed. `speed_scale` re-times through TOTG, which brings
+the motion under the limits but discards the taught timing — a dwell is zero path
+progress, so the parameterization has no notion of it.
+
+`tempo_scale` scales the time axis and nothing else: everything happens in the
+*output* time base, so the grid and the filter window mean the same thing at any
+tempo. Relative dwells, reversal timing and the phase between two arms are all
+ratios, and a ratio survives a scaled clock.
+
+Measured on the duo take whose right arm was taught too fast (30.16 s):
+
+| mode | duration | v/limit (right) | max commanded accel | deviation |
+| --- | --- | --- | --- | --- |
+| `smooth` 0.10 s | 30.16 s | 0.40 | 33.2 rad/s² | 0.023 |
+| `tempo_scale` 0.8 | 37.70 s | 0.35 | 26.5 | 0.019 |
+| `tempo_scale` 0.6 | 50.27 s | 0.31 | 19.8 | 0.015 |
+| `speed_scale` 1.0 | 30.66 s | 0.12 | 1.2 | 0.048 |
+
+Correlation of the right arm's normalised speed profile with the taught one:
+**`tempo_scale` 0.6 gives r = 0.977, `speed_scale` gives r = 0.242.** That
+difference is the whole reason the mode exists.
+
+Two consequences worth knowing:
+
+- the window is in **replay** seconds, so a slower tempo filters *less* of the
+  taught path. Commanded acceleration falls by less than tempo² (33.2 → 15.4 at
+  0.5x, not 8.3) because more taught detail survives. Widen the window if that is
+  not what you want; both knobs are exposed.
+- it costs 0.1-0.2 s to plan against 1-10 s for `speed_scale`, because there is
+  no search — it is a resample.
+
+## The limit scale search is not a bisection any more
+
+`speed_scale` searches for the limit scale whose parameterization lands on a
+requested duration. That search assumed duration falls monotonically as the
+limits rise. **It does not.** `_run_totg` corrects the limits against the peak it
+samples, that correction moves with the blend radii, and the blend radii move
+with the scale. Traced on one path:
+
+```
+scale 0.3767 -> 3.969 s
+scale 0.4909 -> 3.540 s
+scale 0.5674 -> 4.093 s   <- higher limits, longer trajectory
+scale 0.6599 -> 2.495 s
+```
+
+A bisection converges onto whichever local branch it started on and then reports
+its own dead end as the hardware's: it returned 1.13x on a path that
+`maximize_speed` runs at 1.38x. The search now scans the scale range descending,
+refines around the best slow-side sample, and rescans the full grid when the
+bracket it found is more than 5% off target. It still returns only slow-side
+candidates — on a taught motion an unrequested speed-up is the dangerous
+direction.
+
+Seeding the descent from a power-law estimate was tried and reverted: a wrong
+estimate left the descent with no slow-side candidate at all, and it fell back to
+full limits — *faster than requested*. The invariant is worth more than the 40%
+of planning time it saved.
+
+The note it emits no longer says "the limits allow X". It says what was reached
+and that `maximize_speed` is what measures a ceiling.
+
+## Related: the resample step changes the answer
+
+`_run_totg`'s limit correction measures its peaks on the **resampled** output, so
+a coarser step aliases them away and under-corrects: the same path at scale 0.5
+returns 18.94 s at `resample_dt` 0.005 and 13.11 s at 0.05. A cheap coarse probe
+during the search is therefore not available — the duration it would report is
+not the duration the plan has.
