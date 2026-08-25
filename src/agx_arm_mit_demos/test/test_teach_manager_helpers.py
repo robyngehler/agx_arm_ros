@@ -655,3 +655,122 @@ def test_start_offsets_name_the_arm_and_joint():
     assert worst[0] == "right_arm"
     assert worst[1] == 0
     assert worst[2] == pytest.approx(0.6)
+
+
+# --- pre-motion trim ------------------------------------------------------
+
+
+def _snapshots(times, positions):
+    from agx_arm_mit_demos.leader_trajectory_recorder import RecorderSnapshot
+
+    return [
+        RecorderSnapshot(time_from_start=t, positions=list(p), efforts=[0.0], flange_pose=None)
+        for t, p in zip(times, positions)
+    ]
+
+
+class _QuietLogger:
+    """The node is built with __new__, so rclpy never attached a real one."""
+
+    def info(self, *_args, **_kwargs):
+        pass
+
+    warn = error = info
+
+
+def _manager_for_trim(pre_roll, arms):
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+
+    node = TeachManagerNode.__new__(TeachManagerNode)
+    node.args = SimpleNamespace(pre_roll_sec=pre_roll)
+    node.arms = arms
+    node._logger = _QuietLogger()
+    node.get_logger = lambda: node._logger
+    return node
+
+
+def test_the_still_interval_before_the_first_move_is_dropped():
+    """Arming the recorder and starting to move are seconds apart; persisting
+    that interval makes every replay start with a dead hold."""
+    arm = _endpoint()
+    arm.namespace = "right_arm"
+    arm._capture_first_motion = 5.0
+    node = _manager_for_trim(0.25, [arm])
+
+    times = [i * 0.01 for i in range(800)]          # 0 .. 7.99 s
+    samples = _snapshots(times, [[0.0]] * 800)
+    kept = node._trim_pre_motion({arm: samples})[arm]
+
+    assert kept[0].time_from_start == pytest.approx(4.75, abs=0.011)
+    assert kept[-1].time_from_start == pytest.approx(times[-1])
+
+
+def test_the_pre_roll_keeps_the_start_of_the_motion():
+    arm = _endpoint()
+    arm._capture_first_motion = 2.0
+    for pre_roll, expected in ((0.0, 2.0), (0.5, 1.5)):
+        node = _manager_for_trim(pre_roll, [arm])
+        times = [i * 0.01 for i in range(500)]
+        kept = node._trim_pre_motion({arm: _snapshots(times, [[0.0]] * 500)})[arm]
+        assert kept[0].time_from_start == pytest.approx(expected, abs=0.011)
+
+
+def test_both_arms_are_cut_at_the_same_instant():
+    """One cut for the pair, taken from the earliest onset: cutting each arm at
+    its own first move would shift them against each other."""
+    left, right = _endpoint(), _endpoint()
+    left.namespace, right.namespace = "left_arm", "right_arm"
+    left._capture_first_motion = 3.0     # left moves first
+    right._capture_first_motion = 4.2
+    node = _manager_for_trim(0.25, [left, right])
+
+    times = [i * 0.01 for i in range(700)]
+    trimmed = node._trim_pre_motion({
+        left: _snapshots(times, [[0.0]] * 700),
+        right: _snapshots(times, [[0.0]] * 700),
+    })
+    assert trimmed[left][0].time_from_start == pytest.approx(trimmed[right][0].time_from_start)
+    assert trimmed[left][0].time_from_start == pytest.approx(2.75, abs=0.011)
+
+
+def test_trimming_preserves_the_phase_between_the_arms():
+    """The relative offset between two arms' motion must survive trim + re-base,
+    or a duo replay drifts apart."""
+    left, right = _endpoint(), _endpoint()
+    left.namespace, right.namespace = "left_arm", "right_arm"
+    left._capture_first_motion = 3.0
+    right._capture_first_motion = 4.2
+    left._capture_uses_stamp = right._capture_uses_stamp = True
+    node = _manager_for_trim(0.25, [left, right])
+
+    times = [i * 0.01 for i in range(700)]
+    # A marker each arm carries at its own onset, to measure the offset with.
+    left_pos = [[1.0 if t >= 3.0 else 0.0] for t in times]
+    right_pos = [[1.0 if t >= 4.2 else 0.0] for t in times]
+    trimmed = node._trim_pre_motion({
+        left: _snapshots(times, left_pos), right: _snapshots(times, right_pos)
+    })
+    rebased = node._rebase_capture_times(trimmed)
+
+    def onset(samples):
+        return next(s.time_from_start for s in samples if s.positions[0] > 0.5)
+
+    assert onset(rebased[right]) - onset(rebased[left]) == pytest.approx(1.2, abs=0.011)
+    assert onset(rebased[left]) == pytest.approx(0.25, abs=0.011)
+
+
+def test_an_arm_that_never_moved_is_not_trimmed_to_a_stub():
+    """The other arm may have moved much later; this one still has to start
+    where it was standing, and the retiming needs four samples."""
+    left, right = _endpoint(), _endpoint()
+    left.namespace, right.namespace = "left_arm", "right_arm"
+    left._capture_first_motion = 6.0
+    right._capture_first_motion = None
+    node = _manager_for_trim(0.25, [left, right])
+
+    times = [i * 0.01 for i in range(100)]          # right stops at 0.99 s
+    trimmed = node._trim_pre_motion({
+        left: _snapshots([i * 0.01 for i in range(800)], [[0.0]] * 800),
+        right: _snapshots(times, [[0.0]] * 100),
+    })
+    assert len(trimmed[right]) >= 4

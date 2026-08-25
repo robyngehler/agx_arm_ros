@@ -82,6 +82,8 @@ from agx_arm_retiming import (
     RECONSTRUCTION_WINDOW_SEC,
     SMOOTH,
     SPEED_SCALE,
+    TEMPO_SCALE,
+    TIMING_PRESERVING,
     RetimingError,
     default_acceleration,
     retime,
@@ -456,6 +458,7 @@ class _ArmEndpoint:
         self._capture_threshold = 0.0
         self._capture_moved = False
         self._capture_last_motion = 0.0
+        self._capture_first_motion = None
         self._capture_stalled = 0
         node.create_subscription(JointState, self._name(source_topic), self._on_feedback, 50)
 
@@ -503,6 +506,7 @@ class _ArmEndpoint:
         self._capture_threshold = float(movement_threshold)
         self._capture_moved = False
         self._capture_last_motion = time.monotonic()
+        self._capture_first_motion = None
         self._capture_stalled = 0
         self.reset_feedback_counters()
         self._capturing = True
@@ -522,6 +526,11 @@ class _ArmEndpoint:
     @property
     def capture_uses_stamp(self) -> bool:
         return self._capture_uses_stamp
+
+    @property
+    def capture_first_motion(self) -> Optional[float]:
+        """Capture time of the first sample that crossed the movement threshold."""
+        return self._capture_first_motion
 
     @property
     def capture_stalled(self) -> int:
@@ -576,6 +585,8 @@ class _ArmEndpoint:
             if max(deltas, default=0.0) >= self._capture_threshold:
                 self._capture_moved = True
                 self._capture_last_motion = time.monotonic()
+                if self._capture_first_motion is None:
+                    self._capture_first_motion = elapsed
         self._capture.append(
             RecorderSnapshot(
                 time_from_start=elapsed,
@@ -1235,9 +1246,43 @@ class TeachManagerNode(Node):
                 f"too few feedback updates captured on {thin}; the arm is not "
                 "publishing feedback/joint_states with an advancing header stamp"
             )
+        samples = self._trim_pre_motion(samples)
         samples = self._rebase_capture_times(samples)
         self._report_capture(samples, time.monotonic() - recording_start)
         return samples
+
+    def _trim_pre_motion(
+        self, samples: dict[_ArmEndpoint, list[RecorderSnapshot]]
+    ) -> dict[_ArmEndpoint, list[RecorderSnapshot]]:
+        """Drop the still interval between arming the recorder and the first move.
+
+        One cut instant for every arm — the earliest onset across them, less the
+        pre-roll — so a duo recording keeps the relative phase between its arms.
+        The pre-roll keeps the physical start of the motion, which a cut at the
+        threshold crossing itself would clip.
+        """
+        onsets = [
+            arm.capture_first_motion
+            for arm in self.arms
+            if arm.capture_first_motion is not None
+        ]
+        if not onsets:
+            return samples
+        cut = min(onsets) - max(0.0, float(self.args.pre_roll_sec))
+        trimmed: dict[_ArmEndpoint, list[RecorderSnapshot]] = {}
+        for arm, arm_samples in samples.items():
+            kept = [s for s in arm_samples if s.time_from_start >= cut]
+            # Never trim an arm down to a stub: the retiming pipeline needs four
+            # samples, and an arm that only moved late still has to start where
+            # it was standing.
+            trimmed[arm] = kept if len(kept) >= 4 else arm_samples[-4:]
+        dropped = sum(len(samples[arm]) - len(trimmed[arm]) for arm in samples)
+        if dropped:
+            self.get_logger().info(
+                f"trimmed {dropped} pre-motion sample(s) across {len(samples)} arm(s); "
+                f"recording starts {self.args.pre_roll_sec:.2f}s before the first move"
+            )
+        return trimmed
 
     def _rebase_capture_times(
         self, samples: dict[_ArmEndpoint, list[RecorderSnapshot]]
@@ -1506,7 +1551,7 @@ class TeachManagerNode(Node):
                 return None
 
         window = plan.smoothing_window_sec
-        if mode == SMOOTH:
+        if mode in TIMING_PRESERVING and mode != AS_RECORDED:
             raw = self.prompt_line(
                 key_reader,
                 f"Smoothing window in seconds (default {window:g}, floor "
@@ -1523,11 +1568,15 @@ class TeachManagerNode(Node):
                     return None
 
         speed_scale = plan.speed_scale
-        if mode == SPEED_SCALE:
+        if mode in (SPEED_SCALE, TEMPO_SCALE):
+            what = (
+                "Tempo relative to the recording, taught timing kept"
+                if mode == TEMPO_SCALE
+                else "Speed relative to the recording, taught timing discarded"
+            )
             raw = self.prompt_line(
                 key_reader,
-                f"Speed relative to the recording (default {speed_scale:g}, "
-                "2 = twice as fast): ",
+                f"{what} (default {speed_scale:g}, 2 = twice as fast): ",
             ).strip()
             if raw:
                 try:
@@ -1647,7 +1696,8 @@ class TeachManagerNode(Node):
             self.get_logger().warn(
                 f"commanded velocity reaches {result.velocity_utilisation:.2f}x the joint "
                 "limit; the controller will clamp it and tracking error may trip the "
-                "per-joint hold. A wider 'smooth' window or a lower speed avoids that."
+                "per-joint hold. A slower 'tempo_scale' keeps the taught shape and "
+                "brings it under; a wider window or 'speed_scale' also works."
             )
 
     def _build_arm_slice(
@@ -2251,6 +2301,16 @@ def parse_args() -> argparse.Namespace:
     # samples, it cannot invent detail the capture never took.
     # See docs/sprint_refactor/reference/feedback_rate_budget.md.
     parser.add_argument("--hold-timeout", type=float, default=3.0)
+    parser.add_argument(
+        "--pre-roll-sec", type=float, default=0.25,
+        help=(
+            "Seconds of stillness kept before the first detected movement. The "
+            "interval between arming the recorder and moving is dropped; the "
+            "pre-roll keeps the physical start that a cut at the threshold "
+            "crossing would clip. One cut instant for all arms, so a duo "
+            "recording keeps its relative phase."
+        ),
+    )
     parser.add_argument("--movement-threshold", type=float, default=0.01)
     parser.add_argument("--service-timeout", type=float, default=5.0)
     parser.add_argument("--feedback-timeout", type=float, default=3.0)
@@ -2288,7 +2348,9 @@ def parse_args() -> argparse.Namespace:
             "taught path and pace at the smallest filter that executes, 'smooth' widens "
             "that filter to trade path deviation for quieter derivatives, 'speed_scale' "
             "re-times to a multiple of the recorded duration, 'maximize_speed' runs the "
-            "path as fast as the joint limits allow"
+            "path as fast as the joint limits allow. 'tempo_scale' keeps the taught "
+            "timing structure and only stretches the clock, which is what a take that "
+            "was taught too fast needs"
         ),
     )
     parser.add_argument(
@@ -2384,6 +2446,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.pre_roll_sec < 0.0:
+        raise ValueError("--pre-roll-sec must be >= 0")
     if args.playback_speed_scale <= 0.0:
         raise ValueError("--playback-speed-scale must be > 0")
     if args.playback_lead_in_sec < 0.0:
