@@ -289,6 +289,30 @@ Catalogue actions may live in `config/catalogue.yaml` or in any `config/catalogu
 an existing action. The tea demo uses a fragment because its ~140 taught waypoints would drown the
 shared catalogue.
 
+## What a taught replay keeps, and what it loses here (2026-08-25)
+
+A catalogue inlines a **decimation** of the recording — `left_arm_pour_tea` is 73
+waypoints out of 721 recorded samples. That is a storage decision, and it has
+consequences the teach loop does not have:
+
+- **the sparse list is a rougher command stream, not a gentler one.** With 73
+  knots over 14.5 s almost every control tick sits inside a linear segment, so
+  all the acceleration lands on the knots — 98 rad/s² of commanded acceleration
+  against 16 for the same recording replayed through the teach loop.
+- **the replay modes are not available here.** `velocity_scaling` on a recorded
+  action is a time stretch over the sparse waypoints; there is no `smooth`,
+  `tempo_scale`, `speed_scale` or `maximize_speed` at activity level. To change
+  how a taught action executes, re-teach it or change `--max-points`.
+- **velocities are now dispatched** (they were not before 2026-08-25, and the MIT
+  controller reads a missing velocity as a commanded zero — the kd term braked
+  against the position command). Regenerating a waypoint block also now places
+  the waypoints by chord error rather than by even sample index, so corners and
+  reversals survive a small budget.
+
+Regenerate a block with `agx_arm_recorded_to_catalogue` after re-teaching; a
+block pasted before 2026-08-25 still carries evenly-spaced waypoints. Detail:
+`docs/sprint_refactor/reference/teach_replay_timebase.md`.
+
 ## Re-teaching a segment
 
 ```bash

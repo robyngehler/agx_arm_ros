@@ -296,6 +296,14 @@ free-runs without the arm).
 >   corners and reversals instead of on dwells. 2-3x more faithful at the same count, 8-18% slower
 >   through TOTG. The default count is 80, and `path_deviation` now includes the chord error, which
 >   was previously invisible and understated the deviation by up to 0.14 rad.
+> - **an assembled activity does not get the replay modes (2026-08-25).** The coordinator reaches the
+>   same controller through `recorded_to_catalogue` -> catalogue `waypoints:` -> `ExecuteTrajectory`, and
+>   that path has only `velocity_scaling` (a time stretch) over an inlined ~10:1 decimation of the
+>   recording. It now dispatches **velocities** — it emitted positions and times only, which the MIT
+>   buffer reads as a commanded zero, so the kd term braked against the position command — and
+>   `agx_arm_recorded_to_catalogue` now picks waypoints by chord error rather than by even sample index.
+>   What is still not shared: the retiming modes and the taught density. Tune a tea-demo-style replay by
+>   re-teaching or by `--max-points`, not by expecting `tempo_scale` at activity level.
 > - **`m` in playback mode moves to the selected recording's start pose (2026-08-24).** A gap up to
 >   0.35 rad is bridged by the replay's lead-in; beyond that, `m` plans and runs a collision-checked
 >   MoveIt move to the first waypoint (`both_arms` for a duo recording, that side's group for a single

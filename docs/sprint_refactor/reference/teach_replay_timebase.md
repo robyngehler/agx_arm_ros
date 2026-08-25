@@ -444,3 +444,56 @@ never mentions it: a window of 0.30 set for a `tempo_scale` replay silently
 shaped the next `speed_scale` plan (15.68 s and 0.097 rad deviation against
 15.41 s and 0.069 rad at the 0.10 default). The parameterized modes' note now
 states the window and waypoint count that produced their path.
+
+## The coordinator path did not inherit any of this
+
+Everything above describes the **teach manager's** replay. The coordinator — the
+path that runs an assembled activity such as the tea demo — reaches the same
+controller through a different chain, and until 2026-08-25 it carried none of it:
+
+```
+recording (clean)  ->  recorded_to_waypoints  ->  catalogue YAML
+                    ->  arm_executor  ->  coordinator_node  ->  ExecuteTrajectory
+```
+
+Two losses, both measured on `Wave_Left_V02` at the tea demo's own density
+(1061 samples down to 73 waypoints, as `left_arm_pour_tea` does at 721 -> 73):
+
+| path | points | p95 cmd accel | max | \|v_des − dp/dt\| |
+| --- | --- | --- | --- | --- |
+| teach manager `smooth` | 2950 | 3.70 | **16.3** | 0.004 |
+| coordinator, before | 73 | 0.00 | **98.4** | **0.224** |
+| coordinator, after | 73 | 0.00 | 81.9 | 0.040 |
+
+**The p95 of 0.00 is not smoothness.** With 73 knots over 14.7 s almost every
+control tick falls *inside* a linear segment, where the second difference is
+exactly zero; all of the acceleration is concentrated at the knots. A sparse
+waypoint list is a rougher command stream than a dense one, not a gentler one.
+
+**`v_des` was zero everywhere.** `_build_execute_trajectory_goal` emitted
+positions and times only, and the trajectory buffer reads a missing velocity as a
+commanded zero — so `kd·(0 − q̇)` braked against the motion the position term was
+asking for. This is the same defect that started this whole line of work, fixed
+in the teach path months earlier and still live in the production path. It now
+supplies central differences over the waypoint times.
+
+**Catalogue waypoints were selected by even index**, which is selection by the
+clock: it spends the budget on dwells. `recorded_to_waypoints` now uses the same
+chord-error selection as the geometric path, which costs nothing in storage and
+measured 1.1-4.2x less chord error at the same count across five recordings.
+
+### What is still not shared
+
+- **the retiming modes.** A catalogue action has `velocity_scaling`, which for a
+  recorded action is a replay time-stretch — closest in spirit to `tempo_scale`,
+  but it stretches sparse waypoints rather than a reconstructed trajectory, and
+  there is no `smooth`, `speed_scale` or `maximize_speed` at activity level
+- **the taught density.** The catalogue inlines waypoints because the dense
+  recording would drown the YAML, so a 10:1 decimation is structural. No
+  downstream retiming recovers what decimation removed; the deeper fix is for a
+  catalogue action to *reference* its recording and let the coordinator retime
+  the full data, which would give the activity path every mode the teach path has
+- **the stall reconstruction and the pre-motion trim** apply at record time, so
+  an activity assembled from a recording taken after 2026-08-25 gets them for
+  free — but a catalogue block pasted before then still carries whatever the
+  recorder produced at the time

@@ -110,6 +110,12 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   the driver cache, and one joint update is four position frames, so the stamp
   advances while the positions need not. Let a stall become a gap the consumer
   interpolates across, not a sample
+- a recorded replay carries velocities on every dispatch path: the MIT
+  trajectory buffer reads a missing velocity as a commanded zero and brakes
+  against its own position command. Two dispatch paths to one controller drift
+  unless what they share is code — the coordinator kept that defect months after
+  the teach path was fixed. Catalogue waypoints are chosen by chord error, not
+  even sample index (`docs/sprint_refactor/reference/teach_replay_timebase.md`)
 - an operation indexed by sample is the operation you meant only if the samples
   are evenly spaced. A recording's grid is uneven, so a moving average over N
   rows is not a fixed-width filter and a row-index difference is not a

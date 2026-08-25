@@ -204,6 +204,33 @@ The general form: **an operation indexed by sample is only the operation you
 meant if the samples are evenly spaced.** Check the grid before trusting a
 filter width or a derivative, and resample if you cannot guarantee it.
 
+## A fix in the teach path is not a fix in the activity path
+
+**2026-08-25.** Recorded replay was reworked end to end in the teach manager —
+uniform resample, filter floor, velocity feedforward, chord-error waypoints,
+`tempo_scale`. The coordinator reaches the same MIT controller through a
+different chain (`recorded_to_waypoints` -> catalogue YAML -> `arm_executor` ->
+`ExecuteTrajectory`) and had inherited none of it.
+
+The one that matters most: `_build_execute_trajectory_goal` emitted positions and
+times only, and the trajectory buffer reads a missing velocity as a **commanded
+zero**, so `kd·(0 − q̇)` braked against the motion the position term was asking
+for. That is the same defect the teach path was fixed for months earlier —
+`|v_des − dp/dt|` measured 0.224 rad/s on the production path against 0.004 on
+the teach path.
+
+Catalogue waypoints were also chosen by even sample index, which is selection by
+the clock: it spends a scarce budget on dwells rather than on corners. Chord-error
+selection costs nothing in storage and measured 1.1-4.2x less chord error at the
+same count.
+
+The lesson is about where a contract lives: **two dispatch paths to one
+controller will drift unless the thing they share is code, not a convention.**
+The teach path and the coordinator both build a `JointTrajectory` for the same
+consumer, and only one of them knew what that consumer does with a missing
+field. Detail and what is still not shared:
+`docs/sprint_refactor/reference/teach_replay_timebase.md`.
+
 ## An advancing timestamp is not advancing data
 
 **2026-08-24.** After the two fixes above, a duo replay was still rough on the

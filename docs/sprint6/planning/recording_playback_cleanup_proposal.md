@@ -16,7 +16,8 @@
 > | P1 Ruckig evaluation | **deferred by the proposal's own gate** — `tempo_scale` first |
 > | P2 acceleration / jerk limits | unchanged — still an explicit stand-in, still the binding constraint |
 > | Validation 1, 2, 4, 5 | **covered by package tests** |
-> | Validation 3 (hardware capture) | open — needs a run on the arms |
+> | Validation 3 (hardware capture) | **done 2026-08-25** — duo teach+replay over all five modes |
+> | *(not in the proposal)* activity/catalogue path | **partly closed** — velocities and chord-error waypoints now shared; retiming modes and taught density are not |
 >
 > **P0.2 finding.** `get_joint_angles()` in
 > `pyAgxArm/protocols/can_protocol/drivers/nero/default/driver.py` reassembles the

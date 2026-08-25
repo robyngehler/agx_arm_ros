@@ -79,3 +79,15 @@
 - Recorded replay uses `ExecuteTrajectory` (executes the taught trajectory as-is through MoveIt's
 	controller manager; the path itself is not re-collision-checked). Full MoveIt Cartesian/retime of
 	recorded joint trajectories is a later refinement — not exercisable until waypoints are taught.
+- **Partly addressed 2026-08-25.** "As-is" was doing more damage than the phrasing suggests: the
+	dispatch emitted positions and times only, and the MIT trajectory buffer reads a missing velocity
+	as a *commanded zero*, so the kd term braked against the position command (`|v_des - dp/dt|` 0.224
+	rad/s against the teach path's 0.004). It now supplies central differences, and catalogue waypoints
+	are selected by chord error rather than by even sample index.
+- **Still open: the activity path has no retiming modes and no access to the taught density.** The
+	teach loop gained `as_recorded`/`smooth`/`tempo_scale`/`speed_scale`/`maximize_speed` over a
+	uniformly resampled trajectory; a catalogue action has only `velocity_scaling` over an inlined
+	~10:1 decimation. No downstream retiming recovers what decimation removed. The shape of the fix is
+	for a catalogue action to *reference* its recording rather than inline waypoints, which would give
+	an assembled activity every mode the teach path has. See
+	`docs/sprint_refactor/reference/teach_replay_timebase.md`.

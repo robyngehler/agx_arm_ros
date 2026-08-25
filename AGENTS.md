@@ -30,7 +30,7 @@ This repository keeps durable, tool-neutral engineering rules here and uses `.gi
 - Keep production MIT control ownership in `src/agx_arm_mit_controller`.
 - Keep MIT demo and workflow apps in `src/agx_arm_mit_demos` instead of the controller runtime package.
 - Keep MIT debug bridges, hold checks, and calibration helpers in `src/agx_arm_mit_tools`.
-- Keep dual-arm/dual-hand task orchestration (Activity-DAG coordinator, performer routing, catalogue) in `src/agx_arm_coordination`; reuse the existing `both_arms`/per-arm FollowJointTrajectory path for arm execution.
+- Keep dual-arm/dual-hand task orchestration (Activity-DAG coordinator, performer routing, catalogue) in `src/agx_arm_coordination`; reuse the existing `both_arms`/per-arm FollowJointTrajectory path for arm execution. **A recorded replay dispatched from here carries velocities like any other**: the MIT trajectory buffer reads a missing velocity as a commanded zero and brakes against its own position command. Catalogue waypoints are selected by chord error, because a sparse budget spent by the clock lands on dwells. The retiming modes and the taught density are *not* yet shared with this path — a catalogue inlines a decimation, and no downstream retiming recovers what decimation removed (`docs/sprint_refactor/reference/teach_replay_timebase.md`).
 - Keep the OmniHand bridge in `src/agx_arm_ctrl`; only revisit a package split after a non-mock backend proves a separate boundary is useful.
 - Extend `src/agx_arm_msgs` for repo-owned OmniHand messages instead of creating a second message package.
 - Treat `vendor/OmniHand-Pro-2025` as upstream input, not as the public ROS contract.
