@@ -33,6 +33,7 @@ setup(
             "agx_arm_test_position_hold = agx_arm_mit_tools.test_position_hold:main",
             "agx_arm_validate_urdf_mdh = agx_arm_mit_tools.validate_urdf_mdh:main",
             "agx_arm_compare_gravity = agx_arm_mit_tools.compare_gravity:main",
+            "agx_arm_gravity_pose_sweep = agx_arm_mit_tools.sweep_gravity_poses:main",
             "agx_arm_fit_gravity_calibration = agx_arm_mit_tools.fit_gravity_calibration:main",
         ],
     },
