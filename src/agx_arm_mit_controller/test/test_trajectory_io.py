@@ -355,3 +355,58 @@ def test_reconstruction_needs_at_least_three_samples():
     corrected, spread = reconstruct_stalled_joints([0.0, 0.01], positions)
     assert corrected == positions
     assert spread == [0]
+
+
+def _ramp(steps, per_step, hold=0):
+    """A motion of `steps` increments, then `hold` samples standing still."""
+    points = [
+        RecordedTrajectoryPoint(index * 0.0137, [index * per_step], [0.0], [0.0])
+        for index in range(steps + 1)
+    ]
+    resting = steps * per_step
+    points += [
+        RecordedTrajectoryPoint((steps + 1 + index) * 0.0137, [resting], [0.0], [0.0])
+        for index in range(hold)
+    ]
+    return points
+
+
+def test_a_slow_guided_motion_survives_the_trim():
+    """0.002 rad per sample at 73 Hz is 0.15 rad/s — a careful teach guide. The
+    per-sample form of this cut such a take back to its first point."""
+    points = _ramp(steps=200, per_step=0.002)
+
+    trimmed, _ = trim_trailing_stationary_points(points, movement_threshold_rad=0.01)
+
+    # Only the final threshold's worth of travel reads as "at rest"; the take
+    # used to be cut back to a single point.
+    assert len(trimmed) > 0.95 * len(points), f"kept {len(trimmed)} of {len(points)}"
+
+
+def test_the_trailing_hold_is_still_cut():
+    points = _ramp(steps=50, per_step=0.01, hold=220)
+
+    trimmed, last_motion_index = trim_trailing_stationary_points(points, movement_threshold_rad=0.01)
+
+    # The 220-sample hold goes; one settle sample stays so the take ends at rest.
+    assert len(trimmed) == 51
+    assert last_motion_index == 50
+
+
+def test_a_take_that_never_moved_stays_a_single_point():
+    points = [RecordedTrajectoryPoint(index * 0.0137, [0.0], [0.0], [0.0]) for index in range(40)]
+
+    trimmed, _ = trim_trailing_stationary_points(points, movement_threshold_rad=0.01)
+
+    assert len(trimmed) == 1
+
+
+def test_the_cut_does_not_depend_on_the_sample_rate():
+    """The same physical motion, sampled at the two arms' rates."""
+    kept = []
+    for rate in (100.0, 137.0):
+        steps = int(2.0 * rate)          # two seconds of guiding
+        points = _ramp(steps=steps, per_step=0.3 / rate, hold=int(3.0 * rate))
+        trimmed, _ = trim_trailing_stationary_points(points, movement_threshold_rad=0.01)
+        kept.append(len(trimmed) / (steps + 1))
+    assert abs(kept[0] - kept[1]) < 0.02, f"rate-dependent trim: {kept}"

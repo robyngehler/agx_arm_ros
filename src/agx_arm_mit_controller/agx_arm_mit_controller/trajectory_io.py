@@ -191,19 +191,38 @@ def trim_trailing_stationary_points(
     points: list[RecordedTrajectoryPoint],
     movement_threshold_rad: float,
 ) -> tuple[list[RecordedTrajectoryPoint], int]:
+    """Cut the hold at the end, where the operator has let go of the arm.
+
+    Measured as distance from the FINAL pose, walking backwards, so the
+    criterion is "how far from where it came to rest". A per-sample delta made
+    the threshold a speed instead: at the ~73 Hz a teach capture stores,
+    0.01 rad between samples is 0.73 rad/s, so a slow guided motion registered
+    nowhere and the recording was cut back to its first sample. One take kept
+    111 of 883 samples that way, another kept a single point.
+
+    One settle sample is kept, so the recording still ends at the rest pose.
+    """
     if len(points) < 2:
         return points, len(points) - 1
 
-    last_motion_index = 0
-    for index in range(1, len(points)):
+    final = points[-1].positions
+    away_from_rest = None
+    for index in range(len(points) - 1, -1, -1):
         deltas = [
-            abs(current - previous)
-            for current, previous in zip(points[index].positions, points[index - 1].positions)
+            abs(current - resting)
+            for current, resting in zip(points[index].positions, final)
         ]
         if max(deltas, default=0.0) >= movement_threshold_rad:
-            last_motion_index = index
+            away_from_rest = index
+            break
 
-    return points[: last_motion_index + 1], last_motion_index
+    if away_from_rest is None:
+        # Never left the pose it ends at: there is no motion to keep.
+        return points[:1], 0
+
+    keep = min(away_from_rest + 2, len(points))
+    # The index of the last sample kept, which is where the motion ends.
+    return points[:keep], keep - 1
 
 
 def with_finite_difference_velocities(

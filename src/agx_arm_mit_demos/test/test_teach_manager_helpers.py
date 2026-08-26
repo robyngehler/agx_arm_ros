@@ -838,3 +838,253 @@ def test_recorded_to_waypoints_keeps_the_taught_time_of_each_kept_sample():
     # Every emitted time is a taught sample time, not an interpolated one.
     taught = {round(p.time_from_start, 3) for p in points}
     assert all(t in taught for t in times)
+
+
+# --- hand skill replay travels on the authority-carrying surface -------------
+
+
+def test_the_replay_primitive_matches_the_surface_the_bridge_expects():
+    """The bridge checks the surface against the primitive the owner_id declares.
+
+    A gesture is one static target, so it goes out as HandJointTarget on the
+    reactive surface. Declaring the wrong primitive is refused at admission, and
+    the symptom is a publish that succeeds and moves nothing.
+    """
+    from agx_arm_ctrl.omnihand_bridge_node import SURFACE_PRIMITIVES, owner_primitive
+    from agx_arm_mit_demos.teach_manager import HAND_OWNER_PRIMITIVE
+
+    assert HAND_OWNER_PRIMITIVE == SURFACE_PRIMITIVES["hand_joint_target"]
+    assert owner_primitive(f"{HAND_OWNER_PRIMITIVE}:teach_manager") == HAND_OWNER_PRIMITIVE
+
+
+def test_the_claim_service_name_matches_the_bridge():
+    """Not `claim_device`: the arm driver serves one of those too."""
+    from agx_arm_ctrl.omnihand_bridge_node import HAND_CLAIM_SERVICE as BRIDGE_SERVICE
+    from agx_arm_mit_demos.teach_manager import HAND_CLAIM_SERVICE
+
+    assert HAND_CLAIM_SERVICE == BRIDGE_SERVICE
+
+
+def test_the_default_command_topic_is_one_the_bridge_subscribes_by_default(monkeypatch):
+    """control/joint_states is the legacy ingress, off unless explicitly enabled."""
+    import sys
+
+    from agx_arm_mit_demos import teach_manager
+
+    monkeypatch.setattr(sys, "argv", ["agx_arm_teach_manager"])
+    monkeypatch.setattr(teach_manager, "handshake_required", lambda: False)
+    monkeypatch.setattr(teach_manager, "assert_matches_topology", lambda *a, **k: None)
+    args = teach_manager.parse_args()
+    assert args.hand_command_topic == "control/omnihand/joint_target"
+
+
+def test_a_fresh_authority_carries_nothing_to_stamp_with():
+    from agx_arm_mit_demos.teach_manager import _HandAuthority
+
+    authority = _HandAuthority()
+    assert (authority.device_epoch, authority.sequence, authority.held) == (0, 0, False)
+
+
+# --- freedrive gravity residual capture --------------------------------------
+
+
+def _gravity_stub(tmp_path):
+    """A stand-in self for the CSV writer: it touches args, counters and a logger."""
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+
+    logged = []
+    stub = SimpleNamespace(
+        args=SimpleNamespace(gravity_csv_dir=str(tmp_path)),
+        _gravity_rows={},
+        get_logger=lambda: SimpleNamespace(error=logged.append, info=logged.append),
+    )
+    stub._gravity_csv_path = TeachManagerNode._gravity_csv_path.__get__(stub)
+    stub._write = TeachManagerNode._write_gravity_samples.__get__(stub)
+    return stub, logged
+
+
+def _sample(names, positions, efforts):
+    return SimpleNamespace(name=list(names), position=list(positions), effort=list(efforts))
+
+
+class _FlatGravity:
+    def compute_gravity(self, q):
+        return [1.0] * len(q)
+
+
+def test_gravity_capture_writes_the_schema_the_fitter_reads(tmp_path):
+    import csv
+
+    stub, _ = _gravity_stub(tmp_path)
+    joints = [f"joint{i}" for i in range(1, 8)]
+    arm = SimpleNamespace(label="right_arm", source_joints=joints)
+    samples = [_sample(joints, [0.1] * 7, [2.5] * 7), _sample(joints, [0.2] * 7, [2.5] * 7)]
+
+    assert stub._write(arm, _FlatGravity(), samples, "pose_a") == 2
+
+    rows = list(csv.DictReader(stub._gravity_csv_path(arm).open(encoding="utf-8")))
+    assert len(rows) == 2
+    # The three columns fit_gravity_calibration reads, per joint.
+    assert float(rows[0]["q1"]) == pytest.approx(0.1)
+    assert float(rows[0]["tau_measured_7"]) == pytest.approx(2.5)
+    assert float(rows[0]["tau_g_urdf_7"]) == pytest.approx(1.0)
+    assert float(rows[0]["tau_error_7"]) == pytest.approx(1.5)
+    assert rows[0]["pose"] == "pose_a"
+
+
+def test_a_second_capture_appends_instead_of_overwriting(tmp_path):
+    import csv
+
+    stub, _ = _gravity_stub(tmp_path)
+    joints = [f"joint{i}" for i in range(1, 8)]
+    arm = SimpleNamespace(label="right_arm", source_joints=joints)
+    stub._write(arm, _FlatGravity(), [_sample(joints, [0.1] * 7, [2.0] * 7)], "a")
+    stub._write(arm, _FlatGravity(), [_sample(joints, [0.9] * 7, [3.0] * 7)], "b")
+
+    rows = list(csv.DictReader(stub._gravity_csv_path(arm).open(encoding="utf-8")))
+    assert [row["pose"] for row in rows] == ["a", "b"]
+    assert stub._gravity_rows["right_arm"] == 2
+
+
+def test_feedback_without_effort_is_refused_not_logged_as_zero(tmp_path):
+    """The measured torque is the whole point; a surface without it cannot answer."""
+    stub, logged = _gravity_stub(tmp_path)
+    joints = [f"joint{i}" for i in range(1, 8)]
+    arm = SimpleNamespace(label="right_arm", source_joints=joints)
+
+    written = stub._write(arm, _FlatGravity(), [_sample(joints, [0.1] * 7, [])], "a")
+
+    assert written == 0
+    assert any("effort" in str(message) for message in logged)
+
+
+# --- the recording trigger is a displacement, not a per-sample delta ----------
+
+
+def _feed(endpoint, positions, stamp_ns):
+    """One feedback message at a stamp, through the real capture callback.
+
+    Named with the endpoint's own joints: a message whose names do not cover
+    source_joints is dropped, which looks exactly like an arm that never moved.
+    """
+    endpoint._on_feedback(
+        _state(
+            stamp_ns // 1_000_000_000,
+            stamp_ns % 1_000_000_000,
+            positions,
+            names=tuple(endpoint.source_joints),
+        )
+    )
+
+
+def test_a_slow_guide_still_triggers_the_recording():
+    """0.002 rad per sample never clears a 0.01 rad per-sample threshold, but
+    the arm has plainly moved after five of them."""
+    endpoint = _endpoint()
+    endpoint.start_capture(0.01)
+    for step in range(6):
+        _feed(endpoint, [step * 0.002, 0.0], step * 10_000_000)
+    assert endpoint.capture_moved, "a slow hand-guided move never armed the recorder"
+
+
+def test_a_still_arm_never_triggers():
+    endpoint = _endpoint()
+    endpoint.start_capture(0.01)
+    for step in range(20):
+        # Sensor noise well under the threshold, and never accumulating.
+        _feed(endpoint, [0.0005 * (step % 2), 0.0], step * 10_000_000)
+    assert not endpoint.capture_moved
+
+
+def test_a_fast_move_still_triggers_on_the_first_step():
+    endpoint = _endpoint()
+    endpoint.start_capture(0.01)
+    _feed(endpoint, [0.0, 0.0], 0)
+    _feed(endpoint, [0.05, 0.0], 10_000_000)
+    assert endpoint.capture_moved
+
+
+def test_a_continuing_slow_move_keeps_advancing_the_idle_clock():
+    """Otherwise the hold timeout fires while the arm is still being guided."""
+    endpoint = _endpoint()
+    endpoint.start_capture(0.01)
+    for step in range(12):
+        _feed(endpoint, [step * 0.002, 0.0], step * 10_000_000)
+    first = endpoint.capture_last_motion
+    for step in range(12, 24):
+        _feed(endpoint, [step * 0.002, 0.0], step * 10_000_000)
+    assert endpoint.capture_last_motion > first
+
+
+def test_the_threshold_is_the_same_distance_at_either_arms_rate():
+    """~100/s right against ~137/s left: a per-sample delta meant 1.0 rad/s on
+    one arm and 1.37 rad/s on the other."""
+    moved = []
+    for period_ns in (10_000_000, 7_300_000):
+        endpoint = _endpoint()
+        endpoint.start_capture(0.01)
+        for step in range(1, 11):
+            # The same physical speed, sampled at the two arms' rates.
+            _feed(endpoint, [step * 0.2 * period_ns * 1e-9, 0.0], step * period_ns)
+        moved.append(endpoint.capture_moved)
+    assert moved == [True, True], f"rate-dependent trigger: {moved}"
+
+
+def test_a_single_side_take_is_not_refused_for_the_still_arm(monkeypatch):
+    """The other arm is deliberately held still, so it stores nothing. Judging
+    the take by it refused every single-side recording in a duo session."""
+    import rclpy
+
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+
+    node = _manager_with_arms(["left_arm", "right_arm"], _config())
+    left, right = node.arms
+    # Long enough that the loop ends by running out of spins, not by the idle
+    # timeout, so the whole guided motion is captured.
+    node.args = SimpleNamespace(movement_threshold=0.01, hold_timeout=10.0, pre_roll_sec=0.0)
+    node._callbacks_served = 0
+    node.RECORD_DRAIN_LIMIT = 1
+    node._step = 0
+    node._trim_pre_motion = lambda samples: samples
+    node._rebase_capture_times = lambda samples: samples
+    node._report_capture = lambda samples, elapsed: None
+
+    def fake_spin(_node, timeout_sec=0.0):
+        # The left arm is guided; the right is held, so it publishes nothing new.
+        step = node._step
+        node._step = step + 1
+        if step < 8:
+            _feed(left, [step * 0.01, 0.0], step * 10_000_000)
+            node._callbacks_served += 1
+
+    monkeypatch.setattr(rclpy, "spin_once", fake_spin)
+    monkeypatch.setattr(rclpy, "ok", lambda: node._step < 12)
+
+    samples = node._record_all_arms([left])
+
+    assert len(samples[left]) >= 4
+    assert samples[right] == []
+
+
+def test_a_take_is_still_refused_when_the_recorded_arm_never_moved(monkeypatch):
+    import rclpy
+
+    node = _manager_with_arms(["left_arm", "right_arm"], _config())
+    left, right = node.arms
+    node.args = SimpleNamespace(movement_threshold=0.01, hold_timeout=0.0, pre_roll_sec=0.0)
+    node._callbacks_served = 0
+    node.RECORD_DRAIN_LIMIT = 1
+    node._step = 0
+
+    def fake_spin(_node, timeout_sec=0.0):
+        node._step += 1
+        # Only the arm that is NOT being recorded moves.
+        if node._step < 8:
+            _feed(right, [node._step * 0.01, 0.0], node._step * 10_000_000)
+            node._callbacks_served += 1
+
+    monkeypatch.setattr(rclpy, "spin_once", fake_spin)
+    monkeypatch.setattr(rclpy, "ok", lambda: node._step < 30)
+
+    with pytest.raises(RuntimeError, match="No joint movement detected"):
+        node._record_all_arms([left])

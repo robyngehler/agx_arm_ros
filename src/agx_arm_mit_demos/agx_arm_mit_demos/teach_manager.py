@@ -59,7 +59,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Empty, SetBool, Trigger
 
-from agx_arm_msgs.msg import OmniHandStatus
+from agx_arm_msgs.msg import DeviceCommandStamp, HandJointTarget, OmniHandStatus
+from agx_arm_msgs.srv import ClaimDevice
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
@@ -351,6 +352,28 @@ def _resolve_topic_for_namespace(namespace: str, topic: str) -> str:
     return f"/{ns}/{cleaned}" if ns else cleaned
 
 
+#: Where the hand bridge serves its claim. Deliberately not `claim_device`: the
+#: arm driver serves one of those too, and a client would reach whichever it found.
+HAND_CLAIM_SERVICE = "control/omnihand/claim_device"
+#: A gesture is a static target, so it travels on the reactive surface, and the
+#: bridge checks the surface against the primitive the owner_id declares.
+HAND_OWNER_PRIMITIVE = "reactive"
+
+
+@dataclass
+class _HandAuthority:
+    """The claim one hand's commands are stamped with.
+
+    Both generations come from the claim response, so the first command need not
+    wait for the authority topic. The sequence restarts at each new claim.
+    """
+
+    device_epoch: int = 0
+    unit_safety_epoch: int = 0
+    sequence: int = 0
+    held: bool = False
+
+
 def _hand_side_for_arm_name(name: str) -> str:
     """Infer the hand side for an arm namespace/label.
 
@@ -508,6 +531,10 @@ class _ArmEndpoint:
         self._capture_last_motion = time.monotonic()
         self._capture_first_motion = None
         self._capture_stalled = 0
+        # Pose the threshold is measured from, re-seeded every time motion is
+        # registered. See _on_feedback: a per-sample delta would make the
+        # threshold a speed, and a different speed on each arm.
+        self._capture_reference: Optional[list[float]] = None
         self.reset_feedback_counters()
         self._capturing = True
 
@@ -577,16 +604,25 @@ class _ArmEndpoint:
             # stall instead, and a genuinely still arm interpolates flat.
             self._capture_stalled += 1
             return
-        if self._capture:
-            deltas = [
-                abs(current - previous)
-                for current, previous in zip(positions, self._capture[-1].positions)
-            ]
-            if max(deltas, default=0.0) >= self._capture_threshold:
-                self._capture_moved = True
-                self._capture_last_motion = time.monotonic()
-                if self._capture_first_motion is None:
-                    self._capture_first_motion = elapsed
+        # Displacement from a reference pose, not from the previous sample. A
+        # per-sample delta divided by nothing is a speed, and the two arms
+        # sample at different rates (~100/s right, ~137/s left), so one number
+        # meant 1.0 rad/s on one arm and 1.37 rad/s on the other — a hand-guided
+        # teach motion cleared neither. Re-seeding the reference at each
+        # registration keeps a slow move registering as it accumulates, so the
+        # hold timeout still fires only when the arm is actually held still.
+        if self._capture_reference is None:
+            self._capture_reference = list(positions)
+        deltas = [
+            abs(current - reference)
+            for current, reference in zip(positions, self._capture_reference)
+        ]
+        if max(deltas, default=0.0) >= self._capture_threshold:
+            self._capture_moved = True
+            self._capture_last_motion = time.monotonic()
+            self._capture_reference = list(positions)
+            if self._capture_first_motion is None:
+                self._capture_first_motion = elapsed
         self._capture.append(
             RecorderSnapshot(
                 time_from_start=elapsed,
@@ -732,6 +768,10 @@ class TeachManagerNode(Node):
         # Per-arm OmniHand delivery status, so a hand op can hold its window open
         # until the bridge confirms the command landed instead of guessing with a
         # fixed dwell (which closes the window mid-retry on a busy shared bus).
+        # Gravity residual capture ('v' in freedrive): one model per arm, built
+        # on first use, and how many rows each arm's CSV has grown by this session.
+        self._gravity_models: dict[str, object] = {}
+        self._gravity_rows: dict[str, int] = {}
         self.hand_status_by_arm: dict[str, Optional[OmniHandStatus]] = {}
         self.hand_status_monotonic: dict[str, float] = {}
         self.hand_status_topics: dict[str, str] = {}
@@ -751,6 +791,9 @@ class TeachManagerNode(Node):
         self.hand_status_by_arm = {}
         self.hand_status_monotonic = {}
         self.hand_status_topics = {}
+        self.hand_claim_clients = {}
+        self.hand_authority = {}
+        self.hand_owner_id = f"{HAND_OWNER_PRIMITIVE}:{self.get_name()}"
         for arm in self.arms:
             label = arm.label
             feedback_topic = _resolve_topic_for_namespace(
@@ -768,19 +811,19 @@ class TeachManagerNode(Node):
             self.hand_status_topics[label] = status_topic
             self.hand_status_by_arm[label] = None
             self.hand_status_monotonic[label] = 0.0
-            # Bare JointState, which the hand bridge no longer subscribes by
-            # default: the surface carries no commander, no generations and no
-            # sequence, so a stale command cannot be refused on it. Teach
-            # playback of hand poses therefore needs the bridge started with
-            # allow_legacy_hand_command_ingress:=true until this path is moved
-            # onto the stamped hand contract. Said once at start-up, because the
-            # failure is otherwise a publish that succeeds and reaches nobody.
-            self.hand_command_pubs[label] = self.create_publisher(JointState, command_topic, 10)
-            self.get_logger().warn(
-                f"hand commands for {label} go out unstamped on '{command_topic}'; "
-                "the OmniHand bridge ignores that surface unless it was started "
-                "with allow_legacy_hand_command_ingress:=true"
+            # A gesture is one static target, so it goes out as HandJointTarget
+            # on the reactive surface, stamped with the claim it was issued
+            # under. The bare-JointState surface this used to publish on is not
+            # subscribed unless the bridge was started with
+            # allow_legacy_hand_command_ingress, so those commands reached nobody.
+            self.hand_command_pubs[label] = self.create_publisher(
+                HandJointTarget, command_topic, 10
             )
+            self.hand_claim_clients[label] = self.create_client(
+                ClaimDevice,
+                _resolve_topic_for_namespace(arm.namespace, HAND_CLAIM_SERVICE),
+            )
+            self.hand_authority[label] = _HandAuthority()
             self.create_subscription(
                 JointState,
                 feedback_topic,
@@ -996,6 +1039,40 @@ class TeachManagerNode(Node):
 
         self._with_hand_window(hand_arm, f"capture '{name}' on {hand_arm.label}", _do)
 
+    def _call_hand_claim(self, arm: _ArmEndpoint, *, claim: bool) -> tuple[bool, str]:
+        """Take or give up this hand's device authority.
+
+        The claim response carries both generations, which is what the next
+        command is stamped with; the bridge is fail-closed, so an unclaimed hand
+        executes nothing.
+        """
+        client = self.hand_claim_clients.get(arm.label)
+        if client is None:
+            return False, f"no claim client for {arm.label}"
+        service = HAND_CLAIM_SERVICE
+        if not client.wait_for_service(timeout_sec=self.args.service_timeout):
+            return False, f"{service} is not available on {arm.label}"
+        request = ClaimDevice.Request()
+        request.owner_id = self.hand_owner_id
+        request.claim = claim
+        future = client.call_async(request)
+        deadline = time.monotonic() + self.args.service_timeout
+        while rclpy.ok() and not future.done():
+            if time.monotonic() > deadline:
+                return False, f"{service} did not answer"
+            rclpy.spin_once(self, timeout_sec=0.05)
+        response = future.result()
+        if response is None:
+            return False, f"{service} returned nothing"
+        authority = self.hand_authority[arm.label]
+        if response.accepted:
+            if claim:
+                authority.device_epoch = int(response.device_epoch)
+                authority.unit_safety_epoch = int(response.unit_safety_epoch)
+                authority.sequence = 0
+            authority.held = bool(claim)
+        return bool(response.accepted), response.message or response.reason
+
     def play_hand_skill(self, key_reader: TerminalKeyReader) -> None:
         skill = self.selected_hand_skill()
         if skill is None:
@@ -1008,21 +1085,49 @@ class TeachManagerNode(Node):
         hand_arm = self._prompt_hand_arm(key_reader, f"replay '{skill}'")
 
         def _do() -> None:
-            msg = JointState()
-            msg.header.stamp = self.get_clock().now().to_msg()
-            msg.name = self._hand_joint_names_for_arm(hand_arm)
-            msg.position = [float(v) for v in vector]
-            published_at = time.monotonic()
-            self.hand_command_pubs[hand_arm.label].publish(msg)
-            self.get_logger().info(
-                f"published hand skill '{skill}' on {hand_arm.label} "
-                f"({self.hand_command_topics.get(hand_arm.label, self.args.hand_command_topic)}); "
-                "holding the window until the bridge confirms delivery"
-            )
-            # Keep the window open until the hand actually has the target, not for
-            # a blind fixed dwell — on a shared bus a fixed dwell closes the
-            # window mid-retry and the remaining attempts hit the arm flood.
-            self._await_hand_delivery(hand_arm.label, published_at)
+            accepted, detail = self._call_hand_claim(hand_arm, claim=True)
+            if not accepted:
+                self.get_logger().error(
+                    f"cannot replay '{skill}' on {hand_arm.label}: the hand refused "
+                    f"the claim ({detail}). Another commander holds it, or the "
+                    "bridge is not up."
+                )
+                return
+            try:
+                authority = self.hand_authority[hand_arm.label]
+                authority.sequence += 1
+                stamp = DeviceCommandStamp()
+                stamp.owner_id = self.hand_owner_id
+                stamp.device_epoch = authority.device_epoch
+                stamp.unit_safety_epoch = authority.unit_safety_epoch
+                stamp.sequence = authority.sequence
+                msg = HandJointTarget()
+                msg.authority = stamp
+                msg.joint_names = self._hand_joint_names_for_arm(hand_arm)
+                msg.positions = [float(v) for v in vector]
+                published_at = time.monotonic()
+                self.hand_command_pubs[hand_arm.label].publish(msg)
+                topic = self.hand_command_topics.get(
+                    hand_arm.label, self.args.hand_command_topic
+                )
+                self.get_logger().info(
+                    f"published hand skill '{skill}' on {hand_arm.label} ({topic}, "
+                    f"epoch {stamp.device_epoch} seq {stamp.sequence}); "
+                    "holding the window until the bridge confirms delivery"
+                )
+                # Keep the window open until the hand actually has the target, not
+                # for a blind fixed dwell — on a shared bus a fixed dwell closes
+                # the window mid-retry and the remaining attempts hit the arm flood.
+                self._await_hand_delivery(hand_arm.label, published_at)
+            finally:
+                # Released even when the publish or the wait failed: a claim left
+                # behind blocks every later replay, and releasing advances the
+                # epoch so anything still in flight is stale.
+                released, release_detail = self._call_hand_claim(hand_arm, claim=False)
+                if not released:
+                    self.get_logger().warn(
+                        f"could not release {hand_arm.label}'s hand: {release_detail}"
+                    )
 
         self._with_hand_window(hand_arm, f"replay '{skill}' on {hand_arm.label}", _do)
 
@@ -1206,14 +1311,23 @@ class TeachManagerNode(Node):
 
     # --- teach actions -------------------------------------------------------
 
-    def _record_all_arms(self) -> dict[_ArmEndpoint, list[RecorderSnapshot]]:
+    def _record_all_arms(
+        self, recorded: "list[_ArmEndpoint] | None" = None
+    ) -> dict[_ArmEndpoint, list[RecorderSnapshot]]:
         """Capture every arm from its own feedback callbacks until motion stops.
 
         Each arm stores one sample per feedback update it receives, so the arm's
         cadence is the recording's cadence: nothing is stored twice, and the
         stored rate is the rate the arm delivered. Recording stops after
         ``hold_timeout`` with no arm moving.
+
+        ``recorded`` names the arms the take is actually for. Every arm is still
+        captured — a duo merge needs both — but only these decide when the take
+        starts, when it ends, and whether it is usable. A single-side take beside
+        a deliberately still arm was otherwise refused for the still arm having
+        produced nothing to store.
         """
+        watched = list(recorded) if recorded else list(self.arms)
         for arm in self.arms:
             arm.start_capture(self.args.movement_threshold)
         recording_start = time.monotonic()
@@ -1230,17 +1344,20 @@ class TeachManagerNode(Node):
                     rclpy.spin_once(self, timeout_sec=0.0)
                     if self._callbacks_served == served:
                         break
-                if not any(arm.capture_moved for arm in self.arms):
+                if not any(arm.capture_moved for arm in watched):
                     continue
-                idle = time.monotonic() - max(arm.capture_last_motion for arm in self.arms)
+                idle = time.monotonic() - max(arm.capture_last_motion for arm in watched)
                 if idle >= self.args.hold_timeout:
                     break
         finally:
             samples = {arm: arm.stop_capture() for arm in self.arms}
 
-        if not any(arm.capture_moved for arm in self.arms):
-            raise RuntimeError("No joint movement detected during recording")
-        thin = [arm.label for arm in self.arms if len(samples[arm]) < 4]
+        if not any(arm.capture_moved for arm in watched):
+            raise RuntimeError(
+                "No joint movement detected on "
+                f"{[arm.label for arm in watched]} during recording"
+            )
+        thin = [arm.label for arm in watched if len(samples[arm]) < 4]
         if thin:
             raise RuntimeError(
                 f"too few feedback updates captured on {thin}; the arm is not "
@@ -1428,11 +1545,20 @@ class TeachManagerNode(Node):
         name = sanitize_trajectory_name(
             self.prompt_line(key_reader, f"Trajectory name [{default_name}]: ") or default_name
         )
-        self.get_logger().info(f"Recording '{name}' as '{resource}' — move the arm(s); auto-stops after hold timeout")
-        samples = self._record_all_arms()
+        if resource == "both_arms":
+            recorded = sorted(self.arms, key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
+        else:
+            recorded = [
+                next((a for a in self.arms if (a.namespace or "nero") == resource), self.arms[0])
+            ]
+        self.get_logger().info(
+            f"Recording '{name}' as '{resource}' — move "
+            f"{', '.join(arm.label for arm in recorded)}; auto-stops after hold timeout"
+        )
+        samples = self._record_all_arms(recorded)
 
         if resource == "both_arms":
-            ordered = sorted(self.arms, key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
+            ordered = recorded
             per_arm = [self._build_arm_trajectory(f"{name}_{arm.namespace}", arm, samples[arm]) for arm in ordered]
             # The arms deliver at different rates, so the merge grid takes the
             # faster one: resampling the slower arm up interpolates, resampling
@@ -1446,7 +1572,7 @@ class TeachManagerNode(Node):
                 rate_hz=max(recording.sample_rate_hz for recording in per_arm),
             )
         else:
-            arm = next((a for a in self.arms if (a.namespace or "nero") == resource), self.arms[0])
+            arm = recorded[0]
             trajectory = self._build_arm_trajectory(name, arm, samples[arm])
 
         # No de-duplication pass here: capture already refuses a read whose
@@ -1458,6 +1584,154 @@ class TeachManagerNode(Node):
             self.selected_index = self.trajectory_paths.index(saved)
         self.get_logger().info(f"Saved {saved} ({len(trajectory.joint_names)}-dim, resource={resource})")
         self.print_status()
+
+    # --- gravity residuals ---------------------------------------------------
+
+    def _gravity_model_for(self, arm: _ArmEndpoint):
+        """The gravity model for one arm, built once and cached.
+
+        Derived through the same `resolve_gravity_urdf_path` the MIT controller
+        uses at bring-up, so the residual is measured against the model that is
+        actually running — body mount baked in, hand subtree frozen.
+        """
+        cached = self._gravity_models.get(arm.label)
+        if cached is not None:
+            return cached
+        from agx_arm_mit_controller.gravity_launch_utils import resolve_gravity_urdf_path
+        from agx_arm_mit_controller.gravity_model import create_gravity_model
+
+        urdf_path = resolve_gravity_urdf_path(
+            custom_model=self.args.gravity_custom_model,
+            explicit_gravity_urdf_path=self.args.gravity_urdf,
+            duo_side=_hand_side_for_arm_name(arm.namespace or arm.label),
+            effector_type=self.args.gravity_effector_type,
+        )
+        if not urdf_path:
+            raise RuntimeError(
+                "no gravity URDF: pass --gravity-urdf, or --gravity-custom-model "
+                "to derive one per side. Without it the comparison would run "
+                "against the upright hand-less Nero."
+            )
+        model = create_gravity_model("pinocchio", urdf_path)
+        self._gravity_models[arm.label] = model
+        self.get_logger().info(f"[{arm.label}] gravity model from {urdf_path}")
+        return model
+
+    def _collect_feedback_samples(self, arm: _ArmEndpoint, dwell_sec: float) -> list[JointState]:
+        """Every distinct feedback message this arm delivers over ``dwell_sec``.
+
+        Keyed on message identity, not on the header stamp: the stamp carries the
+        receive time of the last CAN frame to touch the driver cache and advances
+        while the positions need not, so it cannot tell a new reading from a
+        stalled one. A message the callback did not replace is not a new sample.
+        """
+        samples: list[JointState] = []
+        last = arm.latest
+        deadline = time.monotonic() + dwell_sec
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.02)
+            # Drain what else is ready, and stop as soon as a spin serves nothing:
+            # one spin_once delivers one message from one subscription.
+            served = self._callbacks_served
+            while rclpy.ok():
+                rclpy.spin_once(self, timeout_sec=0.0)
+                if self._callbacks_served == served:
+                    break
+                served = self._callbacks_served
+            current = arm.latest
+            if current is not None and current is not last:
+                samples.append(current)
+                last = current
+        return samples
+
+    def capture_gravity_sample(self, key_reader: TerminalKeyReader) -> None:
+        """Log the gravity residual at wherever the arm has been guided to.
+
+        Freedrive is MIT zero-force plus the gravity feedforward, so the measured
+        joint torque is the compensation the model asked for. Its difference from
+        the model is what `fit_gravity_calibration` fits a per-joint scale and
+        bias to.
+        """
+        if self.state != ManagerState.IDLE:
+            self.get_logger().warn(
+                "gravity capture needs freedrive; press 'i' first so the arm is "
+                "hand-guidable and the measured torque is the compensation torque"
+            )
+            return
+        label = self.prompt_line(
+            key_reader, "Pose label for this sample (blank = auto): "
+        ).strip()
+
+        for arm in self.arms:
+            try:
+                model = self._gravity_model_for(arm)
+            except (RuntimeError, ImportError) as exc:
+                self.get_logger().error(f"[{arm.label}] {exc}")
+                return
+            samples = self._collect_feedback_samples(arm, self.args.gravity_dwell)
+            if not samples:
+                self.get_logger().error(
+                    f"[{arm.label}] no feedback over {self.args.gravity_dwell:.1f}s; "
+                    "nothing captured"
+                )
+                continue
+            written = self._write_gravity_samples(arm, model, samples, label)
+            self.get_logger().info(
+                f"[{arm.label}] {written} sample(s) at '{label or 'auto'}' -> "
+                f"{self._gravity_csv_path(arm)} ({self._gravity_rows.get(arm.label, 0)} total)"
+            )
+        self.print_status()
+
+    def _gravity_csv_path(self, arm: _ArmEndpoint) -> Path:
+        directory = Path(self.args.gravity_csv_dir).expanduser()
+        return directory / f"{sanitize_trajectory_name(arm.label)}_gravity_freedrive.csv"
+
+    def _write_gravity_samples(self, arm, model, samples: list[JointState], label: str) -> int:
+        """Append samples in the schema `fit_gravity_calibration` reads."""
+        import csv
+
+        path = self._gravity_csv_path(arm)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        count = ARM_JOINT_COUNT
+        field_names = [
+            "time", "pose",
+            *[f"q{i}" for i in range(1, count + 1)],
+            *[f"tau_measured_{i}" for i in range(1, count + 1)],
+            *[f"tau_g_urdf_{i}" for i in range(1, count + 1)],
+            *[f"tau_error_{i}" for i in range(1, count + 1)],
+        ]
+        write_header = not path.exists() or path.stat().st_size == 0
+        written = 0
+        with path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=field_names)
+            if write_header:
+                writer.writeheader()
+            for sample in samples:
+                by_name = dict(zip(sample.name, sample.position))
+                effort_by_name = dict(zip(sample.name, sample.effort))
+                if not all(joint in by_name for joint in arm.source_joints):
+                    continue
+                if not all(joint in effort_by_name for joint in arm.source_joints):
+                    # The driver publishes motor torque as JointState.effort; a
+                    # feedback surface without it cannot answer this question.
+                    self.get_logger().error(
+                        f"[{arm.label}] feedback carries no effort for every joint; "
+                        "the measured torque is what this capture exists to read"
+                    )
+                    return written
+                q = [float(by_name[joint]) for joint in arm.source_joints]
+                tau_measured = [float(effort_by_name[joint]) for joint in arm.source_joints]
+                tau_model = model.compute_gravity(q)
+                row = {"time": time.monotonic(), "pose": label or "auto"}
+                for index in range(count):
+                    row[f"q{index + 1}"] = q[index]
+                    row[f"tau_measured_{index + 1}"] = tau_measured[index]
+                    row[f"tau_g_urdf_{index + 1}"] = tau_model[index]
+                    row[f"tau_error_{index + 1}"] = tau_measured[index] - tau_model[index]
+                writer.writerow(row)
+                written += 1
+        self._gravity_rows[arm.label] = self._gravity_rows.get(arm.label, 0) + written
+        return written
 
     def capture_anchor(self, key_reader: TerminalKeyReader) -> None:
         if self.arm_config_path is None:
@@ -2107,6 +2381,9 @@ class TeachManagerNode(Node):
         if key == "w":
             self.convert_to_waypoints(key_reader)
             return
+        if key == "v":
+            self.capture_gravity_sample(key_reader)
+            return
         if self.state == ManagerState.RECORD and key == "n":
             self.record_sample(key_reader)
             return
@@ -2142,6 +2419,7 @@ class TeachManagerNode(Node):
             "  r -> record mode      p -> playback mode      t -> transitions mode\n"
             "  g -> hand mode        a -> capture current pose as a named anchor\n"
             "  w -> convert selected recording -> catalogue waypoints\n"
+            "  v -> log the gravity residual here (freedrive; guide the arm, press v per pose)\n"
             "  [ / ] -> select previous / next item (recording, anchor, or hand skill)\n"
             "  s -> status   h -> help   q -> quit\n"
             "Record mode:   n -> record a new trajectory\n"
@@ -2385,6 +2663,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--auto-enable-arm", action="store_true", help="Call enable_agx_arm before mode switches")
     parser.add_argument("--no-keyboard", action="store_true")
     parser.add_argument("--urdf-path", default="")
+    # Gravity residual capture ('v'): compared against the same model the MIT
+    # controller runs, so the fit corrects what is actually commanding the arm.
+    parser.add_argument(
+        "--gravity-urdf", default="",
+        help="Gravity URDF the residual is measured against. Wins over --gravity-custom-model.",
+    )
+    parser.add_argument(
+        "--gravity-custom-model", default="",
+        help="Xacro the gravity URDF is derived from per arm side "
+             "(e.g. src/duo_body_description/urdf/duo_system.urdf.xacro)",
+    )
+    parser.add_argument("--gravity-effector-type", default="omnihand")
+    parser.add_argument(
+        "--gravity-dwell", type=float, default=1.0,
+        help="Seconds of feedback logged per 'v' press",
+    )
+    parser.add_argument("--gravity-csv-dir", default="logs")
     # Hand mode ('g'): capture ('c') / replay ('f') OmniHand skills. Whether each
     # is wrapped in a prepare_hand_window/resume_arm_control handshake follows
     # the declared bus topology; see --hand-window below.
@@ -2397,8 +2692,9 @@ def parse_args() -> argparse.Namespace:
         help="OmniHand JointState feedback topic read for skill capture",
     )
     parser.add_argument(
-        "--hand-command-topic", default="control/joint_states",
-        help="OmniHand JointState command topic a replayed skill is published to",
+        "--hand-command-topic", default="control/omnihand/joint_target",
+        help="Authority-carrying HandJointTarget topic a replayed skill is "
+             "published to, after claiming the hand",
     )
     parser.add_argument(
         "--hand-arm", default="",

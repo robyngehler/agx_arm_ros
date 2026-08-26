@@ -426,7 +426,36 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
 Keys: `i` idle/freedrive · `r` record (`n` to record) · `p` playback (`f` to play, `c` cancel) ·
 `t` transitions (`f` to plan selected anchor target, `f` again to execute the cached MoveIt plan, `c`
 to clear it) · `a` capture current pose → named anchor in `arm_config.yaml` · `w` convert the selected
-recording → catalogue `waypoints` · `[`/`]` select recording or anchor target · `s`/`h`/`q`.
+recording → catalogue `waypoints` · `v` log the gravity residual at the current pose (freedrive) ·
+`[`/`]` select recording or anchor target · `s`/`h`/`q`.
+
+> **`--movement-threshold` is a distance again (2026-08-26).** It used to be compared against the
+> difference between two consecutive feedback samples, which made it a speed — 0.01 rad at the ~73 Hz
+> a take stores is 0.73 rad/s, and at the arms' different rates it meant 1.0 rad/s on the right and
+> 1.37 on the left. A hand-guided take at ~0.11 rad/s therefore armed nothing, and the trailing-hold
+> trim cut one 883-sample recording back to a single point. Both ends now measure displacement: the
+> recorder arms once a joint has travelled the threshold from where it was standing, and the trim cuts
+> the tail that stays within the threshold of the final pose. Recordings taken before this are
+> truncated at the last fast-enough moment and cannot be repaired — re-record them.
+
+> **`v` records a gravity calibration dataset by hand (2026-08-26).** In freedrive the arm floats on
+> MIT zero-force plus the gravity feedforward, so the measured joint torque on `feedback/joint_states`
+> (`effort`, the motor torque the driver publishes) *is* the compensation the model asked for. Guide the
+> arm to a pose, press `v`, give the sample a label; it logs `--gravity-dwell` seconds of feedback per
+> press to `logs/<arm>_gravity_freedrive.csv` in the schema `agx_arm_fit_gravity_calibration` reads.
+> Cover a spread of poses — the fitter silently falls back to scale 1 / bias 0 for a joint that spans
+> less than 0.05 rad or 0.1 Nm. Pass `--gravity-custom-model src/duo_body_description/urdf/duo_system.urdf.xacro`
+> so the residual is measured against the same gravity URDF the controller runs (body mount baked in,
+> hand frozen); `--gravity-urdf` names one explicitly. For a commanded pose set instead of hand
+> guidance, `agx_arm_gravity_pose_sweep` drives them, but it owns the SDK session and so needs the MIT
+> stack down.
+
+> **Hand-skill replay no longer needs the legacy ingress (2026-08-26).** `g` → `f` used to publish a
+> bare `JointState` on `control/joint_states`, which the OmniHand bridge does not subscribe to unless
+> it was started with `allow_legacy_hand_command_ingress:=true` — so the publish succeeded and reached
+> nobody. It now claims the hand through `control/omnihand/claim_device`, publishes a
+> `HandJointTarget` stamped with that claim on `control/omnihand/joint_target`, and releases
+> afterwards. A refused claim is reported instead of being replayed into silence.
 
 Internally the manager **reuses** the same building blocks as the CLIs below (the leader recorder,
 saved-trajectory executor, `capture_anchor_pose`'s averaging, and `recorded_to_catalogue`) — no
