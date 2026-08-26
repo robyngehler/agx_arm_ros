@@ -161,17 +161,31 @@
     <passive_joint name="${side}_ring_dip_joint" />
     <passive_joint name="${side}_pinky_pip_joint" />
     <passive_joint name="${side}_pinky_dip_joint" />
+    <!-- link7, the flange, the hand base and the palm are joined by fixed joints,
+         so their relative pose is constant and a check between them returns the
+         same answer in every state. link6 is across joint7 and does vary. -->
     <disable_collisions link1="${resolved_link_prefix}link7" link2="${resolved_link_prefix}omnihand_flange" reason="Adjacent" />
-    <disable_collisions link1="${resolved_link_prefix}link6" link2="${resolved_link_prefix}omnihand_flange" reason="Never" />
+    <disable_collisions link1="${resolved_link_prefix}link7" link2="${side}_base_link" reason="Adjacent" />
+    <disable_collisions link1="${resolved_link_prefix}link7" link2="${side}_palm" reason="Adjacent" />
     <disable_collisions link1="${resolved_link_prefix}omnihand_flange" link2="${side}_base_link" reason="Adjacent" />
     <disable_collisions link1="${resolved_link_prefix}omnihand_flange" link2="${side}_palm" reason="Adjacent" />
+    <!-- The hand sits in the wrist envelope and barely moves relative to it:
+         swept over the whole joint5-joint7 range the closest approach is 2.8 mm
+         (link5/flange) to 17 mm (link6/palm), and the joint limits leave no
+         configuration that closes it. Hand against the upper arm and the body
+         stays ACTIVE - that is the pairing a plan can actually drive into. -->
+    <disable_collisions link1="${resolved_link_prefix}link6" link2="${resolved_link_prefix}omnihand_flange" reason="Never" />
+    <disable_collisions link1="${resolved_link_prefix}link6" link2="${side}_base_link" reason="Never" />
+    <disable_collisions link1="${resolved_link_prefix}link6" link2="${side}_palm" reason="Never" />
+    <disable_collisions link1="${resolved_link_prefix}link5" link2="${resolved_link_prefix}omnihand_flange" reason="Never" />
+    <disable_collisions link1="${resolved_link_prefix}link5" link2="${side}_palm" reason="Never" />
     <!-- Disable ALL intra-hand collision pairs. The hand joints are never planned
          by the arm groups (their values come from hardware readback), self-contact
          in a grasp is intended (fist: fingertips touch the palm, thumb presses the
          fingers, middle/ring rub), and the vendor meshes + approximate mimic
          coupling interpenetrate at legitimate poses anyway - so intra-hand FCL
          checks only invalidate arm-planning start states (OMPL: 'invalid start
-         state' after a fist). Hand-vs-arm and hand-vs-body pairs stay ACTIVE.
+         state' after a fist). Hand-vs-upper-arm and hand-vs-body pairs stay ACTIVE.
          Generated: all pairs over the hand link set, including currently
          collision-less links (thumb_roll/index_abad/middle_abad) for robustness. -->
     <disable_collisions link1="${side}_base_link" link2="${side}_palm" reason="IntraHand" />
