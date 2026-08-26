@@ -228,3 +228,105 @@ def test_no_joint_state_published_before_first_successful_readback(bridge_node):
     _cycle(bridge_node)
 
     assert published == []
+
+
+# --- a slow joint is not a stuck joint ---------------------------------------
+
+
+def _creeping_backend(node, target: float, step: float):
+    """Make the readback crawl toward the target instead of arriving at once.
+
+    A thumb travels further than a finger and takes longer than the retry budget
+    spent on the clock. This is that joint, in the small.
+    """
+    names = list(node.joint_names[:2])
+    reached = {name: 0.0 for name in names}
+
+    def creeping_apply(target_map, control_mode):
+        for name in names:
+            if name in target_map:
+                gap = target - reached[name]
+                reached[name] += step if gap > step else gap
+        node.backend.positions = [
+            reached.get(name, 0.0) for name in node.joint_names
+        ]
+        return len(target_map)
+
+    node.backend.apply_joint_targets = creeping_apply
+    return reached
+
+
+def test_a_joint_still_closing_in_does_not_spend_the_budget(bridge_node):
+    """The budget catches a command the hand never received, not a slow joint."""
+    bridge_node._creep = _creeping_backend(bridge_node, target=0.3, step=0.02)
+    bridge_node._joint_states_command_callback(_command_msg(bridge_node, 0.3))
+
+    # 0.3 rad at 0.02 per cycle needs ~10 cycles to come inside the 0.10 rad
+    # tolerance — more than the 8-attempt budget, which is the point.
+    cycles = 0
+    for _ in range(20):
+        bridge_node.pending_command["last_send_monotonic"] -= 10.0
+        _cycle(bridge_node)
+        bridge_node._command_retry_tick()
+        cycles += 1
+        if bridge_node.pending_command is None:
+            break
+        # Never runs away with the budget while the gap keeps shrinking.
+        assert bridge_node.pending_command["attempts"] <= 2
+    assert cycles > bridge_node.command_retry_max_attempts, (
+        "the creep arrived inside the old budget, so this proves nothing"
+    )
+
+    assert bridge_node.pending_command is None, "a closing joint was given up on"
+
+
+def test_a_stalled_joint_still_exhausts_the_budget(bridge_node):
+    """No progress, no reprieve: this is what the budget exists for."""
+    def stalled_apply(target_map, control_mode):
+        return len(target_map)
+
+    bridge_node.backend.apply_joint_targets = stalled_apply
+    bridge_node._joint_states_command_callback(_command_msg(bridge_node, 0.9))
+
+    for _ in range(bridge_node.command_retry_max_attempts + 4):
+        if bridge_node.pending_command is None:
+            break
+        bridge_node.pending_command["last_send_monotonic"] -= 10.0
+        _cycle(bridge_node)
+        bridge_node._command_retry_tick()
+
+    assert bridge_node.pending_command is None
+    assert bridge_node._command_delivery_failed
+
+
+def test_a_settled_command_reports_the_attempts_it_spent(bridge_node):
+    """Reporting 0 made every give-up read 'after 0 attempts' downstream."""
+    def stalled_apply(target_map, control_mode):
+        return len(target_map)
+
+    bridge_node.backend.apply_joint_targets = stalled_apply
+    bridge_node._joint_states_command_callback(_command_msg(bridge_node, 0.9))
+
+    for _ in range(bridge_node.command_retry_max_attempts + 4):
+        if bridge_node.pending_command is None:
+            break
+        bridge_node.pending_command["last_send_monotonic"] -= 10.0
+        _cycle(bridge_node)
+        bridge_node._command_retry_tick()
+
+    assert bridge_node._last_command_attempts >= bridge_node.command_retry_max_attempts
+
+
+def test_the_wall_clock_deadline_bounds_a_creep_that_never_arrives(bridge_node):
+    """Progress alone must not extend the wait for ever."""
+    bridge_node.command_verify_timeout_s = 0.0
+    _creeping_backend(bridge_node, target=0.3, step=0.001)
+    bridge_node._joint_states_command_callback(_command_msg(bridge_node, 0.3))
+    bridge_node.pending_command["deadline"] = 0.0
+
+    bridge_node.pending_command["last_send_monotonic"] -= 10.0
+    _cycle(bridge_node)
+    bridge_node._command_retry_tick()
+
+    assert bridge_node.pending_command is None
+    assert bridge_node._command_delivery_failed

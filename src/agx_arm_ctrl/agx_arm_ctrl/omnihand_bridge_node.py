@@ -930,6 +930,11 @@ class OmniHandBridgeNode(Node):
         self.declare_parameter("command_retry_max_attempts", 8)
         self.declare_parameter("command_retry_period_s", 0.3)
         self.declare_parameter("command_verify_tolerance_rad", 0.10)
+        # Absolute ceiling on one command's verification, and how much the gap
+        # has to shrink to count as progress. The attempt budget measures being
+        # stuck; this bounds being slow.
+        self.declare_parameter("command_verify_timeout_s", 6.0)
+        self.declare_parameter("command_progress_epsilon_rad", 0.01)
         # When the backend reports a communication fault (请求超时 storms), every
         # further periodic SDK poll is a real CANFD request that feeds the bus
         # error flood — with one-shot off a failing FD frame already keeps the
@@ -998,6 +1003,12 @@ class OmniHandBridgeNode(Node):
         )
         self.command_verify_tolerance_rad = float(
             self.get_parameter("command_verify_tolerance_rad").value
+        )
+        self.command_verify_timeout_s = float(
+            self.get_parameter("command_verify_timeout_s").value
+        )
+        self.command_progress_epsilon_rad = float(
+            self.get_parameter("command_progress_epsilon_rad").value
         )
         self.fault_poll_interval_s = max(
             0.0, float(self.get_parameter("fault_poll_interval_s").value)
@@ -1114,6 +1125,9 @@ class OmniHandBridgeNode(Node):
         # command or by a stop. Lets the FollowJointTrajectory bridge fail the
         # goal instead of reporting SUCCEEDED on an undelivered pose.
         self._command_delivery_failed = False
+        # Attempts the last settled command spent, so a verdict published after
+        # it was cleared still carries its own count instead of zero.
+        self._last_command_attempts = 0
         self.joint_read_min_interval_s = (
             1.0 / self.joint_read_rate if self.joint_read_rate > 0.0 else 0.0
         )
@@ -1560,11 +1574,14 @@ class OmniHandBridgeNode(Node):
             return
 
         self._command_delivery_failed = False
+        self._last_command_attempts = 0
         self.pending_command = {
             "targets": dict(target_map),
             "control_mode": control_mode,
             "attempts": 0,
             "last_send_monotonic": 0.0,
+            "best_error": float("inf"),
+            "deadline": time.monotonic() + self.command_verify_timeout_s,
         }
         self._send_pending_command()
         if not self.command_retry_enabled:
@@ -1625,19 +1642,49 @@ class OmniHandBridgeNode(Node):
         if call.outcome in (CallOutcome.DROPPED, CallOutcome.REJECTED):
             raise ValueError(f"hand command {call.outcome.value}: {call.detail}")
 
-    def _pending_command_verified(self, pending: dict[str, Any]) -> bool:
+    def _pending_command_error(self, pending: dict[str, Any]) -> float | None:
+        """Largest per-joint gap to the target, or None without a fresh readback.
+
+        Only a real SDK readback taken after the last send counts; right after
+        apply_joint_targets the backend caches the target optimistically.
+        """
         if self.backend.communication_fault:
-            return False
-        # Only trust a real SDK readback taken after the last send; right after
-        # apply_joint_targets the backend caches the target optimistically.
+            return None
         if self.last_joint_read_monotonic <= pending["last_send_monotonic"]:
-            return False
+            return None
         positions = dict(zip(self.joint_names, self.cached_positions))
-        return all(
-            joint_name in positions
-            and abs(positions[joint_name] - target) <= self.command_verify_tolerance_rad
-            for joint_name, target in pending["targets"].items()
-        )
+        worst = 0.0
+        for joint_name, target in pending["targets"].items():
+            if joint_name not in positions:
+                return float("inf")
+            worst = max(worst, abs(positions[joint_name] - target))
+        return worst
+
+    def _pending_command_verified(self, pending: dict[str, Any]) -> bool:
+        error = self._pending_command_error(pending)
+        return error is not None and error <= self.command_verify_tolerance_rad
+
+    def _pending_is_closing_in(self, pending: dict[str, Any]) -> bool:
+        """Whether the hand is still measurably approaching the target.
+
+        The attempt budget exists to catch a command the hand never received, so
+        it has to measure being STUCK, not being SLOW. A thumb travels further
+        than a finger and takes longer than 8 x the retry period; spending the
+        budget on the clock gave up mid-travel, and every retry re-sent the
+        setpoint into a joint still moving toward it. Progress therefore returns
+        the budget, and `command_verify_timeout_s` bounds the whole attempt.
+        """
+        error = self._pending_command_error(pending)
+        if error is None:
+            return False
+        previous = pending["best_error"]
+        pending["best_error"] = min(previous, error)
+        # The first measurement only establishes the baseline. Counting it as
+        # progress would compare against infinity and hand back the budget once
+        # for free, including to a command whose sends are being rejected.
+        if previous == float("inf"):
+            return False
+        return error < previous - self.command_progress_epsilon_rad
 
     def _command_retry_tick(self) -> None:
         pending = self.pending_command
@@ -1666,6 +1713,7 @@ class OmniHandBridgeNode(Node):
                     f"OmniHand {pending['control_mode']} command verified after "
                     f"{pending['attempts']} attempts"
                 )
+            self._last_command_attempts = int(pending["attempts"])
             self.pending_command = None
             self._publish_command_verdict()
             return
@@ -1681,14 +1729,28 @@ class OmniHandBridgeNode(Node):
         if self.last_joint_read_monotonic <= pending["last_send_monotonic"]:
             return
 
-        if pending["attempts"] >= self.command_retry_max_attempts:
+        # A joint still closing in returns the budget: the retry exists for a
+        # command the hand never received, and a slow joint is not that. The
+        # deadline below is what bounds the wait.
+        if self._pending_is_closing_in(pending):
+            pending["attempts"] = 0
+
+        expired = time.monotonic() >= pending["deadline"]
+        if expired or pending["attempts"] >= self.command_retry_max_attempts:
+            gap = self._pending_command_error(pending)
+            measured = "no readback" if gap is None else f"{gap:.3f} rad short"
+            reason = (
+                f"{self.command_verify_timeout_s:.1f}s elapsed" if expired
+                else f"{pending['attempts']} attempts without progress"
+            )
             self.get_logger().warn(
-                f"OmniHand {pending['control_mode']} command not verified within "
-                f"{pending['attempts']} attempts (tolerance "
+                f"OmniHand {pending['control_mode']} command not verified "
+                f"({reason}, {measured}, tolerance "
                 f"{self.command_verify_tolerance_rad:.3f} rad); giving up — fingers may be "
                 "in contact or the bus is congested"
             )
             self._command_delivery_failed = True
+            self._last_command_attempts = int(pending["attempts"])
             self.pending_command = None
             self._publish_command_verdict()
             return
@@ -2160,8 +2222,12 @@ class OmniHandBridgeNode(Node):
         pending = self.pending_command
         status_msg.command_pending = pending is not None
         status_msg.command_delivery_failed = self._command_delivery_failed
+        # A settled command has already been cleared, so its own count is what
+        # the consumer needs: reporting 0 made every give-up read "after 0
+        # attempts" in the FollowJointTrajectory result.
         status_msg.command_attempts = min(
-            0xFFFF, int(pending["attempts"]) if pending is not None else 0
+            0xFFFF,
+            int(pending["attempts"]) if pending is not None else self._last_command_attempts,
         )
         status_msg.joint_readback_age_s = (
             float(now - self.last_good_joint_read_monotonic)
