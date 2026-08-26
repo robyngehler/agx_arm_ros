@@ -153,6 +153,10 @@ class O12ProSdkBackend:
         # ends where this sensor says and cannot wait a second to hear it.
         self.tactile_read_interval_s = SDK_TACTILE_READ_INTERVAL_S
         self._extra_fault_text = ""
+        # Readback outside the command window, kept separate from the status
+        # read's extras so neither overwrites the other.
+        self._window_warning = ""
+        self._last_out_of_window: list[str] = []
 
         sdk_class, finger_enum, hand_type_enum, _control_mode_enum = _load_o12_pro_symbols(
             sdk_python_dir
@@ -206,10 +210,35 @@ class O12ProSdkBackend:
         self.status_text = message
 
     def _clamp(self, values: list[float]) -> list[float]:
+        """Saturate a COMMAND into this side's active-joint window.
+
+        Only commands. A readback saturated the same way stops being a
+        measurement: it reports the window edge whatever the joint did, and a
+        target that never matches it can never be verified.
+        """
         return [
             min(max(self._active_joint_min[index], float(value)), self._active_joint_max[index])
             for index, value in enumerate(values)
         ]
+
+    def _report_out_of_window(self, positions: list[float]) -> None:
+        """Name a readback outside the command window instead of hiding it.
+
+        Out of window means the window and the reading disagree about the
+        joint's sign convention or range — the command built from that window
+        cannot be reached, so the bridge retries it until it gives up.
+        """
+        outside = [
+            f"{self.joint_names[index]}={value:+.4f} outside "
+            f"[{self._active_joint_min[index]:+.4f}, {self._active_joint_max[index]:+.4f}]"
+            for index, value in enumerate(positions)
+            if value < self._active_joint_min[index] or value > self._active_joint_max[index]
+        ]
+        if not outside or outside == self._last_out_of_window:
+            self._last_out_of_window = outside
+            return
+        self._last_out_of_window = outside
+        self._window_warning = f"; readback outside the command window: {'; '.join(outside)}"
 
     def _current_active_joint_targets(self) -> list[float]:
         if any(self.positions):
@@ -268,7 +297,9 @@ class O12ProSdkBackend:
         without one, it kept closing.
         """
         try:
-            hold_positions = self.read_joint_state()
+            # The readback is a measurement now, so it is clamped HERE, where it
+            # becomes a command again.
+            hold_positions = self._clamp(self.read_joint_state())
             self.hand.set_all_active_joint_angles(hold_positions)
             self.positions = list(hold_positions)
             self.control_mode = "stopped"
@@ -284,7 +315,11 @@ class O12ProSdkBackend:
                     "active joint angles length mismatch: expected "
                     f"{len(self.joint_names)}, got {len(raw)}"
                 )
-            self.positions = self._clamp([float(value) for value in raw])
+            positions = [float(value) for value in raw]
+            self._report_out_of_window(positions)
+            # Stored as measured. Commands are still clamped in
+            # apply_joint_targets; a measurement is not a command.
+            self.positions = positions
             self._clear_fault("o12 pro readback active")
         except Exception as exc:
             self._set_fault("o12 pro joint readback failed", exc)
@@ -341,7 +376,7 @@ class O12ProSdkBackend:
             active_joint_stalled=list(self.stalled),
             active_joint_over_temperature=list(self.over_temperature),
             active_joint_over_current=list(self.over_current),
-            status_text=self.status_text + self._extra_fault_text,
+            status_text=self.status_text + self._extra_fault_text + self._window_warning,
         )
 
     def read_tactile(self) -> OmniHandTactileSnapshot:
