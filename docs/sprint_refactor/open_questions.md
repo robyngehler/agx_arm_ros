@@ -269,3 +269,34 @@ neither justifies a sprint; they are here so they are not rediscovered.
   need the adapter physically removed, `POLLNVAL` needs the descriptor closed
   underneath the thread. This is submodule fault-injection work, not a reason to
   re-run any demo.
+
+## Opened 2026-08-27 (hardware data)
+
+- **The right arm's reported joint torque has a sign that flips sample to sample,
+  and it is not usable for anything that reads `effort`.** Measured on a
+  1015-sample freedrive residual capture over seven poses
+  (`logs/right_arm_gravity_freedrive.csv`): correlation between the reported
+  torque and the URDF gravity model is **0.00** on every joint, while the left
+  arm over the same poses reads **-0.992 to -1.000**. The magnitude is right —
+  ~7.75 Nm on joint2 where the model wants 9.3 — but the sign changes on 646 to
+  701 of 1014 consecutive samples, against 2 to 5 on the left arm's joints 1-4.
+  Reconstructing the raw CAN word from the torque (`torque = slope * current /
+  gear`) gives values alternating between `1636` and `63900`, i.e. `N` and
+  `65536 - N`: the same magnitude with the two's-complement sign bit set.
+  Averaged over a pose that is zero, which is why a fit of this data returns a
+  per-joint scale of ~0.02 and would switch gravity compensation off.
+
+  Two things are established and one is not. The shared decoder reads bytes 2-3
+  as **signed** int16 (`ConvertToNegative_16bit` at its default), while the Nero
+  message doc declares that field **uint16**
+  (`msgs/nero/default/feedback/arm_feedback_high_spd.py`) — but the data says the
+  device really does send two's complement, so the decoder matches the hardware
+  and the doc is what is wrong. Both arms share that decoder and only one arm
+  misbehaves, so the tier is not the discriminator either. **Where the alternation
+  comes from is open.**
+
+  Next measurement, hardware: `candump can_nero_right,252:7FF` while the arm holds
+  a loaded pose, to see whether the raw bytes alternate on the wire or whether the
+  frame is being assembled wrong above it. Until that is answered, treat the right
+  arm's `effort` as unavailable — it is published on `feedback/joint_states` like
+  any other field and nothing downstream currently says it cannot be trusted.
