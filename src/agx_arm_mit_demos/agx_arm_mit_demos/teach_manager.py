@@ -1410,13 +1410,21 @@ class TeachManagerNode(Node):
         as long as they chose the same one. Mixing them would silently skew a duo
         recording against itself.
         """
-        clocks = {arm.capture_uses_stamp for arm in self.arms}
+        # Only arms that captured something have a clock: the flag is decided on
+        # the first message received, so an arm held still still carries the
+        # start_capture default and comparing it would be a false mismatch.
+        clocks = {arm.capture_uses_stamp for arm in self.arms if samples[arm]}
         if len(clocks) > 1:
             raise RuntimeError(
                 "arms captured on different clocks (one publishes a header stamp, "
                 "one does not); a duo recording cannot be put on one time axis"
             )
-        origin = min(samples[arm][0].time_from_start for arm in self.arms)
+        # An arm held still stores nothing, so it contributes no origin. Only the
+        # arms that captured something define the shared axis.
+        starts = [samples[arm][0].time_from_start for arm in self.arms if samples[arm]]
+        if not starts:
+            return samples
+        origin = min(starts)
         return {
             arm: [
                 RecorderSnapshot(
@@ -1432,6 +1440,8 @@ class TeachManagerNode(Node):
 
     @staticmethod
     def _achieved_rate(arm_samples: list[RecorderSnapshot]) -> float:
+        if len(arm_samples) < 2:
+            return 0.0
         span = arm_samples[-1].time_from_start - arm_samples[0].time_from_start
         return (len(arm_samples) - 1) / span if span > 0.0 else 0.0
 
@@ -1468,8 +1478,18 @@ class TeachManagerNode(Node):
                 b.time_from_start - a.time_from_start
                 for a, b in zip(arm_samples, arm_samples[1:])
             )
-            median = gaps[len(gaps) // 2] if gaps else 0.0
             clock = "frame stamp" if arm.capture_uses_stamp else "arrival time"
+            if not gaps:
+                # An arm held still stores nothing: capture refuses a read whose
+                # positions have not changed. It is not part of the take, so this
+                # is a statement about it, not a fault.
+                self.get_logger().info(
+                    f"[{arm.label}] captured {len(arm_samples)} update(s) over "
+                    f"{elapsed:.1f}s ({arm.capture_stalled} stalled read(s)); "
+                    "no interval to report"
+                )
+                continue
+            median = gaps[len(gaps) // 2]
             self.get_logger().info(
                 f"[{arm.label}] captured {len(arm_samples)} updates at "
                 f"{self._achieved_rate(arm_samples):.1f} Hz over {elapsed:.1f}s "

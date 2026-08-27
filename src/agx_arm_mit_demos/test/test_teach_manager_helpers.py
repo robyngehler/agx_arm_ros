@@ -557,6 +557,7 @@ def test_arms_are_rebased_onto_one_time_axis():
 
 
 def test_mixed_capture_clocks_are_refused():
+    """Both arms captured, on different clocks: the axis cannot be shared."""
     import pytest
 
     from agx_arm_mit_demos.teach_manager import TeachManagerNode
@@ -566,7 +567,28 @@ def test_mixed_capture_clocks_are_refused():
     node = TeachManagerNode.__new__(TeachManagerNode)
     node.arms = [left, right]
     with pytest.raises(RuntimeError, match="different clocks"):
-        node._rebase_capture_times({left: [], right: []})
+        node._rebase_capture_times(
+            {left: _snapshots([0.0, 0.01], [[0.0], [0.1]]),
+             right: _snapshots([0.0, 0.01], [[0.0], [0.1]])}
+        )
+
+
+def test_an_arm_that_captured_nothing_is_not_a_clock_mismatch():
+    """The flag is decided on the first message, so an arm held still carries
+    the default. Comparing it refused a valid single-side take."""
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+
+    left, right = _endpoint(), _endpoint()
+    left._capture_uses_stamp, right._capture_uses_stamp = False, True
+    node = TeachManagerNode.__new__(TeachManagerNode)
+    node.arms = [left, right]
+
+    rebased = node._rebase_capture_times(
+        {left: _snapshots([0.5, 0.51], [[0.0], [0.1]]), right: []}
+    )
+
+    assert [round(s.time_from_start, 6) for s in rebased[left]] == [0.0, 0.01]
+    assert rebased[right] == []
 
 
 # --- move to a replay's start pose ---------------------------------------
@@ -1047,16 +1069,21 @@ def test_a_single_side_take_is_not_refused_for_the_still_arm(monkeypatch):
     node._callbacks_served = 0
     node.RECORD_DRAIN_LIMIT = 1
     node._step = 0
-    node._trim_pre_motion = lambda samples: samples
-    node._rebase_capture_times = lambda samples: samples
-    node._report_capture = lambda samples, elapsed: None
+    # Deliberately NOT stubbing _trim_pre_motion / _rebase_capture_times /
+    # _report_capture: a still arm reaches all three, and stubbing them is what
+    # hid an IndexError on the arm that stored nothing.
+    logged = []
+    node.get_logger = lambda: SimpleNamespace(
+        info=logged.append, warn=logged.append, error=logged.append
+    )
+    node._logged = logged
 
     def fake_spin(_node, timeout_sec=0.0):
         # The left arm is guided; the right is held, so it publishes nothing new.
         step = node._step
         node._step = step + 1
         if step < 8:
-            _feed(left, [step * 0.01, 0.0], step * 10_000_000)
+            _feed(left, [step * 0.01, 0.0], (step + 1) * 10_000_000)
             node._callbacks_served += 1
 
     monkeypatch.setattr(rclpy, "spin_once", fake_spin)
@@ -1134,3 +1161,69 @@ def test_a_zero_sign_is_refused(tmp_path):
 
     with pytest.raises(RuntimeError, match="must not be zero"):
         stub._write(arm, _FlatGravity(), [_sample(joints, [0.1] * 7, [1.0] * 7)], "a")
+
+
+def test_an_arm_that_stored_nothing_is_reported_not_crashed(monkeypatch):
+    """A still arm has no interval to report. Indexing one is an IndexError that
+    lands after the take was already captured."""
+    node = _manager_with_arms(["left_arm", "right_arm"], _config())
+    left, right = node.arms
+    for arm in node.arms:
+        arm.start_capture(0.01)
+    logged = []
+    node.get_logger = lambda: SimpleNamespace(
+        info=logged.append, warn=logged.append, error=logged.append
+    )
+    for step in range(6):
+        _feed(left, [step * 0.01, 0.0], (step + 1) * 10_000_000)
+
+    samples = {left: left.stop_capture(), right: right.stop_capture()}
+    assert samples[right] == []
+
+    node._report_capture(samples, elapsed=1.0)
+
+    assert any("right_arm" in str(m) and "no interval" in str(m) for m in logged)
+
+
+def test_one_stored_sample_is_also_reported_not_crashed():
+    """The case that actually crashed: one sample, so zero intervals."""
+    node = _manager_with_arms(["left_arm", "right_arm"], _config())
+    left, right = node.arms
+    for arm in node.arms:
+        arm.start_capture(0.01)
+    logged = []
+    node.get_logger = lambda: SimpleNamespace(
+        info=logged.append, warn=logged.append, error=logged.append
+    )
+    for step in range(6):
+        _feed(left, [step * 0.01, 0.0], (step + 1) * 10_000_000)
+    _feed(right, [0.5, 0.0], 0)
+
+    samples = {left: left.stop_capture(), right: right.stop_capture()}
+    assert len(samples[right]) == 1
+
+    node._report_capture(samples, elapsed=1.0)
+
+    assert any("right_arm" in str(m) and "no interval" in str(m) for m in logged)
+
+
+def test_the_shared_time_axis_ignores_an_arm_that_stored_nothing():
+    node = _manager_with_arms(["left_arm", "right_arm"], _config())
+    left, right = node.arms
+    for arm in node.arms:
+        arm.start_capture(0.01)
+    for step in range(6):
+        _feed(left, [step * 0.01, 0.0], (step + 100) * 10_000_000)
+
+    samples = {left: left.stop_capture(), right: right.stop_capture()}
+    rebased = node._rebase_capture_times(samples)
+
+    assert rebased[left][0].time_from_start == pytest.approx(0.0)
+    assert rebased[right] == []
+
+
+def test_the_achieved_rate_of_a_single_sample_is_zero():
+    from agx_arm_mit_demos.teach_manager import TeachManagerNode
+    from agx_arm_mit_controller.trajectory_io import RecordedTrajectoryPoint  # noqa: F401
+
+    assert TeachManagerNode._achieved_rate([]) == 0.0
