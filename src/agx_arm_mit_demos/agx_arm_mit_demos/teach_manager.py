@@ -1687,8 +1687,21 @@ class TeachManagerNode(Node):
         return directory / f"{sanitize_trajectory_name(arm.label)}_gravity_freedrive.csv"
 
     def _write_gravity_samples(self, arm, model, samples: list[JointState], label: str) -> int:
-        """Append samples in the schema `fit_gravity_calibration` reads."""
+        """Append samples in the schema `fit_gravity_calibration` reads.
+
+        The measured torque is converted into the gravity model's sign
+        convention before it is stored, by dividing out the controller's
+        `gravity_feedforward_sign`. The controller commands
+        `sign * scale * compute_gravity(q)`, so the motor reports the negative
+        of the model at the default sign of -1; comparing the raw reading
+        against the model made the residual twice the gravity torque and the
+        fitted scale -1. `tau_raw_*` keeps the untouched reading.
+        """
         import csv
+
+        sign = float(self.args.gravity_feedforward_sign)
+        if sign == 0.0:
+            raise RuntimeError("--gravity-feedforward-sign must not be zero")
 
         path = self._gravity_csv_path(arm)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1699,6 +1712,7 @@ class TeachManagerNode(Node):
             *[f"tau_measured_{i}" for i in range(1, count + 1)],
             *[f"tau_g_urdf_{i}" for i in range(1, count + 1)],
             *[f"tau_error_{i}" for i in range(1, count + 1)],
+            *[f"tau_raw_{i}" for i in range(1, count + 1)],
         ]
         write_header = not path.exists() or path.stat().st_size == 0
         written = 0
@@ -1720,7 +1734,8 @@ class TeachManagerNode(Node):
                     )
                     return written
                 q = [float(by_name[joint]) for joint in arm.source_joints]
-                tau_measured = [float(effort_by_name[joint]) for joint in arm.source_joints]
+                tau_raw = [float(effort_by_name[joint]) for joint in arm.source_joints]
+                tau_measured = [value / sign for value in tau_raw]
                 tau_model = model.compute_gravity(q)
                 row = {"time": time.monotonic(), "pose": label or "auto"}
                 for index in range(count):
@@ -1728,6 +1743,7 @@ class TeachManagerNode(Node):
                     row[f"tau_measured_{index + 1}"] = tau_measured[index]
                     row[f"tau_g_urdf_{index + 1}"] = tau_model[index]
                     row[f"tau_error_{index + 1}"] = tau_measured[index] - tau_model[index]
+                    row[f"tau_raw_{index + 1}"] = tau_raw[index]
                 writer.writerow(row)
                 written += 1
         self._gravity_rows[arm.label] = self._gravity_rows.get(arm.label, 0) + written
@@ -2680,6 +2696,12 @@ def parse_args() -> argparse.Namespace:
         help="Seconds of feedback logged per 'v' press",
     )
     parser.add_argument("--gravity-csv-dir", default="logs")
+    parser.add_argument(
+        "--gravity-feedforward-sign", type=float, default=-1.0,
+        help="The MIT controller's gravity_feedforward_sign. The measured torque "
+             "is divided by it so the logged residual is in the model's own sign "
+             "convention; a mismatch shows up as a fitted scale of -1.",
+    )
     # Hand mode ('g'): capture ('c') / replay ('f') OmniHand skills. Whether each
     # is wrapped in a prepare_hand_window/resume_arm_control handshake follows
     # the declared bus topology; see --hand-window below.

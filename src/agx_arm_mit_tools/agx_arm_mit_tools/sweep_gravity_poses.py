@@ -107,6 +107,12 @@ def parse_args() -> argparse.Namespace:
 		help="Log a pose the arm did not reach and continue. Default aborts, "
 			 "because a joint short of its target may be pressing on something.",
 	)
+	parser.add_argument(
+		"--feedforward-sign", type=float, default=-1.0,
+		help="The MIT controller's gravity_feedforward_sign. The measured torque is "
+			 "divided by it, so the logged residual is in the model's own sign "
+			 "convention; a mismatch shows up as a fitted scale of -1.",
+	)
 	parser.add_argument("--enable-timeout", type=float, default=5.0)
 	parser.add_argument("--dry-run", action="store_true", help="Print the plan, touch no hardware")
 	parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt")
@@ -352,6 +358,9 @@ def main() -> None:
 		gravity_model = create_gravity_model(args.backend, urdf_path)
 	except GravityModelError as exc:
 		raise SystemExit(str(exc))
+	feedforward_sign = float(args.feedforward_sign)
+	if feedforward_sign == 0.0:
+		raise SystemExit("--feedforward-sign must not be zero")
 	extras = json.loads(args.hand_joints) if args.hand_joints.strip() else None
 	limits = joint_limits(urdf_path)
 
@@ -397,6 +406,7 @@ def main() -> None:
 		*[f"tau_measured_{i}" for i in range(1, JOINT_COUNT + 1)],
 		*[f"tau_g_urdf_{i}" for i in range(1, JOINT_COUNT + 1)],
 		*[f"tau_error_{i}" for i in range(1, JOINT_COUNT + 1)],
+		*[f"tau_raw_{i}" for i in range(1, JOINT_COUNT + 1)],
 	]
 	write_header = not args.append or not csv_path.exists() or csv_path.stat().st_size == 0
 	rows: list[dict] = []
@@ -466,7 +476,11 @@ def main() -> None:
 					if q is None:
 						time.sleep(period)
 						continue
-					tau_measured = read_torques(robot)
+					tau_raw = read_torques(robot)
+					# Into the model's sign convention: the controller commands
+					# `sign * scale * model`, so the motor reports the negative of
+					# the model at the default sign of -1.
+					tau_measured = [value / feedforward_sign for value in tau_raw]
 					tau_model = gravity_model.compute_gravity(q, extras)
 					row = {"time": time.monotonic() - clock, "pose": name}
 					for i in range(JOINT_COUNT):
@@ -474,6 +488,7 @@ def main() -> None:
 						row[f"tau_measured_{i + 1}"] = tau_measured[i]
 						row[f"tau_g_urdf_{i + 1}"] = tau_model[i]
 						row[f"tau_error_{i + 1}"] = tau_measured[i] - tau_model[i]
+						row[f"tau_raw_{i + 1}"] = tau_raw[i]
 					writer.writerow(row)
 					rows.append(row)
 					time.sleep(max(0.0, period - (time.monotonic() - loop_start)))

@@ -894,7 +894,7 @@ def _gravity_stub(tmp_path):
 
     logged = []
     stub = SimpleNamespace(
-        args=SimpleNamespace(gravity_csv_dir=str(tmp_path)),
+        args=SimpleNamespace(gravity_csv_dir=str(tmp_path), gravity_feedforward_sign=-1.0),
         _gravity_rows={},
         get_logger=lambda: SimpleNamespace(error=logged.append, info=logged.append),
     )
@@ -924,11 +924,13 @@ def test_gravity_capture_writes_the_schema_the_fitter_reads(tmp_path):
 
     rows = list(csv.DictReader(stub._gravity_csv_path(arm).open(encoding="utf-8")))
     assert len(rows) == 2
-    # The three columns fit_gravity_calibration reads, per joint.
+    # The three columns fit_gravity_calibration reads, per joint. The reading of
+    # +2.5 is logged as -2.5: the model's convention, at a feedforward sign of -1.
     assert float(rows[0]["q1"]) == pytest.approx(0.1)
-    assert float(rows[0]["tau_measured_7"]) == pytest.approx(2.5)
+    assert float(rows[0]["tau_raw_7"]) == pytest.approx(2.5)
+    assert float(rows[0]["tau_measured_7"]) == pytest.approx(-2.5)
     assert float(rows[0]["tau_g_urdf_7"]) == pytest.approx(1.0)
-    assert float(rows[0]["tau_error_7"]) == pytest.approx(1.5)
+    assert float(rows[0]["tau_error_7"]) == pytest.approx(-3.5)
     assert rows[0]["pose"] == "pose_a"
 
 
@@ -1088,3 +1090,47 @@ def test_a_take_is_still_refused_when_the_recorded_arm_never_moved(monkeypatch):
 
     with pytest.raises(RuntimeError, match="No joint movement detected"):
         node._record_all_arms([left])
+
+
+def test_the_measurement_is_logged_in_the_model_s_sign_convention(tmp_path):
+    """The controller commands `sign * scale * model`, so the motor reports the
+    negative of the model. Comparing the raw reading made the residual twice the
+    gravity torque and the fitted scale -1."""
+    import csv
+
+    stub, _ = _gravity_stub(tmp_path)
+    joints = [f"joint{i}" for i in range(1, 8)]
+    arm = SimpleNamespace(label="left_arm", source_joints=joints)
+    # The model wants +1.0; a correct arm reports -1.0 at a feedforward sign of -1.
+    samples = [_sample(joints, [0.1] * 7, [-1.0] * 7)]
+
+    stub._write(arm, _FlatGravity(), samples, "pose_a")
+
+    row = next(iter(csv.DictReader(stub._gravity_csv_path(arm).open(encoding="utf-8"))))
+    assert float(row["tau_raw_1"]) == pytest.approx(-1.0), "the raw reading is kept"
+    assert float(row["tau_measured_1"]) == pytest.approx(1.0)
+    assert float(row["tau_error_1"]) == pytest.approx(0.0), "a correct arm has no residual"
+
+
+def test_a_positive_sign_convention_is_honoured(tmp_path):
+    stub, _ = _gravity_stub(tmp_path)
+    stub.args.gravity_feedforward_sign = 1.0
+    joints = [f"joint{i}" for i in range(1, 8)]
+    arm = SimpleNamespace(label="left_arm", source_joints=joints)
+
+    stub._write(arm, _FlatGravity(), [_sample(joints, [0.1] * 7, [1.0] * 7)], "a")
+
+    import csv
+    row = next(iter(csv.DictReader(stub._gravity_csv_path(arm).open(encoding="utf-8"))))
+    assert float(row["tau_measured_1"]) == pytest.approx(1.0)
+    assert float(row["tau_error_1"]) == pytest.approx(0.0)
+
+
+def test_a_zero_sign_is_refused(tmp_path):
+    stub, _ = _gravity_stub(tmp_path)
+    stub.args.gravity_feedforward_sign = 0.0
+    joints = [f"joint{i}" for i in range(1, 8)]
+    arm = SimpleNamespace(label="left_arm", source_joints=joints)
+
+    with pytest.raises(RuntimeError, match="must not be zero"):
+        stub._write(arm, _FlatGravity(), [_sample(joints, [0.1] * 7, [1.0] * 7)], "a")

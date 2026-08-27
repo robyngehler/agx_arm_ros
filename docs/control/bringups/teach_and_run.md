@@ -429,6 +429,21 @@ to clear it) · `a` capture current pose → named anchor in `arm_config.yaml` �
 recording → catalogue `waypoints` · `v` log the gravity residual at the current pose (freedrive) ·
 `[`/`]` select recording or anchor target · `s`/`h`/`q`.
 
+> **The gravity residual is logged in the model's sign convention (2026-08-27).** The MIT controller
+> commands `gravity_feedforward_sign * scale * compute_gravity(q)`, and that sign defaults to **-1**, so
+> the motor reports roughly the negative of the model. `compare_gravity` compared the raw reading
+> against the raw model from the start, which made the residual twice the gravity torque and any fit of
+> it come back with a scale near -1 — a convention error recorded as a calibration. The freedrive
+> capture, `agx_arm_gravity_pose_sweep` and `compare_gravity` now divide the reading by
+> `--feedforward-sign` before storing it, and keep the untouched value as `tau_raw_*`. An older log can
+> be converted with `scripts/convert_gravity_log_sign.py` instead of being re-recorded.
+>
+> Measured on a 1104-sample left-arm freedrive set over seven poses (2026-08-26): correlation between
+> reading and model -0.992 to -1.000 on every joint, and per-joint RMS residual falls from
+> 10.6/12.2/5.8/4.0/0.6/1.1/1.0 Nm to 1.10/0.93/0.03/0.05/0.04/0.02/0.02 once the sign is applied. The
+> hand-and-mount gravity model is therefore already exact on joints 3-7; joints 1 and 2 are
+> over-predicted by about 17 % (fitted scale 0.826 and 0.836).
+
 > **`--movement-threshold` is a distance again (2026-08-26).** It used to be compared against the
 > difference between two consecutive feedback samples, which made it a speed — 0.01 rad at the ~73 Hz
 > a take stores is 0.73 rad/s, and at the arms' different rates it meant 1.0 rad/s on the right and

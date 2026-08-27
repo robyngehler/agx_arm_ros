@@ -30,12 +30,21 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--urdf-path", default="")
 	parser.add_argument("--csv-path", default="logs/nero_urdf_gravity_compare.csv")
 	parser.add_argument("--append", action="store_true", help="Append samples to an existing CSV instead of overwriting it")
+	parser.add_argument(
+		"--feedforward-sign", type=float, default=-1.0,
+		help="The MIT controller's gravity_feedforward_sign. The measured torque is "
+			 "divided by it, so the residual is in the model's own sign convention; "
+			 "a mismatch shows up as a fitted scale of -1.",
+	)
 	parser.add_argument("--enable-timeout", type=float, default=5.0)
 	return parser.parse_args()
 
 
 def main() -> None:
 	args = parse_args()
+	feedforward_sign = float(args.feedforward_sign)
+	if feedforward_sign == 0.0:
+		raise SystemExit("--feedforward-sign must not be zero")
 	try:
 		gravity_model = create_gravity_model(args.backend, args.urdf_path or None)
 	except GravityModelError as exc:
@@ -56,6 +65,7 @@ def main() -> None:
 		*[f"tau_measured_{i}" for i in range(1, 8)],
 		*[f"tau_g_urdf_{i}" for i in range(1, 8)],
 		*[f"tau_error_{i}" for i in range(1, 8)],
+		*[f"tau_raw_{i}" for i in range(1, 8)],
 	]
 	file_mode = "a" if args.append else "w"
 	write_header = not args.append or not csv_path.exists() or csv_path.stat().st_size == 0
@@ -84,13 +94,20 @@ def main() -> None:
 					time.sleep(period)
 					continue
 				q = [float(value) for value in joint_angles.msg]
-				tau_measured = []
+				tau_raw = []
 				for joint_index in range(1, 8):
 					motor_state = robot.get_motor_states(joint_index)
-					tau_measured.append(0.0 if motor_state is None else float(motor_state.msg.torque))
+					tau_raw.append(0.0 if motor_state is None else float(motor_state.msg.torque))
+				# Into the model's sign convention: the controller commands
+				# `sign * scale * model`, so the motor reports the negative of the
+				# model at the default sign of -1. Comparing the raw reading made
+				# the residual twice the gravity torque and the fitted scale -1.
+				tau_measured = [value / feedforward_sign for value in tau_raw]
 				tau_model = gravity_model.compute_gravity(q)
 				tau_error = [tau_measured[i] - tau_model[i] for i in range(7)]
-				writer.writerow([time.monotonic() - start, *q, *tau_measured, *tau_model, *tau_error])
+				writer.writerow(
+					[time.monotonic() - start, *q, *tau_measured, *tau_model, *tau_error, *tau_raw]
+				)
 				print(f"q={q}")
 				print(f"tau_measured={tau_measured}")
 				print(f"tau_g_urdf={tau_model}")
