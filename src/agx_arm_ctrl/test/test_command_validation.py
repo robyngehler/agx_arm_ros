@@ -210,6 +210,11 @@ class _CountingArm:
         # The mode bracket the setpoint cycle opens and must always close.
         self.bracket = []
         self.on_send = None
+        self.on_move_j = None
+
+    def move_j(self, q):
+        if self.on_move_j is not None:
+            self.on_move_j(q)
 
     def set_motion_mode(self, _mode):
         pass
@@ -488,13 +493,19 @@ def test_an_emergency_stop_overtakes_the_queued_setpoints():
         node._move_mit_callback(_msg((1, 2, 3), (0.1, 0.2, 0.3)))
 
     order = []
-    arm.on_send = lambda kwargs: order.append("stop" if kwargs["kp"] == 0.0 else "setpoint")
+    arm.on_send = lambda kwargs: order.append("setpoint")
+    arm.on_move_j = lambda _q: order.append("hold")
 
-    stopper = threading.Thread(target=node._submit_damped_stop_mit)
+    # The stop's own work is the MOVE-J hold. There is deliberately no kp=0 MIT
+    # command to send here any more: it would end the setpoint without stiffness,
+    # and a sagging arm is not a stop.
+    stopper = threading.Thread(
+        target=lambda: node._sdk_safety("move_j", lambda: arm.move_j([0.0] * 7))
+    )
     stopper.start()
-    time.sleep(0.05)  # let the stop reach the queue behind the setpoints
+    time.sleep(0.05)  # let the hold reach the queue behind the setpoints
     release.set()
     stopper.join(3.0)
     _drain(node)
 
-    assert order[:7] == ["stop"] * 7, f"a setpoint went out before the stop: {order[:9]}"
+    assert order[0] == "hold", f"a setpoint went out before the stop: {order[:9]}"

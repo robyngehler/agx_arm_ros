@@ -16,7 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
-from std_srvs.srv import Empty, SetBool
+from std_srvs.srv import Empty, SetBool, Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.srv import ClaimDevice
@@ -233,6 +233,9 @@ class NeroMitControllerNode(Node):
         self.trajectory_start_monotonic = 0.0
         self.hold_reference: Optional[SampledTrajectoryPoint] = None
         self.last_stale_feedback_log = 0.0
+        # One driver-hold request per stale-feedback outage, re-sent on a
+        # slow cadence while it lasts: a service call is not a stream.
+        self._last_driver_hold_request = 0.0
         self._stale_since_monotonic: Optional[float] = None
         # Two preloaded gravity models, one active reference. The control loop
         # reads `gravity_model`; ~/payload_attached only swaps which of the two
@@ -301,6 +304,12 @@ class NeroMitControllerNode(Node):
         )
         self._claim_client = self.create_client(
             ClaimDevice, "claim_device", callback_group=self.callback_group
+        )
+        # The rung below a MIT hold: the driver's MOVE-J at the current pose.
+        # Relative, so it resolves to the arm namespace this controller shares
+        # with its driver, exactly as claim_device does.
+        self._driver_hold_client = self.create_client(
+            Trigger, "hold_current_pose", callback_group=self.callback_group
         )
         self.create_subscription(
             AgxDeviceCapability,
@@ -1336,6 +1345,22 @@ class NeroMitControllerNode(Node):
         del goal_handle
         return CancelResponse.ACCEPT
 
+    @staticmethod
+    def _end_goal_stopped(goal_handle) -> None:
+        """Terminal transition for a goal that was stopped, in the state rcl allows.
+
+        ``canceled()`` is legal only out of CANCELING, i.e. once this server has
+        accepted the action client's own cancel request. A stop arriving on any
+        other surface — the ``cancel_trajectory`` service, the duo e-stop — leaves
+        the goal EXECUTING, where the only terminal transition is ``abort()``.
+        Calling ``canceled()`` there raises out of the execute callback, and rclpy
+        reports the goal aborted anyway, minus whatever the callback had left to do.
+        """
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+        else:
+            goal_handle.abort()
+
     def _execute_follow_joint_trajectory(self, goal_handle):
         with self.state_lock:
             buffer, error_code, detail = self._validate_trajectory_goal(goal_handle.request.trajectory)
@@ -1377,7 +1402,7 @@ class NeroMitControllerNode(Node):
                         self.external_cancel_requested = False
                         self.active_goal_handle = None
                         self._set_execution_state(ExecutionState.CANCELING_TO_HOLD)
-                        goal_handle.canceled()
+                        self._end_goal_stopped(goal_handle)
                         return self._failed_result(
                             FollowJointTrajectory.Result.INVALID_GOAL,
                             "Goal canceled by external MIT cancel request",
@@ -1642,18 +1667,21 @@ class NeroMitControllerNode(Node):
                         self.active_trajectory = None
                         self.hold_reference = None
                         self.holding_final_point = False
-                if now - self.last_stale_feedback_log > 1.0:
-                    self.get_logger().warn(
-                        "Feedback is stale; streaming damped-stop MIT commands (dead-man)"
-                    )
-                    self.last_stale_feedback_log = now
                 self._set_execution_state(ExecutionState.STALE_FEEDBACK)
-                # Dead-man: the firmware executes the LAST received MIT command
-                # indefinitely — going silent here left a moving arm moving
-                # (runaway observed live during a teach recording). Stream a
-                # kd-damped zero-velocity command instead so the firmware's
-                # active setpoint is a stop, not the last motion.
-                self._publish_damped_stop_command(now - self._stale_since_monotonic)
+                # The firmware executes the LAST received MIT command
+                # indefinitely, so going silent leaves a moving arm moving
+                # (runaway observed live during a teach recording). This
+                # controller cannot answer that itself: a MIT hold needs a pose
+                # and there is none, and the kp=0 command that needs none has no
+                # stiffness, so it would trade the runaway for a sag.
+                #
+                # So it escalates one rung instead: the driver's MOVE-J at the
+                # current pose, which reads the pose from the SDK rather than
+                # from this node's subscription — a different source, and the
+                # one that is still alive when a starved executor is what made
+                # our feedback stale. Requested once per outage; where the
+                # driver cannot reach the arm either, the CAN watchdog owns it.
+                self._request_driver_hold(now)
                 return
             self._stale_since_monotonic = None
 
@@ -1732,44 +1760,86 @@ class NeroMitControllerNode(Node):
             self._publish_reference(reference)
             self._publish_gravity_feedforward(cmd.torque)
 
-    # Dead-man torque schedule: keep the frozen gravity feedforward through a
-    # short grace window (a stale blip in freedrive must not sag the arm), then
-    # ramp it to zero — a feedforward frozen for a pose the arm has left can
-    # actively drive it, while pure kd damping can only brake.
-    STALE_STOP_TORQUE_GRACE_S = 1.0
-    STALE_STOP_TORQUE_RAMP_S = 2.0
+    #: How often the driver hold is re-requested while feedback stays stale. A
+    #: service call is not a stream: the firmware holds what MOVE-J gave it, so
+    #: repeating is only there to cover a request that never landed.
+    DRIVER_HOLD_REQUEST_PERIOD_S = 2.0
 
-    def _publish_damped_stop_command(self, stale_duration_s: float) -> None:
-        joint_count = len(self.joint_names)
-        positions = [0.0] * joint_count
-        torques = [0.0] * joint_count
-        if all(name in self.feedback_positions for name in self.joint_names):
-            positions = [self.feedback_positions[name] for name in self.joint_names]
-            ramp_progress = (
-                stale_duration_s - self.STALE_STOP_TORQUE_GRACE_S
-            ) / self.STALE_STOP_TORQUE_RAMP_S
-            torque_scale = 1.0 - min(max(ramp_progress, 0.0), 1.0)
-            if torque_scale > 0.0:
-                reference = SampledTrajectoryPoint(
-                    positions=tuple(positions),
-                    velocities=(0.0,) * joint_count,
-                    efforts=(0.0,) * joint_count,
+    def _request_driver_hold(self, now: float) -> None:
+        """Escalate to the driver's MOVE-J at the current pose. Never blocks.
+
+        The rung below a MIT hold. This controller has lost the feedback a MIT
+        hold needs, but the driver reads the pose from the SDK — a different
+        source, and the one still alive when a starved executor is what made
+        this node's subscription stale. Fire-and-forget from the control loop:
+        the loop holds the state lock and must not wait on a service.
+        """
+        due = now - self._last_driver_hold_request >= self.DRIVER_HOLD_REQUEST_PERIOD_S
+        if self._last_driver_hold_request and not due:
+            return
+        self._last_driver_hold_request = now
+        if not self._driver_hold_client.service_is_ready():
+            if now - self.last_stale_feedback_log > 1.0:
+                self.last_stale_feedback_log = now
+                self.get_logger().error(
+                    "Feedback is stale and the driver's hold_current_pose is not "
+                    "available. Nothing here can hold the arm — the CAN watchdog "
+                    "is the boundary. Cut arm power if the arm is moving."
                 )
-                feedforward = self._compute_feedforward(reference)
-                torques = [
-                    torque_scale * clamp(float(feedforward[index]), self.torque_limit[index])
-                    for index in range(joint_count)
-                ]
+            return
+        try:
+            self._driver_hold_client.call_async(Trigger.Request())
+        except Exception as exc:
+            self.get_logger().error(f"driver hold request failed: {exc}")
+            return
+        self.get_logger().warn(
+            "Feedback is stale; requested the driver's MOVE-J hold at the "
+            "current pose. No MIT command is issued here: the one that needs no "
+            "pose has no stiffness, and a sagging arm is not a stop."
+        )
+
+    def _publish_stiff_hold_command(self) -> bool:
+        """Command a stiff, gravity-compensated hold at the measured pose.
+
+        The MIT rung of the pose hold, and the terminal MIT setpoint. Position
+        error is zero by construction, so this is the command the control loop
+        settles on in ``IDLE_HOLD``, built without a reference. Returns False
+        when feedback cannot say where the arm is: a hold at a synthesised pose
+        would be a wrong hold, and the pose hold then belongs to the MOVE-J rung
+        below it rather than to a weaker MIT command.
+
+        The firmware keeps executing the last MIT command it received, so the
+        setpoint left behind decides what the arm does once this node stops
+        commanding.
+        """
+        if not self._has_fresh_feedback():
+            return False
+        if not all(name in self.feedback_positions for name in self.joint_names):
+            return False
+
+        reference = self._capture_current_reference()
+        feedforward = self._compute_feedforward(reference)
+        if first_non_finite((
+            ("p_des", reference.positions),
+            ("feedforward", feedforward),
+            ("kp", self.kp),
+            ("kd", self.kd),
+        )) is not None:
+            return False
 
         cmd = MoveMITMsg()
         self._stamp(cmd)
-        cmd.joint_index = list(range(1, joint_count + 1))
-        cmd.p_des = [float(value) for value in positions]
-        cmd.v_des = [0.0] * joint_count
-        cmd.kp = [0.0] * joint_count
-        cmd.kd = [float(value) for value in self.freedrive_kd]
-        cmd.torque = torques
+        cmd.joint_index = list(range(1, len(self.joint_names) + 1))
+        cmd.p_des = [float(value) for value in reference.positions]
+        cmd.v_des = [0.0] * len(self.joint_names)
+        cmd.kp = [float(value) for value in self.kp]
+        cmd.kd = [float(value) for value in self.kd]
+        cmd.torque = [
+            clamp(float(feedforward[index]), self.torque_limit[index])
+            for index in range(len(self.joint_names))
+        ]
         self.move_mit_pub.publish(cmd)
+        return True
 
     def _publish_freedrive_command(self) -> None:
         """Zero-force, gravity-compensated command so the arm is back-drivable.
@@ -1829,14 +1899,24 @@ def main(args: Optional[list[str]] = None) -> None:
     try:
         executor.spin()
     finally:
-        # Best-effort dead-man on shutdown: the firmware keeps executing the
-        # last MIT command after our stream stops, so leave it a damped stop
-        # as the final setpoint (pure kd damping, zero torque). Requires the
-        # arm driver to still be up to reach the bus.
+        # The firmware executes the last MIT command it received indefinitely,
+        # so the setpoint left behind on shutdown is what the arm does from then
+        # on. It is a stiff gravity-compensated hold at the measured pose, or it
+        # is nothing: every rung of this ladder holds the current pose, and no
+        # rung is allowed to be a kp=0 command, which carries no stiffness and
+        # sags. Where feedback cannot place the arm there is no MIT hold to
+        # build, and the pose hold belongs to the layer that can still command
+        # MOVE-J — the arm driver on its way out, and the external watchdog
+        # beyond it. Reaching the bus at all requires the driver to still be up.
         try:
             if node.enabled:
                 for _ in range(5):
-                    node._publish_damped_stop_command(float("inf"))
+                    if not node._publish_stiff_hold_command():
+                        # Rung two, for the same reason the stale-feedback path
+                        # takes it: no pose here, and no MIT command exists that
+                        # holds without one.
+                        node._request_driver_hold(time.monotonic())
+                        break
                     time.sleep(0.02)
         except Exception:
             pass

@@ -425,3 +425,129 @@ def test_neither_tier_s_mit_code_can_pass_as_a_hold():
         node = _node(_UnreadableModeArm(mode=mit_code))
         left_mit, _mode, _attempts = node._assert_firmware_hold([0.0] * 7)
         assert left_mit is False, f"move mode {mit_code:#04x} passed as a hold"
+
+
+# --- shutdown ----------------------------------------------------------------
+
+def _shutdown_node(arm, **kwargs) -> AgxArmRosNode:
+    node = _node(arm, **kwargs)
+    node.enable_flag = True
+    return node
+
+
+def test_shutdown_parks_the_arm_in_the_firmware_hold():
+    """Exiting is not a reason to leave the arm on the last streamed setpoint.
+
+    The firmware executes the last MIT command it received indefinitely, so a
+    process that just goes away hands the arm to whatever was mid-trajectory.
+    """
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+
+    assert node.hold_on_shutdown() is True
+    assert "move_j" in arm.calls
+    assert "electronic_emergency_stop" not in arm.calls, (
+        "the ladder ends at MOVE-J; a damped descent is not a hold"
+    )
+
+
+def test_shutdown_latches_nothing():
+    """An ordinary exit must not cost the next bring-up a lockout to clear."""
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+    node.hold_on_shutdown()
+
+    assert node._estop_latched is False
+    assert node.unit_stop_requests == []
+
+
+def test_shutdown_commands_no_hold_while_recovery_owns_the_session():
+    arm = _HoldArm()
+    node = _shutdown_node(arm, recovering=True)
+
+    assert node.hold_on_shutdown() is False
+    assert arm.calls == []
+
+
+class _MutePoseArm(_HoldArm):
+    """Answers no joint angles, so no pose hold can be built."""
+
+    def get_joint_angles(self):
+        return None
+
+    def set_normal_mode(self):
+        self.calls.append("set_normal_mode")
+
+
+def test_shutdown_falls_through_to_the_mode_frame_without_a_pose():
+    """No pose, no MOVE-J — but the rung below is a mode frame, not a MIT command.
+
+    ``set_normal_mode`` needs neither pose nor feedback, ends the MIT setpoint the
+    firmware would keep executing, and leaves the arm to its own position
+    controller. It cannot be verified, so nothing is claimed.
+    """
+    arm = _MutePoseArm()
+    node = _shutdown_node(arm)
+
+    assert node.hold_on_shutdown() is False
+    assert "move_j" not in arm.calls
+    assert "set_normal_mode" in arm.calls
+    assert any("cut arm power" in e.lower() for e in node.logger.errors)
+
+
+# --- the prohibition ---------------------------------------------------------
+
+def test_no_kp_zero_mit_command_is_reachable_on_this_driver():
+    """Removed, not merely unused: an escalation step that exists gets called.
+
+    A kp=0 MIT command ends a moving setpoint without stiffness, so it trades a
+    runaway for a sag. It was the emergency stop's braking transient, the
+    pre-recovery quiesce, and the hand window's mode change; all three now go
+    straight to the hold that keeps the arm up.
+    """
+    for name in ("_submit_damped_stop_mit", "_send_damped_stop_mit",
+                 "_send_damped_stop_joint"):
+        assert not hasattr(AgxArmRosNode, name), f"{name} is still reachable"
+
+
+def test_the_emergency_stop_sends_no_mit_command():
+    class _MitWatchingArm(_HoldArm):
+        def move_mit(self, **kwargs):
+            self.calls.append(f"move_mit(kp={kwargs.get('kp')})")
+
+    arm = _MitWatchingArm()
+    node = _node(arm)
+
+    node._emergency_stop_callback(None, Trigger.Response())
+
+    assert not any(call.startswith("move_mit") for call in arm.calls), arm.calls
+    assert "move_j" in arm.calls, "the stop still has to command its hold"
+
+
+def test_the_emergency_stop_without_a_pose_sends_the_mode_frame_not_a_setpoint():
+    arm = _MutePoseArm()
+    node = _node(arm)
+
+    node._emergency_stop_callback(None, Trigger.Response())
+
+    assert "set_normal_mode" in arm.calls
+    assert "move_j" not in arm.calls
+    assert not any(call.startswith("move_mit") for call in arm.calls)
+
+
+def test_the_hold_service_latches_nothing():
+    """The MOVE-J rung on its own, for a controller that lost its feedback.
+
+    Sharing the emergency stop's fault latch would make an ordinary escalation
+    cost the next bring-up a lockout to clear.
+    """
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+
+    ok, message = node.hold_current_pose("test")
+
+    assert ok is True
+    assert "move_j" in arm.calls
+    assert node._estop_latched is False
+    assert node.unit_stop_requests == []
+    assert message

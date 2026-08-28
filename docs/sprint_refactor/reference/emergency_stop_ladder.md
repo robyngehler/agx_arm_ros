@@ -30,21 +30,97 @@ authority revoked.
 
 Per attempt, all on the `SAFETY` lane:
 
-1. damped MIT zero, **only** as a braking transient when a MIT stream is live —
-   needs no feedback, has no stiffness, never terminal
-2. capture the current pose from trustworthy live feedback
-3. `MOVE-J(current_q)`, re-asserted until the firmware's move-mode readback
+1. capture the current pose from trustworthy live feedback
+2. `MOVE-J(current_q)`, re-asserted until the firmware's move-mode readback
    positively confirms it left MIT
-4. verify in feedback that joint velocities settled
+3. verify in feedback that joint velocities settled
 
 An unverified result **re-asserts the same hold** at the pose the arm is at now,
 rather than escalating to a different command. After the attempts are spent the
 driver requests a bus-recovery link reset — transport repair, which re-attempts
 the hold on its way in — and reports the stop as unverified.
 
-Where no trustworthy pose exists, **nothing is commanded and nothing is
-claimed.** A pose synthesised from stale feedback is a wrong hold rather than a
-missing one, and a damped descent is worse than either.
+Where no trustworthy pose exists, the hold cannot be built: a pose synthesised
+from stale feedback is a wrong hold rather than a missing one. The rung below it
+is a **mode frame, not a setpoint** — `set_normal_mode` needs neither pose nor
+feedback, ends the MIT setpoint the firmware would otherwise keep executing, and
+hands the arm to its own position controller, which holds it where it is. It is
+unverifiable by construction, so it is attempted and reported, never claimed.
+
+## There is no kp=0 rung, at any height (2026-08-28)
+
+A kp=0 MIT command carries no stiffness. It ends a moving setpoint, which is why
+it was attractive — it needs no feedback — but what it leaves behind is an arm
+with nothing holding it up. **It is not a weaker hold. It is a sag**, and it was
+removed from this driver and this controller entirely rather than left available:
+
+| Where it was | What it does now |
+|---|---|
+| `emergency_stop`, "braking transient" before MOVE-J | straight to `MOVE-J(current_q)`; `set_normal_mode` where no pose exists |
+| `_hold_before_teardown`, pre-recovery quiesce | same |
+| `prepare_hand_window`, before the mode change | the `set_normal_mode` frame already ends MIT; the damped zero only added a window with no stiffness in it |
+| MIT controller, stale-feedback dead-man | requests the driver's `hold_current_pose`; publishes no MIT command |
+| MIT controller, shutdown | stiff gravity-compensated hold at the measured pose |
+
+`_submit_damped_stop_mit`, `_send_damped_stop_mit`, `_send_damped_stop_joint` and
+`_publish_damped_stop_command` are **deleted**, and tests assert they are not
+reachable. An escalation step that exists gets called.
+
+The one surviving kp=0 command is **freedrive**, which is kp=0 *with* the gravity
+feedforward — the model carries the arm's weight, which is what makes it
+back-drivable rather than limp. Its service refuses to enter without a gravity
+model, and that gate is what keeps the prohibition true.
+
+## The ladder, end to end
+
+1. **MIT hold** at the measured pose — the controller's own, while it has feedback
+2. **`MOVE-J(current_q)`** — the driver's, reading the pose from the SDK rather
+   than from a ROS subscription, so a starved executor does not cost the rung.
+   Reachable on its own as `hold_current_pose` (Trigger), which latches no fault
+3. **`set_normal_mode`** — the mode frame, where not even the driver has a pose
+4. **the external CAN watchdog** — where the bus is genuinely gone. It also
+   commands `MOVE-J` at the current pose
+
+Every rung holds the current pose. The last attempt is always that hold,
+independent of whether this Jetson is healthy — CPU saturation is one of the ways
+the rungs above it fail.
+
+## Shutdown is on the ladder too (2026-08-26)
+
+The firmware executes the last MIT command it received indefinitely, so the
+setpoint a process leaves behind is what the arm does from then on. Ordinary exit
+is therefore a rung, not an absence of one, and it holds the current pose like
+every other rung:
+
+1. **MIT controller**, on shutdown: a stiff gravity-compensated hold at the
+   measured pose. Where feedback cannot place the arm it commands *nothing* and
+   says so — the pose hold belongs to the rung below, not to a weaker MIT
+   command.
+2. **arm driver**, on shutdown: `MOVE-J(current_q)`, the same
+   `_command_firmware_hold` the stop ladder ends at, so the arm leaves MIT
+   entirely. Nothing is latched: an ordinary exit must not cost the next
+   bring-up a lockout to clear.
+3. **external CAN watchdog** beyond that, which also commands `MOVE-J` to the
+   current pose.
+
+The two processes receive `SIGINT` together under `ros2 launch` and either may
+win the race. Both terminal states are a hold, so either order is safe.
+
+Until 2026-08-26 the MIT controller's shutdown published
+`_publish_damped_stop_command(float("inf"))` five times instead. `inf` selects
+`torque_scale = 0.0` past the dead-man's ramp, so the arm's final setpoint was
+`kp = 0`, `torque = 0`, damping only — no stiffness and no gravity feedforward.
+A raised, loaded arm sags on that command, and the firmware holds it forever.
+The rest of the codebase already stated the rule the shutdown path broke: the
+same file's `_command_firmware_hold` warns that a dropped mode frame "leaves the
+firmware in MIT executing the kp=0 damped stop, which has no stiffness — the arm
+sags instead of holding."
+
+**A kp=0 damped command is a braking transient, on every path, never a terminal
+state.** It is the dead-man for a live stream that has lost its feedback, where
+the ramp to zero torque exists because a feedforward frozen for a pose the arm
+has left can actively drive it. It is not an answer to "this process is going
+away".
 
 ## What the escalation used to do, and why it was wrong
 

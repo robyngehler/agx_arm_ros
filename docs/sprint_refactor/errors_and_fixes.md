@@ -1087,3 +1087,46 @@ that collapsed after a collision.
   does not take effect, check the installed copy's mtime before re-reading the
   source.
 
+## 2026-08-28 (the kp=0 rung is removed from the ladder entirely)
+
+Follow-up to the 2026-08-26 entry, and a stricter rule than the fix it replaces.
+
+- The 2026-08-26 fix changed the MIT controller's *shutdown* to a stiff hold but
+  left the kp=0 damped stop in place elsewhere: the in-loop stale-feedback
+  dead-man, the emergency stop's braking transient, the pre-recovery quiesce, and
+  the hand window's mode change.
+- The rule now: **a kp=0 MIT command is not a rung of this ladder at any height.**
+  It ends a moving setpoint, which is why it was attractive — it needs no
+  feedback — but it carries no stiffness, so what it leaves is an arm with
+  nothing holding it up. It is not a weaker hold; it is a sag.
+- Every rung holds the current pose instead: MIT hold at the measured pose ->
+  driver `MOVE-J(current_q)` -> `set_normal_mode` (a mode frame needing neither
+  pose nor feedback, which ends the MIT setpoint and hands the arm to its own
+  position controller) -> the external CAN watchdog, which also commands MOVE-J
+  at the current pose. The last attempt is always that hold, independent of
+  whether this Jetson is healthy — CPU saturation is one of the ways the rungs
+  above it fail.
+- The stale-feedback dead-man now escalates rather than commanding something
+  weaker. It asks the driver for `hold_current_pose`, which reads the pose from
+  the SDK rather than from this node's subscription — a different source, and
+  the one still alive when a starved executor is what made our feedback stale.
+  It publishes no MIT command at all.
+- `hold_current_pose` (Trigger) is new on the arm driver: the emergency stop's
+  MOVE-J rung without its fault latch, so an ordinary escalation does not cost
+  the next bring-up a `clear_fault_lockout`.
+- **Deleted, not left unused**: `_submit_damped_stop_mit`, `_send_damped_stop_mit`,
+  `_send_damped_stop_joint`, `_publish_damped_stop_command`,
+  `STALE_STOP_TORQUE_GRACE_S`, `STALE_STOP_TORQUE_RAMP_S`. An escalation step
+  that exists gets called. Tests assert the names are unreachable.
+- The one surviving kp=0 command is **freedrive**, which is kp=0 *with* the
+  gravity feedforward — the model carries the arm's weight, which is what makes
+  it back-drivable rather than limp. Its service already refused to enter without
+  a gravity model, and that gate is what keeps the prohibition true; it is now
+  covered by a test rather than left as a coincidence.
+- What was given up: the damped zero worked with no feedback and no pose, so on
+  the no-pose branch there is now no *setpoint* to fall back to, only the mode
+  frame. That frame cannot be verified — the same missing feedback that cost the
+  pose costs the readback — so it is attempted and reported, never claimed.
+- Validation: L1 + L2. **Unexercised on hardware.** Every claim here is about
+  motion and needs L3: whether `set_normal_mode` alone holds a loaded arm on both
+  firmware tiers is reasoned from the mode semantics, not measured.

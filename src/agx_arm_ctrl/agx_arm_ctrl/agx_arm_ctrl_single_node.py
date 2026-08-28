@@ -942,6 +942,12 @@ class AgxArmRosNode(Node):
         self.create_service(SetBool, "enable_agx_arm", self._enable_callback)
         self.create_service(Empty, "move_home", self._move_home_callback)
         self.create_service(Trigger, "emergency_stop", self._emergency_stop_callback)
+        # The MOVE-J rung on its own, without the emergency stop's fault latch:
+        # what a controller that lost its feedback escalates to, and what this
+        # node commands on its way out.
+        self.create_service(
+            Trigger, "hold_current_pose", self._hold_current_pose_callback
+        )
         self.create_service(
             Trigger, "clear_fault_lockout", self._clear_fault_lockout_callback
         )
@@ -2124,25 +2130,22 @@ class AgxArmRosNode(Node):
         the hold can be commanded at all: once recovery owns the session the
         worker is quiesced.
 
-        A host-side MIT command is not a hold. The damped kp=0 zero below stops
-        a moving MIT command but has no stiffness, so leaving it as the terminal
-        state sags the arm; it is a braking transient before MOVE-J, never the
-        end state. Without trustworthy feedback no hold is claimed — a pose
-        synthesised from stale data would be a wrong hold, not a missing one —
-        and the independent watchdog is the boundary for that regime.
+        A host-side MIT command is not a hold, and there is no kp=0 rung below
+        MOVE-J: such a command ends the moving setpoint without stiffness, so
+        the arm sags through exactly the teardown this hold exists to survive.
+        Without a trustworthy pose the mode frame still goes out — it needs no
+        pose and leaves the firmware's own position controller holding — but no
+        hold is claimed, and the independent watchdog is the boundary there.
         """
         self._restore_feedback_push("pre-recovery hold")
-        if self.is_mit_mode or self._current_motion_mode == 'mit':
-            try:
-                self._submit_damped_stop_mit()
-            except Exception as exc:
-                self.get_logger().error(f"pre-recovery damped MIT stop failed: {exc}")
-
         hold_pose = self._capture_hold_pose()
         if hold_pose is None:
+            left_mit = self._leave_mit_without_a_pose()
             self.get_logger().error(
                 "pre-recovery firmware hold UNAVAILABLE: no trustworthy joint "
-                "feedback, so no hold was commanded and none is claimed. The "
+                "feedback, so no MOVE-J hold was commanded and none is claimed. "
+                "Normal mode was " + ("requested" if left_mit else "NOT sent")
+                + " so the firmware leaves MIT and holds its own pose. The "
                 "independent watchdog is the protective boundary here."
             )
             return
@@ -3134,61 +3137,27 @@ class AgxArmRosNode(Node):
             lane=Lane.SAFETY,
         )
 
-    def _submit_damped_stop_mit(self, kd: float = 1.0, timeout: float = None):
-        """Send the damped zero on the safety lane, as one cycle.
+    def _leave_mit_without_a_pose(self) -> bool:
+        """Take the firmware out of MIT when no trustworthy pose exists.
 
-        This is the first thing an emergency stop puts on the wire while a MIT
-        stream is running, so it is the call the 20 ms budget is about: it has
-        to overtake every setpoint already queued, and it does that by lane
-        rather than by hoping the queue is short.
+        The bottom rung this driver can still reach on its own. ``set_normal_mode``
+        is a mode frame: it needs no feedback and no pose, ends the MIT setpoint
+        the firmware would otherwise keep executing, and hands the arm to its own
+        position controller, which holds it where it is. Unverifiable by
+        construction — the same missing feedback that cost us the pose also costs
+        us the readback — so it is attempted and reported, never claimed.
+
+        There is deliberately no MIT command here. A kp=0 command has no
+        stiffness and sags, so it is not a rung of this ladder at any height.
         """
-        steps = [(
-            "set_auto_set_motion_mode_enabled",
-            lambda: self.agx_arm.set_auto_set_motion_mode_enabled(False),
-        )]
-        steps += [
-            ("move_mit", partial(self._send_damped_stop_joint, joint_index, kd))
-            for joint_index in range(1, self.arm_joint_count + 1)
-        ]
-        call = self._sdk.submit_cycle(
-            "damped_stop_mit", steps, lane=Lane.SAFETY,
-            always=(
-                "set_auto_set_motion_mode_enabled",
-                lambda: self.agx_arm.set_auto_set_motion_mode_enabled(True),
-            ),
-        )
-        return call.result(self.feedback_timeout if timeout is None else timeout)
-
-    def _send_damped_stop_joint(self, joint_index: int, kd: float) -> None:
-        self.agx_arm.move_mit(
-            joint_index=joint_index, p_des=0.0, v_des=0.0, kp=0.0, kd=kd, t_ff=0.0
-        )
-
-    def _send_damped_stop_mit(self, kd: float = 1.0) -> None:
-        """Zero-velocity, kp=0, kd-damped MIT command for every joint.
-
-        Needs NO feedback, so it works exactly when the readiness checks fail —
-        the situation in which the firmware would otherwise keep executing the
-        last (possibly moving) MIT command it received.
-
-        Direct, for the caller that owns the session: recovery sends this after
-        quiescing the worker and before tearing the link down. The emergency
-        stop uses :meth:`_submit_damped_stop_mit` instead, because it competes
-        with a live control stream and needs the lane to get in front of it.
-        """
-        self.agx_arm.set_auto_set_motion_mode_enabled(False)
         try:
-            for joint_index in range(1, self.arm_joint_count + 1):
-                self.agx_arm.move_mit(
-                    joint_index=joint_index,
-                    p_des=0.0,
-                    v_des=0.0,
-                    kp=0.0,
-                    kd=kd,
-                    t_ff=0.0,
-                )
-        finally:
-            self.agx_arm.set_auto_set_motion_mode_enabled(True)
+            self._sdk_safety("set_normal_mode", self.agx_arm.set_normal_mode)
+        except Exception as exc:
+            self.get_logger().error(f"could not leave MIT without a pose: {exc}")
+            return False
+        self.is_mit_mode = False
+        self._current_motion_mode = None
+        return True
 
     # An emergency stop is only trustworthy if the arm is confirmed stopped in
     # feedback: under ENOBUFS the SDK silently drops the stop command and still
@@ -3386,31 +3355,33 @@ class AgxArmRosNode(Node):
             # The ladder has exactly one rung, re-tried: MOVE-J at the current
             # pose. An unverified stop re-asserts that same hold rather than
             # escalating to a different command, because no stronger motion
-            # primitive exists here that still holds the arm up.
+            # primitive exists here that still holds the arm up. Nothing below
+            # it is a MIT command: a kp=0 zero would end the moving setpoint
+            # without stiffness, which sags the arm.
             for attempt in range(1, self.ESTOP_HOLD_ATTEMPTS + 1):
-                # Braking transient: a kp=0 damped zero needs no feedback and
-                # ends a moving MIT setpoint, but it carries no stiffness and is
-                # never the terminal state.
-                if self.is_mit_mode or self._current_motion_mode == 'mit':
-                    try:
-                        self._submit_damped_stop_mit()
-                    except Exception as e:
-                        self.get_logger().error(f"Damped MIT stop failed: {e}")
-
                 hold_pose = self._capture_hold_pose(lane=Lane.SAFETY)
                 if hold_pose is None:
                     # A pose synthesised from stale feedback would be a wrong
-                    # hold, not a missing one. Nothing is commanded and nothing
-                    # is claimed; the external CAN watchdog owns this regime.
+                    # hold, not a missing one. The mode frame still goes out —
+                    # it needs no pose, ends the MIT setpoint, and leaves the
+                    # firmware's own position controller holding where the arm
+                    # is — but it cannot be verified, so nothing is claimed and
+                    # the external CAN watchdog owns this regime.
+                    left_mit = self._leave_mit_without_a_pose()
                     verification = StopVerification(
                         False, False,
-                        "no trustworthy joint feedback, so no hold was commanded",
+                        "no trustworthy joint feedback, so no pose hold was "
+                        "commanded; normal mode "
+                        + ("requested" if left_mit else "could not be sent"),
                     )
                     self.get_logger().error(
                         f"{self.arm_type} emergency stop: no trustworthy joint "
-                        "feedback, so no hold was commanded and none is claimed. "
-                        "The external CAN watchdog is the protective boundary "
-                        "here — cut arm power to stop the arm."
+                        "feedback, so no MOVE-J hold could be commanded. Normal "
+                        "mode was " + ("requested" if left_mit else "NOT sent")
+                        + " so the firmware leaves MIT and holds its own pose, "
+                        "but nothing here can confirm it. The external CAN "
+                        "watchdog is the protective boundary — cut arm power to "
+                        "stop the arm."
                     )
                     break
 
@@ -3951,8 +3922,9 @@ class AgxArmRosNode(Node):
         # Gate MIT forwarding first so no streamed arm command races the handoff.
         self._hand_window_active = True
         try:
-            if self.is_mit_mode or self._current_motion_mode == 'mit':
-                self._send_damped_stop_mit()
+            # Straight to the mode frame: it is what ends the MIT setpoint, and
+            # the MOVE-J hold below is what holds the pose. A kp=0 damped zero
+            # in between would only add a window with no stiffness in it.
             self._sdk_write("set_normal_mode", self.agx_arm.set_normal_mode)
             self.is_mit_mode = False
             self._leader_mode_active = False
@@ -4124,6 +4096,69 @@ class AgxArmRosNode(Node):
         return response
 
 
+    def hold_current_pose(self, reason: str) -> tuple[bool, str]:
+        """MOVE-J at the current pose, latching nothing. The ladder's second rung.
+
+        The emergency stop's hold without its fault lockout, so an ordinary
+        escalation — a controller that lost its feedback, this node exiting —
+        does not cost the next bring-up a lockout to clear.
+
+        Where no trustworthy pose exists it falls through to the mode frame,
+        which needs none. There is no rung below that here: a kp=0 MIT command
+        would end the setpoint without stiffness and sag the arm, so where the
+        firmware answers nothing at all the external watchdog is the boundary.
+        """
+        if getattr(self, "_recovery_in_progress", False):
+            return False, "recovery owns the SDK session; no hold was commanded"
+        if not self.enable_flag:
+            return False, "arm is not enabled; there is nothing to hold"
+        # No separate health gate: a trustworthy pose is exactly the condition
+        # for commanding a hold, and _capture_hold_pose establishes it. A second
+        # check would only add a way to skip the hold.
+        hold_pose = self._capture_hold_pose(lane=Lane.SAFETY)
+        if hold_pose is None:
+            left_mit = self._leave_mit_without_a_pose()
+            detail = (
+                f"{reason}: no trustworthy joint feedback, so no MOVE-J hold "
+                "was commanded. Normal mode was "
+                + ("requested" if left_mit else "NOT sent")
+                + " so the firmware leaves MIT and holds its own pose, but "
+                "nothing here can confirm it. Cut arm power if the arm moves."
+            )
+            self.get_logger().error(detail)
+            return False, detail
+        try:
+            held = self._command_firmware_hold(hold_pose)
+        except Exception as e:
+            detail = f"{reason}: firmware hold failed: {e}"
+            self.get_logger().error(detail)
+            return False, detail
+        if held:
+            detail = f"{reason}: arm holding its pose in the firmware position controller"
+            self.get_logger().info(detail)
+            return True, detail
+        detail = (
+            f"{reason}: firmware did not confirm it left MIT — the arm may still "
+            "be on the last streamed setpoint. Cut arm power if it moves."
+        )
+        self.get_logger().error(detail)
+        return False, detail
+
+    def _hold_current_pose_callback(self, request, response):
+        del request
+        response.success, response.message = self.hold_current_pose("hold_current_pose")
+        return response
+
+    def hold_on_shutdown(self) -> bool:
+        """Park the arm in the firmware MOVE-J hold before this process goes away.
+
+        The firmware keeps executing the last MIT setpoint it received, so
+        leaving without a hold hands the arm to whatever was streaming when the
+        stack went down.
+        """
+        held, _detail = self.hold_current_pose("shutdown")
+        return held
+
     def shutdown(self) -> None:
         """Stop the SDK worker this node owns. Idempotent.
 
@@ -4159,8 +4194,16 @@ def main(args=None):
         # would stay mute on CAN for the next session too.
         if node is not None:
             try:
+                # Before the hold, because the hold is verified in feedback.
                 # direct: the worker is stopped immediately after this.
                 node._restore_feedback_push("node shutdown", direct=True)
+            except Exception:
+                pass
+            try:
+                # Last, while the worker is still up to carry it: the arm ends
+                # in the firmware hold rather than on whatever setpoint the MIT
+                # stream stopped at.
+                node.hold_on_shutdown()
             except Exception:
                 pass
             try:

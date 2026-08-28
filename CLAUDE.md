@@ -161,8 +161,15 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   and would release the stiffness the hold provides. An unverified stop
   re-asserts the hold, then asks for a bus-recovery link reset as transport
   repair; no trustworthy pose means nothing commanded and nothing claimed, and
-  the external CAN watchdog owns that regime
-  (`docs/sprint_refactor/reference/emergency_stop_ladder.md`)
+  the external CAN watchdog owns that regime. **There is no kp=0 rung at any
+  height** — such a command ends a moving setpoint with no stiffness, which is
+  a sag, not a weaker hold. The rungs: MIT hold at the measured pose ->
+  `MOVE-J(current_q)` (reachable alone as `hold_current_pose`, latching no
+  fault) -> `set_normal_mode`, needing neither pose nor feedback -> the CAN
+  watchdog, which also commands `MOVE-J` at the current pose. Shutdown is on
+  the same ladder, because the firmware keeps executing the last setpoint it
+  was given. Freedrive is the one surviving kp=0 command, and it is kp=0 *with*
+  gravity feedforward (`docs/sprint_refactor/reference/emergency_stop_ladder.md`)
 - use repo-owned `agx_arm_msgs` messages for hand diagnostics and tactile payloads, with statically
   defined fields
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment

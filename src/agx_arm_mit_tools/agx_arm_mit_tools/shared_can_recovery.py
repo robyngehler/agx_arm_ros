@@ -9,8 +9,8 @@ only an operator running the bash helper. Same ordering contract as the script:
   2. stop the OmniHand BEFORE any link reset — pending hand retries must not keep
      hammering the shared side bus and must not be killed mid-command by a
      down/up
-  3. arm ``emergency_stop`` (Trigger): a damped MIT zero then a firmware MOVE-J
-     hold, VERIFIED in feedback, re-asserting the hold and finally forcing a
+  3. arm ``emergency_stop`` (Trigger): a firmware MOVE-J hold at the current
+     pose, VERIFIED in feedback, re-asserting the hold and finally forcing a
      bus-recovery link reset when the stop cannot be verified. The link reset is
      owned by the arm ctrl node, so this service stays sudo-free and never
      fights the driver for the interface.

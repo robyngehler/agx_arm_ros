@@ -53,6 +53,14 @@ trajectory and the hand goal executing with nobody left to cancel them.
 | `Ctrl+C` with **no activity running** | the coordinator exits on the first interrupt. Verified on hardware 2026-08-17: all five tea-stack processes gone within 0.66 s |
 | `Ctrl+C` a second time | escalates to `emergency_stop` on both sides, then exits immediately |
 | `Ctrl+C` on the **arm stack** | the MIT controller leaves a stiff gravity-compensated hold at the measured pose as the firmware's last MIT setpoint, and the driver parks the arm in `MOVE-J(current_q)` on its way out. Whichever wins the race, the arm holds |
+
+**No stop path sends a kp=0 MIT command.** Such a command ends a moving setpoint
+but carries no stiffness, so it sags the arm — it is not a weaker hold. Every rung
+holds the current pose: MIT hold at the measured pose → the driver's
+`MOVE-J(current_q)` (`hold_current_pose`, latching no fault) → `set_normal_mode`,
+which needs neither pose nor feedback → the external CAN watchdog, which also
+commands `MOVE-J` at the current pose. Detail:
+`../../sprint_refactor/reference/emergency_stop_ladder.md`.
 | the coordinator crashes | **not covered by any of the above.** A hard crash of the coordinator alone leaves the MoveIt goal running |
 
 The order in the second row is load bearing. `cancel_trajectory` needs nothing
