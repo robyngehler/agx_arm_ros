@@ -295,7 +295,7 @@ class _FakeGraph:
 
 
 def _node_with(actions, planner, stop_requested=False):
-    """A bare CoordinatorNode carrying only what _prewarm_recorded touches."""
+    """A bare CoordinatorNode carrying only what _prewarm_arm_actions touches."""
     import threading
 
     from agx_arm_coordination.coordinator_node import CoordinatorNode
@@ -304,6 +304,7 @@ def _node_with(actions, planner, stop_requested=False):
     node._stop_lock = threading.Lock()
     node._stop_requested = stop_requested
     node.arm_planner = planner
+    node.arm_dry_run = False
     node.catalogue = type("C", (), {"actions": {a.action_id: a for a in actions}})()
     node.get_logger = lambda: type("L", (), {
         "info": staticmethod(lambda *a, **k: None),
@@ -318,12 +319,12 @@ def _named(action_id, playback=None):
     return dataclasses.replace(_taught_action(playback), action_id=action_id)
 
 
-def test_every_recorded_action_is_planned_before_the_first_one_moves():
+def test_every_arm_action_is_planned_before_the_first_one_moves():
     planner = ArmTrajectoryPlanner(_config())
     actions = [_named("a"), _named("b")]
     node = _node_with(actions, planner)
 
-    problems, interrupted = node._prewarm_recorded(_FakeGraph(["a", "b"]), "demo", None)
+    problems, interrupted = node._prewarm_arm_actions(_FakeGraph(["a", "b"]), "demo", None)
     assert (problems, interrupted) == ([], False)
     assert len(planner._retimed) == 2
 
@@ -333,7 +334,7 @@ def test_a_refusal_is_reported_against_the_action_that_refused():
     actions = [_named("a"), _named("b", {"mode": "tempo_scale", "speed_scale": 40.0})]
     node = _node_with(actions, planner)
 
-    problems, interrupted = node._prewarm_recorded(_FakeGraph(["a", "b"]), "demo", None)
+    problems, interrupted = node._prewarm_arm_actions(_FakeGraph(["a", "b"]), "demo", None)
     assert interrupted is False
     assert len(problems) == 1 and problems[0].startswith("b: ")
 
@@ -344,7 +345,7 @@ def test_a_stop_during_preplanning_abandons_the_rest():
     planner = ArmTrajectoryPlanner(_config())
     node = _node_with([_named("a"), _named("b")], planner, stop_requested=True)
 
-    problems, interrupted = node._prewarm_recorded(_FakeGraph(["a", "b"]), "demo", None)
+    problems, interrupted = node._prewarm_arm_actions(_FakeGraph(["a", "b"]), "demo", None)
     assert interrupted is True
     assert problems == []
     assert planner._retimed == {}
@@ -363,9 +364,53 @@ def test_a_cancel_between_actions_stops_the_next_one_being_planned():
             self._checks += 1
             return self._checks > 1
 
-    problems, interrupted = node._prewarm_recorded(
+    problems, interrupted = node._prewarm_arm_actions(
         _FakeGraph(["a", "b"]), "demo", _CancelAfterFirst()
     )
     assert interrupted is True
     # The one already planned is kept; the cache is what the next run reuses.
     assert len(planner._retimed) == 1
+
+
+def test_an_anchor_naming_a_pose_that_is_gone_fails_before_the_first_move():
+    """Validation checks action ids, edges and resources, never a `to_pose`.
+
+    An anchor pointing at a pose that was renamed or re-captured out of
+    arm_config.yaml would otherwise surface at dispatch, mid-sequence, possibly
+    with the payload attached.
+    """
+    import dataclasses
+
+    planner = ArmTrajectoryPlanner(_config())
+    anchor = dataclasses.replace(
+        _taught_action(),
+        action_id="to_gone",
+        metadata={"source": "moveit_planned", "to_pose": "Was_Recaptured_L"},
+    )
+    node = _node_with([_named("a"), anchor], planner)
+
+    problems, interrupted = node._prewarm_arm_actions(
+        _FakeGraph(["a", "to_gone"]), "demo", None
+    )
+    assert interrupted is False
+    assert len(problems) == 1
+    assert problems[0].startswith("to_gone: ") and "unknown anchor pose" in problems[0]
+
+
+def test_a_not_yet_taught_action_still_dry_runs():
+    """A dry run reports it at dispatch and carries on, so planning ahead must
+    not be the stricter of the two."""
+    import dataclasses
+
+    planner = ArmTrajectoryPlanner(_config())
+    untaught = dataclasses.replace(
+        _taught_action(), action_id="untaught", metadata={"source": "recorded"}
+    )
+    node = _node_with([untaught], planner)
+    node.arm_dry_run = True
+
+    assert node._prewarm_arm_actions(_FakeGraph(["untaught"]), "demo", None) == ([], False)
+
+    node.arm_dry_run = False
+    problems, _ = node._prewarm_arm_actions(_FakeGraph(["untaught"]), "demo", None)
+    assert len(problems) == 1 and problems[0].startswith("untaught: ")

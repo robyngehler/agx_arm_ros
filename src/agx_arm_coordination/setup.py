@@ -18,6 +18,10 @@ setup(
             glob('config/activities/*.yaml')),
         (os.path.join('share', package_name, 'config', 'catalogue.d'),
             glob('config/catalogue.d/*.yaml')),
+        # Lean sidecars a recorded action references instead of inlining
+        # waypoints; graph_loader resolves the path against the config dir.
+        (os.path.join('share', package_name, 'config', 'recordings'),
+            glob('config/recordings/*.json')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
     ],
     install_requires=['setuptools'],

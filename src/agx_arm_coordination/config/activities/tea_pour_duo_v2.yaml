@@ -1,0 +1,96 @@
+# Tea-pour demo v2: grip a tea can with the LEFT arm + LEFT OmniHand, pour it,
+# put it back. The RIGHT arm holds a support pose throughout and the two longest
+# motions were taught on both arms at once.
+#
+# Actions: config/catalogue.d/tea_pour_duo_v2.yaml. Anchors: config/arm_config.yaml.
+# Hand presets: agx_arm_ctrl/config/omnihand_skills.yaml -> omnihand_pro_gestures.yaml.
+# Source of the sequence: docs/sprint6/target/README.md ("The New Activity Flow").
+#
+# THE RIGHT HAND IS NOT COMMANDED (2026-08-27). It is out of service, and this
+# graph addresses no right-hand action: no `can_prep` support shape, no closing
+# `zero` / `heart`. It is assumed to sit at `zero` and to stay there. The right
+# ARM still moves — its support replay and its half of the two duo takes are
+# unchanged, so those motions now run with a FLAT right hand where they were
+# taught with a shaped one. The catalogue keeps `right_hand_can_prep`,
+# `right_hand_zero` and `right_hand_heart` so restoring them is an edge change
+# here, not a re-authoring.
+#
+# PARALLELISM. Three steps run an arm move and a hand shape at the same time
+# (sync_flag 2, 3 and 4; sync_flag 1 was the right hand's and 5 was the closing
+# heart). That is only legal because every device owns its own CAN bus
+# (duo_motion_registry.yaml bus_topology: dedicated_per_device): a hand action
+# then holds no token the arms hold, so the scheduler admits the pair together
+# and the coordinator dispatches two independent goals. Under shared_per_side the
+# same file is REFUSED at validation rather than silently serialized — the sync
+# groups say what has to overlap, so a topology that cannot overlap them is an
+# error, not a slower run.
+#
+# A sync group is admitted whole or not at all, and both members must finish
+# before the next node starts, so the step takes the longer of the two.
+#
+# Rough timing: 8 anchor moves + 7 replays (7.4 + 7.8 + 4.7 + 10.9 + 25.4 + 8.7 +
+# 8.9 s taught, replayed at speed_scale 1.0) + 4 hand actions, three of which cost
+# nothing extra because they run beside an arm move. Expect ~2.5 minutes.
+activity: tea_pour_duo_v2
+nodes:
+  # --- 1. Prepare for work (from the packing pose, hands flat) ---------------
+  # The right hand's `can_prep` shape used to run beside node 20 (sync_flag 1).
+  # Restore it by re-adding `- { action_no: 21, action_id: right_hand_can_prep,
+  # sync_flag: 1 }`, putting sync_flag 1 back on node 20, and adding the edges
+  # [10,21] and [21,30].
+  - { action_no: 10,  action_id: both_arms_to_functional_init }
+  - { action_no: 20,  action_id: both_arms_to_can_prep_grip }
+  - { action_no: 30,  action_id: right_arm_can_prep_4grip }        # recorded, right
+
+  # --- 2. Grip the can ------------------------------------------------------
+  - { action_no: 40,  action_id: both_arms_to_can_grip_idle,      sync_flag: 2 }
+  - { action_no: 41,  action_id: left_hand_can_pre_grip,          sync_flag: 2 }
+  - { action_no: 50,  action_id: both_arms_to_can_pre_grip }
+  - { action_no: 60,  action_id: left_arm_can_grip_move }          # recorded, left
+  - { action_no: 70,  action_id: both_arms_to_can_pre_grip_adjust }
+  # The hand closes while the left arm settles into the carry attitude; the grip
+  # action carries payload_update: attach, applied on its success and before any
+  # later node is admitted, so the lift never runs under the unloaded model.
+  - { action_no: 80,  action_id: left_hand_can_grip,              sync_flag: 3 }
+  - { action_no: 81,  action_id: both_arms_to_can_adjust_while_grip, sync_flag: 3 }
+
+  # --- 3. Pour --------------------------------------------------------------
+  - { action_no: 90,  action_id: left_arm_can_lift_post_grip }     # recorded, left
+  - { action_no: 100, action_id: both_arms_can_goto_pour_init }    # recorded, duo
+  - { action_no: 110, action_id: both_arms_can_pour }              # recorded, duo
+
+  # --- 4. Bring the can back ------------------------------------------------
+  - { action_no: 120, action_id: both_arms_to_can_post_grip }
+  - { action_no: 130, action_id: both_arms_to_can_place }
+  # Opens the hand and detaches the payload model: the can is on the table.
+  - { action_no: 140, action_id: left_hand_can_release }
+  - { action_no: 150, action_id: left_arm_can_release_motion }     # recorded, left
+  - { action_no: 160, action_id: left_arm_can_post_place_adjust }  # recorded, left
+
+  # --- 5. Back to idle ------------------------------------------------------
+  # The activity ends here. The closing heart gesture (nodes 180/181,
+  # `both_arms_to_heart_top` + `left_hand_heart`) is out, and so are the two
+  # right-hand nodes that used to sit in this phase. The left hand finishes in
+  # `fist`, not flat.
+  - { action_no: 170, action_id: both_arms_to_functional_init,    sync_flag: 4 }
+  - { action_no: 171, action_id: left_hand_fist,                  sync_flag: 4 }
+edges:
+  # Fan out into each sync group and back together again: a group's members share
+  # the barrier, so they need no edge between themselves, only the same
+  # predecessors and the same successor.
+  [ [10,20],
+    [20,30],
+    [30,40], [30,41],
+    [40,50], [41,50],
+    [50,60],
+    [60,70],
+    [70,80], [70,81],
+    [80,90], [81,90],
+    [90,100],
+    [100,110],
+    [110,120],
+    [120,130],
+    [130,140],
+    [140,150],
+    [150,160],
+    [160,170], [160,171] ]

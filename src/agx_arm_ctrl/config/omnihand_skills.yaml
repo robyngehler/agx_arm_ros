@@ -53,6 +53,22 @@ omnihand_skills:
     target_preset: can_pre_grip        # same shape as pre-grip; separate name so
                                        # release can be recalibrated on its own
 
+  # --- Tea-pour demo v2 (tea_pour_duo_v2) -----------------------------------
+  # v2 adds the right hand, which holds a support shape for the whole carry, and
+  # the two closing gesture shapes. Same `pose` motion and the same tradeoff.
+  prep_can_grip:
+    motion: pose
+    target_preset: can_prep            # right-hand support shape under the can
+  hand_heart:
+    motion: pose
+    target_preset: heart               # half of the two-handed heart; both hands
+                                       # use it, mirrored by the side's left_dir
+  hand_fist:
+    motion: pose
+    target_preset: fist                # taught closed fist. Distinct from
+                                       # hand_rest_fist, which is the vendor
+                                       # demo shape (fist_vendor_demo)
+
 # Loop + monitoring tunables. Per-object contact_threshold / stable_samples /
 # timeout_sec come from the action metadata, NOT from here. All values below are
 # placeholders to calibrate on the Pro hardware (proposal §9.2).

@@ -4,7 +4,7 @@
   <xacro:include filename="$(find agx_arm_description)/agx_arm_urdf/nero/urdf/nero_with_omnihand_flange_description.xacro"/>
 
   <joint name="hand_base_joint" type="fixed">
-    <origin xyz="0.0 0.0 0.012" rpy="0 0 3.1415926"/>
+    <origin xyz="0.0 0.0 0.005" rpy="0 0 3.1415926"/>
     <parent link="omnihand_flange"/>
     <child link="right_base_link"/>
     <axis xyz="0.0 0.0 0.0"/>

@@ -146,6 +146,11 @@ class _Child:
         self.done = False
         self.success = False
         self.message = ""
+        # How to dispatch this same work again, and how often it already was.
+        # Set by _dispatch_units, because only it knows whether the child was one
+        # action or a merged sync group.
+        self.respawn = None
+        self.attempt = 1
         self._goal_future = None
         self._result_future = None
         self._goal_handle = None
@@ -220,6 +225,27 @@ class _HandChild(_Child):
         self.mark(bool(result.success), result.message or result.final_state)
 
 
+#: MoveIt failures a fresh goal may still get past, because nothing has moved and
+#: the next attempt starts from a new sampler. A goal state that only just clears
+#: the collision model fails intermittently: `num_planning_attempts` does not help
+#: there, because the attempts share one goal sampler — once it has failed to find
+#: valid goal states, the remaining attempts return in under a millisecond
+#: ("Insufficient states in sampleable goal region"). A new goal rebuilds it.
+RETRYABLE_MOVEIT_CODES = frozenset({
+    MoveItErrorCodes.FAILURE,                                   # 99999, the generic one
+    MoveItErrorCodes.PLANNING_FAILED,                           # -1
+    MoveItErrorCodes.INVALID_MOTION_PLAN,                       # -2
+    MoveItErrorCodes.MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE,  # -3
+    MoveItErrorCodes.TIMED_OUT,                                 # -6
+    MoveItErrorCodes.START_STATE_IN_COLLISION,                  # -10
+    MoveItErrorCodes.GOAL_IN_COLLISION,                         # -12
+})
+#: Deliberately absent: CONTROL_FAILED, because execution failed and the arm is
+#: somewhere unknown; PREEMPTED, because someone asked for the stop; and the
+#: INVALID_* configuration codes, which are deterministic and would only make the
+#: same refusal three times slower.
+
+
 class _ArmChild(_Child):
     """Arm child over a MoveGroup or ExecuteTrajectory goal (both moveit_msgs).
 
@@ -227,11 +253,17 @@ class _ArmChild(_Child):
     ``val`` is ``SUCCESS`` (1) on success.
     """
 
+    error_code: int = 0
+
     def _interpret_result(self, wrapper) -> None:
         result = wrapper.result
         code = result.error_code.val
+        self.error_code = code
         ok = code == MoveItErrorCodes.SUCCESS
         self.mark(ok, "" if ok else f"MoveIt error_code={code}")
+
+    def retryable(self) -> bool:
+        return self.error_code in RETRYABLE_MOVEIT_CODES
 
 
 class _PhasedArmChild(_ArmChild):
@@ -274,8 +306,18 @@ class _PhasedArmChild(_ArmChild):
             message = f"{self._label()}: {message}"
         super().mark(success, message)
 
+    def retryable(self) -> bool:
+        """Only while the planned approach is what failed.
+
+        Past that the replay has begun, so the arm is somewhere along a taught
+        path this class cannot reason about; re-running it is a motion decision,
+        not a retry.
+        """
+        return self._phase_index == 0 and super().retryable()
+
     def _interpret_result(self, wrapper) -> None:
         code = wrapper.result.error_code.val
+        self.error_code = code
         if code != MoveItErrorCodes.SUCCESS:
             self.mark(False, f"MoveIt error_code={code}")
             return
@@ -319,6 +361,10 @@ class CoordinatorNode(Node):
         self.declare_parameter("joint_goal_tolerance_rad", 0.01)
         self.declare_parameter("num_planning_attempts", 10)
         self.declare_parameter("allowed_planning_time_sec", 5.0)
+        # Fresh MoveIt goals after a retryable planning failure, on top of the
+        # attempts inside one goal. The two are not interchangeable: MoveIt's
+        # attempts share a goal sampler, a new goal does not.
+        self.declare_parameter("plan_retry_attempts", 2)
         # Scaling for the planned approach that precedes a recorded replay. Kept
         # separate from the action's velocity_scaling, which for a recorded action
         # stretches replay time rather than limiting the planner.
@@ -358,6 +404,7 @@ class CoordinatorNode(Node):
         self.joint_goal_tolerance = float(self.get_parameter("joint_goal_tolerance_rad").value)
         self.num_planning_attempts = int(self.get_parameter("num_planning_attempts").value)
         self.allowed_planning_time = float(self.get_parameter("allowed_planning_time_sec").value)
+        self.plan_retry_attempts = max(int(self.get_parameter("plan_retry_attempts").value), 0)
         self.recorded_approach_scaling = min(
             max(float(self.get_parameter("recorded_approach_scaling").value), 1e-3), 1.0
         )
@@ -471,6 +518,7 @@ class CoordinatorNode(Node):
             f"activities={self.catalogue.available_activities()}, "
             f"arm_groups={sorted(self.arm_planner.config.groups)}, "
             f"arm_dry_run={self.arm_dry_run}, "
+            f"plan_retry_attempts={self.plan_retry_attempts}, "
             # Named at startup because it silently changes what may run at once:
             # under dedicated_per_device a hand action no longer waits for its
             # own arm, and no other line of output would say so.
@@ -958,17 +1006,56 @@ class CoordinatorNode(Node):
                         "and silently drop the synchronization, so the activity "
                         "fails instead"
                     )
+                merged.respawn = (
+                    lambda group=list(arm_traj):
+                    self._try_merge_sync_group(group, activity_id)
+                )
                 children.append(merged)
                 rest = [m for m in members if m not in arm_traj]
             else:
                 rest = members
-            children.extend(
-                self._dispatch(m.action_no, m.action_id, activity_id) for m in rest
-            )
-        children.extend(
-            self._dispatch(m.action_no, m.action_id, activity_id) for m in singles
-        )
+            children.extend(self._dispatch_one(m, activity_id) for m in rest)
+        children.extend(self._dispatch_one(m, activity_id) for m in singles)
         return children
+
+    def _dispatch_one(self, item, activity_id) -> _Child:
+        """Dispatch one scheduler item, remembering how to dispatch it again."""
+        child = self._dispatch(item.action_no, item.action_id, activity_id)
+        child.respawn = lambda: self._dispatch(item.action_no, item.action_id, activity_id)
+        return child
+
+    def _retry_child(self, child: _Child, activity_id: str) -> _Child | None:
+        """A replacement child for a failure a fresh goal may get past.
+
+        MoveIt's own ``num_planning_attempts`` shares one goal sampler across its
+        attempts, so a goal state that only marginally clears the collision model
+        fails every attempt in the same call — the second and third return in
+        under a millisecond. A new goal rebuilds the sampler, which is what makes
+        this worth doing at all.
+        """
+        if self.plan_retry_attempts <= 0 or child.respawn is None:
+            return None
+        if not isinstance(child, _ArmChild) or not child.retryable():
+            return None
+        if child.attempt > self.plan_retry_attempts:
+            return None
+        try:
+            replacement = child.respawn()
+        except (DispatchError, KeyError, ArmConfigError, NotTaughtError) as exc:
+            self.get_logger().error(f"retry of {child.action_id} could not dispatch: {exc}")
+            return None
+        if replacement is None:
+            return None
+        replacement.attempt = child.attempt + 1
+        self.get_logger().warn(
+            f"{child.action_id}: {child.message}; replanning "
+            f"(attempt {replacement.attempt} of {self.plan_retry_attempts + 1})"
+        )
+        self._event(
+            "info", activity_id=activity_id, action_id=child.action_id,
+            state="running", message=f"replanning after {child.message}",
+        )
+        return replacement
 
     def _is_arm_trajectory(self, action_id: str) -> bool:
         """True for a per-arm Trajectory action — the only mergeable shape."""
@@ -1086,14 +1173,21 @@ class CoordinatorNode(Node):
             if self.stop_requested:
                 self._shutdown_event.set()
 
-    def _prewarm_recorded(self, graph, activity_id: str, goal_handle=None):
-        """Plan every recorded action in the graph, returning what refused.
+    def _prewarm_arm_actions(self, graph, activity_id: str, goal_handle=None):
+        """Plan every arm action in the graph, returning what refused.
 
         Populates the planner's cache, so the dispatch that follows is a lookup.
         Cancellation is checked between actions: one retiming is a single library
         call that runs to completion, so an action is the finest granularity
         available here — under `speed_scale` that call is seconds, not the whole
         prewarm.
+
+        Anchor moves are planned too, not only recorded ones. Resolving a
+        ``to_pose`` is a config lookup rather than a retiming, so it costs
+        nothing here, and an anchor naming a pose that no longer exists is
+        otherwise not caught by anything: validation checks action ids, edges and
+        resources, so the failure lands at dispatch — with the arm mid-sequence,
+        possibly holding the payload.
         """
         problems: list[str] = []
         seen: set[str] = set()
@@ -1101,7 +1195,7 @@ class CoordinatorNode(Node):
             if self._prewarm_interrupted(goal_handle):
                 self.get_logger().info(
                     f"activity '{activity_id}': planning stopped after "
-                    f"{len(seen)} recorded action(s)"
+                    f"{len(seen)} arm action(s)"
                 )
                 return problems, True
             action = self.catalogue.actions.get(node.action_id)
@@ -1109,16 +1203,20 @@ class CoordinatorNode(Node):
                 continue
             if action.actiontype_id != ACTIONTYPE_TRAJECTORY:
                 continue
-            if not (action.metadata or {}).get("waypoints"):
-                continue
             seen.add(action.action_id)
             try:
                 self.arm_planner.plan(action)
-            except (ArmConfigError, NotTaughtError, PlanMergeError) as exc:
+            except NotTaughtError as exc:
+                # A dry run reports a not-yet-taught action at dispatch and
+                # continues, so refusing the whole activity here would take that
+                # away — the one case where planning ahead must not be stricter.
+                if not self.arm_dry_run:
+                    problems.append(f"{action.action_id}: {exc}")
+            except (ArmConfigError, PlanMergeError) as exc:
                 problems.append(f"{action.action_id}: {exc}")
         if seen and not problems:
             self.get_logger().info(
-                f"activity '{activity_id}': {len(seen)} recorded action(s) planned"
+                f"activity '{activity_id}': {len(seen)} arm action(s) planned"
             )
         return problems, False
 
@@ -1158,12 +1256,13 @@ class CoordinatorNode(Node):
             return result
 
         graph = self.catalogue.get_activity_plan(activity_id)
-        # Plan every recorded action before the first one moves. Retiming a taught
+        # Plan every arm action before the first one moves. Retiming a taught
         # trajectory costs up to 11 s under `speed_scale`, which is a stall in the
-        # middle of a sequence, and a recording that cannot be replayed under the
-        # requested mode has to fail here rather than three actions in.
+        # middle of a sequence; a recording that cannot be replayed under the
+        # requested mode, or an anchor naming a pose that is not configured, has
+        # to fail here rather than three actions in.
         problems, interrupted = (
-            self._prewarm_recorded(graph, activity_id, goal_handle)
+            self._prewarm_arm_actions(graph, activity_id, goal_handle)
             if planner is not None
             else ([], False)
         )
@@ -1268,6 +1367,12 @@ class CoordinatorNode(Node):
                     self._publish_feedback(goal_handle, child.action_no, child.action_id,
                                            "completed", len(completed), total)
                 else:
+                    replacement = self._retry_child(child, activity_id)
+                    if replacement is not None:
+                        replacement.set_notify(self._progress.set)
+                        for covered_no in replacement.action_nos:
+                            running[covered_no] = replacement
+                        continue
                     return self._abort(
                         goal_handle, result, running, activity_id,
                         child.action_id, len(completed),

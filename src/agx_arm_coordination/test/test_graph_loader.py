@@ -54,6 +54,7 @@ def test_catalogue_fragment_may_not_redefine_an_action(tmp_path):
 @pytest.mark.parametrize("activity_id", [
     "hefeweizen_pour_v1",
     "tea_pour_left_v1",
+    "tea_pour_duo_v2",
     "hands_open_close_release_v1",
     "hands_open_release_v1",
     "both_arms_pregrasp_grasp_retract_v1",

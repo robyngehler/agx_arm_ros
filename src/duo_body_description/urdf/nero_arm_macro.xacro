@@ -277,7 +277,7 @@
       </link>
 
       <joint name="${arm_prefix}left_hand_base_joint" type="fixed">
-        <origin xyz="0.0 0.0 0.012" rpy="0 0 3.1415926"/>
+        <origin xyz="0.0 0.0 0.005" rpy="0 0 3.1415926"/>
         <parent link="${arm_prefix}omnihand_flange"/>
         <child link="left_base_link"/>
       </joint>
@@ -304,7 +304,7 @@
       </link>
 
       <joint name="${arm_prefix}right_hand_base_joint" type="fixed">
-        <origin xyz="0.0 0.0 0.012" rpy="0 0 3.1415926"/>
+        <origin xyz="0.0 0.0 0.005" rpy="0 0 3.1415926"/>
         <parent link="${arm_prefix}omnihand_flange"/>
         <child link="right_base_link"/>
       </joint>

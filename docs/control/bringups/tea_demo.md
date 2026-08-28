@@ -1,4 +1,16 @@
-# Tea Pour Demo (`tea_pour_left_v1`) — Runbook
+# Tea Pour Demo (`tea_pour_duo_v2`) — Runbook
+
+> **`tea_pour_left_v1` cannot run any more (2026-08-27).** Its eight anchor poses
+> (`Can_Grip_Idle_L`, `Can_Pre_Grip_L`, `Can_Grip_L`, `Can_Post_Grip_L`,
+> `Can_Fill_Init_L`, `Can_Fill_Idle`, `Pre_Place_Can_L`, `Place_Can_L`) were
+> re-captured out of `arm_config.yaml` under `Tee-Can_*` names, so every anchor in
+> it now names a pose that does not exist. The current activity is
+> **`tea_pour_duo_v2`** — see § The v2 activity below. `tea_pour_left_v1` is kept
+> for its taught waypoints, not because it is runnable; re-anchor it or delete it.
+>
+> Everything in this page from § Emergency stop onwards describes mechanisms that
+> are unchanged between the two — payload attach/detach, how a replay reaches its
+> start, the playback modes, the CPU budget. The v1 step tables are historical.
 
 > **Superseded in part — V02 refactor.** Each device now has its own CAN bus
 > (arms `can_nero_left`/`can_nero_right` native, hands `hand_left`/`hand_right`
@@ -15,11 +27,14 @@
 > See `docs/sprint_refactor/planning/integration_plan.md` (C1, C7) and
 > `docs/sprint_refactor/planning/decision_record.md` §5 and §7.
 
-The first end-to-end hardware demo: the **left** arm plus the **left** OmniHand pick up a teapot,
-carry it to the pour station, pour, set it down and withdraw. The right arm and right hand are
-brought up and stay live, but the activity never addresses them — they hold wherever they are.
+The end-to-end hardware demo: the **left** arm plus the **left** OmniHand pick up a tea can, carry it
+to the pour station, pour, set it down and withdraw, while the **right** arm supports.
 
-Built on the sprint 6 coordinator. Both arms and both hands run, only the left side moves.
+v1 was left-only, with the right side merely live. v2 is a duo activity: the right arm is staged
+first, its two longest motions were taught on both arms at once, and three of its steps overlap an
+arm move with a hand shape. The right hand is out of service and is commanded nowhere.
+
+Built on the sprint 6 coordinator.
 
 > **Naming.** The anchor poses and hand gestures were captured under `Can_*` names before the object
 > was settled. The object is a **teapot**; `Can_*` is a capture-time misnomer that is kept verbatim
@@ -51,7 +66,7 @@ See `teach_and_run.md` § Emergency stop / runaway.
 | CAN buses | `sudo bash ./scripts/activate_duo_can.sh` |
 | arms + MoveIt + unit safety | `start_agx_arm_components.launch.py mode:=moveit_mit execution_profile:=duo_hand_external_bridge` |
 | hands + coordinator | `start_tea_demo.launch.py` |
-| the activity | `ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1` |
+| the activity | `ros2 run agx_arm_coordination run_activity --activity tea_pour_duo_v2` |
 
 > **The unit safety writer must be running.** `agx_arm_ctrl unit_safety` allocates the unit's safety
 > generation, and the coordinator is fail-closed: with no generation established it rejects every
@@ -81,12 +96,168 @@ See `teach_and_run.md` § Emergency stop / runaway.
 > `ros2 param get /left_arm/agx_arm_ctrl_single_node omnihand_joint_states_topic`
 > against `ros2 topic list | grep omnihand/joint_states`.
 
+## The v2 activity (`tea_pour_duo_v2`)
+
+Source of the sequence: `docs/sprint6/target/README.md`. Graph:
+`agx_arm_coordination/config/activities/tea_pour_duo_v2.yaml`; actions:
+`config/catalogue.d/tea_pour_duo_v2.yaml`.
+
+> **The right hand is out of service (2026-08-27)** and this activity commands
+> it nowhere — not even to `zero`. It is assumed to already sit flat and to stay
+> there. The right **arm** is unchanged, so its support replay and its half of
+> the two duo takes now run with a *flat* right hand where they were taught with
+> a shaped one (`can_prep`). Check that before the first live run.
+>
+> The activity also no longer ends on the two-handed heart. It returns to
+> `Functional_Init_Both_V01` with the left hand closing to `fist`, and stops
+> there. `both_arms_to_heart_top`, `left_hand_heart` and `left_hand_zero` stay
+> defined in the catalogue, referenced by nothing.
+
+20 nodes, dispatched in 17 steps. `‖` marks a step the scheduler admits as one
+batch — an arm goal and a hand goal running at the same time.
+
+| # | Step | Group | Taught / planned |
+|---|---|---|---|
+| 1 | `both_arms_to_functional_init` | both_arms | anchor |
+| 2 | `both_arms_to_can_prep_grip` | both_arms | anchor |
+| 3 | `right_arm_can_prep_4grip` | right_arm | replay, 9.49 s taught |
+| 4 | `both_arms_to_can_grip_idle` ‖ `left_hand_can_pre_grip` | both_arms + left_hand | anchor |
+| 5 | `both_arms_to_can_pre_grip` | both_arms | anchor |
+| 6 | `left_arm_can_grip_move` | left_arm | replay, 7.83 s taught → 6.12 s |
+| 7 | `both_arms_to_can_pre_grip_adjust` | both_arms | anchor, 0.05 scaling |
+| 8 | `left_hand_can_grip` ‖ `both_arms_to_can_adjust_while_grip` | left_hand + both_arms | anchor, 0.05 scaling; **payload attach** |
+| 9 | `left_arm_can_lift_post_grip` | left_arm | replay, 4.65 s taught → 2.83 s |
+| 10 | `both_arms_can_goto_pour_init` | both_arms | replay, 10.91 s |
+| 11 | `both_arms_can_pour` | both_arms | replay, 25.35 s |
+| 12 | `both_arms_to_can_post_grip` | both_arms | anchor |
+| 13 | `both_arms_to_can_place` | both_arms | anchor, 0.05 scaling |
+| 14 | `left_hand_can_release` | left_hand | **payload detach** |
+| 15 | `left_arm_can_release_motion` | left_arm | replay, 8.68 s |
+| 16 | `left_arm_can_post_place_adjust` | left_arm | replay, 8.85 s → 8.69 s |
+| 17 | `both_arms_to_functional_init` ‖ `left_hand_fist` | both_arms + left_hand | anchor; last step |
+
+Three replays come out **shorter** than taught. `smooth` reconstructs the motion,
+and a take that opened with the arm standing still — 2.00 s on the lift, 1.88 s
+on the grip move — loses that dead lead-in. The motion itself is not sped up.
+
+### The overlap is the activity, not an optimisation of it
+
+Steps 4, 8 and 17 are `sync_flag` groups (step 2 was one until the right
+hand's `can_prep` came out; the closing heart was another). They are only
+legal because
+every device owns its own bus (`bus_topology: dedicated_per_device`): a hand
+action then holds no resource token the arms hold, the scheduler admits the group
+whole, and the coordinator dispatches two independent goals — a `both_arms`
+action is not one of the two per-arm shapes it would try to merge.
+
+Under `shared_per_side` the activity is **refused at validation**, naming all
+three pairs, rather than running serialized. That is deliberate: a run that
+quietly dropped the overlap would be a different activity wearing this one's
+name. Switching the registry back to the degraded topology therefore means
+re-writing this graph, not just accepting a slower run.
+
+### Every anchor is a `both_arms` pose
+
+The taught vectors in `arm_config.yaml` are 14-DoF, so an anchor move always
+states where *both* arms are. The arm that is not the subject of a step holds its
+measured pose rather than wherever it happened to stop.
+
+One consequence to be aware of on hardware: after the pour, the right arm is
+3.755 rad from `Tee-Can_Post_Grip_L`'s right half on j5, and step 13 then moves
+it a further 1.915 rad away. The right arm returns to the support pose and
+immediately leaves it. That is what the flow says; if the swing is unwanted, the
+fix is a right-arm anchor between steps 11 and 13, not a change here.
+
+### Recordings are referenced, not inlined
+
+`config/recordings/*.json` holds lean sidecars — joint names, times, positions —
+that a `recording:` key points at. Full taught density survives (219–1407
+samples per take, 4.1 MB of teach files as 426 KB of sidecars), which is what the
+retiming needs and what decimating into the catalogue would destroy. The sidecars
+carry side-prefixed joint names, so the planner checks the side against the group
+instead of taking the catalogue's word for it.
+
+**A sidecar is a copy, so re-teaching a take on hardware does not update it.**
+The activity keeps replaying the older motion and nothing says so — that cost one
+run, where a re-taught `Prep_Tee-Can_4Grip_Right` (633 samples, 9.49 s) was still
+being replayed as the 454-sample, 7.37 s take it replaced. After any re-teach:
+
+```bash
+scripts/refresh_demo_recordings.py --check   # what is out of date (exit 1 if any)
+scripts/refresh_demo_recordings.py           # rewrite them
+bash ./scripts/colcon_build_system_python.sh --packages-select agx_arm_coordination
+```
+
+It reads the `recording:` references straight out of the catalogue and takes the
+side prefix from each action's `robot_id`, so nothing has to be listed twice. For
+a single take by hand:
+
+```bash
+ros2 run agx_arm_mit_demos agx_arm_recorded_to_catalogue \
+    ~/agx_arm_trajectories/teach/Tee-Can_Pour_V01.json \
+    --action-id both_arms_can_pour \
+    --emit-recording src/agx_arm_coordination/config/recordings/Tee-Can_Pour_V01.json
+```
+
+Add `--joint-prefix left_arm_` (or `right_arm_`) for a single-arm take; a duo take
+already carries prefixed names.
+
+### Replanning after a MoveIt failure
+
+`left_arm_link2` against `body_base_link` was **not** an intermittent failure,
+and this is worth keeping straight because the symptom reads like one.
+Surface-to-surface distance, measured 2026-08-27 against the same URDF move_group
+loads: 0.01 mm at `Tee-Can_Adjust-While-Grip_L` — touching — against 3.95 mm at
+`Tee-Can_Post_Grip_L` and 5.33 mm at `Tee-Can_Pre_Grip_Adjust_L`, both of which
+plan. `Unable to sample any valid states for goal tree` says every state in the
+±0.01 rad goal box collides, which is a deterministic refusal, not a flaky one.
+No joint nudge helps: only j1 and j2 move link2, and ±0.10 rad on either stays
+between 1.1 and 4.0 mm.
+
+link2 rotates about the mount, so it sweeps along the torso hull by construction:
+over the **whole** j1 x j2 range it never gets further than 12.9 mm (left) /
+13.3 mm (right) from the body, median 7.2 / 8.0 mm, and 81% of that space is
+under 10 mm. A collision check on a pair that can never be more than 13 mm apart
+yields refusals, not safety, so `<side>_arm_link2` vs `body_base_link` is now
+disabled in the SRDF alongside `base_link` and `link1`, which were already out.
+The pose it refused is one an operator back-drove the real arm into by hand.
+
+It is **not** the payload update, although it lands in the same instant: the grip
+that attaches the payload and this anchor move are one sync group, dispatched
+together, and this is the tightest pose in the activity. `~/payload_attached`
+swaps a reference between two gravity models preloaded at startup under the
+control loop's lock — it publishes nothing, touches no planning scene, and
+generates no motion.
+
+Genuinely intermittent planning failures do happen here, which is what the retry
+below is for.
+
+`num_planning_attempts` does not help there. Its attempts share one goal sampler:
+in the failure that prompted this, the first attempt spent 0.55 s and the next
+two returned in 0.48 ms and 0.23 ms with `Insufficient states in sampleable goal
+region`. Only a **new goal** rebuilds the sampler.
+
+The coordinator therefore re-dispatches a failed arm goal up to
+`plan_retry_attempts` times (default 2, so three tries in all), and logs each
+one. Retried: `FAILURE`, `PLANNING_FAILED`, `INVALID_MOTION_PLAN`,
+`MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE`, `TIMED_OUT`,
+`START_STATE_IN_COLLISION`, `GOAL_IN_COLLISION`. **Not** retried: `CONTROL_FAILED`
+and `PREEMPTED`, because the motion started and the arm is somewhere this cannot
+reason about, and the `INVALID_*` configuration codes, which are deterministic. A
+taught replay is retried only while its planned approach is what failed.
+
+```bash
+ros2 run agx_arm_coordination coordinator --ros-args -p plan_retry_attempts:=4
+```
+
+Set it to 0 to fail on the first refusal.
+
 ### 1. Dry run first (no hardware)
 
 ```bash
 ros2 launch agx_arm_coordination start_tea_demo.launch.py \
   arm_dry_run:=true start_unit_safety:=true
-ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
+ros2 run agx_arm_coordination run_activity --activity tea_pour_duo_v2
 ```
 
 Mock hands, no arm goals sent. Confirms the graph validates, every action resolves, and the
@@ -118,11 +289,13 @@ ros2 launch agx_arm_ctrl start_agx_arm_components.launch.py \
 ros2 launch agx_arm_coordination start_tea_demo.launch.py backend_type:=sdk
 
 # Run it
-ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
+ros2 run agx_arm_coordination run_activity --activity tea_pour_duo_v2
 ```
 
-**Measured 2026-08-17: 93 s**, twice, within 1.1 s of each other — 8 planned anchor moves, 3 taught
-replays (4.6 s + 19.4 s + 13.2 s at the 0.75 time-stretch) and 5 hand actions. On the normal
+**v1 measured 2026-08-17: 93 s**, twice, within 1.1 s of each other — 8 planned anchor moves, 3
+taught replays (4.6 s + 19.4 s + 13.2 s at the 0.75 time-stretch) and 5 hand actions. v2 has not
+been run on hardware: 8 anchor moves, 7 replays (73.4 s of taught motion) and 4 hand actions, three
+of which cost nothing extra because they overlap an arm move. On the normal
 `dedicated_per_device` topology **no hand window is opened**: the hand claims its own device, the arm
 keeps its own bus, and the handshake is off. Per-action timings for all three completed runs, and the
 anomalies they recorded, are in `../../sprint6/evidence/tea_pour_left_v1_2026-08-17.md`.
@@ -362,7 +535,7 @@ To try a different tempo without touching the catalogue, override for one run:
 
 ```bash
 ros2 run agx_arm_coordination agx_arm_run_activity \
-  --activity tea_pour_left_v1 \
+  --activity tea_pour_duo_v2 \
   --metadata-json '{"playback": {"mode": "tempo_scale", "speed_scale": 0.6}}'
 ```
 

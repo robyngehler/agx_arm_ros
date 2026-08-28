@@ -1,27 +1,22 @@
-"""Coordination bring-up for the tea-pour demo (activity ``tea_pour_left_v1``).
+"""Coordination bring-up for the tea-pour demo (activity ``tea_pour_duo_v2``).
 
 Same shape as ``start_hefeweizen_demo.launch.py`` -- both OmniHand bridges, both
-skill controllers, the coordinator -- but with CPU-lean defaults, because the
-Jetson is the binding constraint on this demo, not the robot. See
-``docs/sprint_refactor/reference/critical_cpu_paths.md``: when the host stalls,
-nothing drains the CAN RX socket and the kernel drops hand response frames. Every
-Hz saved here is bus reliability, not just headroom.
+skill controllers, the coordinator.
 
-What is lowered versus the Hefeweizen defaults, and why it is safe:
+Both hands run at the same rates. v1 lowered the right side to 5/2 Hz because it
+was only kept alive; v2 shapes it three times and holds a support pose under the
+can for the whole carry, so it is an active device.
 
-- ``hand_pub_rate`` 50 -> 20 Hz. The hand's ROS feedback republish rate. Nothing
-  in this demo closes a loop on it -- the skill controller compares against its
-  own commanded ramp -- and it is decoupled from the SDK poll rate.
-- ``hand_joint_read_rate`` 20 -> 10 Hz. Each poll is a real CAN request/response
-  on the shared arm+hand bus (hot path 4). Halving it halves that traffic; the
-  skill controller's pose confirmation just needs a reading within its timeout.
-- the right hand's rates are lowered further (``idle_hand_*``): the right side is
-  brought up and stays live, but this activity never addresses it, so its polling
-  is pure background load.
+``hand_pub_rate`` is the ROS feedback republish rate and nothing here closes a
+loop on it -- the skill controller compares against its own commanded ramp.
+``hand_joint_read_rate`` is real CAN traffic on the hand's own bus, and lowering
+it is CPU headroom on the Jetson: when the host stalls, nothing drains the CAN RX
+socket and the kernel drops response frames
+(``docs/sprint_refactor/reference/critical_cpu_paths.md``).
 
-What is deliberately NOT lowered: the arm driver's ``pub_rate`` and the MIT
-control rate. Those belong to the arm bring-up (started separately) and are load
-bearing for control and gravity compensation.
+Not settable here: the arm driver's ``pub_rate`` and the MIT control rate. Those
+belong to the arm bring-up and are load bearing for control and gravity
+compensation.
 
 The ARM stack is NOT started here. Bring up the Duo arm/MoveIt slice first
 (``mode:=moveit_mit``, and use ``use_rviz:=false`` for the demo -- rviz rendering
@@ -40,7 +35,7 @@ Examples::
     ros2 launch agx_arm_coordination start_tea_demo.launch.py backend_type:=sdk
 
     # then run it (Ctrl+C here cancels the activity and stops the arm)
-    ros2 run agx_arm_coordination run_activity --activity tea_pour_left_v1
+    ros2 run agx_arm_coordination run_activity --activity tea_pour_duo_v2
 """
 
 import os
@@ -54,8 +49,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-ACTIVE_SIDE = "left"   # the side this activity drives
-IDLE_SIDE = "right"    # brought up and live, but never addressed by the activity
+SIDES = ("left", "right")   # v2 drives both
 
 
 def _hand_side(side: str, ctrl_launch_dir: str, pub_rate: str, joint_read_rate: str):
@@ -101,19 +95,11 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "hand_pub_rate", default_value="50.0",
-            description="Active hand feedback republish rate (Hz).",
+            description="Hand feedback republish rate (Hz), both sides.",
         ),
         DeclareLaunchArgument(
             "hand_joint_read_rate", default_value="50.0",
-            description="Active hand SDK joint poll rate (Hz) -- real CAN traffic.",
-        ),
-        DeclareLaunchArgument(
-            "idle_hand_pub_rate", default_value="5.0",
-            description="Idle-side hand republish rate (Hz); it is only kept alive.",
-        ),
-        DeclareLaunchArgument(
-            "idle_hand_joint_read_rate", default_value="2.0",
-            description="Idle-side hand SDK poll rate (Hz); pure background load.",
+            description="Hand SDK joint poll rate (Hz), both sides -- real CAN traffic.",
         ),
         DeclareLaunchArgument(
             "poll_period_sec", default_value="0.05",
@@ -157,9 +143,9 @@ def generate_launch_description():
 
     nodes = list(args)
     nodes.append(unit_safety)
-    nodes += _hand_side(ACTIVE_SIDE, ctrl_launch_dir, "hand_pub_rate", "hand_joint_read_rate")
-    nodes += _hand_side(
-        IDLE_SIDE, ctrl_launch_dir, "idle_hand_pub_rate", "idle_hand_joint_read_rate"
-    )
+    for side in SIDES:
+        nodes += _hand_side(
+            side, ctrl_launch_dir, "hand_pub_rate", "hand_joint_read_rate"
+        )
     nodes.append(coordinator)
     return LaunchDescription(nodes)

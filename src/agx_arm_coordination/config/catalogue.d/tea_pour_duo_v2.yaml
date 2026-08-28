@@ -1,0 +1,311 @@
+# Tea-pour demo v2 catalogue fragment (activity: tea_pour_duo_v2).
+#
+# Merged into the shared catalogue by graph_loader (config/catalogue.d/*.yaml).
+#
+# DUO, not left-only. v1 drove the left side alone; v2 stages the right arm into
+# a support pose first, and its two longest motions were taught on both arms at
+# once, so they replay as `both_arms`. The right hand holds `can_prep` for the
+# whole carry.
+#
+# Every anchor here is a `both_arms` pose: the taught vectors in
+# arm_config.yaml are 14-DoF, so an anchor move always states where BOTH arms
+# are, and the arm that is not the subject of the step holds its measured pose
+# rather than wherever it happened to stop.
+#
+# Recorded actions reference a lean sidecar under config/recordings/ instead of
+# inlining waypoints: the taught density survives (454-1407 samples per take,
+# which is what the retiming needs), and the sidecars carry side-prefixed joint
+# names so arm_executor._assert_recorded_joints checks the side against the group
+# instead of taking this file's word for it.
+#
+# Playback is `smooth` at a 0.5 s window with speed_scale 1.0 on every replay
+# (docs/sprint6/target/README.md). `playback` is the single timing authority on a
+# recorded action, so none of them carries velocity_scaling / acceleration_scaling
+# — declaring both is refused rather than multiplied.
+#
+# NAMING: the poses and gestures were captured under "Tee-Can_*" / "can_*" names.
+# Those names are kept verbatim wherever they name stored data; do not rename a
+# stored pose or gesture without re-capturing it.
+#
+# payload_update rides the HAND action that changes what the arm carries, never
+# the gesture preset: can_pre_grip is the shape of both the pre-grip and the
+# release, and only one of them means the can is gone. It requires the left arm's
+# MIT controller to have been brought up with payload_mass_kg > 0 (~1 kg for the
+# tea can); with payload_mass_kg 0 the attach is refused and the activity fails
+# before the lift.
+
+actions:
+
+  # --- Hand skills ----------------------------------------------------------
+  # motion `pose`: these presets were taught on the real can, so the shape IS the
+  # grasp — deterministic and repeatable, and blind to a can that is not where
+  # the anchor says it is.
+
+  # NOT IN THE ACTIVITY (2026-08-27): the right hand is out of service, so
+  # tea_pour_duo_v2 addresses none of the three right-hand actions below. They
+  # are kept defined so restoring them is an edge change in the activity rather
+  # than a re-authoring. An action nothing references costs nothing at load.
+  right_hand_can_prep:
+    actiontype_id: Gripper
+    robot_id: right_hand
+    metadata:
+      skill_name: prep_can_grip
+      timeout_sec: 5.0
+      description: "Right hand into the support shape it holds for the whole carry."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  left_hand_can_pre_grip:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: pre_grip_handle
+      timeout_sec: 5.0
+      description: "Open enough for the arm to thread the hand around the can."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  left_hand_can_grip:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: grip_handle
+      timeout_sec: 5.0
+      payload_update: attach
+      description: "Taught closure on the can; switches the left arm to the ~1 kg gravity model."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  left_hand_can_release:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: release_handle
+      timeout_sec: 5.0
+      payload_update: detach
+      description: "Back to the pre-grip shape once the can is down; returns the left arm to the unloaded gravity model."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  # The activity's closing hand shape.
+  left_hand_fist:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: hand_fist
+      timeout_sec: 5.0
+      description: "Closed fist; the shape the left hand ends the activity in."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  # NOT IN THE ACTIVITY: the closing heart gesture was dropped, and `zero` with
+  # it — the left hand now finishes in `fist` instead of flat. Kept defined for
+  # the same reason as the right-hand actions above.
+  left_hand_zero:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: open_hand
+      timeout_sec: 5.0
+      description: "Flat hand."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+  right_hand_zero:
+    actiontype_id: Gripper
+    robot_id: right_hand
+    metadata:
+      skill_name: open_hand
+      timeout_sec: 5.0
+      description: "Flat hand."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  left_hand_heart:
+    actiontype_id: Gripper
+    robot_id: left_hand
+    metadata:
+      skill_name: hand_heart
+      timeout_sec: 5.0
+      description: "Half of the two-handed heart shape."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+  right_hand_heart:
+    actiontype_id: Gripper
+    robot_id: right_hand
+    metadata:
+      skill_name: hand_heart
+      timeout_sec: 5.0
+      description: "Half of the two-handed heart shape."
+      fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
+
+  # --- Arm anchor moves (Trajectory, MoveIt-planned, collision-aware) --------
+
+  both_arms_to_functional_init:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Functional_Init_Both_V01
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Neutral working pose. Entry point of the activity and the pose it returns to."
+
+  both_arms_to_can_prep_grip:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Prep_Tee-Can_Grip
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Staging pose for the right arm's support replay."
+
+  both_arms_to_can_grip_idle:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Can_Grip_Idle_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Approach standoff in front of the can."
+
+  both_arms_to_can_pre_grip:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Can_Pre_Grip_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Pre-grip pose; staging pose for the taught grip-entry replay."
+
+  both_arms_to_can_pre_grip_adjust:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Can_Pre_Grip_Adjust_L
+      velocity_scaling: 0.05
+      acceleration_scaling: 0.05
+      description: "Seats the hand around the can, still in the pre-grip shape. Slow: this is the pose the fingers close from."
+
+  both_arms_to_can_adjust_while_grip:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Can_Adjust-While-Grip_L
+      velocity_scaling: 0.05
+      acceleration_scaling: 0.05
+      description: "Left arm settles into the carry attitude while the hand closes. Only the left arm moves (right side is identical to the pre-grip-adjust anchor); slow, because the fingers are closing on the can at the same time."
+
+  both_arms_to_can_post_grip:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Can_Post_Grip_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Carry pose above the can's table position."
+
+  both_arms_to_can_place:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Can_Place_L
+      velocity_scaling: 0.05
+      acceleration_scaling: 0.05
+      description: "Can set down; staging pose for the release replay. Slow: the can is still held and touches down here."
+
+  both_arms_to_heart_top:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Heart_Both_Top_V01
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Closing gesture pose."
+
+  # --- Arm taught replays (Trajectory, source: recorded) --------------------
+  # Each is dispatched as TWO MoveIt goals: a planned, collision-aware approach to
+  # waypoint 0, then the ExecuteTrajectory replay. The preceding anchor is a
+  # staging pose, not a required start state — the residual offset is closed by
+  # that planned approach, so nothing here is re-taught when an anchor moves.
+  #
+  # ExecuteTrajectory executes, it does not plan: the replay itself is NOT
+  # collision checked. It is only as safe as the taught motion was.
+
+  right_arm_can_prep_4grip:
+    actiontype_id: Trajectory
+    robot_id: right_arm
+    metadata:
+      planning_group: right_arm
+      source: recorded
+      recording: recordings/Prep_Tee-Can_4Grip_Right.json
+      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "Right arm into the support position that steadies the can (taught 7.37 s, 454 samples)."
+
+  left_arm_can_grip_move:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: recorded
+      recording: recordings/Tee-Can_Grip_Move_L.json
+      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "Threads the left hand around the can (taught 7.83 s, 481 samples)."
+
+  left_arm_can_lift_post_grip:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: recorded
+      recording: recordings/Tee-Can_Lift_Post_Grip_L.json
+      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "Lifts the can clear of the table (taught 4.65 s, 219 samples). Runs under the attached payload model."
+
+  both_arms_can_goto_pour_init:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: recorded
+      recording: recordings/Tee-Can_GoTo_Pour_Init.json
+      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "Carries the can to the pour station. Taught on both arms at once (10.91 s, 699 samples), so it replays as one both_arms goal."
+
+  both_arms_can_pour:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: recorded
+      recording: recordings/Tee-Can_Pour_V01.json
+      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "The pour. Taught on both arms at once (25.35 s, 1407 samples) — the longest motion in the activity."
+
+  left_arm_can_release_motion:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: recorded
+      recording: recordings/Tee-Can_Release_Motion.json
+      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "Withdraws the opened hand from around the can (taught 8.68 s, 697 samples)."
+
+  left_arm_can_post_place_adjust:
+    actiontype_id: Trajectory
+    robot_id: left_arm
+    metadata:
+      planning_group: left_arm
+      source: recorded
+      recording: recordings/Tee-Can_Post_Place_Adjust.json
+      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "Clears the left arm away from the placed can (taught 8.85 s, 639 samples)."

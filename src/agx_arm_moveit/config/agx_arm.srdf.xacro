@@ -85,6 +85,13 @@
     <xacro:if value="${mount_body_link != ''}">
       <disable_collisions link1="${mount_body_link}" link2="${link_prefix}base_link" reason="Adjacent" />
       <disable_collisions link1="${mount_body_link}" link2="${link_prefix}link1" reason="Adjacent" />
+      <!-- link2 rotates about the mount, so it sweeps along the torso hull by
+           construction: over the whole j1 x j2 range it never gets further than
+           12.9 mm (left) / 13.3 mm (right) from the body, median 7.2 / 8.0 mm.
+           A check on a pair that is always within 13 mm and touches at 0.01 mm
+           on a pose an operator back-drove the arm into by hand yields refusals,
+           not safety. Measured 2026-08-27, docs/control/bringups/tea_demo.md. -->
+      <disable_collisions link1="${mount_body_link}" link2="${link_prefix}link2" reason="Never" />
     </xacro:if>
   </xacro:macro>
 
