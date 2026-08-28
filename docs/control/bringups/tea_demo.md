@@ -48,11 +48,18 @@ trajectory and the hand goal executing with nobody left to cancel them.
 
 | You press | What happens |
 |---|---|
-| `Ctrl+C` on `run_activity` | cancels the activity goal, waits for the coordinator to confirm it unwound, then exits |
-| `Ctrl+C` on the coordinator | cancels children → pins the moving arm (`cancel_trajectory` + `hold_current`) → exits. On the degraded `shared_per_side` topology it also closes any hand window it opened; on the normal topology there is none to close |
+| `Ctrl+C` on `run_activity` | cancels the activity goal and waits for the coordinator to confirm it unwound. **A second interrupt, or a cancel that produced no result, calls the unit `/emergency_stop`** rather than exiting with the arms unaccounted for |
+| `Ctrl+C` on the coordinator | drops the MIT trajectory on every moving side (`cancel_trajectory`) → cancels children → pins the arms (`hold_current`) → exits. On the degraded `shared_per_side` topology it also closes any hand window it opened; on the normal topology there is none to close |
 | `Ctrl+C` with **no activity running** | the coordinator exits on the first interrupt. Verified on hardware 2026-08-17: all five tea-stack processes gone within 0.66 s |
 | `Ctrl+C` a second time | escalates to `emergency_stop` on both sides, then exits immediately |
-| the coordinator crashes | **not covered by any of the above.** The MIT controller streams a damped stop on its own shutdown and the driver puts the arm in a firmware MOVE-J hold before a recovery disconnect, but a hard crash of the coordinator alone leaves the MoveIt goal running |
+| `Ctrl+C` on the **arm stack** | the MIT controller leaves a stiff gravity-compensated hold at the measured pose as the firmware's last MIT setpoint, and the driver parks the arm in `MOVE-J(current_q)` on its way out. Whichever wins the race, the arm holds |
+| the coordinator crashes | **not covered by any of the above.** A hard crash of the coordinator alone leaves the MoveIt goal running |
+
+The order in the second row is load bearing. `cancel_trajectory` needs nothing
+from MoveIt and stops the arm on its own; cancelling the children waits up to
+`cleanup_timeout` (3 s) for MoveIt to answer, and on 2026-08-26 a `MoveGroup`
+goal never answered its cancel at all — the arms kept moving for that whole
+budget before anything reached them, which is why the two were separated.
 
 **This unit has no mechanical emergency stop.** The arm is either powered or it is not, and the only
 guaranteed stop is removing arm power — which drops the arm, because a de-energized Nero has no
@@ -585,7 +592,10 @@ mid-motion is unexercised.
   benign, because the fingers are physically blocked and the bridge cannot yet tell contact from
   congestion.
 - **The stop ladder is unexercised on hardware.** The 2026-08-17 `Ctrl+C` landed with no activity
-  running, so it proved the idle exit and nothing about cancelling a moving arm.
+  running, so it proved the idle exit and nothing about cancelling a moving arm. The 2026-08-26
+  session did exercise it mid-motion and found four defects on that path
+  (`../../sprint_refactor/errors_and_fixes.md`, 2026-08-26); the fixes are L1/L2 only and the
+  latency and hold claims still need L3.
 - Coordinator crash recovery is not covered — only clean interrupts are.
 - The teapot payload mass and lever are unmeasured estimates, and the payload state does not survive
   a MIT controller restart (deliberate for the MVP — re-establish it through the service before

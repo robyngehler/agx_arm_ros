@@ -974,3 +974,116 @@ run on a refusal had never executed.
   joint. Recorded in `docs/open_questions.md`.
 - Validation: L3, reversible, arm did not move (TX 1353 -> 0 -> 1347/s, pose
   unchanged to within 7e-5 rad).
+
+## 2026-08-26 (the Ctrl+C stop path, found on tea_pour_duo_v2)
+
+Four defects on one path, reported together from a live `tea_pour_duo_v2`
+session: a Ctrl+C that did not stop the arms, a Ctrl+C that stopped them ~3 s
+late while the MIT controller's goal thread died with a traceback, and an arm
+that collapsed after a collision.
+
+### The MIT controller left the arm a sagging setpoint on every shutdown
+
+- Symptom: an arm went completely limp and sank in on itself after an incident
+  in which the activity would not stop (2026-08-25, ~15:08, right arm, no log).
+- `mit_controller_node.main()`'s `finally` published
+  `_publish_damped_stop_command(float("inf"))` five times as the arm's last MIT
+  command. `inf` puts the dead-man's torque ramp past its end, so
+  `torque_scale = 0.0`: the final setpoint is `kp = 0`, `torque = 0`, `kd` only.
+- The Nero firmware executes the last MIT command it received indefinitely, so
+  that command — no stiffness, no gravity feedforward — is what a raised, loaded
+  arm was left holding itself up with. It cannot: it sags.
+- The rule was already written down twice in the same repository. The arm
+  driver's `_command_firmware_hold` warns that a dropped mode frame "leaves the
+  firmware in MIT executing the kp=0 damped stop, which has no stiffness — the
+  arm sags instead of holding", and `test_safety_hold_semantics.py` opens with
+  "the stopped arm holds its pose; it does not go limp". The shutdown path was
+  the one place that did the opposite.
+- Fix: the terminal MIT setpoint is a stiff gravity-compensated hold at the
+  measured pose (`_publish_stiff_hold_command`). Where feedback cannot place the
+  arm, **nothing** is published and the gap is logged — a hold at a synthesised
+  pose is a wrong hold, and the pose hold belongs to the MOVE-J rung below.
+- Fix: the arm driver now ends its own `main()` with `hold_on_shutdown()`, the
+  same `MOVE-J(current_q)` the stop ladder ends at, latching nothing. Every way
+  the stack goes down now ends in a hold rather than on whatever was streaming.
+- **Not established**: that this is what happened on 2026-08-25. No log survives,
+  and a collision can also trip a joint-level firmware fault. What is established
+  is that the shutdown path produced exactly this state whenever the arm stack
+  was interrupted, which was the operator's next action.
+- Validation: L1 + L2. Unexercised on hardware — this is a motion claim and
+  needs L3.
+
+### The stop pinned the arms only after waiting out a third party
+
+- Symptom: `Ctrl+C` on the tea-demo launch reached the arms "strongly delayed".
+- From the reported log: the duo `MoveGroup` goal was accepted at `t=588.83` and
+  `cancel_trajectory` reached the MIT controllers at `t=593.10`, with **no
+  preempt logged by `move_group` in between**. The interrupt instant is not in
+  the log, so the delay is not measured directly — but the path the code takes
+  between them is `_cancel_children`'s full `cleanup_timeout`, 3.0 s, which the
+  absent preempt says was spent in full.
+- `_stop_running` ran `_cancel_children` first, which waits up to
+  `cleanup_timeout` (3.0 s) for each child to confirm it stopped. `move_group`
+  logged no preempt at all, so the full budget was spent, and only then were the
+  arms told anything. The docstring said "cancel the children — this is what
+  actually stops the motion"; on this stack that is `cancel_trajectory` on the
+  MIT controller, which needs nothing from MoveIt and was issued last.
+- The per-side calls were also serialized: the left arm's cancel landed at
+  `593.099` and the right arm's at `593.206`, **107 ms apart, mid duo motion**.
+- Fix: `cancel_arm_trajectories` runs first, before the children are cancelled;
+  the hold still runs after the hand windows close, because an open window shuts
+  the arm's MIT gate. `_call_empty_batch` sends every side's request before
+  waiting for any answer, under one deadline for the whole stop.
+- Validation: L1 pins the order; the latency claim is L3 and unmeasured.
+
+### A goal stopped from outside its client ended in an illegal transition
+
+- Symptom: `components.launch` "crashed" on Ctrl+C with
+  `RCLError: goal_handle attempted invalid transition from state EXECUTING with
+  event CANCELED` out of `_execute_follow_joint_trajectory`, on both arms.
+- `goal_handle.canceled()` is legal only out of `CANCELING`, i.e. after this
+  server accepted the action *client's* cancel request. The `cancel_trajectory`
+  service and the duo e-stop leave the goal `EXECUTING`, and the external-cancel
+  branch called `canceled()` there anyway.
+- The exception unwound out of the execute callback. rclpy logged "Goal state not
+  set, assuming aborted" and reported the goal aborted — which is what the
+  branch should have done itself, minus everything the callback still had to do.
+- Fix: `_end_goal_stopped` picks the transition rcl allows — `canceled()` when a
+  cancel was requested, `abort()` otherwise.
+- Validation: L1.
+
+### `run_activity` had no escalation, and it is the terminal the operator holds
+
+- Symptom: repeated `Ctrl+C` in the `run_activity` terminal did not stop the
+  arms.
+- The coordinator escalates to `emergency_stop_all()` on a second interrupt.
+  The client did not: a second interrupt abandoned the wait, printed advice
+  naming only `/left_arm/emergency_stop`, and exited 130. During a demo, that
+  terminal is the one an operator is holding Ctrl+C in.
+- `_Child.request_cancel()` also returned silently when the goal handle was not
+  resolved yet, so a goal sent but not yet accepted was never cancelled and
+  nothing said so.
+- Fix: the second interrupt calls the unit `/emergency_stop` (per-arm services as
+  the fallback), reports what each side verified, and demands power be cut when
+  a stop is unverified. `request_cancel` arms the cancel on the acceptance.
+- Validation: L1 + L2.
+
+### Builds silently installed nothing for 30 files
+
+- Found while validating the above: `install/` and `build/*/build/lib/` held 30
+  files stamped **2026-08-27**, a day ahead of the system clock. setuptools
+  copies only when the source is newer, so `colcon build` reported success while
+  copying none of them — and because the stale copy sits in `build/lib` too, a
+  rebuild propagated it *forward* into `install/`, overwriting a newer installed
+  file with an older one.
+- Affected among others: `coordinator_node.py`, `trajectory_io.py`,
+  `teach_manager.py`, `arm_config.yaml`, `catalogue.yaml`, every activity YAML
+  and every recording sidecar.
+- Observed drift at the time: the installed `arm_config.yaml` was missing the
+  `Functional_Init_Both_V02` anchor present in `src/`. Nothing referenced it yet,
+  so no run was affected — but any edit to those 30 files would have been.
+- Cleared by resetting the future mtimes under `build/` and `install/` and
+  rebuilding. **What runs is not necessarily what is in `src/`**: when a change
+  does not take effect, check the installed copy's mtime before re-reading the
+  source.
+

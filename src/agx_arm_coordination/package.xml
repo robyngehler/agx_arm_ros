@@ -13,6 +13,7 @@
   <exec_depend>agx_arm_description</exec_depend>
   <depend>moveit_msgs</depend>
   <depend>trajectory_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>builtin_interfaces</depend>
   <depend>action_msgs</depend>
   <depend>ament_index_python</depend>

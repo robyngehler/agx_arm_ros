@@ -199,39 +199,77 @@ def test_sides_for_robot(robot_id, expected):
     assert _coord()._sides_for_robot(robot_id) == expected
 
 
-def test_stop_running_cancels_then_resumes_then_pins():
-    # Order is load bearing: while a hand window is open the arm's MIT gate is
-    # closed, so a hold sent before resume_arm_control would be dropped before it
-    # reaches the arm.
+def _stop_order_coord(sides):
+    """Coordinator stub recording the order of its stop steps."""
     node = _coord()
     calls = []
+    node.cancel_arm_trajectories = lambda s, reason: calls.append(f"drop:{sorted(s)}")
+    node._cancel_children = lambda running: calls.append("cancel_children")
+    node._resume_all_hand_windows = lambda: calls.append("resume")
+    node.safe_stop_arms = lambda s, reason: calls.append(f"pin:{sorted(s)}")
+    node._sides_in_flight = lambda running: set(sides)
+    return node, calls
+
+
+def test_stop_running_drops_the_trajectory_before_waiting_on_the_children():
+    # Order is load bearing twice over. Dropping the MIT trajectory needs nothing
+    # from MoveIt, so it must not sit behind _cancel_children, which waits out
+    # cleanup_timeout when a MoveGroup goal does not answer its cancel — measured
+    # at 3.1 s of continued duo motion after a Ctrl+C. And the hold has to come
+    # after resume_arm_control, because an open hand window closes the arm's MIT
+    # gate and the hold would be dropped before reaching the arm.
+    node, calls = _stop_order_coord({"left"})
 
     class _Child:
         action_nos = [1]
         done = False
 
-        def request_cancel(self):
-            calls.append("cancel")
-
-    node._cancel_children = lambda running: calls.append("cancel")
-    node._resume_all_hand_windows = lambda: calls.append("resume")
-    node.safe_stop_arms = lambda sides, reason: calls.append(f"pin:{sorted(sides)}")
-    node._sides_in_flight = lambda running: {"left"}
-
     node._stop_running({1: _Child()}, "interrupt")
-    assert calls == ["cancel", "resume", "pin:['left']"]
+    assert calls == ["drop:['left']", "cancel_children", "resume", "pin:['left']"]
 
 
-def test_stop_running_skips_pinning_when_no_arm_was_moving():
-    node = _coord()
-    calls = []
-    node._cancel_children = lambda running: calls.append("cancel")
-    node._resume_all_hand_windows = lambda: calls.append("resume")
-    node.safe_stop_arms = lambda sides, reason: calls.append("pin")
-    node._sides_in_flight = lambda running: set()
-
+def test_stop_running_skips_arm_commands_when_no_arm_was_moving():
+    node, calls = _stop_order_coord(set())
     node._stop_running({}, "interrupt")
-    assert calls == ["cancel", "resume"]
+    assert calls == ["cancel_children", "resume"]
+
+
+def test_request_cancel_arms_the_cancel_on_a_goal_still_being_accepted():
+    """A goal sent but not yet accepted still has to be stopped.
+
+    ``request_cancel`` used to return quietly when the handle was not resolved
+    yet, which let a dispatched motion run on through the stop that was supposed
+    to end it.
+    """
+    from agx_arm_coordination.coordinator_node import _Child as Child
+
+    class _PendingFuture:
+        def __init__(self):
+            self._callback = None
+            self._handle = None
+
+        def done(self):
+            return self._handle is not None
+
+        def result(self):
+            return self._handle
+
+        def add_done_callback(self, callback):
+            self._callback = callback
+
+        def accept(self, handle):
+            self._handle = handle
+            if self._callback is not None:
+                self._callback(self)
+
+    future = _PendingFuture()
+    child = Child(10, "both_arms_can_pour")
+    child.attach_goal_future(future)
+
+    child.request_cancel()          # acceptance has not come back yet
+    handle = _GoalHandle(SUCCESS)
+    future.accept(handle)           # ... and now it does
+    assert handle.cancelled, "a goal accepted after the stop must still be cancelled"
 
 
 # --- emergency stop outcome reporting ----------------------------------------

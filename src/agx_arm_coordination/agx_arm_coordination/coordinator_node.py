@@ -207,13 +207,37 @@ class _Child:
         self.mark(False, "no result interpreter")
 
     def request_cancel(self) -> None:
-        if self._goal_handle is None or self.done:
+        """Cancel this child's goal, including one still being accepted.
+
+        A goal that has been sent but whose acceptance has not come back yet has
+        no handle to cancel. Returning quietly there let a dispatched motion run
+        on through a stop, so the cancel is armed on the acceptance instead.
+        """
+        if self.done:
+            return
+        if self._goal_handle is None and self._goal_future is not None:
+            if self._goal_future.done():
+                self._goal_handle = self._goal_future.result()
+            else:
+                self._cancel_when_accepted(self._goal_future)
+                return
+        self._cancel_handle(self._goal_handle)
+
+    @staticmethod
+    def _cancel_handle(goal_handle) -> None:
+        if goal_handle is None or not getattr(goal_handle, "accepted", True):
             return
         try:
-            self._goal_handle.cancel_goal_async()
+            goal_handle.cancel_goal_async()
         except Exception:
             # Cancelling is a stop path: a torn-down context or an already-closed
             # goal must not stop the remaining children from being cancelled.
+            pass
+
+    def _cancel_when_accepted(self, future) -> None:
+        try:
+            future.add_done_callback(lambda f: self._cancel_handle(f.result()))
+        except Exception:
             pass
 
 
@@ -599,20 +623,33 @@ class CoordinatorNode(Node):
         while not self._shutdown_event.wait(0.2):
             pass
 
-    def _call_empty_sync(self, client, label: str) -> tuple[bool, str]:
-        """Call an Empty service and wait for it (bounded); never raises."""
-        try:
-            if not client.wait_for_service(timeout_sec=self.stop_service_timeout):
-                return False, f"{label}: service unavailable"
-            future = client.call_async(Empty.Request())
-            deadline = time.monotonic() + self.stop_service_timeout
-            while not future.done():
-                if time.monotonic() > deadline:
-                    return False, f"{label}: timed out"
+    def _call_empty_batch(self, labelled_clients, reason: str) -> None:
+        """Send every Empty request first, then collect the answers; never raises.
+
+        One deadline covers the whole batch, so a stop cannot cost
+        ``stop_service_timeout`` per side. Sending before waiting is the point:
+        answering the left arm's round trip before the right arm's request goes
+        out left 107 ms between the two cancels of one synchronized duo motion.
+        """
+        deadline = time.monotonic() + self.stop_service_timeout
+        pending: list[tuple[str, object]] = []
+        for label, client in labelled_clients:
+            try:
+                remaining = max(0.0, deadline - time.monotonic())
+                if not client.wait_for_service(timeout_sec=remaining):
+                    self.get_logger().warn(f"safe stop ({reason}): {label}: service unavailable")
+                    continue
+                pending.append((label, client.call_async(Empty.Request())))
+            except Exception as exc:  # a stop path must never raise
+                self.get_logger().warn(f"safe stop ({reason}): {label}: {exc}")
+
+        for label, future in pending:
+            while not future.done() and time.monotonic() < deadline:
                 time.sleep(self.poll_period)
-            return True, f"{label}: ok"
-        except Exception as exc:  # a stop path must never raise
-            return False, f"{label}: {exc}"
+            if future.done():
+                self.get_logger().info(f"safe stop ({reason}): {label}: ok")
+            else:
+                self.get_logger().warn(f"safe stop ({reason}): {label}: timed out")
 
     def _sides_for_robot(self, robot_id: str) -> set[str]:
         if robot_id == "both_arms":
@@ -621,29 +658,37 @@ class CoordinatorNode(Node):
             return {robot_id.split("_", 1)[0]}
         return set()
 
+    def cancel_arm_trajectories(self, sides: set[str], reason: str) -> None:
+        """Drop the active MIT trajectory on the given sides. The fast stop.
+
+        This is the command that ends arm motion on this stack: it needs nothing
+        from MoveIt, and the controller captures its hold pose in the same call.
+        Issued before the children are cancelled, because that wait is bounded by
+        a third party's answer and the arm must not keep moving through it.
+        """
+        self._call_empty_batch(
+            [(f"cancel_trajectory[{side}]", self._cancel_traj_clients[side])
+             for side in sorted(sides)],
+            reason,
+        )
+
     def safe_stop_arms(self, sides: set[str], reason: str) -> None:
         """Pin the given arm sides where they stand (best effort, bounded).
 
-        Cancelling the MoveIt goal is what actually stops the motion; this runs
-        after it so "stopped" means *held* rather than left at whatever the last
-        streamed MIT command was. The Nero firmware has no MIT command watchdog —
-        silence is not a safe state — so an explicit hold is the difference
-        between stopping and merely going quiet.
+        Runs after the cancels, so "stopped" means *held* rather than left at
+        whatever the last streamed MIT command was. The Nero firmware has no MIT
+        command watchdog — silence is not a safe state — so an explicit hold is
+        the difference between stopping and merely going quiet.
 
         Best effort by design: a missing service is logged, not escalated. The
         escalation to ``emergency_stop`` is deliberate and separate
         (``emergency_stop_all``, second Ctrl+C).
         """
-        for side in sorted(sides):
-            for label, client in (
-                ("cancel_trajectory", self._cancel_traj_clients[side]),
-                ("hold_current", self._hold_clients[side]),
-            ):
-                ok, msg = self._call_empty_sync(client, f"{label}[{side}]")
-                if ok:
-                    self.get_logger().info(f"safe stop ({reason}): {msg}")
-                else:
-                    self.get_logger().warn(f"safe stop ({reason}): {msg}")
+        self._call_empty_batch(
+            [(f"hold_current[{side}]", self._hold_clients[side])
+             for side in sorted(sides)],
+            reason,
+        )
 
     def emergency_stop_all(self) -> None:
         """Last-resort stop on every side: damped zero, then the firmware hold.
@@ -1417,14 +1462,23 @@ class CoordinatorNode(Node):
         return sides
 
     def _stop_running(self, running: dict[int, _Child], reason: str) -> None:
-        """Bring everything in flight to a held stop, in the only order that works.
+        """Bring everything in flight to a held stop, fastest-acting command first.
 
-        1. cancel the children — this is what actually stops the motion;
-        2. close any hand window, because while one is open the arm's MIT gate is
+        1. drop the active MIT trajectory on every arm side in flight;
+        2. cancel the children, so the goals unwind and nothing is re-dispatched;
+        3. close any hand window, because while one is open the arm's MIT gate is
            closed and a hold command would be dropped before reaching the arm;
-        3. pin the arms that were moving.
+        4. pin the arms that were moving.
+
+        Step 1 used to sit with step 4, after step 2. Step 2 waits up to
+        ``cleanup_timeout`` for a third party to confirm it stopped, and a
+        MoveGroup goal that never answered its cancel spends all of it with the
+        arms still moving. What stops the arm may not wait on what unwinds the
+        plan.
         """
         sides = self._sides_in_flight(running)
+        if sides:
+            self.cancel_arm_trajectories(sides, reason)
         self._cancel_children(running)
         self._resume_all_hand_windows()
         if sides:
