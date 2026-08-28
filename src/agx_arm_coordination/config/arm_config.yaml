@@ -34,6 +34,7 @@ arm_executor:
   # (e.g. Can_Pre_Grip_L/_R below pair into a both_arms target). An un-suffixed
   # bare list has no resolvable side — re-capture it or add robot_id.
   poses:
+    Functional_Init_Both_V03: {robot_id: both_arms, q: [0.66113, 0.27574, -0.37867, 1.95095, 0.21187, 0.25398, 0.38174, 1.16820, 0.38341, -0.60612, 1.75530, 0.18658, 0.19005, 0.49080]}
     Functional_Init_Both_V02: {robot_id: both_arms, q: [-0.25292, 0.52496, -0.65724, 1.64480, 0.21822, -0.11069, 0.08933, -1.08149, 0.39305, 1.02468, 1.92051, -0.34355, 0.18530, 0.24682]}
     Tee-Can_Place_L: {robot_id: both_arms, q: [-0.94023, 1.20286, -0.91433, 1.94777, -1.59263, -0.53686, -0.67597, 0.66738, -0.08592, -0.47675, 1.87394, 0.67555, 0.40214, 0.39258]}
     Tee-Can_Post_Grip_L: {robot_id: both_arms, q: [-0.78271, 1.36916, -0.99629, 1.74423, -1.26800, -0.70789, -0.40741, 2.58239, 0.66802, -0.77788, 2.02917, 1.52690, 0.25025, -0.29166]}

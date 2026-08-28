@@ -74,6 +74,7 @@ nodes:
   # `fist`, not flat.
   - { action_no: 170, action_id: both_arms_to_functional_init,    sync_flag: 4 }
   - { action_no: 171, action_id: left_hand_fist,                  sync_flag: 4 }
+  - { action_no: 180, action_id: both_arms_to_packing_pose }
 edges:
   # Fan out into each sync group and back together again: a group's members share
   # the barrier, so they need no edge between themselves, only the same
@@ -93,4 +94,5 @@ edges:
     [130,140],
     [140,150],
     [150,160],
-    [160,170], [160,171] ]
+    [160,170], [160,171],
+    [170,180] ]

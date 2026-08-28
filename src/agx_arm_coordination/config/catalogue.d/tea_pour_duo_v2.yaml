@@ -131,6 +131,17 @@ actions:
       fallback_policy: { on_cancel: stop_motion, on_timeout: report_failure }
 
   # --- Arm anchor moves (Trajectory, MoveIt-planned, collision-aware) --------
+  both_arms_to_packing_pose:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Packing_Pose_Side_Both
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Neutral packing pose. Entry and end point of each session."
+
 
   both_arms_to_functional_init:
     actiontype_id: Trajectory
@@ -138,7 +149,7 @@ actions:
     metadata:
       planning_group: both_arms
       source: moveit_planned
-      to_pose: Functional_Init_Both_V01
+      to_pose: Functional_Init_Both_V03
       velocity_scaling: 0.10
       acceleration_scaling: 0.10
       description: "Neutral working pose. Entry point of the activity and the pose it returns to."
