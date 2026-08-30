@@ -56,8 +56,12 @@ nodes:
 
   # --- 3. Pour --------------------------------------------------------------
   - { action_no: 90,  action_id: left_arm_can_lift_post_grip }     # recorded, left
-  - { action_no: 100, action_id: both_arms_can_goto_pour_init }    # recorded, duo
+  - { action_no: 100, action_id: both_arms_can_goto_pour_init,    sync_flag: 4 }    # recorded, duo
+  - { action_no: 101, action_id: both_arms_to_pour_init}
+  #- { action_no: 101, action_id: right_hand_can_prep,             sync_flag: 4 }                
   - { action_no: 110, action_id: both_arms_can_pour }              # recorded, duo
+  - { action_no: 111, action_id: both_arms_to_pour_finish }
+ # - { action_no: 111, action_id: right_hand_zero }
 
   # --- 4. Bring the can back ------------------------------------------------
   - { action_no: 120, action_id: both_arms_to_can_post_grip }
@@ -72,8 +76,8 @@ nodes:
   # `both_arms_to_heart_top` + `left_hand_heart`) is out, and so are the two
   # right-hand nodes that used to sit in this phase. The left hand finishes in
   # `fist`, not flat.
-  - { action_no: 170, action_id: both_arms_to_functional_init,    sync_flag: 4 }
-  - { action_no: 171, action_id: left_hand_fist,                  sync_flag: 4 }
+  - { action_no: 170, action_id: both_arms_to_functional_init,    sync_flag: 5 }
+  - { action_no: 171, action_id: left_hand_fist,                  sync_flag: 5 }
   - { action_no: 180, action_id: both_arms_to_packing_pose }
 edges:
   # Fan out into each sync group and back together again: a group's members share
@@ -87,9 +91,11 @@ edges:
     [60,70],
     [70,80], [70,81],
     [80,90], [81,90],
-    [90,100],
-    [100,110],
-    [110,120],
+    [90,100], #[90,101],
+    [100, 101],
+    [101,110],
+    [110, 111],
+    [111,120],
     [120,130],
     [130,140],
     [140,150],
