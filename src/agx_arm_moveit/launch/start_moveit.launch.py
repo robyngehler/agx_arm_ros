@@ -21,12 +21,8 @@ from launch_ros.actions import Node, PushRosNamespace, SetRemap
 from moveit_configs_utils.launch_utils import DeclareBooleanLaunchArg
 
 from _moveit_config_builder import (
-    ALL_ARM_TYPES,
-    ALL_EFFECTOR_TYPES,
-    ALL_MOVEIT_PROFILES,
-    ALL_OMNIHAND_TYPES,
-    ALL_REVO2_TYPES,
     build_moveit_config,
+    declare_common_args,
 )
 from _multi_arm_runtime import (
     ARM_SIDES,
@@ -345,87 +341,7 @@ def _build_moveit(context):
 def generate_launch_description():
     return LaunchDescription(
         [
-            DeclareLaunchArgument(
-                "namespace",
-                default_value="",
-                description="ROS namespace for this robot instance. Leave empty for the default shared graph; use a namespace only to separate multiple robots.",
-            ),
-            DeclareLaunchArgument(
-                "arm_type",
-                default_value="nero",
-                choices=ALL_ARM_TYPES,
-                description="Arm type.",
-            ),
-            DeclareLaunchArgument(
-                "moveit_profile",
-                default_value="nero_arm",
-                choices=ALL_MOVEIT_PROFILES,
-                description="MoveIt planning profile. Use right_arm or left_arm for prefixed Duo custom-model bringup.",
-            ),
-            DeclareLaunchArgument(
-                "robot_name",
-                default_value="agx_arm",
-                description="Robot name used in the generated SRDF. Override this for custom models whose URDF robot name differs.",
-            ),
-            DeclareLaunchArgument(
-                "custom_model",
-                default_value="",
-                description="Optional custom model path. When set, MoveIt uses this xacro/URDF instead of the built-in arm model.",
-            ),
-            DeclareLaunchArgument(
-                "custom_model_xacro_args",
-                default_value="",
-                description="Optional extra xacro args appended when custom_model is set.",
-            ),
-            DeclareLaunchArgument(
-                "effector_type",
-                default_value="none",
-                choices=ALL_EFFECTOR_TYPES,
-                description="Effector type.",
-            ),
-            DeclareLaunchArgument(
-                "revo2_type",
-                default_value="left",
-                choices=ALL_REVO2_TYPES,
-                description="Revo2 side (used when effector_type is revo2).",
-            ),
-            DeclareLaunchArgument(
-                "omnihand_type",
-                default_value="left",
-                choices=ALL_OMNIHAND_TYPES,
-                description="OmniHand side (used when effector_type is omnihand).",
-            ),
-            DeclareLaunchArgument(
-                "tcp_offset",
-                default_value="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0]",
-                description="TCP offset [x, y, z, rx, ry, rz] in meters/radians.",
-            ),
-            DeclareLaunchArgument(
-                "input_joint_prefix",
-                default_value="",
-                description="Optional prefix used by prefixed custom models for the controlled arm joints.",
-            ),
-            DeclareLaunchArgument(
-                "arm_base_frame",
-                default_value="",
-                description="Optional arm base frame used by the MoveIt arm chain when custom_model is set.",
-            ),
-            DeclareLaunchArgument(
-                "arm_tip_frame",
-                default_value="",
-                description="Optional arm tip frame used by the MoveIt arm chain when custom_model is set.",
-            ),
-            DeclareLaunchArgument(
-                "follow",
-                default_value="false",
-                choices=["true", "false"],
-                description="Follow real arm state. true: move_group subscribes to feedback/joint_states; false: subscribes to control/joint_states (mock hardware).",
-            ),
-            DeclareLaunchArgument(
-                "follow_joint_states_topic",
-                default_value="feedback/joint_states",
-                description="JointState topic consumed when follow:=true. Override this for prefixed custom-model feedback adaptation.",
-            ),
+            *declare_common_args(),
             DeclareBooleanLaunchArg(
                 "db",
                 default_value=False,

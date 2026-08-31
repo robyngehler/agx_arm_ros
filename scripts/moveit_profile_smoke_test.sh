@@ -62,7 +62,9 @@ run_profile() {
         ready="yes"
     fi
 
-    if grep -Eq "Segmentation fault|process has died .*move_group|failed to terminate .*move_group" "$log_file"; then
+    # A process dying with "exit code -2" is the SIGINT this script sends, not a crash.
+    if grep -Eq "Segmentation fault|failed to terminate" "$log_file" \
+        || grep -E "process has died" "$log_file" | grep -qv "exit code -2"; then
         shutdown_crash="yes"
     fi
 
