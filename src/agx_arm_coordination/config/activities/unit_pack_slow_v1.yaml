@@ -1,0 +1,26 @@
+# Unit pack, slow variant: fold the unit from the presentation pose back into
+# the packing pose over every intermediate anchor. The reverse of
+# unit_unpack_slow_v1's outward half.
+#
+# Actions: config/catalogue.d/unit_unpack_v1.yaml. Anchors: config/arm_config.yaml.
+#
+# Arms only, one serial chain: no hand is addressed, every step is a
+# MoveIt-planned both_arms transition and there is nothing to overlap.
+#
+# Node 10 moves to the presentation pose rather than assuming it, so the
+# activity is runnable from wherever the arms stand — including after an
+# aborted run that left them somewhere in between.
+#
+# Rough timing: 5 planned anchor moves at velocity_scaling 0.10.
+activity: unit_pack_slow_v1
+nodes:
+  - { action_no: 10, action_id: both_arms_to_tee_cup_hold_init_v01 }
+  - { action_no: 20, action_id: both_arms_to_functional_init_hold_v02 }
+  - { action_no: 30, action_id: both_arms_to_transit_functional_init_v02 }
+  - { action_no: 40, action_id: both_arms_to_transit_packing_side_v02 }
+  - { action_no: 50, action_id: both_arms_to_packing_side_v02 }
+edges:
+  [ [10,20],
+    [20,30],
+    [30,40],
+    [40,50] ]
