@@ -394,8 +394,30 @@ def _next_from_id(spec: StackSpec, watcher: _StackWatcher) -> str:
     )
 
 
+def _warn_if_a_dropped_connection_would_orphan_the_stack() -> None:
+    """Over SSH without tmux, a dropped link leaves the stack running unattended.
+
+    The launches deliberately run in their own session so a terminal Ctrl+C
+    reaches run_activity instead of them. The same property means a SIGHUP kills
+    only this wrapper: the teardown never runs, and the arms keep a live driver
+    with nobody supervising it.
+    """
+    if os.environ.get("TMUX") or os.environ.get("STY"):
+        return
+    if not (os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY")):
+        return
+    print(
+        "WARNING: this is an SSH session and not a tmux/screen one. If the\n"
+        "         connection drops, this wrapper dies and the launches keep\n"
+        "         running with nothing to shut them down. Prefer:\n"
+        "             tmux new -A -s demo\n",
+        file=sys.stderr,
+    )
+
+
 def run_stack(spec: StackSpec, args) -> int:
     check_from_id(spec.activity, args.from_id)
+    _warn_if_a_dropped_connection_would_orphan_the_stack()
 
     log_dir = Path(args.log_dir) if args.log_dir else Path(
         tempfile.mkdtemp(prefix=f"{spec.name}-")

@@ -28,6 +28,7 @@ Source proposal: `../demo_script_proposal.md`.
 | **Hardware validation** | Nothing below has been run against the arms. See the gate. |
 | Event-based recording and its playback (proposal §8.2, §9) | Belongs to the teach loop, not to this layer; follows the Piper gripper's own event work |
 | Recording → catalogue conversion for gripper events (§10) | Follows the above |
+| Headless operation over an access point | evaluated, not configured — see `headless_operation.md`. SSH, mDNS, key login and tmux are in place and the radio supports AP mode; the AP profile, the ROS environment for non-interactive SSH, the hostname and WiFi power save are not done |
 | The automatic recovery trigger's calibration | `activate_stack.sh` judges a bus on RX advancing and flat error counters. The reported first-start symptom is *messages rising but MoveIt never starts*, and that state has never been measured — so `--recover` runs the chain unconditionally until it has been |
 
 ## Found by the activity sweep, not fixed
