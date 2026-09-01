@@ -13,6 +13,8 @@ must NOT move with it is READY: no step here may make the arm commandable
 without evidence.
 """
 
+import time
+
 import pytest
 
 from agx_arm_ctrl import agx_arm_ctrl_single_node as node_module
@@ -73,8 +75,14 @@ class _StartupArm:
 
     joint_nums = 7
 
-    def __init__(self, *, wakes_on="push"):
+    def __init__(self, *, wakes_on="push", answers_enable=None, wakes_after_modes=1):
         self.wakes_on = wakes_on
+        # An arm can answer the enable readback and still never answer the
+        # firmware query — measured on both arms 2026-09-01. None follows
+        # ``awake``, which is the mute arm of the 2026-07-24 finding.
+        self.answers_enable = answers_enable
+        self.wakes_after_modes = wakes_after_modes
+        self.normal_mode_calls = 0
         self.awake = False
         self.calls = []
         self._msg_mode = _ModeMsg()
@@ -97,11 +105,16 @@ class _StartupArm:
 
     def get_joint_enable_status(self, _index):
         self.calls.append("enable_readback")
-        return self.awake
+        return self.awake if self.answers_enable is None else self.answers_enable
+
+    def get_joint_angles(self):
+        self.calls.append("get_joint_angles")
+        return None
 
     def set_normal_mode(self):
         self.calls.append("set_normal_mode")
-        if self.wakes_on == "mode":
+        self.normal_mode_calls += 1
+        if self.wakes_on == "mode" and self.normal_mode_calls >= self.wakes_after_modes:
             self.awake = True
 
     def get_firmware(self):
@@ -123,6 +136,8 @@ def _node(arm, monkeypatch, *, auto_enable=True) -> AgxArmRosNode:
     node.is_piper = False
     node.auto_enable = auto_enable
     node.enable_timeout = 0.1
+    node.firmware_query_timeout = 0.1
+    node.firmware_recover_attempts = 1
     node.feedback_timeout = 1.0
     node.speed_percent = 50
     node.tcp_offset = 0.0
@@ -243,3 +258,51 @@ def test_the_failure_says_which_half_did_not_happen():
     assert "Transport session: present" in diagnostic
     assert "feedback: none" in diagnostic
     assert "enable: unverified" in diagnostic
+
+
+def test_a_failed_bootstrap_leaves_no_energised_arm_without_an_owner():
+    """The enable precedes the firmware query, so giving up bare left a stiff
+    arm with nothing streaming to it and its push still off — and an arm left
+    mute is what made the next bring-up fail the same way."""
+    arm = _StartupArm(wakes_on=None, answers_enable=True)
+    with pytest.MonkeyPatch.context() as mp:
+        node = _node(arm, mp)
+        with pytest.raises(SystemExit):
+            node._init_agx_arm()
+
+    assert node.enable_flag is True, "this arm answered the enable"
+    pushes = [call for call in arm.calls if call.startswith("push_")]
+    assert pushes[-1] == "push_on", f"the arm was left mute: {arm.calls}"
+    assert arm.calls[-1] == "set_normal_mode", (
+        f"the firmware kept the bootstrap's setpoint: {arm.calls}"
+    )
+
+
+def test_the_linkage_reassert_gets_more_than_one_window():
+    """Measured 2026-09-01: the firmware answered 0.55 s after set_normal_mode
+    on one arm and 2.66 s on the other, and once not within one window at all."""
+    arm = _StartupArm(wakes_on="mode", wakes_after_modes=2)
+    with pytest.MonkeyPatch.context() as mp:
+        node = _node(arm, mp)
+        node.firmware_recover_attempts = 2
+        node._init_agx_arm()
+
+    assert arm.normal_mode_calls == 2
+    assert node.firmware == {"software_version": "1.11"}
+
+
+def test_the_firmware_query_does_not_spend_the_enable_budget():
+    """Two different questions. Sharing enable_timeout is what capped the
+    handshake at one 5 s window per escalation."""
+    arm = _StartupArm(wakes_on=None)
+    with pytest.MonkeyPatch.context() as mp:
+        node = _node(arm, mp)
+        node.agx_arm = arm
+        node.enable_timeout = 30.0
+        node.firmware_query_timeout = 0.05
+        started = time.monotonic()
+        node._wait_for_firmware()
+        elapsed = time.monotonic() - started
+
+    assert node.firmware is None
+    assert elapsed < 1.0, f"the query spent the enable budget ({elapsed:.2f}s)"

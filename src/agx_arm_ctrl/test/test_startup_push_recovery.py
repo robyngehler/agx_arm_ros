@@ -105,6 +105,8 @@ def _node(arm, *, is_nero=True, transport=True) -> AgxArmRosNode:
     node.agx_arm = arm
     node.is_nero = is_nero
     node.enable_timeout = 0.05
+    node.firmware_query_timeout = 0.05
+    node.firmware_recover_attempts = 1
     node.feedback_timeout = 1.0
     node.firmware = None
     node._leader_mode_active = True

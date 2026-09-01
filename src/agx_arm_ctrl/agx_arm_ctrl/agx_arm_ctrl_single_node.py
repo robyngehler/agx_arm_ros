@@ -314,6 +314,13 @@ class AgxArmRosNode(Node):
         self.declare_parameter("runtime_metrics_enabled", False)
         self.declare_parameter("runtime_metrics_period_s", 10.0)
         self.declare_parameter("enable_timeout", 5.0)
+        # The firmware handshake is not the enable and does not share its
+        # budget. An arm that answered the enable can still need seconds and a
+        # normal-mode re-assert before it answers get_firmware: measured after
+        # set_normal_mode, 0.55 s on one arm and 2.66 s on the other, and once
+        # not inside a single 5 s window at all.
+        self.declare_parameter("firmware_query_timeout", 5.0)
+        self.declare_parameter("firmware_recover_attempts", 2)
         self.declare_parameter("effector_type", "none")
         self.declare_parameter("tcp_offset", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("gripper_default_effort", 1.0)
@@ -426,6 +433,12 @@ class AgxArmRosNode(Node):
             acquisition_rate if acquisition_rate > 0.0 else float(self.pub_rate)
         )
         self.enable_timeout = self.get_parameter("enable_timeout").value
+        self.firmware_query_timeout = max(
+            0.5, float(self.get_parameter("firmware_query_timeout").value)
+        )
+        self.firmware_recover_attempts = max(
+            1, int(self.get_parameter("firmware_recover_attempts").value)
+        )
         self.effector_type = self.get_parameter("effector_type").value
         self.tcp_offset = self.get_parameter("tcp_offset").value
         self.gripper_default_effort = self.get_parameter("gripper_default_effort").value
@@ -623,6 +636,8 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"pub_rate: {self.pub_rate}")
         self.get_logger().info(f"acquisition_rate_hz: {self.acquisition_rate_hz}")
         self.get_logger().info(f"enable_timeout: {self.enable_timeout}")
+        self.get_logger().info(f"firmware_query_timeout: {self.firmware_query_timeout}")
+        self.get_logger().info(f"firmware_recover_attempts: {self.firmware_recover_attempts}")
         self.get_logger().info(f"effector_type: {self.effector_type}")
         self.get_logger().info(f"tcp_offset: {self.tcp_offset}")
         self.get_logger().info(f"gripper_default_effort: {self.gripper_default_effort}")
@@ -635,10 +650,10 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"bus_recovery_max_attempts: {self.bus_recovery_max_attempts}")
 
     def _wait_for_firmware(self) -> None:
-        """Poll the firmware query until it answers or the enable timeout runs out."""
+        """Poll the firmware query until it answers or its own budget runs out."""
         self.firmware = None
         start_time = time.time()
-        while time.time() - start_time < self.enable_timeout:
+        while time.time() - start_time < self.firmware_query_timeout:
             self.firmware = self.agx_arm.get_firmware()
             if self.firmware:
                 return
@@ -747,6 +762,25 @@ class AgxArmRosNode(Node):
         self._hand_window_push_silenced = False
         self._hand_window_silence_started = 0.0
 
+    def _park_after_failed_bootstrap(self) -> None:
+        """Leave the arm safe and answerable before a failed bootstrap exits.
+
+        The enable goes out before the firmware query, so giving up bare leaves
+        an energised arm with no owner, its push still off and the firmware on
+        whatever setpoint the bootstrap found. Both are put back here. The push
+        matters beyond this process: an arm left mute answers nothing on the
+        next bring-up either, which is how one failed start makes the next one
+        fail. The hold is the ladder's normal second rung and falls through to
+        ``set_normal_mode`` where no pose can be read, which is the case that
+        got here.
+
+        ``exit(1)`` unwinds out of ``__init__``, so ``main`` sees no node and
+        runs none of its shutdown; this is the only place that can do it.
+        """
+        self._ensure_feedback_push_enabled("failed bootstrap", force=True)
+        self.hold_current_pose("failed bootstrap")
+        self.shutdown()
+
     def _init_agx_arm(self):
         # Defaults matching the driver the SDK builds when no tier is given, so
         # an arm whose firmware never answers is still validated against the
@@ -789,11 +823,15 @@ class AgxArmRosNode(Node):
                     "still silent after enable", force=True
                 )
                 self._wait_for_firmware()
-            if not self.firmware:
-                # An arm whose feedback push is disabled answers nothing, so
-                # startup would die here — and with the node dead its
-                # set_normal_mode service never comes up, leaving no way to
-                # re-enable the push through ROS. Break that deadlock once.
+            # An arm whose feedback push is disabled answers nothing, so
+            # startup would die here — and with the node dead its
+            # set_normal_mode service never comes up, leaving no way to
+            # re-enable the push through ROS. Break that deadlock, and give the
+            # re-assert more than one window: the answer came 0.55 s after
+            # set_normal_mode on one arm and 2.66 s on the other.
+            for _ in range(self.firmware_recover_attempts):
+                if self.firmware:
+                    break
                 self._recover_silent_arm()
                 self._wait_for_firmware()
 
@@ -854,6 +892,7 @@ class AgxArmRosNode(Node):
                     "E-stop and wiring for this side. (3) does the bus carry "
                     "feedback frames (candump)?"
                 )
+                self._park_after_failed_bootstrap()
                 exit(1)
 
             self.agx_arm.set_speed_percent(self.speed_percent)
