@@ -203,9 +203,12 @@ class AgxArmRosNode(Node):
     _last_link_tx_packets = None
     _bus_held_since_monotonic = None
     _bus_held_logged = False
+    _last_rx_advance_monotonic = None
     bus_hold_patience_s = 60.0
+    bus_hold_min_silence_s = 0.25
     bus_recovery_persistent = True
     bus_recovery_backoff_max_s = 5.0
+    bus_recovery_persist_max_s = 300.0
 
     #: How often a persistent recovery says it is still trying.
     RECOVERY_PROGRESS_EVERY = 10
@@ -341,6 +344,15 @@ class AgxArmRosNode(Node):
         # so persistence is the default and the attempt budget is the opt-in.
         self.declare_parameter("bus_recovery_persistent", True)
         self.declare_parameter("bus_recovery_backoff_max_s", 5.0)
+        # A persistent recovery still has to end. It owns the SDK session while
+        # it runs, so a loop with no terminal bound leaves the node up, silent
+        # and unrecoverable, with no exception to show for it. On expiry it
+        # stops and latches the lockout like an exhausted attempt budget.
+        self.declare_parameter("bus_recovery_persist_max_s", 300.0)
+        # How long RX must be silent before the quiet counts as a hold. The arm
+        # delivers a complete update every 7-10 ms and this is evaluated at the
+        # publish rate, so a per-sample comparison sees silence constantly.
+        self.declare_parameter("bus_hold_min_silence_s", 0.25)
         # Minimum quiet time after a completed recovery before the watchdog may
         # fire again. Without it a congested (error-storming) bus re-latches a
         # comm error during the recovery's OWN enable/config sends, and the
@@ -430,6 +442,12 @@ class AgxArmRosNode(Node):
         )
         self.bus_recovery_backoff_max_s = max(
             0.0, float(self.get_parameter("bus_recovery_backoff_max_s").value)
+        )
+        self.bus_recovery_persist_max_s = max(
+            0.0, float(self.get_parameter("bus_recovery_persist_max_s").value)
+        )
+        self.bus_hold_min_silence_s = max(
+            0.0, float(self.get_parameter("bus_hold_min_silence_s").value)
         )
         # Set when a stall first matched the held-bus signature; None otherwise.
         self._bus_held_since_monotonic = None
@@ -1154,6 +1172,16 @@ class AgxArmRosNode(Node):
                     "Arm in fault lockout after recovery; motion refused until "
                     "clear_fault_lockout is called"
                 )
+            return False
+        if self._bus_is_held():
+            # Nobody is on the bus to acknowledge a frame. Every unacknowledged
+            # transmission adds 8 to the controller's transmit error counter, so
+            # a 200 Hz MIT stream of seven joint frames each reaches the
+            # error-passive threshold of 128 in about 11 ms and then stays there,
+            # throttled and backing the TX queue up until it reports ENOBUFS.
+            # Nothing is lost by staying quiet: the arm is on the watchdog's
+            # MOVE-J hold and the feedback push is what tells us it is back.
+            # Silent by design, like the hand window below.
             return False
         if self._hand_window_active:
             # A hand window owns the shared side bus and the arm is parked in a
@@ -2027,23 +2055,51 @@ class AgxArmRosNode(Node):
         command on the healthy bus that follows.
 
         The signature that separates a held bus from a broken one, using only
-        kernel counters: the link is up, RX has stopped, and TX is still being
-        accepted. A bus-off controller stops accepting TX, and a downed link
+        kernel counters: the link is up, RX has been silent for longer than the
+        arm's own update spacing, and TX was still being accepted when the
+        silence began. A bus-off controller stops accepting TX and a downed link
         fails the first check, so both fall through to the normal fault path.
         The signature cannot tell a held bus from an unplugged one — that case
         waits out the patience window and then recovers as before.
+
+        The silence is measured against a clock, not against the previous
+        sample: this runs at the publish rate (up to 5 ms apart) while complete
+        joint updates arrive every 7-10 ms, so "no new frame since last call"
+        is true constantly during healthy streaming.
+
+        Once the hold is entered, TX is no longer required to advance — the
+        command stream is deliberately stopped while it lasts, so requiring it
+        would end the hold the moment the gate took effect.
         """
         rx = self._link_counter("rx_packets")
         tx = self._link_counter("tx_packets")
         previous_rx, previous_tx = self._last_link_rx_packets, self._last_link_tx_packets
         self._last_link_rx_packets, self._last_link_tx_packets = rx, tx
-        if rx is None or tx is None or previous_rx is None or previous_tx is None:
+        if rx is None or tx is None:
             return False
 
-        held = self._link_is_up() and rx == previous_rx and tx > previous_tx
-        if not held:
+        now = time.monotonic()
+        if previous_rx is None or rx != previous_rx:
+            self._last_rx_advance_monotonic = now
+        if self._last_rx_advance_monotonic is None:
+            self._last_rx_advance_monotonic = now
+        silent_for = now - self._last_rx_advance_monotonic
+
+        if self._bus_held_since_monotonic is not None:
+            # Already holding: only RX coming back ends it. TX is gated off by
+            # us, so it says nothing about the bus now.
+            still_held = self._link_is_up() and silent_for >= self.bus_hold_min_silence_s
+        else:
+            tx_accepted = previous_tx is not None and tx > previous_tx
+            still_held = (
+                self._link_is_up()
+                and silent_for >= self.bus_hold_min_silence_s
+                and tx_accepted
+            )
+
+        if not still_held:
             if self._bus_held_since_monotonic is not None:
-                held_for = time.monotonic() - self._bus_held_since_monotonic
+                held_for = now - self._bus_held_since_monotonic
                 self.get_logger().info(
                     f"CAN RX resumed after {held_for:.1f}s of a held bus; no recovery "
                     "was run and no fault was latched. Control re-arms once feedback "
@@ -2053,9 +2109,8 @@ class AgxArmRosNode(Node):
             self._bus_held_logged = False
             return False
 
-        now = time.monotonic()
         if self._bus_held_since_monotonic is None:
-            self._bus_held_since_monotonic = now
+            self._bus_held_since_monotonic = now - silent_for
         waited = now - self._bus_held_since_monotonic
         if waited > self.bus_hold_patience_s:
             if self._bus_held_logged:
@@ -2068,12 +2123,18 @@ class AgxArmRosNode(Node):
         if not self._bus_held_logged:
             self._bus_held_logged = True
             self.get_logger().warn(
-                f"CAN RX stopped while the link is up and TX is still accepted: the bus "
-                f"is live and quiet, which is what the external watchdog's hold looks "
-                f"like. Waiting up to {self.bus_hold_patience_s:.0f}s for it to come "
-                f"back instead of recovering. The arm holds on the watchdog's MOVE-J."
+                f"CAN RX silent for {silent_for:.2f}s while the link is up and TX was "
+                f"still accepted: the bus is live and quiet, which is what the external "
+                f"watchdog's hold looks like. Waiting up to "
+                f"{self.bus_hold_patience_s:.0f}s for it to come back instead of "
+                f"recovering, and holding the command stream off meanwhile — nobody is "
+                f"there to acknowledge it. The arm holds on the watchdog's MOVE-J."
             )
         return True
+
+    def _bus_is_held(self) -> bool:
+        """Whether the classifier currently believes the bus is being held."""
+        return self._bus_held_since_monotonic is not None
 
     def _should_recover_bus(self, snapshot: "FeedbackSnapshot" = None) -> bool:
         if self._recovery_in_progress:
@@ -2451,14 +2512,23 @@ class AgxArmRosNode(Node):
                         )
                     break
                 if self.bus_recovery_persistent:
+                    running_for = self.recovery_active_s
+                    if running_for >= self.bus_recovery_persist_max_s:
+                        self.get_logger().error(
+                            f"CAN bus recovery gave up after {running_for:.0f}s and "
+                            f"{attempt} attempts ({self.bus_recovery_persist_max_s:.0f}s "
+                            "limit). Recovery owns the SDK session, so it ends rather "
+                            "than leaving the node up and unable to command."
+                        )
+                        break
                     # Every attempt is one disconnect/connect plus a bounded
                     # feedback wait, so the cost of waiting is a log line, not
                     # bus load. Say so on a schedule instead of per attempt.
                     if attempt == 1 or attempt % self.RECOVERY_PROGRESS_EVERY == 0:
                         self.get_logger().warn(
                             f"CAN bus recovery attempt {attempt} did not restore "
-                            f"feedback; retrying until it does "
-                            f"({self.recovery_active_s:.0f}s so far). Set "
+                            f"feedback; retrying until it does ({running_for:.0f}s of "
+                            f"{self.bus_recovery_persist_max_s:.0f}s). Set "
                             "bus_recovery_persistent:=false to give up after "
                             f"{self.bus_recovery_max_attempts} attempts instead."
                         )
