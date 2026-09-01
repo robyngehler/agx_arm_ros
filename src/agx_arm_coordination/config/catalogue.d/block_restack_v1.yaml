@@ -1,0 +1,169 @@
+# Block-restack demo v1 catalogue fragment (activity: block_restack_v1).
+#
+# Merged into the shared catalogue by graph_loader (config/catalogue.d/*.yaml).
+#
+# All arm actions are `both_arms`, `source: moveit_planned` (collision-aware).
+# No recorded replays: the demo is a pure anchor sequence.
+#
+# velocity_scaling 0.05 for grip and place approaches; 0.10 for all transfers
+# and returns. Payload switching is not modelled here — add `payload_update:
+# attach/detach` to the gripper actions in the activity if the arm gravity
+# model must follow the load.
+
+actions:
+
+  # --- Arm anchor moves (Trajectory, MoveIt-planned) -------------------------
+
+  both_arms_to_boxing_idle:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Boxing_Both_Idle_V01
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Demo start/end pose."
+
+  both_arms_to_grip_block_lifted:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Grip_Block_Lifted
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Safe lifted pose above the block stack; used for approach and post-lift."
+
+  both_arms_to_grip_block_04:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Grip_Block_04
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Grip approach for block 4 (top of stack)."
+
+  both_arms_to_grip_block_03:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Grip_Block_03
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Grip approach for block 3."
+
+  both_arms_to_grip_block_02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Grip_Block_02
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Grip approach for block 2."
+
+  both_arms_to_grip_block_01:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Grip_Block_01
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Grip approach for block 1 (bottom of stack)."
+
+  both_arms_to_pre_block_handover:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Pre_Block_Handover
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Staging pose entering the handover zone."
+
+  both_arms_to_block_handover:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Block_Handover_V01
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Handover pose; both grippers meet here to transfer the block."
+
+  both_arms_to_backoff_block_handover:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Backoff_Block_Handover
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Clear of the handover zone."
+
+  both_arms_to_post_block_handover:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Post_Block_Handover
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Neutral carry/return pose away from the handover zone."
+
+  both_arms_to_place_block_04:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Place_Block_04
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Place position for block 4."
+
+  both_arms_to_place_block_03:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Place_Block_03
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Place position for block 3."
+
+  both_arms_to_place_block_02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Place_Block_02
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Place position for block 2."
+
+  both_arms_to_place_block_01:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Place_Block_01
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Place position for block 1."

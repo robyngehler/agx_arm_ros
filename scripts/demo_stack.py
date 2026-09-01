@@ -101,6 +101,21 @@ ARM_COMPONENTS_TEA = LaunchSpec(
     ),
 )
 
+#: The block demo's arm stack. `duo_gripper` puts an AGX parallel gripper on each
+#: arm instead of an OmniHand, which is what gives the two gripper trajectory
+#: servers the activity commands.
+ARM_COMPONENTS_GRIPPER = LaunchSpec(
+    package="agx_arm_ctrl",
+    launch_file="start_agx_arm_components.launch.py",
+    args=(
+        "mode:=moveit_mit",
+        "execution_profile:=duo_gripper",
+        "follow:=true",
+        "planning_pipelines:=ompl",
+        "use_rviz:=false",
+    ),
+)
+
 COORDINATION = LaunchSpec(
     package="agx_arm_coordination",
     launch_file="start_coordination.launch.py",
@@ -135,6 +150,23 @@ def arm_flow(name: str, activity: str, description: str) -> StackSpec:
         launches=(ARM_COMPONENTS, COORDINATION),
         description=description,
     )
+
+
+#: A gripper flow additionally waits for the two trajectory servers it commands.
+#: Without them a gripper action fails at dispatch, which on the block demo is
+#: step 2 of 63 — after the arms have already moved to the start pose.
+GRIPPER_ACTIONS = (
+    "/left_arm/gripper_controller/follow_joint_trajectory",
+    "/right_arm/gripper_controller/follow_joint_trajectory",
+)
+
+BLOCK_RESTACK = StackSpec(
+    name="start_block_restack",
+    activity="block_restack_v1",
+    launches=(ARM_COMPONENTS_GRIPPER, COORDINATION),
+    extra_actions=GRIPPER_ACTIONS,
+    description="Restack four blocks, handing each from the left gripper to the right.",
+)
 
 
 TEA_DEMO = StackSpec(

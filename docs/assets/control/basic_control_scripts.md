@@ -10,7 +10,8 @@ It does not replace `docs/control/bringups/launches.md` or `docs/control/bringup
   clean traffic, and reloads the CAN driver when they do not
 - `scripts/activate_duo_can.sh`: the bring-up itself, matched by physical slot; called by the above
 - `scripts/unpack_bottom_unit.py`, `pack_bottom_unit.py`, `unpack_top_unit.py`,
-  `pack_top_unit.py`, `start_tea_demo.py`: the operator demo scripts — bring the stack up,
+  `pack_top_unit.py`, `start_tea_demo.py`, `start_block_restack.py`: the operator demo scripts —
+  bring the stack up,
   wait for it, then run one activity
 - `scripts/colcon_build_system_python.sh`: workspace build wrapper
 - `scripts/run_in_ros_conda.sh -- <command>`: Conda-backed runtime wrapper
@@ -32,6 +33,7 @@ operational control docs.
 | `scripts/unpack_bottom_unit.py` / `pack_bottom_unit.py` | bottom unit between its packing pose and the presentation pose; `--speed fast\|slow` picks the path |
 | `scripts/unpack_top_unit.py` / `pack_top_unit.py` | top unit between its packing pose and `Functional_Init_Both_V03` |
 | `scripts/start_tea_demo.py` | brings up the tea-demo stack and runs `tea_pour_duo_v2` (not the launch file of the same name, which it starts) |
+| `scripts/start_block_restack.py` | brings up the `duo_gripper` stack and runs `block_restack_v1` — the only flow that needs a parallel gripper on both arms |
 | `scripts/prepare_can_interfaces.py` | role-based CAN or CAN FD preparation for USB or fallback adapter setups |
 | `scripts/colcon_build_system_python.sh` | keeps builds on system Python and filters stale or conflicting local environment state |
 | `scripts/run_in_ros_conda.sh` | runs a ROS command inside the repo-owned Conda runtime after sourcing ROS and local overlays |

@@ -17,7 +17,9 @@ Source proposal: `../demo_script_proposal.md`.
 | Resume refusals | landed — past the end, and onto a taught replay, naming the nearest earlier planned step |
 | `run_activity --from-id N` | landed — `--from_id` as an alias; declaring it beside a `resume` block in `--metadata-json` is refused, not merged |
 | CAN activation with verification and recovery | landed — `scripts/activate_stack.sh`, including the `rmmod mttcan` / `modprobe` / reactivate cycle |
-| The five operator scripts | landed — `scripts/demo_stack.py` plus one CLI per verb |
+| The operator scripts | landed — `scripts/demo_stack.py` plus one CLI per verb: four pack/unpack flows, the tea demo, and the block restack |
+| `block_restack_v1` runnable by script | landed — `scripts/start_block_restack.py` on the `duo_gripper` stack, waiting for both gripper trajectory servers. 63 operator steps, no replay, so any step is a resume point |
+| Every shipped activity checked on load | landed — `test_shipped_activities` sweeps `config/activities/`, so a new activity is covered without anyone remembering to add it |
 
 ## Not done
 
@@ -27,6 +29,23 @@ Source proposal: `../demo_script_proposal.md`.
 | Event-based recording and its playback (proposal §8.2, §9) | Belongs to the teach loop, not to this layer; follows the Piper gripper's own event work |
 | Recording → catalogue conversion for gripper events (§10) | Follows the above |
 | The automatic recovery trigger's calibration | `activate_stack.sh` judges a bus on RX advancing and flat error counters. The reported first-start symptom is *messages rising but MoveIt never starts*, and that state has never been measured — so `--recover` runs the chain unconditionally until it has been |
+
+## Found by the activity sweep, not fixed
+
+Three shipped activities load and schedule but cannot be planned: they name
+anchor poses that were re-captured under other names and no longer exist in
+`arm_config.yaml`. They are quarantined in `test_shipped_activities` with the
+reason, and the quarantine itself is asserted, so one that gets re-anchored fails
+the test rather than sitting in the list.
+
+| Activity | Missing anchors |
+| --- | --- |
+| `tea_pour_left_v1` | `Can_Grip_Idle_L`, `Can_Pre_Grip_L`, … — re-captured as `Tee-Can_*`. Already documented as unrunnable in `docs/control/bringups/tea_demo.md` |
+| `hefeweizen_pour_v1` | `Pre_Grip_L`, `grasp_L`, … — the pose set that predates that re-capture. **Not** documented anywhere |
+| `both_arms_pregrasp_grasp_retract_v1` | the same pose set |
+
+Re-anchoring them is a judgement about which current pose replaced which old one,
+so it is left to whoever captured them.
 
 ## Hardware validation gate (not started)
 

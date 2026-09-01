@@ -1,0 +1,156 @@
+# Block-restack demo v1: move a 4-block stack from one location to another.
+#
+# Actions: config/catalogue.d/block_restack_v1.yaml (arm transitions) +
+#          config/catalogue.yaml (left_gripper_open/close, right_gripper_open/close).
+# Anchors: config/arm_config.yaml.
+#
+# SEQUENCE (repeated for blocks 4 -> 1, top to bottom):
+#   Open both grippers -> arm to Grip_Block_Lifted -> arm to Grip_Block_X ->
+#   close left gripper -> arm lifts to Grip_Block_Lifted ->
+#   arm to Pre_Block_Handover -> arm to Block_Handover_V01 ->
+#   close right gripper -> open left gripper ->
+#   arm to Backoff_Block_Handover -> arm to Post_Block_Handover ->
+#   arm to Place_Block_X -> open right gripper -> arm to Post_Block_Handover
+#
+# PARALLELISM. Each "Open both grippers" step runs left_gripper_open and
+# right_gripper_open as a sync_flag barrier pair — left and right grippers hold
+# different CAN bus tokens so the scheduler admits them in parallel. The
+# closing ceremony at the end (5 sync pairs) follows the same pattern.
+#
+# NODE NUMBERING: 10 = init; 1xx/3xx/5xx/7xx = blocks 4/3/2/1; 9xx = celebration.
+# The same action_id can appear in multiple nodes; both_arms_to_grip_block_lifted
+# is used twice per block (approach and post-lift) and both_arms_to_post_block_handover
+# appears twice per block (before place and as the iteration end-state).
+#
+# PAYLOAD: not modelled. Add `payload_update: attach` on the close-left-gripper
+# node and `payload_update: detach` on the open-right-gripper node if the arm's
+# gravity model must switch with the block load.
+
+activity: block_restack_v1
+nodes:
+  # --- 0. Initialise: arm to the demo start pose ----------------------------
+  - { action_no: 10,  action_id: both_arms_to_boxing_idle }
+
+  # --- 1. Block 4 (top of stack) -------------------------------------------
+  - { action_no: 100, action_id: left_gripper_open,              sync_flag: 1 }
+  - { action_no: 101, action_id: right_gripper_open,             sync_flag: 1 }
+  - { action_no: 110, action_id: both_arms_to_grip_block_lifted }  # approach above stack
+  - { action_no: 120, action_id: both_arms_to_grip_block_01 }      # descend to block 4
+  - { action_no: 130, action_id: left_gripper_close }               # grip
+  - { action_no: 140, action_id: both_arms_to_grip_block_lifted }  # lift
+  - { action_no: 150, action_id: both_arms_to_pre_block_handover }
+  - { action_no: 160, action_id: both_arms_to_block_handover }
+  - { action_no: 170, action_id: right_gripper_close }              # right receives
+  - { action_no: 180, action_id: left_gripper_open }                # left releases
+  - { action_no: 190, action_id: both_arms_to_backoff_block_handover }
+  - { action_no: 200, action_id: both_arms_to_post_block_handover }
+  - { action_no: 210, action_id: both_arms_to_place_block_01 }      # descend to place
+  - { action_no: 220, action_id: right_gripper_open }               # release
+  - { action_no: 230, action_id: both_arms_to_post_block_handover } # return
+
+  # --- 2. Block 3 -----------------------------------------------------------
+  - { action_no: 300, action_id: left_gripper_open,              sync_flag: 2 }
+  - { action_no: 301, action_id: right_gripper_open,             sync_flag: 2 }
+  - { action_no: 310, action_id: both_arms_to_grip_block_lifted }
+  - { action_no: 320, action_id: both_arms_to_grip_block_02 }
+  - { action_no: 330, action_id: left_gripper_close }
+  - { action_no: 340, action_id: both_arms_to_grip_block_lifted }
+  - { action_no: 350, action_id: both_arms_to_pre_block_handover }
+  - { action_no: 360, action_id: both_arms_to_block_handover }
+  - { action_no: 370, action_id: right_gripper_close }
+  - { action_no: 380, action_id: left_gripper_open }
+  - { action_no: 390, action_id: both_arms_to_backoff_block_handover }
+  - { action_no: 400, action_id: both_arms_to_post_block_handover }
+  - { action_no: 410, action_id: both_arms_to_place_block_02 }
+  - { action_no: 420, action_id: right_gripper_open }
+  - { action_no: 430, action_id: both_arms_to_post_block_handover }
+
+  # --- 3. Block 2 -----------------------------------------------------------
+  - { action_no: 500, action_id: left_gripper_open,              sync_flag: 3 }
+  - { action_no: 501, action_id: right_gripper_open,             sync_flag: 3 }
+  - { action_no: 510, action_id: both_arms_to_grip_block_lifted }
+  - { action_no: 520, action_id: both_arms_to_grip_block_03 }
+  - { action_no: 530, action_id: left_gripper_close }
+  - { action_no: 540, action_id: both_arms_to_grip_block_lifted }
+  - { action_no: 550, action_id: both_arms_to_pre_block_handover }
+  - { action_no: 560, action_id: both_arms_to_block_handover }
+  - { action_no: 570, action_id: right_gripper_close }
+  - { action_no: 580, action_id: left_gripper_open }
+  - { action_no: 590, action_id: both_arms_to_backoff_block_handover }
+  - { action_no: 600, action_id: both_arms_to_post_block_handover }
+  - { action_no: 610, action_id: both_arms_to_place_block_03 }
+  - { action_no: 620, action_id: right_gripper_open }
+  - { action_no: 630, action_id: both_arms_to_post_block_handover }
+
+  # --- 4. Block 1 (bottom of stack) ----------------------------------------
+  - { action_no: 700, action_id: left_gripper_open,              sync_flag: 4 }
+  - { action_no: 701, action_id: right_gripper_open,             sync_flag: 4 }
+  - { action_no: 710, action_id: both_arms_to_grip_block_lifted }
+  - { action_no: 720, action_id: both_arms_to_grip_block_04 }
+  - { action_no: 730, action_id: left_gripper_close }
+  - { action_no: 740, action_id: both_arms_to_grip_block_lifted }
+  - { action_no: 750, action_id: both_arms_to_pre_block_handover }
+  - { action_no: 760, action_id: both_arms_to_block_handover }
+  - { action_no: 770, action_id: right_gripper_close }
+  - { action_no: 780, action_id: left_gripper_open }
+  - { action_no: 790, action_id: both_arms_to_backoff_block_handover }
+  - { action_no: 800, action_id: both_arms_to_post_block_handover }
+  - { action_no: 810, action_id: both_arms_to_place_block_04 }
+  - { action_no: 820, action_id: right_gripper_open }
+  - { action_no: 830, action_id: both_arms_to_post_block_handover }
+
+  # --- 5. Celebration: return to idle, then both grippers close/open x2, close
+  #        "zu, auf, zu, auf, zu" = 5 gripper states, each a sync pair.
+  - { action_no: 900, action_id: both_arms_to_boxing_idle }
+  - { action_no: 910, action_id: left_gripper_close,             sync_flag: 5 }
+  - { action_no: 911, action_id: right_gripper_close,            sync_flag: 5 }
+  - { action_no: 920, action_id: left_gripper_open,              sync_flag: 6 }
+  - { action_no: 921, action_id: right_gripper_open,             sync_flag: 6 }
+  - { action_no: 930, action_id: left_gripper_close,             sync_flag: 7 }
+  - { action_no: 931, action_id: right_gripper_close,            sync_flag: 7 }
+  - { action_no: 940, action_id: left_gripper_open,              sync_flag: 8 }
+  - { action_no: 941, action_id: right_gripper_open,             sync_flag: 8 }
+  - { action_no: 950, action_id: left_gripper_close,             sync_flag: 9 }
+  - { action_no: 951, action_id: right_gripper_close,            sync_flag: 9 }
+
+edges: [
+  # 0. init
+  [10, 100], [10, 101],
+
+  # 1. block 4: open (sync 1) -> arm chain
+  [100, 110], [101, 110],
+  [110, 120], [120, 130], [130, 140], [140, 150], [150, 160], [160, 170],
+  [170, 180], [180, 190], [190, 200], [200, 210], [210, 220], [220, 230],
+
+  # block 4 -> block 3: open (sync 2)
+  [230, 300], [230, 301],
+
+  # 2. block 3: open (sync 2) -> arm chain
+  [300, 310], [301, 310],
+  [310, 320], [320, 330], [330, 340], [340, 350], [350, 360], [360, 370],
+  [370, 380], [380, 390], [390, 400], [400, 410], [410, 420], [420, 430],
+
+  # block 3 -> block 2: open (sync 3)
+  [430, 500], [430, 501],
+
+  # 3. block 2: open (sync 3) -> arm chain
+  [500, 510], [501, 510],
+  [510, 520], [520, 530], [530, 540], [540, 550], [550, 560], [560, 570],
+  [570, 580], [580, 590], [590, 600], [600, 610], [610, 620], [620, 630],
+
+  # block 2 -> block 1: open (sync 4)
+  [630, 700], [630, 701],
+
+  # 4. block 1: open (sync 4) -> arm chain
+  [700, 710], [701, 710],
+  [710, 720], [720, 730], [730, 740], [740, 750], [750, 760], [760, 770],
+  [770, 780], [780, 790], [790, 800], [800, 810], [810, 820], [820, 830],
+
+  # 5. celebration
+  [830, 900],
+  [900, 910], [900, 911],
+  [910, 920], [911, 921],
+  [920, 930], [921, 931],
+  [930, 940], [931, 941],
+  [940, 950], [941, 951]
+]
