@@ -1,0 +1,75 @@
+# Catalogue fragment for the unit unpack/pack activities
+# (unit_unpack_slow_v1, unit_unpack_fast_v1).
+#
+# Merged into the shared catalogue by graph_loader (config/catalogue.d/*.yaml);
+# action_ids are one flat namespace, so these names do not collide with the
+# tea-demo fragment's `both_arms_to_packing_pose` (a different pose,
+# Packing_Pose_Side_Both).
+#
+# Anchor moves only: no hand is addressed and nothing here is a taught replay,
+# so every step is a MoveIt-planned, collision-aware both_arms transition. The
+# taught vectors in arm_config.yaml are 14-DoF, so each anchor states where both
+# arms are and neither arm holds wherever it happened to stop.
+#
+# The two activities share these five actions and differ only in which of them
+# they visit. Speed is the same on every segment (0.10); "slow" and "fast" name
+# the path length, not the scaling.
+
+actions:
+
+  # --- Packing pose and its transit -----------------------------------------
+  both_arms_to_packing_side_v02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Packing_Pose_Side_V02
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Folded packing pose. Start and end point of the unpack/pack cycle."
+
+  both_arms_to_transit_packing_side_v02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: To_Packing_Pose_Side_V02
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Shoulders lifted out of the packing pose, arms still at the side. The clearance pose between packing and any working pose."
+
+  # --- Working poses --------------------------------------------------------
+  both_arms_to_transit_functional_init_v02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: To_Functional_Init_V02
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Arms swung to the front, low. Intermediate pose on the way into the working area."
+
+  both_arms_to_functional_init_hold_v02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Functional_Init_Hold_V02
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Neutral working pose with both hands raised in front of the unit."
+
+  both_arms_to_tee_cup_hold_init_v01:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Cup_Hold_Init_V01
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Presentation pose the unpack ends in; the pose a cup is handed to."
