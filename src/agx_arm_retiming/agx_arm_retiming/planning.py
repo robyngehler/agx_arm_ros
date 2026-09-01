@@ -552,6 +552,16 @@ def retime(
         speed_scale > 0.0 and math.isfinite(speed_scale)
     ):
         raise RetimingError("speed_scale must be finite and > 0")
+    # `as_recorded` and `smooth` reproduce the taught pace and have nothing to
+    # scale it by, so a speed request here is refused rather than dropped: a
+    # replay that came back at the taught speed while the config asked for half
+    # is indistinguishable from one that honoured the request.
+    if mode in (AS_RECORDED, SMOOTH) and speed_scale != 1.0:
+        raise RetimingError(
+            f"mode '{mode}' keeps the taught pace and cannot apply "
+            f"speed_scale {speed_scale:.2f}; use 'tempo_scale' to scale the "
+            f"taught timing, or 'speed_scale' to re-plan against the limits"
+        )
 
     t, q = _validate(times, positions, max_velocity, max_acceleration)
     recorded_duration = float(t[-1])
