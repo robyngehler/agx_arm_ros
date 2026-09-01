@@ -1,0 +1,30 @@
+# Unit unpack/pack, fast variant: unfold the unit out of the packing pose
+# straight into the presentation pose, then fold back the same way.
+#
+# Actions: config/catalogue.d/unit_unpack_v1.yaml. Anchors: config/arm_config.yaml.
+#
+# Same anchors and the same per-segment speed as unit_unpack_slow_v1; this one
+# drops the two intermediate working poses, so MoveIt plans one long transition
+# from the packing transit pose to the presentation pose instead of three short
+# ones. The plan is collision-aware, but the path it takes through the workspace
+# is not the taught one the slow variant walks — run the slow variant first when
+# anything is standing in front of the unit.
+#
+# Arms only, one serial chain: no hand is addressed, nothing overlaps.
+#
+# Rough timing: 5 planned anchor moves at velocity_scaling 0.10.
+activity: unit_unpack_fast_v1
+nodes:
+  # --- Unfold ---------------------------------------------------------------
+  - { action_no: 10, action_id: both_arms_to_packing_side_v02 }
+  - { action_no: 20, action_id: both_arms_to_transit_packing_side_v02 }
+  - { action_no: 30, action_id: both_arms_to_tee_cup_hold_init_v01 }
+
+  # --- Fold back, reverse order ---------------------------------------------
+  - { action_no: 40, action_id: both_arms_to_transit_packing_side_v02 }
+  - { action_no: 50, action_id: both_arms_to_packing_side_v02 }
+edges:
+  [ [10,20],
+    [20,30],
+    [30,40],
+    [40,50] ]

@@ -3,6 +3,7 @@
 status: ACTIVE_BASELINE
 last_updated: 2026-07-30
 audited_against: `ROS2_Duo_System_V02` @ `edcc5d7`
+should work for current branch `ROS2_Duo_System_V02_refactor` the same.
 
 ## Purpose
 
@@ -192,7 +193,7 @@ The reference layout is a flat `~/workspace` (not a nested colcon `src/`), and s
 mkdir -p ~/workspace && cd ~/workspace
 git clone --recurse-submodules git@github.com:<org>/agx_arm_ros.git
 cd agx_arm_ros
-git checkout ROS2_Duo_System_V02
+git checkout ROS2_Duo_System_V02_refactor # check up to date branch!
 git submodule update --init --recursive
 git submodule status
 ```
