@@ -4,7 +4,8 @@ status: EVALUATION
 last_updated: 2026-09-01
 scope: what is in place for operating the unit with no monitor, and what is missing
 
-Measured on the unit 2026-09-01, read-only. Nothing here was changed.
+Measured on the unit 2026-09-01. Items 4 and 6 have since been acted on and
+are marked; the rest is a report.
 
 ## What already works
 
@@ -38,7 +39,7 @@ autoconnects ahead of the client profiles would take the unit off the network it
 is currently reachable on, so it wants a wired session or a monitor for the first
 attempt.
 
-### 2. `ssh <host> '<command>'` has no ROS environment
+### 2. `ssh <host> '<command>'` has no ROS environment — accepted, not fixed
 
 `~/.bashrc` returns for non-interactive shells at lines 5-9 and sources ROS at
 lines 121-123. Verified against a clean environment:
@@ -54,14 +55,15 @@ So an interactive session works and a scripted one does not:
 That is exactly the form a laptop-side wrapper, a cron entry or a remote
 watchdog would use.
 
-Two ways out, and they are not equivalent:
+**Decided 2026-09-01: left as it is.** The unit is operated by opening an
+interactive session and typing in it, not by firing single remote commands, and
+an interactive session has the full environment. Moving the sourcing above the
+guard would change the environment of every non-interactive shell on the machine
+to fix a workflow nobody uses.
 
-- move the three `source` lines above the interactivity guard, or into a file a
-  non-interactive shell reads. Fixes every remote command at once, and changes
-  the environment of every non-interactive shell on the machine.
-- have the demo scripts source the workspace themselves. Narrower, but each
-  script then has to know where the workspace is, and `ros2 launch` inside it
-  still needs the environment.
+What this rules out, so it is not rediscovered later: a laptop-side wrapper, a
+cron entry, or a remote watchdog that starts a demo with `ssh jetson '<command>'`.
+Any of those needs the sourcing moved first.
 
 ### 3. The hostname is `ubuntu`
 
@@ -69,27 +71,60 @@ mDNS therefore advertises `ubuntu.local`, which collides with every other stock
 Ubuntu machine on the same network — the normal situation at a demo, and the
 case where a name instead of an IP matters most.
 
-### 4. WiFi power save is on
+### 4. Power saving, WiFi included — handled by a script
 
-`iw dev wlP1p1s0 get power_save` reports `Power save: on`, and the connection
-leaves `802-11-wireless.powersave` at `default`. This is the usual cause of a
-laggy or dropping SSH session over WiFi on this platform. It costs power to turn
-off, which is a trade rather than an obvious fix.
+Measured before: `nvpmodel` MAXN but the CPU governor `schedutil` on all twelve
+cores, cpu0 idling at 883 MHz against a 2.2 GHz maximum; WiFi power save on; USB
+autosuspend `auto` on four devices, two of which are the CAN FD adapters; PCIe
+ASPM at `default`.
 
-### 5. The unit boots to `graphical.target`
+`scripts/jetson_performance_mode.sh` takes all of it off — power mode, CPU
+governor, GPU and memory clocks, WiFi radio, USB autosuspend, PCIe link states —
+and `--install` writes a systemd unit so a reboot does not restore the defaults.
+`--show` reports without changing anything.
 
-Headless that still works — SSH does not depend on it — but it runs a desktop
-session nobody looks at. This repository already treats CPU as a budget on this
-machine: `use_rviz:=false` is documented as "a CPU decision, not cosmetic".
-`multi-user.target` would return that budget, at the cost of needing a target
-change before anyone plugs a monitor in again.
+The governor is the one that reaches the arm. The MIT loop is a paced thread
+doing bounded work per cycle, so it reads as low load; `schedutil` clocks the
+cluster down and the next burst starts on a slow core, with the ramp costing
+several control cycles.
 
-### 6. No `ROS_DOMAIN_ID`, and discovery is multicast over WiFi
+The trade: the unit draws its full budget and the fan runs harder whether or not
+it is doing anything.
 
-`ROS_LOCALHOST_ONLY=0`, no domain id, no DDS profile. Two machines on one AP
-discover each other, which is what a laptop running RViz wants — and so does any
-other ROS 2 machine that joins the same AP. Worth a deliberate decision before a
-demo where several laptops are present, not automatically a defect.
+### 5. The unit boots to `graphical.target` — it runs a desktop nobody sees
+
+`systemctl get-default` returns `graphical.target`, so the machine starts the
+full GNOME session: display manager, compositor, and the desktop services behind
+them. With no monitor attached, all of that runs and renders for nobody.
+
+SSH does not depend on it, so headless works today — this is about what the
+machine spends on itself. This repository already treats CPU here as a budget:
+`use_rviz:=false` is documented in the tea runbook as "a CPU decision, not
+cosmetic". Switching to `multi-user.target` returns that budget.
+
+```bash
+sudo systemctl set-default multi-user.target     # text boot, no desktop
+sudo systemctl set-default graphical.target      # back again
+```
+
+The trade is that plugging a monitor in later gives a console, not a desktop,
+until the target is switched back and the machine rebooted. **Not changed** —
+this is a decision about how the unit is used, not a defect.
+
+### 6. The ROS graph on the network — done
+
+Was `ROS_LOCALHOST_ONLY=0` with no domain id, so any ROS 2 machine joining the
+same AP would have joined the graph, and discovery ran as multicast over WiFi.
+
+**Set 2026-09-01: `ROS_LOCALHOST_ONLY=1` in `~/.bashrc`, above the ROS sourcing.**
+The network is only how the unit is reached; the graph stays on it. DDS
+discovery and traffic are confined to loopback, so nothing on the WiFi can join
+and nothing leaves for it — which also takes the flakiest part of multi-machine
+ROS, multicast discovery over WiFi, out of the picture entirely.
+
+The cost, stated plainly: no laptop-side RViz, `ros2 topic echo` or rqt against
+this unit any more. Reverse it by unsetting the variable if that is ever wanted.
+A backup of the previous `~/.bashrc` is beside it.
 
 ## 7. A dropped connection orphans the stack — and that one is ours
 
@@ -113,14 +148,21 @@ tmux new -A -s demo
 tmux attach -t demo
 ```
 
-## Suggested order
+## Where it stands
 
-1. rename the host and pin an address or a name you can rely on
-2. move the ROS sourcing so remote commands work
-3. turn WiFi power save off and measure whether the session steadies
-4. add the AP profile, from a wired session, at a lower autoconnect priority
-5. decide the domain id
-6. switch the boot target once nobody needs the desktop
+Done: the ROS graph is confined to loopback (§6), and every power-saving knob has
+a script that turns it off (§4) — **that script still has to be run**, it is not
+applied yet.
 
-Items 1-3 are what make headless *comfortable*; item 4 is what makes it
-*independent of a room's network*. Nothing above has been changed on the unit.
+Open, in the order they are worth doing:
+
+1. run `sudo ./scripts/jetson_performance_mode.sh --install`
+2. rename the host away from `ubuntu`, so `.local` resolves to this machine and
+   not to whichever stock Ubuntu box booted first (§3)
+3. add the AP profile, from a wired session, at a lower autoconnect priority than
+   the two client profiles (§1) — this is what makes the unit independent of a
+   room's network
+4. switch the boot target once nobody needs the desktop (§5)
+
+Deliberately not done: moving the ROS sourcing for non-interactive SSH (§2), and
+anything that would put the ROS graph back on the network.
