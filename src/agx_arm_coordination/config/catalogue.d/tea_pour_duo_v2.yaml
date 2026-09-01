@@ -230,6 +230,17 @@ actions:
       velocity_scaling: 0.10
       acceleration_scaling: 0.10
       description: "Final pour pose."
+    
+  both_arms_to_pre_place:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Tee-Can_Pre_Place_L
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Staging pose for the can placement."
 
   both_arms_to_can_post_grip:
     actiontype_id: Trajectory
@@ -280,7 +291,7 @@ actions:
       planning_group: right_arm
       source: recorded
       recording: recordings/Prep_Tee-Can_4Grip_Right.json
-      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
       description: "Right arm into the support position that steadies the can (taught 7.37 s, 454 samples)."
 
   left_arm_can_grip_move:
@@ -290,7 +301,7 @@ actions:
       planning_group: left_arm
       source: recorded
       recording: recordings/Tee-Can_Grip_Move_L.json
-      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
       description: "Threads the left hand around the can (taught 7.83 s, 481 samples)."
 
   left_arm_can_lift_post_grip:
@@ -300,7 +311,7 @@ actions:
       planning_group: left_arm
       source: recorded
       recording: recordings/Tee-Can_Lift_Post_Grip_L.json
-      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
       description: "Lifts the can clear of the table (taught 4.65 s, 219 samples). Runs under the attached payload model."
 
   both_arms_can_goto_pour_init:
@@ -310,7 +321,7 @@ actions:
       planning_group: both_arms
       source: recorded
       recording: recordings/Tee-Can_GoTo_Pour_Init_V02.json
-      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
       description: "Carries the can to the pour station. Taught on both arms at once."
 
   both_arms_can_pour:
@@ -320,7 +331,7 @@ actions:
       planning_group: both_arms
       source: recorded
       recording: recordings/Tee-Can_Pour_Motion_V03.json
-      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
       description: "The pour. Taught on both arms at once the longest motion in the activity."
 
   left_arm_can_release_motion:
@@ -330,7 +341,7 @@ actions:
       planning_group: left_arm
       source: recorded
       recording: recordings/Tee-Can_Release_Motion.json
-      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
       description: "Withdraws the opened hand from around the can (taught 8.68 s, 697 samples)."
 
   left_arm_can_post_place_adjust:
@@ -340,5 +351,5 @@ actions:
       planning_group: left_arm
       source: recorded
       recording: recordings/Tee-Can_Post_Place_Adjust.json
-      playback: { mode: smooth, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
       description: "Clears the left arm away from the placed can (taught 8.85 s, 639 samples)."

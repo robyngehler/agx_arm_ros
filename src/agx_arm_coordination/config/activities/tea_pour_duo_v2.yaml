@@ -61,6 +61,7 @@ nodes:
   #- { action_no: 101, action_id: right_hand_can_prep,             sync_flag: 4 }                
   - { action_no: 110, action_id: both_arms_can_pour }              # recorded, duo
   - { action_no: 111, action_id: both_arms_to_pour_finish }
+  - { action_no: 112, action_id: both_arms_to_pre_place }   
  # - { action_no: 111, action_id: right_hand_zero }
 
   # --- 4. Bring the can back ------------------------------------------------
@@ -95,7 +96,8 @@ edges:
     [100, 101],
     [101,110],
     [110, 111],
-    [111,120],
+    [111,112],
+    [112,120],
     [120,130],
     [130,140],
     [140,150],
