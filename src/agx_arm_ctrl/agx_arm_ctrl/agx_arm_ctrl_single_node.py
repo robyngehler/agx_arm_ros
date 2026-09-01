@@ -194,6 +194,30 @@ class AgxArmRosNode(Node):
     # ask whether instrumentation happens to be wired up.
     metrics = RuntimeMetrics(enabled=False)
 
+    # Held-bus classifier state, class-level for the same reason: a bare
+    # instance reads a defined value instead of raising, and an interface whose
+    # counters cannot be read classifies as "not held" — the fault path it
+    # defers is then the one that runs.
+    _link_counter_files = None
+    _last_link_rx_packets = None
+    _last_link_tx_packets = None
+    _bus_held_since_monotonic = None
+    _bus_held_logged = False
+    bus_hold_patience_s = 60.0
+    bus_recovery_persistent = True
+    bus_recovery_backoff_max_s = 5.0
+
+    #: How often a persistent recovery says it is still trying.
+    RECOVERY_PROGRESS_EVERY = 10
+
+    def _recovery_backoff_s(self, attempt: int) -> float:
+        """Delay before retry ``attempt``: linear ramp, capped.
+
+        Long enough that a held bus costs a handful of attempts rather than
+        thousands, short enough that a bus which comes back is picked up within
+        one step of it.
+        """
+        return min(0.5 * (attempt - 1), self.bus_recovery_backoff_max_s)
 
     def __init__(self):
         super().__init__("agx_arm_ctrl_single_node")
@@ -304,6 +328,19 @@ class AgxArmRosNode(Node):
         self.declare_parameter("feedback_timeout", 2.0)
         self.declare_parameter("bus_recovery_link_reset", False)
         self.declare_parameter("bus_recovery_max_attempts", 3)
+        # How long a live-but-quiet bus is waited out before it is treated as a
+        # fault. The external CAN watchdog takes the bus on purpose and gives it
+        # back; recovery cannot succeed against it and only spends its budget,
+        # after which the lockout latches and every later command is refused on
+        # a bus that came back healthy. Measured hold: 25.7 s.
+        self.declare_parameter("bus_hold_patience_s", 60.0)
+        # Whether recovery keeps trying until feedback returns. An attempt is one
+        # disconnect/connect plus a bounded feedback wait, spaced by a backoff —
+        # a few frames per attempt, not a load the bus notices. Giving up instead
+        # latches a lockout that refuses every command on the bus that comes back,
+        # so persistence is the default and the attempt budget is the opt-in.
+        self.declare_parameter("bus_recovery_persistent", True)
+        self.declare_parameter("bus_recovery_backoff_max_s", 5.0)
         # Minimum quiet time after a completed recovery before the watchdog may
         # fire again. Without it a congested (error-storming) bus re-latches a
         # comm error during the recovery's OWN enable/config sends, and the
@@ -385,6 +422,21 @@ class AgxArmRosNode(Node):
         self.bus_recovery_max_attempts = max(
             1, int(self.get_parameter("bus_recovery_max_attempts").value)
         )
+        self.bus_hold_patience_s = max(
+            0.0, float(self.get_parameter("bus_hold_patience_s").value)
+        )
+        self.bus_recovery_persistent = bool(
+            self.get_parameter("bus_recovery_persistent").value
+        )
+        self.bus_recovery_backoff_max_s = max(
+            0.0, float(self.get_parameter("bus_recovery_backoff_max_s").value)
+        )
+        # Set when a stall first matched the held-bus signature; None otherwise.
+        self._bus_held_since_monotonic = None
+        self._bus_held_logged = False
+        self._link_counter_files: dict = {}
+        self._last_link_rx_packets = None
+        self._last_link_tx_packets = None
         self.bus_recovery_cooldown_s = max(
             0.0, float(self.get_parameter("bus_recovery_cooldown_s").value)
         )
@@ -439,6 +491,7 @@ class AgxArmRosNode(Node):
         # leader-angle stream instead of mistaking that silence for a stall.
         self._leader_mode_active = False
         self._current_motion_mode = None  # tracks last mode ctrl sent to hardware
+        self._last_external_mode_reassert = 0.0
         # Step-and-settle hand window: while active the arm is parked in a
         # driver-level normal-mode hold and incoming MIT commands are dropped at
         # this gateway, so the OmniHand owns the shared side CAN bus (plan §3).
@@ -1775,6 +1828,7 @@ class AgxArmRosNode(Node):
                 self.get_logger().error(f"bus recovery check failed: {e}")
 
             self._surface_silent_tx_loss(snapshot)
+            self._detect_external_motion_mode_change(snapshot)
             self._sync_authority("publish loop")
 
             if snapshot.is_ok and self._check_arm_ready(snapshot):
@@ -1937,6 +1991,90 @@ class AgxArmRosNode(Node):
             f"the firmware. {cause}"
         )
 
+    def _link_counter(self, name: str):
+        """One sysfs counter for this arm's CAN interface, or None."""
+        if not getattr(self, "can_port", None):
+            return None
+        try:
+            if self._link_counter_files is None:
+                self._link_counter_files = {}
+            handle = self._link_counter_files.get(name)
+            if handle is None:
+                handle = open(f"/sys/class/net/{self.can_port}/statistics/{name}")
+                self._link_counter_files[name] = handle
+            handle.seek(0)
+            return int(handle.read())
+        except (OSError, ValueError):
+            return None
+
+    def _link_is_up(self) -> bool:
+        try:
+            with open(f"/sys/class/net/{self.can_port}/operstate") as state:
+                if state.read().strip() != "up":
+                    return False
+            with open(f"/sys/class/net/{self.can_port}/carrier") as carrier:
+                return carrier.read().strip() == "1"
+        except OSError:
+            return False
+
+    def _bus_hold_defers_recovery(self) -> bool:
+        """True while a live-but-quiet bus should be waited out, not recovered.
+
+        The external CAN watchdog terminates the bus and commands its own
+        MOVE-J hold, then gives the bus back. Recovery cannot succeed against
+        it — three attempts measured 25.7 s of teardown against a bus that was
+        never broken — and the lockout it latches afterwards refuses every
+        command on the healthy bus that follows.
+
+        The signature that separates a held bus from a broken one, using only
+        kernel counters: the link is up, RX has stopped, and TX is still being
+        accepted. A bus-off controller stops accepting TX, and a downed link
+        fails the first check, so both fall through to the normal fault path.
+        The signature cannot tell a held bus from an unplugged one — that case
+        waits out the patience window and then recovers as before.
+        """
+        rx = self._link_counter("rx_packets")
+        tx = self._link_counter("tx_packets")
+        previous_rx, previous_tx = self._last_link_rx_packets, self._last_link_tx_packets
+        self._last_link_rx_packets, self._last_link_tx_packets = rx, tx
+        if rx is None or tx is None or previous_rx is None or previous_tx is None:
+            return False
+
+        held = self._link_is_up() and rx == previous_rx and tx > previous_tx
+        if not held:
+            if self._bus_held_since_monotonic is not None:
+                held_for = time.monotonic() - self._bus_held_since_monotonic
+                self.get_logger().info(
+                    f"CAN RX resumed after {held_for:.1f}s of a held bus; no recovery "
+                    "was run and no fault was latched. Control re-arms once feedback "
+                    "and the joint enable readback verify."
+                )
+            self._bus_held_since_monotonic = None
+            self._bus_held_logged = False
+            return False
+
+        now = time.monotonic()
+        if self._bus_held_since_monotonic is None:
+            self._bus_held_since_monotonic = now
+        waited = now - self._bus_held_since_monotonic
+        if waited > self.bus_hold_patience_s:
+            if self._bus_held_logged:
+                self._bus_held_logged = False
+                self.get_logger().error(
+                    f"bus held quiet for {waited:.1f}s, past the "
+                    f"{self.bus_hold_patience_s:.0f}s patience; treating it as a fault"
+                )
+            return False
+        if not self._bus_held_logged:
+            self._bus_held_logged = True
+            self.get_logger().warn(
+                f"CAN RX stopped while the link is up and TX is still accepted: the bus "
+                f"is live and quiet, which is what the external watchdog's hold looks "
+                f"like. Waiting up to {self.bus_hold_patience_s:.0f}s for it to come "
+                f"back instead of recovering. The arm holds on the watchdog's MOVE-J."
+            )
+        return True
+
     def _should_recover_bus(self, snapshot: "FeedbackSnapshot" = None) -> bool:
         if self._recovery_in_progress:
             return False
@@ -1988,6 +2126,10 @@ class AgxArmRosNode(Node):
                     f"{self.bus_recovery_cooldown_s:.1f} s of the last recovery; "
                     "holding off (bus likely still congested)"
                 )
+            return False
+        # A live bus that somebody is holding quiet is not a fault yet, and
+        # tearing the link down against one only spends the recovery budget.
+        if self._bus_hold_defers_recovery():
             return False
         # Path A: an exception propagated out of a send (raise-style comm model).
         if self._tx_stall_detected:
@@ -2235,7 +2377,15 @@ class AgxArmRosNode(Node):
         )
         try:
             recovered = False
-            for attempt in range(1, self.bus_recovery_max_attempts + 1):
+            rearmed = None
+            attempt = 0
+            while True:
+                attempt += 1
+                if attempt > 1:
+                    # Back off between attempts so a sick bus is not flooded with
+                    # disconnect/enable bursts, and a long hold costs a handful of
+                    # attempts rather than thousands.
+                    time.sleep(self._recovery_backoff_s(attempt))
                 try:
                     self._disconnect_transport()
                 except Exception as e:
@@ -2300,9 +2450,24 @@ class AgxArmRosNode(Node):
                             f"feedback advancing, {enable_note}"
                         )
                     break
+                if self.bus_recovery_persistent:
+                    # Every attempt is one disconnect/connect plus a bounded
+                    # feedback wait, so the cost of waiting is a log line, not
+                    # bus load. Say so on a schedule instead of per attempt.
+                    if attempt == 1 or attempt % self.RECOVERY_PROGRESS_EVERY == 0:
+                        self.get_logger().warn(
+                            f"CAN bus recovery attempt {attempt} did not restore "
+                            f"feedback; retrying until it does "
+                            f"({self.recovery_active_s:.0f}s so far). Set "
+                            "bus_recovery_persistent:=false to give up after "
+                            f"{self.bus_recovery_max_attempts} attempts instead."
+                        )
+                    continue
                 self.get_logger().warn(
                     f"CAN bus recovery attempt {attempt} did not restore feedback"
                 )
+                if attempt >= self.bus_recovery_max_attempts:
+                    break
 
             if not recovered:
                 self.get_logger().error(
@@ -2320,10 +2485,19 @@ class AgxArmRosNode(Node):
             self._clear_comm_error()
             self._last_recovery_end_monotonic = time.monotonic()
             self._recovery_cooldown_logged = False
-            # Hold an explicit fault lockout after recovery: the publish loop
-            # would otherwise re-arm control_ready on the next healthy tick and
-            # silently accept motion. Requires clear_fault_lockout to release.
-            self._enter_fault_lockout(self._recover_reason or "bus recovery")
+            # The lockout exists so the publish loop cannot re-arm control_ready
+            # on the next healthy tick and silently accept motion after a
+            # recovery nobody verified. A recovery that ended with feedback
+            # advancing AND the joint enable confirmed by readback *is* that
+            # verification, so it releases on its own; everything else latches
+            # and needs clear_fault_lockout.
+            if recovered and rearmed is not False:
+                self.get_logger().info(
+                    "recovery verified the arm (feedback advancing, joint enable "
+                    "confirmed); no fault lockout latched"
+                )
+            else:
+                self._enter_fault_lockout(self._recover_reason or "bus recovery")
 
     def _clear_comm_error(self) -> None:
         try:
@@ -3650,6 +3824,46 @@ class AgxArmRosNode(Node):
                 return True, move_mode, attempts
             if time.monotonic() >= deadline:
                 return False, move_mode, attempts
+
+    #: Minimum spacing between motion-mode re-assertions forced by the readback.
+    #: The mode frame is sent once per transition on purpose; re-asserting it on
+    #: every publish cycle would add ~200 frames/s/arm to the TX queue.
+    EXTERNAL_MODE_REASSERT_PERIOD_S = 0.5
+
+    def _detect_external_motion_mode_change(self, snapshot: "FeedbackSnapshot") -> None:
+        """Drop the motion-mode cache when the arm reports a mode we did not set.
+
+        ``set_motion_mode`` is sent once per transition, so the cache is what
+        decides whether the next setpoint re-frames the arm into MIT. Anything
+        that takes the arm out of MIT from outside this driver leaves the cache
+        claiming 'mit' while the firmware runs its own position controller, and
+        every MIT frame after that is accepted by the bus and ignored by the
+        arm. The external CAN watchdog's ``MOVE-J`` hold does exactly this by
+        design, and a hold shorter than ``feedback_timeout`` never reaches the
+        recovery path that would otherwise invalidate the cache.
+
+        Only a positively reported non-MIT mode counts; an unreadable or unknown
+        readback is not evidence of a mode change.
+        """
+        if self._current_motion_mode != 'mit':
+            return
+        now = time.monotonic()
+        if now - self._last_external_mode_reassert < self.EXTERNAL_MODE_REASSERT_PERIOD_S:
+            return
+        arm_status = getattr(snapshot, "arm_status", None)
+        status = getattr(arm_status, "msg", None)
+        move_mode = None if status is None else getattr(status, "mode_feedback", None)
+        if not self._move_mode_is_firmware_hold(move_mode):
+            return
+        self._last_external_mode_reassert = now
+        self._current_motion_mode = None
+        self.is_mit_mode = False
+        self.get_logger().warn(
+            f"arm reports move mode {move_mode} while this driver was streaming "
+            "MIT; something outside this driver changed the mode (the external "
+            "CAN watchdog's MOVE-J hold does). Re-asserting MIT on the next "
+            "setpoint."
+        )
 
     def _arm_ctrl_mode(self):
         """Current firmware ctrl_mode from feedback, or None if unreadable."""
