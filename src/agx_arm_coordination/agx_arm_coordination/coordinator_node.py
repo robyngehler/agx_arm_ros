@@ -49,6 +49,8 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.action import PerformActivity, PerformAction
 from agx_arm_msgs.msg import AgxUnitSafety, RobotEvent
+from action_msgs.msg import GoalStatus
+from control_msgs.action import FollowJointTrajectory
 
 from agx_arm_coordination.arm_executor import (
     ArmConfig,
@@ -71,7 +73,17 @@ from agx_arm_coordination.motion_registry import (
     bus_topology,
     handshake_required,
 )
-from agx_arm_coordination.performer import KIND_ARM, KIND_HAND, RoutingError, route
+from agx_arm_coordination.gripper_closure import (
+    ClosureError,
+    closure_to_finger_positions,
+)
+from agx_arm_coordination.performer import (
+    KIND_ARM,
+    KIND_GRIPPER,
+    KIND_HAND,
+    RoutingError,
+    route,
+)
 from agx_arm_coordination.unit_activity import UnitActivity
 
 
@@ -249,6 +261,27 @@ class _HandChild(_Child):
         self.mark(bool(result.success), result.message or result.final_state)
 
 
+class _GripperChild(_Child):
+    """Parallel-gripper child over a FollowJointTrajectory goal.
+
+    The bridge decides what success means for a gripper — arrived, or settled
+    against an object after measurable travel — and reports it in
+    ``error_code``. A goal that was cancelled comes back through the same
+    result, so it is failed here rather than read as a completion.
+    """
+
+    side: str = ""
+
+    def _interpret_result(self, wrapper) -> None:
+        result = wrapper.result
+        status = getattr(wrapper, "status", None)
+        if status is not None and status != GoalStatus.STATUS_SUCCEEDED:
+            self.mark(False, result.error_string or f"goal status {status}")
+            return
+        ok = result.error_code == FollowJointTrajectory.Result.SUCCESSFUL
+        self.mark(ok, result.error_string or ("" if ok else f"error_code={result.error_code}"))
+
+
 #: MoveIt failures a fresh goal may still get past, because nothing has moved and
 #: the next attempt starts from a new sampler. A goal state that only just clears
 #: the collision model fails intermittently: `num_planning_attempts` does not help
@@ -355,6 +388,15 @@ class CoordinatorNode(Node):
 
         self.declare_parameter("config_dir", "")
         self.declare_parameter("hand_action_template", "/{side}_hand/perform")
+        # The parallel gripper's own trajectory server, the same surface MoveIt
+        # and the teach manager use. Never the hand skill controller: a
+        # contact-seeking hand skill and a two-jaw width command are different
+        # primitives on different hardware.
+        self.declare_parameter(
+            "gripper_action_template",
+            "/{side}_arm/gripper_controller/follow_joint_trajectory",
+        )
+        self.declare_parameter("gripper_joint_template", "{side}_arm_gripper_joint")
         # Driver-side step-and-settle handoff services, per arm side. Before a
         # hand action runs on a shared side bus the arm is quiesced into a
         # verified hold (prepare_hand_window) and handed back afterwards
@@ -401,6 +443,12 @@ class CoordinatorNode(Node):
             )
         config_dir = Path(config_dir_param)
         self.hand_action_template = str(self.get_parameter("hand_action_template").value)
+        self.gripper_action_template = str(
+            self.get_parameter("gripper_action_template").value
+        )
+        self.gripper_joint_template = str(
+            self.get_parameter("gripper_joint_template").value
+        )
         self.arm_service_template = str(self.get_parameter("arm_service_template").value)
         self.mit_controller_template = str(self.get_parameter("mit_controller_template").value)
         self.stop_service_timeout = float(self.get_parameter("stop_service_timeout_sec").value)
@@ -442,6 +490,7 @@ class CoordinatorNode(Node):
 
         # Child action clients (created once, reused per activity run).
         self._hand_clients: dict[str, ActionClient] = {}
+        self._gripper_clients: dict[str, ActionClient] = {}
         self._prepare_clients: dict[str, object] = {}
         self._resume_clients: dict[str, object] = {}
         self._cancel_traj_clients: dict[str, object] = {}
@@ -452,6 +501,12 @@ class CoordinatorNode(Node):
             name = self.hand_action_template.format(side=side)
             self._hand_clients[side] = ActionClient(
                 self, PerformAction, name, callback_group=self._cb_group
+            )
+            self._gripper_clients[side] = ActionClient(
+                self,
+                FollowJointTrajectory,
+                self.gripper_action_template.format(side=side),
+                callback_group=self._cb_group,
             )
             arm_ns = self.arm_service_template.format(side=side)
             self._prepare_clients[side] = self.create_client(
@@ -734,6 +789,8 @@ class CoordinatorNode(Node):
 
         if decision.kind == KIND_HAND:
             return self._dispatch_hand(action_no, action, decision, activity_id)
+        if decision.kind == KIND_GRIPPER:
+            return self._dispatch_gripper(action_no, action, decision)
         if decision.kind == KIND_ARM:
             return self._dispatch_arm(action_no, action, activity_id)
         raise DispatchError(f"unhandled routing kind '{decision.kind}'")
@@ -867,6 +924,40 @@ class CoordinatorNode(Node):
         child = _HandChild(action_no, action.action_id)
         child.side = decision.side
         child.attach_goal_future(client.send_goal_async(goal))
+        return child
+
+    def _dispatch_gripper(self, action_no, action, decision) -> _Child:
+        """Send one normalized closure to the side's gripper trajectory server.
+
+        No hand window: the gripper rides its arm's bus and its arm's SDK
+        session, and the resource table already serializes it against that arm,
+        so there is nothing to hand off.
+        """
+        client = self._gripper_clients[decision.side]
+        if not client.wait_for_server(timeout_sec=self.goal_accept_timeout):
+            raise DispatchError(
+                f"gripper trajectory server for {decision.robot_id} not available "
+                f"({self.gripper_action_template.format(side=decision.side)})"
+            )
+        prefix = self.gripper_joint_template.format(side=decision.side)
+        joint_names = [f"{prefix}1", f"{prefix}2"]
+        try:
+            positions = closure_to_finger_positions(joint_names, action.closure)
+        except ClosureError as exc:  # already checked at load; a config reload could still
+            raise DispatchError(f"action '{action.action_id}': {exc}") from exc
+
+        point = JointTrajectoryPoint()
+        point.positions = positions
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory = JointTrajectory()
+        goal.trajectory.joint_names = joint_names
+        goal.trajectory.points = [point]
+        child = _GripperChild(action_no, action.action_id)
+        child.side = decision.side
+        child.attach_goal_future(client.send_goal_async(goal))
+        self.get_logger().info(
+            f"{action.action_id}: {decision.robot_id} -> closure {action.closure:.2f}"
+        )
         return child
 
     def _dispatch_arm(self, action_no, action, activity_id) -> _Child:

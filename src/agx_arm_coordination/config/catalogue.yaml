@@ -16,6 +16,10 @@ resources:
   R_BOTH_ARMS:  { robots: [both_arms] }
   R_LEFT_HAND:  { robots: [left_hand] }
   R_RIGHT_HAND: { robots: [right_hand] }
+  # The parallel grippers are separate resources from the hands: different
+  # hardware, different command semantics (a width, not a contact-seeking skill).
+  R_LEFT_GRIPPER:  { robots: [left_gripper] }
+  R_RIGHT_GRIPPER: { robots: [right_gripper] }
   # Side CAN-bus contention is confirmed: each side's arm and hand share one
   # physical bus, so graph_model.ROBOT_UNITS now gives left_arm/left_hand a shared
   # left_can_bus unit (and right_can_bus for the right side). Same-side arm and
@@ -83,6 +87,42 @@ actions:
       timeout_sec: 3.0
       completion_policy: { on_success: finish_when_open }
       fallback_policy:   { on_cancel: stop_motion, on_timeout: report_failure }
+
+  # --- Parallel gripper (Gripper, normalized closure) ------------------------
+  # closure 0.0 = fully open, 1.0 = fully closed. These three are conveniences,
+  # not an enumeration: any value in [0, 1] is a valid target, so a new opening
+  # needs a closure, not a new preset. The gripper's physical stroke stays in
+  # duo_motion_registry.yaml and never appears here.
+  right_gripper_open:
+    actiontype_id: Gripper
+    robot_id: right_gripper
+    metadata:
+      target: { closure: 0.0 }
+  right_gripper_half:
+    actiontype_id: Gripper
+    robot_id: right_gripper
+    metadata:
+      target: { closure: 0.5 }
+  right_gripper_close:
+    actiontype_id: Gripper
+    robot_id: right_gripper
+    metadata:
+      target: { closure: 1.0 }
+  # A grasp's physical consequence is declared, never inferred from the closure:
+  # the same closure means a held object in one action and an empty hand in the
+  # next, so payload_update carries it (see graph_model.PAYLOAD_UPDATE_KEY).
+  right_gripper_grasp:
+    actiontype_id: Gripper
+    robot_id: right_gripper
+    metadata:
+      target: { closure: 0.85 }
+      payload_update: attach
+  right_gripper_release:
+    actiontype_id: Gripper
+    robot_id: right_gripper
+    metadata:
+      target: { closure: 0.0 }
+      payload_update: detach
 
   # --- Arm transitions (Trajectory, MoveIt-planned anchor endpoints) --------
   both_arms_home_to_pregrasp:

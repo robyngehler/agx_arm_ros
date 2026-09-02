@@ -60,6 +60,13 @@ arm:
 # URDF counterpart at any prefix, so prefixing it would only move the error.
 gripper:
   canonical_joints: [gripper_joint1, gripper_joint2]
+  # Endpoints of the normalized closure the Activity catalogue and the teach
+  # manager speak: closure 0.0 is width_open_m, closure 1.0 is width_closed_m.
+  # They must equal AgxGripperWrapper.WIDTH_MAX / WIDTH_MIN, which is the range
+  # the driver refuses outside of; agx_arm_ctrl's test_gripper_closure asserts
+  # the two agree, so the stroke is declared once and checked, not copied.
+  width_open_m: 0.1
+  width_closed_m: 0.0
 
 # --- Motion profiles (MoveIt planning groups) --------------------------------
 # Each profile is the geometric ground truth for one MoveIt planning group:

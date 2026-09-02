@@ -28,6 +28,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from agx_arm_coordination.gripper_closure import (
+    CLOSURE_KEY,
+    GRIPPER_SIDES,
+    ClosureError,
+    closure_to_width,
+)
+
 
 TOPOLOGY_DEDICATED = "dedicated_per_device"
 TOPOLOGY_SHARED = "shared_per_side"
@@ -48,6 +55,8 @@ ROBOT_UNITS_SHARED: dict[str, frozenset[str]] = {
     ),
     "left_hand": frozenset({"left_hand", "left_can_bus"}),
     "right_hand": frozenset({"right_hand", "right_can_bus"}),
+    "left_gripper": frozenset({"left_gripper", "left_can_bus"}),
+    "right_gripper": frozenset({"right_gripper", "right_can_bus"}),
 }
 
 # Dedicated: four buses, one per device. The arm and the hand of one side hold
@@ -62,6 +71,13 @@ ROBOT_UNITS_DEDICATED: dict[str, frozenset[str]] = {
     ),
     "left_hand": frozenset({"left_hand", "left_hand_bus"}),
     "right_hand": frozenset({"right_hand", "right_hand_bus"}),
+    # The parallel gripper is not freed by the dedicated topology: it rides its
+    # arm's bus and its arm's SDK session by vendor design, so it holds the arm's
+    # token in both tables and is serialized against that arm either way. Freeing
+    # it is a hardware question (concurrent arm motion + gripper command), not a
+    # wiring one — see docs/sprint_piper/checklist.md.
+    "left_gripper": frozenset({"left_gripper", "left_arm_bus"}),
+    "right_gripper": frozenset({"right_gripper", "right_arm_bus"}),
 }
 
 # The conservative reading is the default everywhere the topology is not stated.
@@ -146,6 +162,37 @@ class Action:
                     f"action '{self.action_id}': {PAYLOAD_UPDATE_KEY} '{value}' "
                     f"invalid; expected one of {sorted(VALID_PAYLOAD_UPDATES)}"
                 )
+        if self.robot_id in GRIPPER_SIDES:
+            self._validate_closure()
+
+    def _validate_closure(self) -> None:
+        """A parallel-gripper action carries a closure in [0, 1], checked at load.
+
+        The catalogue speaks normalized closure; a missing or malformed one would
+        otherwise surface as a dispatch failure mid-activity, with the arm
+        already somewhere. A gripper executes nothing else — there is no path
+        that would take a Trajectory on two jaws.
+        """
+        if self.actiontype_id != ACTIONTYPE_GRIPPER:
+            raise GraphError(
+                f"action '{self.action_id}': a parallel gripper executes only "
+                f"{ACTIONTYPE_GRIPPER} actions, not '{self.actiontype_id}'"
+            )
+        target = self.metadata.get("target") or {}
+        if not isinstance(target, dict) or CLOSURE_KEY not in target:
+            raise GraphError(
+                f"action '{self.action_id}': gripper action needs "
+                f"metadata.target.{CLOSURE_KEY} in [0.0, 1.0]"
+            )
+        try:
+            closure_to_width(target[CLOSURE_KEY])
+        except ClosureError as exc:
+            raise GraphError(f"action '{self.action_id}': {exc}") from exc
+
+    @property
+    def closure(self) -> float:
+        """Normalized closure of a gripper action (validated at construction)."""
+        return float(self.metadata["target"][CLOSURE_KEY])
 
     @property
     def payload_update(self) -> str:
