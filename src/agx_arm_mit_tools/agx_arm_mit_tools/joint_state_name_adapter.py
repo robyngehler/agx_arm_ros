@@ -6,12 +6,18 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-from agx_arm_mit_tools.motion_registry import canonical_arm_joints
+from agx_arm_mit_tools.motion_registry import (
+	canonical_arm_joints,
+	canonical_gripper_joints,
+)
 
 
-# Canonical (unprefixed) arm joints from the single source of truth
-# (agx_arm_description duo_motion_registry.yaml), not a local copy.
-CANONICAL_ARM_JOINTS = set(canonical_arm_joints())
+# Joint names that live in one arm's name space and therefore take that arm's
+# prefix, from the single source of truth (agx_arm_description
+# duo_motion_registry.yaml), not a local copy. Everything else passes through
+# unchanged, which is what an OmniHand needs: its joints are already
+# side-qualified at the source and carry no arm prefix in the URDF.
+ARM_PREFIXED_JOINTS = set(canonical_arm_joints()) | set(canonical_gripper_joints())
 
 
 def adapt_joint_name(name: str, joint_prefix: str, mode: str) -> str:
@@ -21,7 +27,7 @@ def adapt_joint_name(name: str, joint_prefix: str, mode: str) -> str:
 	if mode == "prepend":
 		if joint_name.startswith(joint_prefix):
 			return joint_name
-		if joint_name not in CANONICAL_ARM_JOINTS:
+		if joint_name not in ARM_PREFIXED_JOINTS:
 			return joint_name
 		return f"{joint_prefix}{joint_name}"
 	if mode == "strip":

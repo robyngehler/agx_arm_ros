@@ -44,4 +44,14 @@ def canonical_arm_joints() -> list[str]:
     return [str(name) for name in registry.get("arm", {}).get("canonical_joints", [])]
 
 
-__all__ = ["canonical_arm_joints"]
+def canonical_gripper_joints() -> list[str]:
+    """Canonical (unprefixed) AGX gripper finger joints from the registry.
+
+    They live in the arm's name space, so whatever prefixes the arm joints must
+    prefix these too.
+    """
+    registry = yaml.safe_load(_find_motion_registry().read_text(encoding="utf-8")) or {}
+    return [str(name) for name in registry.get("gripper", {}).get("canonical_joints", [])]
+
+
+__all__ = ["canonical_arm_joints", "canonical_gripper_joints"]

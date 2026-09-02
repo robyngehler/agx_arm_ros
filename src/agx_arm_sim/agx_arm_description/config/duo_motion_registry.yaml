@@ -50,6 +50,17 @@ arm:
   # Per-arm runtime controller (namespaced at use: /<namespace>/<controller_name>).
   controller_name: arm_controller
 
+# --- AGX gripper -------------------------------------------------------------
+# Canonical (unprefixed) finger joints as the driver publishes them. They belong
+# to the arm's own name space — the URDF calls them <arm_prefix>gripper_joint1 —
+# so the joint-state adapter prefixes them alongside the arm joints. The OmniHand
+# needs no such entry: its joints are already side-qualified at the source.
+#
+# The driver's synthetic `gripper` width joint is deliberately absent: it has no
+# URDF counterpart at any prefix, so prefixing it would only move the error.
+gripper:
+  canonical_joints: [gripper_joint1, gripper_joint2]
+
 # --- Motion profiles (MoveIt planning groups) --------------------------------
 # Each profile is the geometric ground truth for one MoveIt planning group:
 # the group name, which arm sides it spans (single-arm profiles carry one side;
