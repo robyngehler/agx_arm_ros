@@ -46,7 +46,7 @@ def test_validate_duo_both_arms_contract_rejects_unsupported_global_effector():
     with pytest.raises(ValueError, match="hand-aware dual-arm variants"):
         validate_duo_both_arms_contract(
             "both_arms",
-            "agx_gripper",
+            "revo2",
             [
                 {"namespace": "left_arm", "joint_prefix": "left_arm_"},
                 {"namespace": "right_arm", "joint_prefix": "right_arm_"},
@@ -54,6 +54,19 @@ def test_validate_duo_both_arms_contract_rejects_unsupported_global_effector():
             follow="true",
             use_mit_controller=True,
         )
+
+
+def test_validate_duo_both_arms_contract_accepts_agx_gripper_effectors():
+    validate_duo_both_arms_contract(
+        "both_arms",
+        "agx_gripper",
+        [
+            {"namespace": "left_arm", "joint_prefix": "left_arm_", "effector_type": "agx_gripper"},
+            {"namespace": "right_arm", "joint_prefix": "right_arm_", "effector_type": "agx_gripper"},
+        ],
+        follow="true",
+        use_mit_controller=True,
+    )
 
 
 def test_validate_duo_both_arms_contract_rejects_unsupported_instance_effector():

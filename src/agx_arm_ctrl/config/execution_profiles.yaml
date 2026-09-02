@@ -54,6 +54,72 @@ profiles:
       use_right_arm: true
       use_right_hand: true
 
+  # AGX gripper instead of the OmniHand. The two share the link7 tool mount, so
+  # a side's use_*_hand stays false wherever use_*_gripper is true. The gripper
+  # sits on the arm's own CAN bus by vendor design (its feedback is ~220 frames/s
+  # of the ~4400 the bus carries under MIT), so there is no second interface to
+  # declare and no hand-window handshake.
+  #
+  # Hardware note: only the right arm carries a gripper today. left_gripper and
+  # duo_gripper are structurally complete but unvalidated on hardware.
+  left_gripper:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: left_arm
+    effector_type: agx_gripper
+    custom_model_xacro_args:
+      use_left_arm: true
+      use_left_hand: false
+      use_left_gripper: true
+      use_right_arm: false
+      use_right_hand: false
+
+  right_gripper:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: right_arm
+    effector_type: agx_gripper
+    custom_model_xacro_args:
+      use_left_arm: false
+      use_left_hand: false
+      use_right_arm: true
+      use_right_hand: false
+      use_right_gripper: true
+
+  # Both arms carrying AGX grippers. Same per-arm MIT + move_group layout as
+  # duo_arm; each side additionally carries its gripper in the gravity URDF and
+  # gets its own SRDF group (left_gripper / right_gripper), derived from the
+  # instance's joint_prefix rather than a type field — a gripper has no side of
+  # its own, the arm it is mounted on names it. Both grippers ride their arm's
+  # CAN bus, so no extra interface and no hand window.
+  duo_gripper:
+    robot_name: duo_nero_system
+    use_duo_model: true
+    moveit_profile: both_arms
+    effector_type: agx_gripper
+    custom_model_xacro_args:
+      use_left_arm: true
+      use_left_hand: false
+      use_left_gripper: true
+      use_right_arm: true
+      use_right_hand: false
+      use_right_gripper: true
+    arm_instances:
+      - name: left_arm
+        namespace: left_arm
+        joint_prefix: left_arm_
+        feedback_joint_prefix: left_arm_
+        can_port: can_nero_left
+        launch_driver: true
+        effector_type: agx_gripper
+      - name: right_arm
+        namespace: right_arm
+        joint_prefix: right_arm_
+        feedback_joint_prefix: right_arm_
+        can_port: can_nero_right
+        launch_driver: true
+        effector_type: agx_gripper
+
   # Duo MoveIt slice. `mode:=moveit_mit` brings up one per-arm MIT controller per
   # side (namespaced /<side>_arm/arm_controller) plus move_group; MoveIt owns the
   # both_arms execution (it fans a both_arms plan out to the per-arm controllers

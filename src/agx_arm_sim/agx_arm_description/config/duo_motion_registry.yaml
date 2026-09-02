@@ -99,7 +99,10 @@ motion_profiles:
       # once the SRDF omnihand_group macro turned per-side instantiable
       # (group_name/parent_group/parent_link params) — see the duo_hand
       # execution profile.
-      allowed_effector_types: [none, omnihand]
+      # agx_gripper joined once agx_gripper_group became per-side instantiable
+      # (group_name/eef_name/parent_group/parent_link/prefix params) — see the
+      # duo_gripper execution profile.
+      allowed_effector_types: [none, omnihand, agx_gripper]
       requires_follow_with_mit: true
 
 # --- OmniHand active (controllable) joints -----------------------------------

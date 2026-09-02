@@ -39,6 +39,10 @@ def _find_motion_registry() -> Path:
 _MOTION_REGISTRY = yaml.safe_load(_find_motion_registry().read_text(encoding="utf-8")) or {}
 
 CANONICAL_ARM_JOINTS = list(_MOTION_REGISTRY["arm"]["canonical_joints"])
+# AGX gripper fingers, prefixed with the arm they are mounted on.
+CANONICAL_GRIPPER_JOINTS = list(
+    _MOTION_REGISTRY.get("gripper", {}).get("canonical_joints", [])
+)
 # OmniHand Pro O12 active (controllable) joints, side-prefixed at use.
 OMNIHAND_O12_ACTIVE_JOINT_SUFFIXES = [
     str(joint["suffix"]) for joint in _MOTION_REGISTRY["omnihand"]["o12_pro"]["active_joints"]

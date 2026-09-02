@@ -7,6 +7,7 @@ from moveit_configs_utils import MoveItConfigsBuilder
 
 from _multi_arm_runtime import (
     ARM_SIDES,
+    CANONICAL_GRIPPER_JOINTS,
     MOTION_PROFILES,
     controller_joint_names,
     controller_path,
@@ -68,20 +69,35 @@ def _resolved_arm_tip_frame(custom_model: str, joint_prefix: str, explicit_frame
     return "tcp_link"
 
 
-def _build_joint_limits(joint_names: list[str]) -> dict:
+def _build_joint_limits(joint_names: list[str], gripper_joint_names: list[str] = ()) -> dict:
+    limits = {
+        joint_name: {
+            "has_velocity_limits": True,
+            "max_velocity": 5.0,
+            "has_acceleration_limits": True,
+            "max_acceleration": 5.0,
+        }
+        for joint_name in joint_names
+    }
+    # The gripper fingers are prismatic: metres, not radians, so the arm's
+    # numbers do not carry over. The velocity is the URDF's declared limit; the
+    # acceleration is the repo's 2.5 * v_max stand-in, not a measurement.
+    limits.update(
+        {
+            joint_name: {
+                "has_velocity_limits": True,
+                "max_velocity": 3.0,
+                "has_acceleration_limits": True,
+                "max_acceleration": 7.5,
+            }
+            for joint_name in gripper_joint_names
+        }
+    )
     return {
         "robot_description_planning": {
             "default_velocity_scaling_factor": 0.1,
             "default_acceleration_scaling_factor": 0.1,
-            "joint_limits": {
-                joint_name: {
-                    "has_velocity_limits": True,
-                    "max_velocity": 5.0,
-                    "has_acceleration_limits": True,
-                    "max_acceleration": 5.0,
-                }
-                for joint_name in joint_names
-            }
+            "joint_limits": limits,
         },
     }
 
@@ -187,6 +203,35 @@ def _apply_trajectory_execution_tuning(trajectory_execution: dict, context) -> N
 def _side_frame(side: str, key: str) -> str:
     """Per-side arm frame/prefix from the registry (arm.sides.<side>.<key>)."""
     return str(ARM_SIDES.get(side, {}).get(key, ""))
+
+
+def _profile_gripper_joint_names(
+    moveit_profile: str,
+    explicit_joint_prefix: str,
+    effector_type: str,
+    gripper_sides: set,
+) -> list[str]:
+    """Gripper finger joints of whichever arms carry one, with their prefixes."""
+    if moveit_profile == DUAL_ARM_MOVEIT_GROUP:
+        prefixes = [_side_frame(side, "prefix") for side in sorted(gripper_sides) if side]
+    elif effector_type == "agx_gripper":
+        prefixes = _profile_joint_prefixes(moveit_profile, explicit_joint_prefix)
+    else:
+        prefixes = []
+    return [
+        f"{joint_prefix}{joint_name}"
+        for joint_prefix in prefixes
+        for joint_name in CANONICAL_GRIPPER_JOINTS
+    ]
+
+
+def _instance_side(instance: dict) -> str:
+    """Side of an arm instance, matched on its joint prefix from the registry."""
+    prefix = str(instance.get("joint_prefix", "")).strip()
+    for side, side_cfg in ARM_SIDES.items():
+        if prefix and prefix == str(side_cfg.get("prefix", "")):
+            return side
+    return ""
 
 
 def _resolve_profile_settings(
@@ -417,11 +462,19 @@ def build_moveit_config(context):
     # the single top-level effector/omnihand_type pair — that pair can only
     # describe one hand. Single-arm profiles keep the legacy single-side gates.
     duo_hand_sides = set()
+    duo_gripper_sides = set()
     if moveit_profile == DUAL_ARM_MOVEIT_GROUP:
         duo_hand_sides = {
             str(instance.get("omnihand_type", "")).strip()
             for instance in arm_instances
             if str(instance.get("effector_type", "")).strip() == "omnihand"
+        }
+        # A gripper carries no side of its own: the arm it is mounted on names
+        # the side, so it comes from the instance name rather than a type field.
+        duo_gripper_sides = {
+            _instance_side(instance)
+            for instance in arm_instances
+            if str(instance.get("effector_type", "")).strip() == "agx_gripper"
         }
     srdf_mappings = {
         "robot_name": LaunchConfiguration("robot_name").perform(context),
@@ -440,6 +493,8 @@ def build_moveit_config(context):
         "include_dual_arm_groups": profile_settings["include_dual_arm_groups"],
         "include_left_omnihand": "true" if "left" in duo_hand_sides else "false",
         "include_right_omnihand": "true" if "right" in duo_hand_sides else "false",
+        "include_left_gripper": "true" if "left" in duo_gripper_sides else "false",
+        "include_right_gripper": "true" if "right" in duo_gripper_sides else "false",
         "left_arm_base_frame": profile_settings["left_arm_base_frame"],
         "left_arm_tip_frame": profile_settings["left_arm_tip_frame"],
         "left_mount_body_link": _resolve_mount_body_link(custom_model),
@@ -504,6 +559,11 @@ def build_moveit_config(context):
             ]
 
     if custom_model or input_joint_prefix or moveit_profile == DUAL_ARM_MOVEIT_GROUP:
-        moveit_config.joint_limits = _build_joint_limits(controlled_joint_names)
+        moveit_config.joint_limits = _build_joint_limits(
+            controlled_joint_names,
+            _profile_gripper_joint_names(
+                moveit_profile, explicit_joint_prefix, effector_type, duo_gripper_sides
+            ),
+        )
 
     return moveit_config
