@@ -211,6 +211,16 @@ def generate_launch_description():
                     'Set false when used with MoveIt (URDF only has gripper_joint1/2).',
     )
 
+    allow_legacy_gripper_command_ingress_arg = DeclareLaunchArgument(
+        'allow_legacy_gripper_command_ingress',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Let bare gripper commands on control/joint_states move the '
+                    'gripper. They carry no owner and no device generation, so a '
+                    'stale one cannot be refused; development and debugging only. '
+                    'Production commanders use control/gripper/authorized_trajectory.',
+    )
+
     # node
     agx_arm_node = Node(
         package='agx_arm_ctrl',
@@ -233,6 +243,9 @@ def generate_launch_description():
             'tcp_offset': LaunchConfiguration('tcp_offset'),
             'gripper_default_effort': LaunchConfiguration('gripper_default_effort'),
             'publish_gripper_joint': LaunchConfiguration('publish_gripper_joint'),
+            'allow_legacy_gripper_command_ingress': LaunchConfiguration(
+                'allow_legacy_gripper_command_ingress'
+            ),
         }],
         remappings=[
             # feedback topics
@@ -369,6 +382,7 @@ def generate_launch_description():
         gripper_default_effort_arg,
         joint_states_command_topic_arg,
         publish_gripper_joint_arg,
+        allow_legacy_gripper_command_ingress_arg,
         # node
         agx_arm_node,
         omnihand_bridge_launch,

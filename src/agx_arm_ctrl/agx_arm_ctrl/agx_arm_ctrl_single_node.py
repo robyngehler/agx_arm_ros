@@ -318,6 +318,11 @@ class AgxArmRosNode(Node):
         self.declare_parameter("tcp_offset", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("gripper_default_effort", 1.0)
         self.declare_parameter("publish_gripper_joint", True)
+        # Bare gripper commands on control/joint_states. They carry no owner and
+        # no generation, so a stale or reordered one cannot be refused; the
+        # production path is control/gripper/authorized_trajectory. Development
+        # and debugging only, exactly like the hand's equivalent switch.
+        self.declare_parameter("allow_legacy_gripper_command_ingress", False)
         self.declare_parameter("omnihand_joint_states_topic", "feedback/omnihand/joint_states")
         # CAN bus recovery (P1): detect TX stalls (ENOBUFS slot leak) / stale
         # feedback and re-establish the link instead of dead-locking until the
@@ -425,6 +430,9 @@ class AgxArmRosNode(Node):
         self.tcp_offset = self.get_parameter("tcp_offset").value
         self.gripper_default_effort = self.get_parameter("gripper_default_effort").value
         self.publish_gripper_joint = self.get_parameter("publish_gripper_joint").value
+        self.allow_legacy_gripper_command_ingress = bool(
+            self.get_parameter("allow_legacy_gripper_command_ingress").value
+        )
         self.omnihand_joint_states_topic = self.get_parameter("omnihand_joint_states_topic").value
         self.bus_recovery_enabled = self.get_parameter("bus_recovery_enabled").value
         self.bus_recovery_tx_error_threshold = max(
@@ -1456,7 +1464,8 @@ class AgxArmRosNode(Node):
 
         Effector control is deliberately not covered here. The gripper and hand
         are separate devices with their own contract (phase 4D); quarantining
-        them through the arm's parameter would be the wrong boundary.
+        them through the arm's parameter would be the wrong boundary — each has
+        its own switch (``allow_legacy_gripper_command_ingress``).
         """
         if self.allow_legacy_motion_ingress:
             return True
@@ -2956,6 +2965,8 @@ class AgxArmRosNode(Node):
     def _control_gripper_joint(self, joint_pos, joint_effort):
         if self.gripper is None:
             return
+        if not self._legacy_gripper_ingress_allowed():
+            return
 
         # gripper_name → width scale
         gripper_joint_map = {
@@ -2980,6 +2991,32 @@ class AgxArmRosNode(Node):
         # Legacy ingress: this surface carries no authority, so it cannot refuse
         # a stale or reordered command. Use control/gripper/authorized_trajectory.
         self._submit_gripper_move(width, force)
+
+    def _legacy_gripper_ingress_allowed(self) -> bool:
+        """Whether a bare gripper command on control/joint_states may execute.
+
+        The gripper's own quarantine, separate from the arm's: a command there
+        carries no owner and no generation, so the authority checks have nothing
+        to check. Production commanders use
+        control/gripper/authorized_trajectory.
+        """
+        if self.allow_legacy_gripper_command_ingress:
+            return True
+        key = ("control/joint_states gripper", "legacy_ingress")
+        count = self._command_rejections.get(key, 0) + 1
+        self._command_rejections[key] = count
+        now = time.monotonic()
+        last = self._last_rejection_log_monotonic.get(key, 0.0)
+        if now - last >= self._rejection_log_period_s:
+            self._last_rejection_log_monotonic[key] = now
+            self.get_logger().warn(
+                "bare gripper commands on control/joint_states are quarantined: "
+                "they carry no commander and no device generation, so a stale "
+                f"one cannot be refused [{count} refused so far]. Use "
+                "control/gripper/authorized_trajectory, or set "
+                "allow_legacy_gripper_command_ingress:=true for development."
+            )
+        return False
 
     ### gripper device authority
     def _publish_gripper_authority(self, snapshot) -> None:
@@ -3172,8 +3209,8 @@ class AgxArmRosNode(Node):
         }
         if self._legacy_ingress_allowed("control/joint_states arm follow"):
             self._control_arm_joints(joint_pos)
-        # Effector control stays: the gripper and hand are separate devices with
-        # their own contract, and the arm's quarantine is the wrong boundary.
+        # The effectors are separate devices with their own contract, so they
+        # carry their own quarantine rather than the arm's.
         self._control_gripper_joint(joint_pos, joint_effort)
         self._control_hand_joints(joint_pos)
 

@@ -23,6 +23,19 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
 	--source-joints joint1,joint2,joint3,joint4,joint5,joint6,joint7
 ```
 
+The manager commands end effectors as well as arms, and the two mounted here are
+commanded differently:
+
+- **OmniHand** (`g`): capture or replay a named skill, published as a `HandJointTarget`
+  under a claim on `control/omnihand/claim_device`.
+- **AGX parallel gripper** (`e`): a normalized `closure` in `[0.0, 1.0]` (0.0 open,
+  1.0 closed), sent as a `FollowJointTrajectory` goal to
+  `<side>_arm/gripper_controller/follow_joint_trajectory` — the same server MoveIt and
+  the coordinator use. Metres never appear in the interface; the stroke lives in
+  `duo_motion_registry.yaml`.
+
+Neither is written into an arm recording.
+
 This package also owns:
 
 - `agx_arm_record_leader_trajectory`

@@ -59,8 +59,14 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import Empty, SetBool, Trigger
 
-from agx_arm_msgs.msg import DeviceCommandStamp, HandJointTarget, OmniHandStatus
+from agx_arm_msgs.msg import (
+    DeviceCommandStamp,
+    GripperStatus,
+    HandJointTarget,
+    OmniHandStatus,
+)
 from agx_arm_msgs.srv import ClaimDevice
+from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_mit_controller.model_metadata import compute_flange_pose_from_mdh
@@ -72,6 +78,11 @@ from agx_arm_mit_controller.trajectory_io import (
     save_recorded_trajectory,
 )
 from agx_arm_coordination.arm_executor import ArmConfig
+from agx_arm_coordination.gripper_closure import (
+    ClosureError,
+    closure_to_finger_positions,
+    displayed_closure,
+)
 from agx_arm_ctrl.motion_registry import assert_matches_topology, handshake_required
 from agx_arm_retiming import (
     AS_RECORDED,
@@ -108,6 +119,7 @@ class ManagerState(str, Enum):
     PLAYBACK = "playback"
     TRANSITIONS = "transitions"
     HAND = "hand"
+    GRIPPER = "gripper"
 
 
 @dataclass
@@ -777,8 +789,215 @@ class TeachManagerNode(Node):
         self.hand_status_topics: dict[str, str] = {}
         self._hand_arm_label = ""
         self._setup_hand_io()
+        # Per-arm parallel gripper: status for the closure display, one action
+        # client per arm for commanding. Which arms actually carry one is
+        # answered by the hardware at mode entry, not by a flag.
+        self.gripper_status_by_arm: dict[str, Optional[GripperStatus]] = {}
+        self.gripper_status_monotonic: dict[str, float] = {}
+        self.gripper_status_topics: dict[str, str] = {}
+        self.gripper_clients: dict[str, ActionClient] = {}
+        self.gripper_selected_index = 0
+        self._setup_gripper_io()
 
         self.refresh_library()
+
+    # --- gripper mode --------------------------------------------------------
+
+    def _setup_gripper_io(self) -> None:
+        """One status subscription and one trajectory client per arm.
+
+        Created for every arm regardless: an arm without a gripper simply never
+        publishes status and never answers on the action, which is exactly how
+        :meth:`_grippers_present` tells them apart.
+        """
+        self.gripper_status_by_arm = {}
+        self.gripper_status_monotonic = {}
+        self.gripper_status_topics = {}
+        self.gripper_clients = {}
+        for arm in self.arms:
+            label = arm.label
+            status_topic = _resolve_topic_for_namespace(
+                arm.namespace, self.args.gripper_status_topic
+            )
+            self.gripper_status_by_arm[label] = None
+            self.gripper_status_monotonic[label] = 0.0
+            self.gripper_status_topics[label] = status_topic
+            self.create_subscription(
+                GripperStatus, status_topic,
+                lambda msg, key=label: self._on_gripper_status(key, msg),
+                1,
+            )
+            self.gripper_clients[label] = ActionClient(
+                self,
+                FollowJointTrajectory,
+                _resolve_topic_for_namespace(
+                    arm.namespace, self.args.gripper_action_topic
+                ),
+            )
+
+    def _on_gripper_status(self, label: str, msg: GripperStatus) -> None:
+        self.gripper_status_by_arm[label] = msg
+        self.gripper_status_monotonic[label] = time.monotonic()
+
+    def _gripper_closure_for(self, label: str) -> Optional[float]:
+        """Displayed closure for one arm's gripper, or None without a readback."""
+        status = self.gripper_status_by_arm.get(label)
+        if status is None:
+            return None
+        try:
+            return displayed_closure(status.width)
+        except ClosureError:
+            return None
+
+    def _grippers_present(self) -> list[_ArmEndpoint]:
+        """Arms whose gripper is answering — status seen, or server up."""
+        present = []
+        for arm in self.arms:
+            client = self.gripper_clients.get(arm.label)
+            has_status = self.gripper_status_by_arm.get(arm.label) is not None
+            if has_status or (client is not None and client.server_is_ready()):
+                present.append(arm)
+        return present
+
+    def selected_gripper_arm(self) -> Optional[_ArmEndpoint]:
+        present = self._grippers_present()
+        if not present:
+            return None
+        return present[self.gripper_selected_index % len(present)]
+
+    def select_next_gripper(self, step: int) -> None:
+        present = self._grippers_present()
+        if len(present) < 2:
+            return
+        self.gripper_selected_index = (self.gripper_selected_index + step) % len(present)
+        arm = self.selected_gripper_arm()
+        if arm is not None:
+            self.get_logger().info(f"gripper selected: {arm.label}")
+
+    def enter_gripper_mode(self) -> None:
+        # A short spin so a gripper that is publishing gets a chance to be seen
+        # before the mode reports there is none.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.05)
+            if self._grippers_present():
+                break
+        present = self._grippers_present()
+        if not present:
+            self.get_logger().warn(
+                "no parallel gripper found: no status on "
+                f"{sorted(set(self.gripper_status_topics.values()))} and no "
+                "trajectory server. Bring the stack up with "
+                "effector_type:=agx_gripper."
+            )
+            return
+        self.state = ManagerState.GRIPPER
+        arm = self.selected_gripper_arm()
+        listing = ", ".join(a.label for a in present)
+        self.get_logger().info(
+            f"GRIPPER mode (selected={arm.label if arm else '<none>'}, "
+            f"available=[{listing}]): 'f' set closure, 'o' open, 'c' close, "
+            "'[' ']' select"
+        )
+        self.print_status()
+
+    def command_gripper_closure(self, closure: float) -> None:
+        """Send one normalized closure to the selected gripper and report it.
+
+        Through the same FollowJointTrajectory server MoveIt and the coordinator
+        use — never a bare command on control/joint_states, which carries no
+        owner and no generation and which the driver refuses by default.
+        """
+        arm = self.selected_gripper_arm()
+        if arm is None:
+            self.get_logger().warn("no gripper available to command")
+            return
+        client = self.gripper_clients[arm.label]
+        if not client.wait_for_server(timeout_sec=self.args.service_timeout):
+            self.get_logger().error(
+                f"gripper trajectory server not available on {arm.label} "
+                f"({client._action_name})"
+            )
+            return
+        joint_names = [
+            f"{arm.side_prefix}gripper_joint1",
+            f"{arm.side_prefix}gripper_joint2",
+        ]
+        try:
+            positions = closure_to_finger_positions(joint_names, closure)
+        except ClosureError as exc:
+            self.get_logger().warn(str(exc))
+            return
+
+        point = JointTrajectoryPoint()
+        point.positions = positions
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory = JointTrajectory()
+        goal.trajectory.joint_names = joint_names
+        goal.trajectory.points = [point]
+
+        self.get_logger().info(f"{arm.label} -> closure {closure:.2f}")
+        goal_future = client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(
+            self, goal_future, timeout_sec=self.args.service_timeout
+        )
+        goal_handle = goal_future.result() if goal_future.done() else None
+        if goal_handle is None:
+            self.get_logger().error("gripper goal was not answered")
+            return
+        if not goal_handle.accepted:
+            self.get_logger().error("gripper goal was rejected")
+            return
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(
+            self, result_future, timeout_sec=self.args.gripper_timeout_sec
+        )
+        if not result_future.done() or result_future.result() is None:
+            self.get_logger().error(
+                f"no gripper result within {self.args.gripper_timeout_sec:.1f} s"
+            )
+            return
+        wrapper = result_future.result()
+        reached = self._gripper_closure_for(arm.label)
+        reached_text = "unknown" if reached is None else f"{reached:.2f}"
+        if wrapper.status == GoalStatus.STATUS_CANCELED:
+            self.get_logger().warn(
+                f"{arm.label} canceled at closure {reached_text}: "
+                f"{wrapper.result.error_string}"
+            )
+        elif wrapper.result.error_code == FollowJointTrajectory.Result.SUCCESSFUL:
+            self.get_logger().info(
+                f"{arm.label} settled at closure {reached_text} "
+                f"({wrapper.result.error_string})"
+            )
+        else:
+            self.get_logger().error(
+                f"{arm.label} failed at closure {reached_text}: "
+                f"{wrapper.result.error_string}"
+            )
+        self.print_status()
+
+    def prompt_gripper_closure(self, key_reader: TerminalKeyReader) -> None:
+        arm = self.selected_gripper_arm()
+        if arm is None:
+            self.get_logger().warn("no gripper available to command")
+            return
+        current = self._gripper_closure_for(arm.label)
+        current_text = "unknown" if current is None else f"{current:.2f}"
+        raw = self.prompt_line(
+            key_reader,
+            f"[{arm.label}] current closure {current_text}. "
+            "Target closure [0.0=open, 1.0=closed]: ",
+        ).strip()
+        if not raw:
+            self.get_logger().info("no closure given; nothing commanded")
+            return
+        try:
+            closure = float(raw)
+        except ValueError:
+            self.get_logger().warn(f"'{raw}' is not a number; nothing commanded")
+            return
+        self.command_gripper_closure(closure)
 
     # --- hand mode -----------------------------------------------------------
 
@@ -2395,11 +2614,16 @@ class TeachManagerNode(Node):
         if key == "g":
             self.enter_hand_mode()
             return
+        if key == "e":
+            self.enter_gripper_mode()
+            return
         if key == "[":
             if self.state == ManagerState.TRANSITIONS:
                 self.select_next_transition(-1)
             elif self.state == ManagerState.HAND:
                 self.select_next_hand_skill(-1)
+            elif self.state == ManagerState.GRIPPER:
+                self.select_next_gripper(-1)
             else:
                 self.select_next(-1)
             return
@@ -2408,6 +2632,8 @@ class TeachManagerNode(Node):
                 self.select_next_transition(1)
             elif self.state == ManagerState.HAND:
                 self.select_next_hand_skill(1)
+            elif self.state == ManagerState.GRIPPER:
+                self.select_next_gripper(1)
             else:
                 self.select_next(1)
             return
@@ -2428,6 +2654,15 @@ class TeachManagerNode(Node):
             return
         if self.state == ManagerState.HAND and key == "f":
             self.play_hand_skill(key_reader)
+            return
+        if self.state == ManagerState.GRIPPER and key == "f":
+            self.prompt_gripper_closure(key_reader)
+            return
+        if self.state == ManagerState.GRIPPER and key == "o":
+            self.command_gripper_closure(0.0)
+            return
+        if self.state == ManagerState.GRIPPER and key == "c":
+            self.command_gripper_closure(1.0)
             return
         if self.state == ManagerState.PLAYBACK and key == "f":
             self.playback_selected(key_reader)
@@ -2453,7 +2688,8 @@ class TeachManagerNode(Node):
             "\nTeach manager keys:\n"
             "  i -> idle / freedrive (MIT zero-force, gravity-compensated)\n"
             "  r -> record mode      p -> playback mode      t -> transitions mode\n"
-            "  g -> hand mode        a -> capture current pose as a named anchor\n"
+            "  g -> hand mode        e -> gripper mode (parallel jaw)\n"
+            "  a -> capture current pose as a named anchor\n"
             "  w -> convert selected recording -> catalogue waypoints\n"
             "  v -> log the gravity residual here (freedrive; guide the arm, press v per pose)\n"
             "  [ / ] -> select previous / next item (recording, anchor, or hand skill)\n"
@@ -2462,6 +2698,9 @@ class TeachManagerNode(Node):
             "Playback mode: f -> play selected   m -> move to its start pose (MoveIt)\n"
             "               c -> cancel active trajectory\n"
             "Transitions:  f -> plan selected target, press f again -> execute cached plan, c -> clear cached plan\n"
+            "Gripper mode: f -> enter a closure (0.0 open .. 1.0 closed), o -> open, c -> close\n"
+            "              (normalized closure, not metres; goes through the same\n"
+            "               FollowJointTrajectory server MoveIt and the coordinator use)\n"
             "Hand mode:    c -> capture current hand pose as a skill, f -> replay selected skill\n"
             "              (wrapped in a prepare_hand_window/resume_arm_control handshake\n"
             "               only on the shared-bus topology; parallel otherwise)\n"
@@ -2474,11 +2713,21 @@ class TeachManagerNode(Node):
         selected = self.selected_trajectory_path()
         transition = self.selected_transition_target()
         arms = ", ".join(arm.label for arm in self.arms)
+        gripper_arm = self.selected_gripper_arm()
+        if gripper_arm is None:
+            gripper = "<none>"
+        else:
+            closure = self._gripper_closure_for(gripper_arm.label)
+            gripper = (
+                f"{gripper_arm.label}@"
+                f"{'?' if closure is None else f'{closure:.2f}'}"
+            )
         print(
             "Status: "
             f"state={self.state.value}, "
             f"arms=[{arms}], "
             f"hand_source={self._current_hand_arm().label}, "
+            f"gripper={gripper}, "
             f"recordings={len(self.trajectory_paths)}, "
             f"selected={selected.name if selected else '<none>'}, "
             f"transition={transition.label if transition else '<none>'}, "
@@ -2499,6 +2748,7 @@ class TeachManagerNode(Node):
         ]
         self.arms.sort(key=lambda arm: _SIDE_ORDER.get(arm.namespace, 99))
         self._setup_hand_io()
+        self._setup_gripper_io()
         # Transition targets are namespace-derived — rebuild them for the new arms.
         self._reload_arm_config()
 
@@ -2725,6 +2975,21 @@ def parse_args() -> argparse.Namespace:
     # Hand mode ('g'): capture ('c') / replay ('f') OmniHand skills. Whether each
     # is wrapped in a prepare_hand_window/resume_arm_control handshake follows
     # the declared bus topology; see --hand-window below.
+    parser.add_argument(
+        "--gripper-action-topic",
+        default="gripper_controller/follow_joint_trajectory",
+        help="Parallel-gripper FollowJointTrajectory action (namespaced per arm); "
+             "the same surface MoveIt and the coordinator use",
+    )
+    parser.add_argument(
+        "--gripper-status-topic", default="feedback/gripper_status",
+        help="Parallel-gripper status topic (namespaced per arm) read for the "
+             "normalized closure display",
+    )
+    parser.add_argument(
+        "--gripper-timeout-sec", type=float, default=10.0,
+        help="Max time to wait for a gripper trajectory goal to finish",
+    )
     parser.add_argument(
         "--hand-gestures", default="",
         help="Path to omnihand_pro_gestures.yaml; enables hand mode ('g') when set/resolvable",

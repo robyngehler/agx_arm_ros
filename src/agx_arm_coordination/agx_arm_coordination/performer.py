@@ -17,9 +17,11 @@ from agx_arm_coordination.graph_model import (
     ACTIONTYPE_TRAJECTORY,
     Action,
 )
+from agx_arm_coordination.gripper_closure import gripper_side
 
 KIND_HAND = "hand"
 KIND_ARM = "arm"
+KIND_GRIPPER = "gripper"
 
 _HAND_ROBOTS = ("left_hand", "right_hand")
 _ARM_ROBOTS = ("both_arms", "left_arm", "right_arm")
@@ -31,15 +33,19 @@ class RoutingError(ValueError):
 
 @dataclass(frozen=True)
 class RoutingDecision:
-    kind: str          # KIND_HAND | KIND_ARM
+    kind: str          # KIND_HAND | KIND_ARM | KIND_GRIPPER
     robot_id: str
-    side: str = ""     # "left"/"right" for hands; "" for arms
+    side: str = ""     # "left"/"right" for hands and grippers; "" for arms
 
 
 def route(action: Action) -> RoutingDecision:
     """Map a catalogue action to its executor.
 
     ``Gripper`` + ``{left,right}_hand`` -> hand skill controller;
+    ``Gripper`` + ``{left,right}_gripper`` -> the parallel gripper's own
+    FollowJointTrajectory server, never the hand skill controller: a five-finger
+    hand ending on tactile contact and a two-jaw gripper closing to a width do
+    not share a command shape;
     ``Trajectory`` + ``{both_arms,left_arm,right_arm}`` -> arm FJT executor.
     Anything else is a routing error (caught by the coordinator as a structured
     failure rather than a crash).
@@ -47,6 +53,11 @@ def route(action: Action) -> RoutingDecision:
     if action.actiontype_id == ACTIONTYPE_GRIPPER and action.robot_id in _HAND_ROBOTS:
         side = "left" if action.robot_id == "left_hand" else "right"
         return RoutingDecision(kind=KIND_HAND, robot_id=action.robot_id, side=side)
+    gripper_side_name = gripper_side(action.robot_id)
+    if action.actiontype_id == ACTIONTYPE_GRIPPER and gripper_side_name:
+        return RoutingDecision(
+            kind=KIND_GRIPPER, robot_id=action.robot_id, side=gripper_side_name
+        )
     if action.actiontype_id == ACTIONTYPE_TRAJECTORY and action.robot_id in _ARM_ROBOTS:
         return RoutingDecision(kind=KIND_ARM, robot_id=action.robot_id)
     raise RoutingError(

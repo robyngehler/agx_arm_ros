@@ -17,6 +17,7 @@ implementation. Companion to `hefeweizen_pour_proposal.md`.
    routing by    │ Performer helper  (agx_arm_coordination)  │
    actiontype/   │  Trajectory+both_arms → arm executor      │
    robot_id      │  Gripper+left/right_hand → hand skill ctrl│
+                 │  Gripper+left/right_gripper → gripper FJT │
                  └───────┬───────────────────────┬───────────┘
                          │                       │
         ┌────────────────▼─────────┐   ┌─────────▼─────────────────────┐
@@ -41,10 +42,10 @@ keeps the demo graph hardware-agnostic.
 | `performer_helper` + `PerformAction` | performer in `agx_arm_coordination` + `agx_arm_msgs/PerformAction` | may start coordinator-internal for the MVP |
 | `db_bridge` (`get_activity_plan`, `validate_activity`, `get_action_detail`) | catalogue/graph loader with the **same service contract** | **YAML-backed for MVP** (see §6) |
 | `cetibar_msgs/PerformActivity`, `PerformAction`, `RobotEvent` | `agx_arm_msgs/PerformActivity`, `PerformAction`, `RobotEvent` | repo-owned, agx_arm-centric |
-| robots `ur_1`, `portal`, `panda_1` | `both_arms`, `left_arm`, `right_arm`, `left_hand`, `right_hand` | our `robot_id` set |
+| robots `ur_1`, `portal`, `panda_1` | `both_arms`, `left_arm`, `right_arm`, `left_hand`, `right_hand`, `left_gripper`, `right_gripper` | our `robot_id` set; the two parallel grippers were added in sprint_piper and route to their own `FollowJointTrajectory` server, not to the hand skill controller |
 | `R_UR_PORT`, `R_FRANKA` resources | `R_BOTH_ARMS`, `R_LEFT_ARM`, …, optional `R_LEFT_CAN_BUS` | resource tokens, `config/` |
 | actiontypes (gripper/trajectory) | `Trajectory`, `Gripper` | routed by performer |
-| Gripper executor (vendor) | OmniHand **skill controller** in `agx_arm_ctrl` | adds tactile + state machine |
+| Gripper executor (vendor) | OmniHand **skill controller** in `agx_arm_ctrl` (hands); `gripper_follow_joint_trajectory` (parallel grippers) | hands add tactile + a state machine; a parallel gripper takes a normalized `closure` |
 
 ## 3. Package & code placement (with rule justification)
 
