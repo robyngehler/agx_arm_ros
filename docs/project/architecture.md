@@ -239,7 +239,7 @@ flowchart LR
 
     MITARGS["MIT launch args<br/>control_rate_hz, params_file,<br/>enable_debug_joint_trajectory_topic,<br/>launch_driver"] --> MITNODE
 
-    ARMARGS["Arm runtime launch args<br/>can_port, pub_rate, auto_enable,<br/>speed_percent, effector_type,<br/>tcp_offset, gripper_default_effort"] --> ARMNODE["agx_arm_ctrl_single_node"]
+    ARMARGS["Arm runtime launch args<br/>can_port, pub_rate, auto_enable,<br/>speed_percent, effector_type,<br/>tcp_offset, gripper_default_effort,<br/>allow_legacy_gripper_command_ingress"] --> ARMNODE["agx_arm_ctrl_single_node"]
 
     HANDARGS["OmniHand bridge launch args<br/>omnihand_type, backend_type,<br/>pub_rate, joint_states_command_topic,<br/>tactile_sample_count"] --> HANDNODE["omnihand_bridge_node"]
     MSGDEFS["src/agx_arm_msgs/msg/<br/>OmniHandStatus and OmniHandTactileRaw"] --> HANDNODE

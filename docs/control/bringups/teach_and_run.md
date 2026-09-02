@@ -472,6 +472,25 @@ recording → catalogue `waypoints` · `v` log the gravity residual at the curre
 > `HandJointTarget` stamped with that claim on `control/omnihand/joint_target`, and releases
 > afterwards. A refused claim is reported instead of being replayed into silence.
 
+> **Gripper mode (`e`) — normalized closure, through the production path.** With an AGX parallel
+> gripper on a side (`effector_type:=agx_gripper`), `e` enters gripper mode: `f` prompts for a target
+> closure, `o` opens, `c` closes, `[`/`]` pick the side when both carry one. The manager sends a
+> `FollowJointTrajectory` goal to `<side>_arm/gripper_controller/follow_joint_trajectory` — the same
+> server MoveIt and the coordinator use — and reports the result, so there is no third execution path
+> and no bare command on `control/joint_states`.
+>
+> **`closure` is a semantic API, not the joint coordinate**: `0.0` is fully open, `1.0` fully closed,
+> and anything between is valid. The stroke it maps onto is declared once, in
+> `agx_arm_description/config/duo_motion_registry.yaml` (`gripper.width_open_m` / `width_closed_m`),
+> and `agx_arm_ctrl`'s `test_gripper_stroke_agreement` checks it against the range the driver enforces.
+> Status shows `gripper=<arm>@<closure>`; the raw width stays on `feedback/gripper_status`.
+>
+> A goal succeeds when the jaws **settled after measurable travel**, not when they reached the
+> commanded width — a gripper closing on an object stops at the object, and the residual gap is
+> reported. A command that moved nothing fails as `no_progress`, so a lost command, a disabled driver
+> or a dead bus cannot come back as a successful grasp. A cancel calls `control/gripper/stop` before
+> the goal ends, because the firmware drives the last width it was given until something replaces it.
+
 Internally the manager **reuses** the same building blocks as the CLIs below (the leader recorder,
 saved-trajectory executor, `capture_anchor_pose`'s averaging, and `recorded_to_catalogue`) — no
 duplicated motion code. The individual CLIs remain for scripted/one-shot use.
@@ -573,13 +592,22 @@ ros2 run agx_arm_mit_demos agx_arm_teach_manager \
 > --arms ...)"). An explicit `--arms` choice is always respected verbatim; the waiting message now
 > also lists which MIT stacks the graph currently provides.
 
-> **Hands are transparent to dual-arm recording, not recorded themselves.** `--source-joints` only ever
-> names the 7 arm joints; the teach manager looks those up by name in each side's `feedback/joint_states`
-> and ignores everything else, so it behaves identically whether or not that side's bring-up carries an
-> OmniHand (the merged hand joints just sit unused in the same message). Hand poses are driven
-> separately (e.g. `omnihand_exerciser`, or the future grip-action payload API in
-> `gravity_payload_api_plan.md`) — there is currently no "record a hand gesture into a trajectory"
-> path. `t` transitions mode (MoveIt) against a duo+hands bring-up uses
+> **End effectors are transparent to dual-arm recording, not recorded themselves.** `--source-joints`
+> only ever names the 7 arm joints; the teach manager looks those up by name in each side's
+> `feedback/joint_states` and ignores everything else, so it behaves identically whether that side's
+> bring-up carries an OmniHand, an AGX parallel gripper, or nothing. This holds for both effectors, but
+> for different reasons, and they are commanded differently:
+>
+> | | OmniHand | AGX parallel gripper |
+> | --- | --- | --- |
+> | teach-manager mode | `g` — capture/replay a named skill | `e` — command a normalized closure |
+> | what is commanded | a semantic skill name, resolved to a preset by the skill controller | `closure` in `[0.0, 1.0]`, 0.0 open / 1.0 closed |
+> | transport | `HandJointTarget` on `control/omnihand/joint_target`, under a claim | `FollowJointTrajectory` on `<side>_arm/gripper_controller/...` |
+> | in a recording | not recorded | not recorded |
+>
+> Neither is written into the arm `JointTrajectory`. Recording gripper commands as discrete
+> **end-effector events** alongside the arm trajectory is designed but not implemented — see
+> `docs/sprint_piper/checklist.md`. `t` transitions mode (MoveIt) against a duo+hands bring-up uses
 > `execution_profile:=duo_hand` on the components baseline (offline-validated, hardware run pending —
 > see [the sprint-6 decision record](../../sprint6/planning/decision_record.md) §3).
 

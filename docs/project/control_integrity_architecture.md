@@ -485,6 +485,28 @@ INTERNAL move_j(current_q)   the firmware-hold primitive safety logic depends on
 
 Do not remove the internal call while cleaning up legacy interfaces.
 
+### Each device carries its own quarantine, not the arm's
+
+The arm, the hand and the parallel gripper are separate devices with separate
+authority, so one switch cannot speak for all three. Each bare-command surface is
+gated by the device it commands:
+
+| Surface | Switch | Default |
+| --- | --- | --- |
+| arm motion on `control/joint_states`, `control/move_j`, … | `allow_legacy_motion_ingress` (arm node) | false |
+| hand commands on `control/joint_states`, `control/omnihand/joint_trajectory` | `allow_legacy_hand_command_ingress` (hand bridge) | false |
+| gripper commands on `control/joint_states` | `allow_legacy_gripper_command_ingress` (arm node) | false |
+
+All three refuse for the same reason: a bare command carries no owner and no
+generation, so the admission checks have nothing to check and a stale or
+reordered command cannot be refused. The production surfaces are
+`control/omnihand/authorized_trajectory` / `joint_target` for the hand and
+`control/gripper/authorized_trajectory` for the gripper, both stamped with
+`DeviceCommandStamp`.
+
+`control/gripper/stop` is a cancel-and-hold, like the hand's: it drops the pending
+target and holds the current width. It is not a latching device stop.
+
 ---
 
 # 11. Proposed external watchdog — physical architecture
