@@ -2944,10 +2944,31 @@ class AgxArmRosNode(Node):
         # Use default force if effort is 0 or not specified
         force = joint_effort.get(joint_name, self.gripper_default_effort) or self.gripper_default_effort
 
-        try:
-            self.gripper.move(width=width, force=force)
-        except ValueError as e:
-            self.get_logger().warn(str(e))
+        # Range check on the calling thread: a rejected target must not occupy a
+        # queue slot, and the caller is the only one that can be told.
+        if not (AgxGripperWrapper.WIDTH_MIN <= width <= AgxGripperWrapper.WIDTH_MAX):
+            self.get_logger().warn(
+                f"gripper width {width:.4f} outside "
+                f"[{AgxGripperWrapper.WIDTH_MIN}, {AgxGripperWrapper.WIDTH_MAX}] m"
+            )
+            return
+        if not (AgxGripperWrapper.FORCE_MIN <= force <= AgxGripperWrapper.FORCE_MAX):
+            self.get_logger().warn(
+                f"gripper force {force:.3f} outside "
+                f"[{AgxGripperWrapper.FORCE_MIN}, {AgxGripperWrapper.FORCE_MAX}] N"
+            )
+            return
+
+        # The gripper shares the arm's SDK session and CAN socket, so its
+        # transmits belong on the worker like every other control write. The
+        # replace_key drops a target that a newer one superseded while queued.
+        self._sdk.submit(
+            "move_gripper",
+            lambda: self.gripper.move(width=width, force=force),
+            lane=Lane.CONTROL,
+            epoch=self._authority.device_epoch,
+            replace_key="gripper_move",
+        )
 
     def _control_hand_joints(self, joint_pos):
         hand_joints = {

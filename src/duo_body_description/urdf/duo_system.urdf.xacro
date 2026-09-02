@@ -5,6 +5,10 @@
   <xacro:arg name="use_left_hand" default="false"/>
   <xacro:arg name="use_right_arm" default="true"/>
   <xacro:arg name="use_right_hand" default="true"/>
+  <!-- A side takes either the hand or the gripper: both mount on the same
+       link7 frame. The launch layer refuses the pair; xacro cannot raise. -->
+  <xacro:arg name="use_left_gripper" default="false"/>
+  <xacro:arg name="use_right_gripper" default="false"/>
   <xacro:arg name="left_arm_prefix" default="left_arm_"/>
   <xacro:arg name="right_arm_prefix" default="right_arm_"/>
   <!--<xacro:arg name="body_mesh_xyz" default="-0.11 -0.12411761856079102 -0.07"/>-->
@@ -40,6 +44,11 @@
       <xacro:omnihand_flange arm_prefix="${left_arm_prefix}"/>
       <xacro:omnihand_hand arm_prefix="${left_arm_prefix}" hand_side="left"/>
     </xacro:if>
+
+    <xacro:if value="$(arg use_left_gripper)">
+      <xacro:agx_gripper_flange arm_prefix="${left_arm_prefix}"/>
+      <xacro:agx_gripper arm_prefix="${left_arm_prefix}"/>
+    </xacro:if>
   </xacro:if>
 
   <xacro:if value="$(arg use_right_arm)">
@@ -54,6 +63,11 @@
     <xacro:if value="$(arg use_right_hand)">
       <xacro:omnihand_flange arm_prefix="${right_arm_prefix}"/>
       <xacro:omnihand_hand arm_prefix="${right_arm_prefix}" hand_side="right"/>
+    </xacro:if>
+
+    <xacro:if value="$(arg use_right_gripper)">
+      <xacro:agx_gripper_flange arm_prefix="${right_arm_prefix}"/>
+      <xacro:agx_gripper arm_prefix="${right_arm_prefix}"/>
     </xacro:if>
   </xacro:if>
 

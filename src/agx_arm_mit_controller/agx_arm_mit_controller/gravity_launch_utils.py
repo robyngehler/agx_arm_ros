@@ -186,18 +186,22 @@ def _apply_duo_slice_mappings(
     if side not in ("left", "right"):
         return mappings
 
-    # Keep only the active arm slice. When the runtime profile uses OmniHand,
-    # keep that hand in the generated URDF so its fixed-pose inertial load can
-    # be folded into the arm gravity model.
+    # Keep only the active arm slice. The mounted end effector stays in the
+    # generated URDF so its inertial load is folded into the arm gravity model:
+    # 1.06 kg for the OmniHand, 0.548 kg for the AGX gripper. An effector left
+    # out is an uncompensated load at the longest lever arm of the chain.
     side_hand_enabled = "true" if effector_type == "omnihand" else "false"
+    side_gripper_enabled = "true" if effector_type == "agx_gripper" else "false"
     resolved = dict(mappings)
     if side == "left":
         resolved.update(
             {
                 "use_left_arm": "true",
                 "use_left_hand": side_hand_enabled,
+                "use_left_gripper": side_gripper_enabled,
                 "use_right_arm": "false",
                 "use_right_hand": "false",
+                "use_right_gripper": "false",
             }
         )
     else:
@@ -205,8 +209,10 @@ def _apply_duo_slice_mappings(
             {
                 "use_left_arm": "false",
                 "use_left_hand": "false",
+                "use_left_gripper": "false",
                 "use_right_arm": "true",
                 "use_right_hand": side_hand_enabled,
+                "use_right_gripper": side_gripper_enabled,
             }
         )
     return resolved
@@ -270,6 +276,25 @@ def _apply_omnihand_payload(
         # matches the frozen static payload exactly.
         return urdf_text
     return _freeze_subtree_joints(urdf_text, f"{side}_base_link")
+
+
+def _apply_gripper_payload(
+    model_path: Path,
+    urdf_text: str,
+    side: str,
+    effector_type: str,
+) -> str:
+    """Freeze the gripper fingers so the gravity model needs no finger feedback.
+
+    The two prismatic fingers are 0.025 kg each against 0.498 kg of flange and
+    base, so their pose does not move the arm's gravity torque measurably. There
+    is no articulated variant for the same reason.
+    """
+    if model_path.name != "duo_system.urdf.xacro" or effector_type != "agx_gripper":
+        return urdf_text
+    if side not in ("left", "right"):
+        return urdf_text
+    return _freeze_subtree_joints(urdf_text, f"{side}_arm_gripper_base")
 
 
 def resolve_gravity_urdf_path(
@@ -349,6 +374,12 @@ def resolve_gravity_urdf_path(
         side,
         effector_type,
         hand_payload_mode,
+    )
+    generated_urdf_text = _apply_gripper_payload(
+        model_path,
+        generated_urdf_text,
+        side,
+        effector_type,
     )
     temp_urdf.write(generated_urdf_text)
 
