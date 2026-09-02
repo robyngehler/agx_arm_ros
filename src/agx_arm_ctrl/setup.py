@@ -34,6 +34,7 @@ setup(
             'omnihand_skill_controller = agx_arm_ctrl.omnihand_skill_controller_node:main',
             'omnihand_exerciser = agx_arm_ctrl.omnihand_exerciser_node:main',
             'omnihand_follow_joint_trajectory = agx_arm_ctrl.omnihand_follow_joint_trajectory:main',
+            'gripper_follow_joint_trajectory = agx_arm_ctrl.gripper_follow_joint_trajectory:main',
         ],
     },
 )

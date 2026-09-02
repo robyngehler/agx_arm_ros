@@ -321,6 +321,27 @@ def generate_launch_description():
         ),
     )
 
+    # The gripper's trajectory server. No handshake argument: the gripper rides
+    # the arm's bus and its transmits are serialized onto the arm's worker, so
+    # there is no window to open. It shares the driver's namespace, which is
+    # where control/gripper/* and feedback/gripper_status live.
+    gripper_follow_joint_trajectory_node = Node(
+        package='agx_arm_ctrl',
+        executable='gripper_follow_joint_trajectory',
+        name='gripper_follow_joint_trajectory',
+        namespace=LaunchConfiguration('namespace'),
+        output='screen',
+        ros_arguments=['--log-level', LaunchConfiguration('log_level')],
+        parameters=[{
+            'action_name': 'gripper_controller/follow_joint_trajectory',
+        }],
+        condition=IfCondition(
+            PythonExpression([
+                "'", LaunchConfiguration('effector_type'), "' == 'agx_gripper'",
+            ])
+        ),
+    )
+
     return LaunchDescription([
         # arguments
         log_level_arg,
@@ -352,4 +373,5 @@ def generate_launch_description():
         agx_arm_node,
         omnihand_bridge_launch,
         omnihand_follow_joint_trajectory_node,
+        gripper_follow_joint_trajectory_node,
     ])

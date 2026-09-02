@@ -120,6 +120,23 @@ def omnihand_controller_path(instance: Mapping[str, object]) -> str:
     return join_relative_namespaces(namespace, f"{side}_omnihand_controller")
 
 
+def gripper_controller_path(instance: Mapping[str, object]) -> str:
+    """`<ns>/gripper_controller` for an instance carrying an AGX gripper.
+
+    Empty unless the instance declares ``effector_type: agx_gripper``. Unlike
+    the hand's, the name carries no side: the gripper takes the side of the arm
+    whose namespace it already sits in.
+    """
+    if _trim_string(instance.get("effector_type")) != "agx_gripper":
+        return ""
+    namespace = normalize_relative_namespace(instance.get("namespace", ""))
+    return join_relative_namespaces(namespace, "gripper_controller")
+
+
+def gripper_controller_joint_names(joint_prefix: str) -> list[str]:
+    return [f"{joint_prefix}{joint_name}" for joint_name in CANONICAL_GRIPPER_JOINTS]
+
+
 def parse_arm_instances(raw_value: object) -> list[Mapping[str, object]]:
     text = _trim_string(raw_value)
     if not text:

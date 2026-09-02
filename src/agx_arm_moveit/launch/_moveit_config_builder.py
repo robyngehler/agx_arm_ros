@@ -9,6 +9,8 @@ from _multi_arm_runtime import (
     ARM_SIDES,
     CANONICAL_GRIPPER_JOINTS,
     MOTION_PROFILES,
+    gripper_controller_joint_names,
+    gripper_controller_path,
     controller_joint_names,
     controller_path,
     omnihand_controller_joint_names,
@@ -153,6 +155,18 @@ def _build_mit_trajectory_execution(arm_instances: list[dict[str, str]]) -> dict
             controllers[hand_controller] = {
                 "type": "FollowJointTrajectory",
                 "joints": omnihand_controller_joint_names(instance["omnihand_type"].strip()),
+                "action_ns": "follow_joint_trajectory",
+                "default": False,
+            }
+
+        # Same for an AGX gripper: without a controller that actuates its
+        # fingers, MoveIt plans the gripper group and then refuses to execute it.
+        gripper_controller = gripper_controller_path(instance)
+        if gripper_controller:
+            controller_names.append(gripper_controller)
+            controllers[gripper_controller] = {
+                "type": "FollowJointTrajectory",
+                "joints": gripper_controller_joint_names(instance["joint_prefix"]),
                 "action_ns": "follow_joint_trajectory",
                 "default": False,
             }
@@ -542,6 +556,14 @@ def build_moveit_config(context):
         only = dict(arm_instances[0])
         if not only.get("omnihand_type"):
             only["omnihand_type"] = omnihand_type
+            arm_instances = [only]
+
+    # Same for a single-arm gripper bring-up: the effector is declared at the
+    # top level, and the lone instance needs it before the controllers are built.
+    if effector_type == "agx_gripper" and len(arm_instances) == 1:
+        only = dict(arm_instances[0])
+        if not str(only.get("effector_type", "")).strip():
+            only["effector_type"] = "agx_gripper"
             arm_instances = [only]
 
     if use_mit_controller:

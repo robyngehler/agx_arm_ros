@@ -37,6 +37,7 @@ from agx_arm_ctrl.sdk_worker import (
 )
 from agx_arm_msgs.msg import (
     AgxArmStatus, AgxDeviceAuthority, AgxDeviceCapability, AgxUnitSafety,
+    AuthorizedJointTrajectory,
     GripperStatus,
     HandStatus, HandCmd, HandPositionTimeCmd,
     MoveMITMsg
@@ -885,11 +886,20 @@ class AgxArmRosNode(Node):
         self.gripper: Optional[AgxGripperWrapper] = None
         self.hand: Optional[Revo2Wrapper] = None
         self.omnihand_joint_state: Optional[JointState] = None
+        # The gripper is a device of its own for ownership purposes even though
+        # it shares this arm's SDK session and CAN socket. Its own generation is
+        # what makes a command from a previous owner unexecutable.
+        self._gripper_authority: Optional[DeviceAuthority] = None
+        self._gripper_target: Optional[tuple] = None
 
         if self.effector_type == "agx_gripper":
             self.gripper = AgxGripperWrapper(self.agx_arm)
             if self.gripper.initialize():
                 self.get_logger().info("AgxGripper initialized successfully")
+                self._gripper_authority = DeviceAuthority(
+                    f"{self.device_id}_gripper", self._unit_safety
+                )
+                self._gripper_authority.go_standby("gripper session up")
             else:
                 self.get_logger().error("Failed to initialize AgxGripper")
                 self.gripper = None
@@ -966,6 +976,13 @@ class AgxArmRosNode(Node):
             self.gripper_status_pub = self.create_publisher(
                 GripperStatus, "feedback/gripper_status", 1
             )
+            # Latched like the arm's, so a controller joining late learns the
+            # gripper's generation without waiting for the next transition.
+            self.gripper_authority_pub = self.create_publisher(
+                AgxDeviceAuthority, "feedback/gripper/authority",
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            )
+            self._gripper_authority.set_on_change(self._publish_gripper_authority)
         if self.hand is not None:
             self.hand_status_pub = self.create_publisher(
                 HandStatus, "feedback/hand_status", 1
@@ -975,6 +992,11 @@ class AgxArmRosNode(Node):
         self.create_subscription(
             JointState, "control/joint_states", self._joint_states_callback, 1
         )
+        if self.gripper is not None:
+            self.create_subscription(
+                AuthorizedJointTrajectory, "control/gripper/authorized_trajectory",
+                self._gripper_authorized_trajectory_callback, 1,
+            )
         self.create_subscription(
             JointState, "control/move_j", self._move_j_callback, 1
         )
@@ -1023,6 +1045,16 @@ class AgxArmRosNode(Node):
             Trigger, "clear_fault_lockout", self._clear_fault_lockout_callback
         )
         self.create_service(ClaimDevice, "claim_device", self._claim_device_callback)
+        if self.gripper is not None:
+            # Never plain claim_device: the arm driver owns that name in this
+            # namespace, and the two devices are claimed independently.
+            self.create_service(
+                ClaimDevice, "control/gripper/claim_device",
+                self._gripper_claim_device_callback,
+            )
+            self.create_service(
+                Trigger, "control/gripper/stop", self._gripper_stop_callback
+            )
         if self.is_nero:
             self.create_service(Trigger, "set_normal_mode", self._set_normal_mode_callback)
             self.create_service(Trigger, "set_leader_mode", self._set_leader_mode_callback)
@@ -2894,6 +2926,7 @@ class AgxArmRosNode(Node):
             self.hand_status_pub.publish(msg)
 
     def _publish_effector_status(self):
+        self._sync_gripper_authority()
         if self.gripper is not None and self.gripper.is_ok():
             self._publish_gripper_status()
         if self.hand is not None and self.hand.is_ok():
@@ -2944,8 +2977,144 @@ class AgxArmRosNode(Node):
         # Use default force if effort is 0 or not specified
         force = joint_effort.get(joint_name, self.gripper_default_effort) or self.gripper_default_effort
 
-        # Range check on the calling thread: a rejected target must not occupy a
-        # queue slot, and the caller is the only one that can be told.
+        # Legacy ingress: this surface carries no authority, so it cannot refuse
+        # a stale or reordered command. Use control/gripper/authorized_trajectory.
+        self._submit_gripper_move(width, force)
+
+    ### gripper device authority
+    def _publish_gripper_authority(self, snapshot) -> None:
+        """Publish one gripper authority transition. Never breaks the caller."""
+        try:
+            msg = AgxDeviceAuthority()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.device_id = snapshot.device_id
+            msg.state = AUTHORITY_STATE_CODES[snapshot.state]
+            msg.device_epoch = snapshot.device_epoch
+            msg.unit_safety_epoch = snapshot.unit_safety_epoch
+            msg.unit_stopped = snapshot.unit_stopped
+            msg.motion_ready = snapshot.motion_ready
+            msg.owner_id = snapshot.owner_id
+            msg.reason = snapshot.reason
+            self.gripper_authority_pub.publish(msg)
+        except Exception as e:
+            self.get_logger().error(f"publishing gripper authority failed: {e}")
+
+    def _sync_gripper_authority(self) -> None:
+        """Track the gripper's readiness against its own readback.
+
+        ``is_ok()`` is the positive evidence ``rearm`` demands: the effector is
+        answering on the bus. An unverified rearm drops the device to STANDBY,
+        which is the same thing said the other way round, so one call covers
+        both directions.
+        """
+        if self._gripper_authority is None:
+            return
+        live = self.gripper is not None and self.gripper.is_ok()
+        self._gripper_authority.rearm(
+            verified=live,
+            detail="gripper readback live" if live else "no gripper readback",
+        )
+
+    def _gripper_claim_device_callback(self, request, response):
+        """Take or give up command of the gripper, independently of the arm."""
+        authority = self._gripper_authority
+        verdict = (
+            authority.claim(request.owner_id)
+            if request.claim
+            else authority.release(request.owner_id)
+        )
+        snapshot = authority.snapshot()
+        response.accepted = verdict.accepted
+        response.reason = "" if verdict.accepted else verdict.reason.value
+        response.device_epoch = snapshot.device_epoch
+        response.unit_safety_epoch = snapshot.unit_safety_epoch
+        action = "claimed by" if request.claim else "released by"
+        if verdict.accepted:
+            response.message = (
+                f"{snapshot.device_id} {action} '{request.owner_id}' at device "
+                f"generation {snapshot.device_epoch}"
+            )
+            self.get_logger().info(response.message)
+        else:
+            response.message = verdict.detail
+            self.get_logger().warn(
+                f"gripper claim refused for '{request.owner_id}': {verdict.detail}"
+            )
+        return response
+
+    def _gripper_stop_callback(self, request, response):
+        """Cancel the pending target and hold the current width.
+
+        A cancel-and-hold, not a latching stop: the gripper re-arms on the next
+        admitted command. Only the unit generation can latch it STOPPED.
+        """
+        del request
+        self._gripper_target = None
+        status = self.gripper.get_status() if self.gripper is not None else None
+        if status is None:
+            response.success = False
+            response.message = "no gripper readback; nothing commanded"
+            self.get_logger().warn(response.message)
+            return response
+        self._submit_gripper_move(status.width, self.gripper_default_effort)
+        response.success = True
+        response.message = f"gripper holding at {status.width:.4f} m"
+        self.get_logger().info(response.message)
+        return response
+
+    def _gripper_authorized_trajectory_callback(self, msg: AuthorizedJointTrajectory):
+        """Drive the gripper from a trajectory that carries its own authority.
+
+        Admitted on the stamp the command arrived with, never on a field
+        substituted from this node's own state. The final point is the target:
+        the gripper closes its own loop on width and has no use for the path.
+        """
+        if self.gripper is None or self._gripper_authority is None:
+            return
+        stamp = CommandStamp(
+            owner_id=msg.authority.owner_id,
+            device_epoch=int(msg.authority.device_epoch),
+            unit_safety_epoch=int(msg.authority.unit_safety_epoch),
+            sequence=int(msg.authority.sequence),
+        )
+        verdict = self._gripper_authority.admit(stamp)
+        if not verdict:
+            self.get_logger().warn(f"gripper command refused: {verdict.detail}")
+            return
+        if not msg.trajectory.points:
+            self.get_logger().warn("gripper trajectory carries no points")
+            return
+
+        names = list(msg.trajectory.joint_names)
+        positions = list(msg.trajectory.points[-1].positions)
+        width = self._gripper_width_from(names, positions)
+        if width is None:
+            self.get_logger().warn(
+                f"gripper trajectory names no known finger joint: {names}"
+            )
+            return
+        self._gripper_target = (width, self.gripper_default_effort)
+        self._submit_gripper_move(width, self.gripper_default_effort)
+
+    def _gripper_width_from(self, names, positions) -> Optional[float]:
+        """Opening width from whichever finger joint the trajectory carries.
+
+        Each finger travels half the width, and the second one mirrors the
+        first, so either alone determines the opening.
+        """
+        for name, scale in (("gripper_joint1", 2.0), ("gripper_joint2", 2.0)):
+            for index, joint_name in enumerate(names):
+                if joint_name.endswith(name) and index < len(positions):
+                    return abs(positions[index]) * scale
+        return None
+
+    def _submit_gripper_move(self, width: float, force: float) -> None:
+        """One bounded gripper transmit on the arm's worker. Clamps nothing."""
+        if not math.isfinite(width) or not math.isfinite(force):
+            self.get_logger().warn(
+                f"gripper command not finite (width={width}, force={force})"
+            )
+            return
         if not (AgxGripperWrapper.WIDTH_MIN <= width <= AgxGripperWrapper.WIDTH_MAX):
             self.get_logger().warn(
                 f"gripper width {width:.4f} outside "
@@ -2958,10 +3127,6 @@ class AgxArmRosNode(Node):
                 f"[{AgxGripperWrapper.FORCE_MIN}, {AgxGripperWrapper.FORCE_MAX}] N"
             )
             return
-
-        # The gripper shares the arm's SDK session and CAN socket, so its
-        # transmits belong on the worker like every other control write. The
-        # replace_key drops a target that a newer one superseded while queued.
         self._sdk.submit(
             "move_gripper",
             lambda: self.gripper.move(width=width, force=force),
