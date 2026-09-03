@@ -12,6 +12,10 @@ This directory is the human-facing documentation hub for the current Duo baselin
 - `assets/`: stable component facts, validation state, and runtime integration notes
 - `sprint1/` through `sprint6/`: sprint targets, checklists, errors, open questions, and retained evidence
 - `sprint_refactor/`: V02 coordination, safety, and runtime refactor proposal, code cross-check, and phased integration plan
+- `sprint_piper/`: AGX parallel-gripper integration from the driver up through the coordinator and
+  the teach manager
+- `sprint_scripts/`: the operator script layer over the existing launches and `run_activity`
+- `sprint_watchdog/`: the external CAN watchdog's takeover and release handover
 - `sprint_physAI/`: pre-sprint Physical AI exploration retained outside the main sprint line
 
 ## Global navigation

@@ -17,10 +17,56 @@ publishes unprefixed `joint1..7` inside its namespace. `execution_profile`
 (`src/agx_arm_ctrl/config/execution_profiles.yaml` and `duo_motion_registry.yaml`) is the source of
 truth for slice composition, prefixes, frames, side buses, and gravity URDF derivation.
 
+## Operator entry points
+
+The scripts below are the supported way to run a demo. They wrap the launch lines
+in the rest of this page, wait for the surfaces the next step needs, and run the
+activity through the existing `run_activity` client. The raw commands stay
+documented here because the scripts are a convenience, not a new contract.
+
+```bash
+sudo bash scripts/activate_stack.sh            # buses up and verified
+./scripts/unpack_bottom_unit.py --slow         # bottom unit out of its packing pose
+./scripts/pack_bottom_unit.py --slow           # and back into it
+./scripts/unpack_top_unit.py                   # top unit into Functional_Init_Both_V03
+./scripts/pack_top_unit.py                     # and back
+./scripts/start_tea_demo.py                    # tea_pour_duo_v2
+```
+
+Each waits for the stack, prints what is live and how many operator steps the
+activity has, then blocks on Enter. Common options: `--from-id N` resumes at
+operator step N, `--no-prompt` skips the Enter gate, `--dry-run` brings the stack
+up and sends nothing, `--log-dir PATH` keeps the launch logs somewhere you choose.
+The bottom-unit scripts also take `--speed fast|slow` (`--fast` / `--slow`).
+
+**Ctrl+C goes to `run_activity`, not to the stack.** The first press cancels the
+activity, the second escalates to the unit emergency stop. The launches are torn
+down only after the client has returned, so the coordinator still has a driver to
+unwind against.
+
+**`--from-id` counts operator steps, not graph nodes.** One step is one dispatch
+batch, so a synchronized arm-plus-hand pair is a single step. A step that replays
+a taught path is refused as a resume point — a replay commands taught joint
+angles from wherever the arm stands — and the refusal names the nearest earlier
+step that plans its own approach. On `tea_pour_duo_v2` those are steps 3, 6, 9,
+10, 12, 18 and 19 of 21; the pack and unpack flows have none, so any of their
+steps is a valid resume point.
+
 ## 0. CAN buses
 
-All four buses, matched by physical slot (the two hand adapters are identical hardware, so their
-`canN` indices can swap between boots):
+`activate_stack.sh` is the entry point: it calls `activate_duo_can.sh` for the
+bring-up, then samples each bus and judges it — RX advancing on the arms, the
+controller ERROR-ACTIVE, error counters flat — and runs a bounded
+`rmmod`/`modprobe`/reactivate cycle when a bus does not pass.
+
+```bash
+sudo bash scripts/activate_stack.sh            # activate, verify, recover if needed
+sudo bash scripts/activate_stack.sh --recover  # go straight to the driver reload
+bash scripts/activate_stack.sh --show          # report state, change nothing
+```
+
+The bring-up itself, all four buses matched by physical slot (the two hand
+adapters are identical hardware, so their `canN` indices can swap between boots):
 
 ```bash
 sudo bash scripts/activate_duo_can.sh          # all four
