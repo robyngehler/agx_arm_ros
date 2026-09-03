@@ -17,6 +17,8 @@ from agx_arm_coordination.graph_model import (
 )
 from agx_arm_coordination.gripper_closure import (
     ClosureError,
+    FINGER_SUFFIXES,
+    FINGER_TO_WIDTH,
     closure_to_finger_positions,
     closure_to_width,
     displayed_closure,
@@ -143,3 +145,17 @@ def test_a_gripper_is_not_a_hand():
             action_id="grip", actiontype_id="Gripper",
             robot_id="right_gripper", metadata={"skill_name": "open_hand"},
         )
+
+
+def test_the_finger_joints_are_the_ones_the_registry_declares():
+    """The mapping is written twice — here and in agx_arm_ctrl's FJT bridge.
+
+    The packages cannot import one another, so both are pinned to the registry
+    instead of to each other; agx_arm_ctrl's test_gripper_stroke_agreement is
+    the other half of this check.
+    """
+    from agx_arm_coordination.motion_registry import load_motion_registry
+
+    gripper = load_motion_registry().get("gripper", {})
+    assert list(FINGER_SUFFIXES) == list(gripper["canonical_joints"])
+    assert FINGER_TO_WIDTH == 2.0

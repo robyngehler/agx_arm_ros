@@ -5,8 +5,9 @@ manager — commands a gripper as ``closure`` in [0, 1], where 0.0 is fully open
 and 1.0 is fully closed. Physical width in metres stays below, in the FJT bridge
 and the driver, so a vendor stroke never reaches the Activity catalogue.
 
-The stroke endpoints come from the duo motion registry, and agx_arm_ctrl's
-test_gripper_closure asserts they equal the range the driver enforces.
+The stroke endpoints and the finger joint names come from the duo motion
+registry; agx_arm_ctrl's test_gripper_stroke_agreement asserts they equal the
+range and the joints the driver enforces.
 """
 
 from __future__ import annotations

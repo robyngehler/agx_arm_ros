@@ -19,3 +19,21 @@ def test_the_registry_stroke_matches_the_range_the_driver_enforces():
 def test_the_finger_joints_are_declared_once_and_come_from_the_registry():
     gripper = load_motion_registry().get("gripper", {})
     assert gripper["canonical_joints"] == ["gripper_joint1", "gripper_joint2"]
+
+
+def test_the_bridge_maps_the_fingers_the_registry_declares():
+    """The trajectory server spells the finger joints itself.
+
+    It cannot import the coordination helper — agx_arm_ctrl does not depend on
+    agx_arm_coordination — so the two write the same mapping twice. The stroke
+    is checked above; this checks the other half, the joints it applies to.
+    """
+    from agx_arm_ctrl.gripper_follow_joint_trajectory import (
+        FINGER_SUFFIXES,
+        FINGER_TO_WIDTH,
+    )
+
+    gripper = load_motion_registry().get("gripper", {})
+    assert list(FINGER_SUFFIXES) == list(gripper["canonical_joints"])
+    # Each finger travels half the opening, and the second mirrors the first.
+    assert FINGER_TO_WIDTH == 2.0
