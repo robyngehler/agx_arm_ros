@@ -385,6 +385,9 @@ class GripperFollowJointTrajectoryBridge(Node):
                 # was given until something replaces it, so a goal that ends
                 # without this leaves the jaws travelling.
                 self._stop_device()
+                # CANCELED is carried by the goal state; error_code has no
+                # cancellation value, and SUCCESSFUL is what ros2_control's
+                # trajectory controller reports there too. Read the state.
                 goal_handle.canceled()
                 return self._result(
                     FollowJointTrajectory.Result.SUCCESSFUL, f"canceled: {reason}"
