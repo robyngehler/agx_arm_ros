@@ -16,6 +16,15 @@ string metadata_json      # optional run-time overrides as a JSON object; may be
                           # unchanged, so the next run is unaffected. Example:
                           #   {"playback": {"mode": "tempo_scale",
                           #                 "speed_scale": 0.6}}
+                          #
+                          # {"resume": {"from_step": N}} starts the run at
+                          # operator step N (1-based) and marks the earlier steps
+                          # completed. A step is one dispatch batch, so a
+                          # synchronized pair is one step and is never entered
+                          # half way. Refused when step N replays a taught path:
+                          # a replay commands taught joint angles from wherever
+                          # the arm stands. The refusal names the nearest earlier
+                          # step that plans its own approach.
 ---
 # --- Result ---
 bool success

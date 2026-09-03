@@ -18,6 +18,7 @@ the arm unaccounted for is not one of the options.
 from __future__ import annotations
 
 import argparse
+import json
 import signal
 import time
 
@@ -219,6 +220,34 @@ class RunActivityClient(Node):
         )
 
 
+def _with_resume(metadata_json: str, from_id) -> str:
+    """Fold ``--from-id`` into the metadata object the goal carries.
+
+    Refused rather than merged when the metadata already declares a resume: two
+    step numbers for one run is a contradiction, and silently preferring one is
+    how a run starts somewhere the operator did not ask for.
+    """
+    if from_id is None:
+        return metadata_json
+    payload = {}
+    if metadata_json and metadata_json.strip():
+        try:
+            payload = json.loads(metadata_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"--metadata-json is not JSON: {exc}") from None
+        if not isinstance(payload, dict):
+            raise ValueError("--metadata-json must be a JSON object")
+    if "resume" in payload:
+        raise ValueError(
+            "--from-id and a 'resume' block in --metadata-json both set the "
+            "start step; declare one"
+        )
+    if from_id < 1:
+        raise ValueError(f"--from-id is 1-based; got {from_id}")
+    payload["resume"] = {"from_step": from_id}
+    return json.dumps(payload)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--activity", required=True, help="activity_id to run")
@@ -233,14 +262,31 @@ def main(argv: list[str] | None = None) -> None:
             "'{\"playback\": {\"mode\": \"tempo_scale\", \"speed_scale\": 0.6}}'"
         ),
     )
+    parser.add_argument(
+        "--from-id", "--from_id",
+        dest="from_id",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Resume at operator step N (1-based). A step is one dispatch batch, "
+            "so a synchronized pair is one step. Sugar for --metadata-json "
+            "'{\"resume\": {\"from_step\": N}}'; declaring both is refused."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    try:
+        metadata_json = _with_resume(args.metadata_json, args.from_id)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     rclpy.init()
     node = None
     try:
         node = RunActivityClient(args.server)
         node.install_interrupt_handler()
-        code = node.run(args.activity, args.timeout_sec, args.metadata_json)
+        code = node.run(args.activity, args.timeout_sec, metadata_json)
     except KeyboardInterrupt:
         code = 130
     finally:

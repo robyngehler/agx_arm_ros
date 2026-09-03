@@ -334,6 +334,19 @@ def _recorded_time_scale(
     )
 
 
+def is_replay(action: Action) -> bool:
+    """Whether this action replays a taught path rather than planning a move.
+
+    The same three-way split :meth:`ArmTrajectoryPlanner.plan` makes, exposed so
+    a caller can ask before planning. A resume needs it: a replay commands taught
+    joint angles from wherever the arm stands, an anchor move plans from the
+    current state. An action declared ``recorded`` but not yet taught counts as a
+    replay — it is one, it just cannot run yet.
+    """
+    metadata = action.metadata or {}
+    return bool(metadata.get("waypoints")) or metadata.get("source") == "recorded"
+
+
 class ArmTrajectoryPlanner:
     def __init__(self, config: ArmConfig) -> None:
         self.config = config
@@ -367,7 +380,7 @@ class ArmTrajectoryPlanner:
         group = self._group(action.robot_id)
         metadata = action.metadata
 
-        if "waypoints" in metadata and metadata.get("waypoints"):
+        if metadata.get("waypoints"):
             return self._plan_recorded(action, group)
         if metadata.get("source") == "recorded":
             raise NotTaughtError(
@@ -456,7 +469,9 @@ class ArmTrajectoryPlanner:
             points.append(
                 TrajectoryPoint(
                     positions=positions,
-                    time_from_start_sec=float(wp.get("time_from_start_sec", index + 1)) * time_scale,
+                    time_from_start_sec=(
+                        float(wp.get("time_from_start_sec", index + 1)) * time_scale
+                    ),
                 )
             )
         if not points:

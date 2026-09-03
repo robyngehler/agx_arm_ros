@@ -65,6 +65,7 @@ from agx_arm_coordination.arm_executor import (
 from agx_arm_coordination.graph_loader import ActivityCatalogue
 from agx_arm_coordination.graph_model import (
     ACTIONTYPE_TRAJECTORY,
+    GraphError,
     Scheduler,
     robot_units,
 )
@@ -77,6 +78,13 @@ from agx_arm_coordination.gripper_closure import (
     ClosureError,
     closure_to_finger_positions,
 )
+from agx_arm_coordination.operator_resume import (
+    FROM_STEP_KEY,
+    RESUME_KEY,
+    ResumeError,
+    parse_from_step,
+    resume_seed,
+)
 from agx_arm_coordination.performer import (
     KIND_ARM,
     KIND_GRIPPER,
@@ -87,14 +95,12 @@ from agx_arm_coordination.performer import (
 from agx_arm_coordination.unit_activity import UnitActivity
 
 
-def _playback_override(metadata_json: str) -> dict:
-    """Run-level playback settings from a PerformActivity goal.
+def _run_metadata(metadata_json: str) -> dict:
+    """The run-time override object a PerformActivity goal carries, or ``{}``.
 
-    ``{"playback": {"mode": "tempo_scale", "speed_scale": 0.6}}`` replays every
-    recorded action in this run at that tempo, leaving the catalogue's own per
-    action settings in place for the next run. Anything else in the object is
-    ignored here rather than rejected, so the field stays open for other
-    run-time overrides.
+    Optional by contract, so an absent or empty field is not an error. Keys
+    nobody reads are ignored rather than rejected, which is what keeps the field
+    open for the next run-time control.
     """
     if not metadata_json or not metadata_json.strip():
         return {}
@@ -104,10 +110,41 @@ def _playback_override(metadata_json: str) -> dict:
         raise ValueError(f"not a JSON object: {exc}") from None
     if not isinstance(payload, dict):
         raise ValueError(f"expected a JSON object, got {type(payload).__name__}")
-    playback = payload.get("playback", {})
+    return payload
+
+
+def _playback_override(metadata_json: str) -> dict:
+    """Run-level playback settings.
+
+    ``{"playback": {"mode": "tempo_scale", "speed_scale": 0.6}}`` replays every
+    recorded action in this run at that tempo, leaving the catalogue's own per
+    action settings in place for the next run.
+    """
+    playback = _run_metadata(metadata_json).get("playback", {})
     if not isinstance(playback, dict):
         raise ValueError(f"'playback' must be an object, got {type(playback).__name__}")
     return dict(playback)
+
+
+def _resume_from_step(metadata_json: str):
+    """Operator step this run starts at, or ``None`` for the whole activity.
+
+    ``{"resume": {"from_step": 8}}``. A step is a dispatch batch, not a graph
+    node — see :mod:`agx_arm_coordination.operator_resume`.
+    """
+    resume = _run_metadata(metadata_json).get(RESUME_KEY, {})
+    if not resume:
+        return None
+    if not isinstance(resume, dict):
+        raise ValueError(
+            f"'{RESUME_KEY}' must be an object, got {type(resume).__name__}"
+        )
+    if FROM_STEP_KEY not in resume:
+        raise ValueError(f"'{RESUME_KEY}' carries no '{FROM_STEP_KEY}'")
+    try:
+        return parse_from_step(resume[FROM_STEP_KEY])
+    except ResumeError as exc:
+        raise ValueError(str(exc)) from None
 
 
 def _waypoint_velocities(points) -> list[tuple[float, ...]]:
@@ -1309,7 +1346,8 @@ class CoordinatorNode(Node):
             if self.stop_requested:
                 self._shutdown_event.set()
 
-    def _prewarm_arm_actions(self, graph, activity_id: str, goal_handle=None):
+    def _prewarm_arm_actions(self, graph, activity_id: str, goal_handle=None,
+                             skip: set[int] | None = None):
         """Plan every arm action in the graph, returning what refused.
 
         Populates the planner's cache, so the dispatch that follows is a lookup.
@@ -1327,7 +1365,13 @@ class CoordinatorNode(Node):
         """
         problems: list[str] = []
         seen: set[str] = set()
+        skip = skip or set()
         for node in graph.nodes.values():
+            if skip and node.action_no in skip:
+                # A resumed run never dispatches these, and retiming one recorded
+                # action costs seconds — a resume near the end would otherwise pay
+                # the whole graph's planning for the few steps it runs.
+                continue
             if self._prewarm_interrupted(goal_handle):
                 self.get_logger().info(
                     f"activity '{activity_id}': planning stopped after "
@@ -1380,7 +1424,9 @@ class CoordinatorNode(Node):
         try:
             # Optional by contract ("may be empty"), so it is read as optional:
             # a client or harness that omits it gets the catalogue's own modes.
-            override = _playback_override(getattr(goal_handle.request, "metadata_json", "") or "")
+            metadata_json = getattr(goal_handle.request, "metadata_json", "") or ""
+            override = _playback_override(metadata_json)
+            from_step = _resume_from_step(metadata_json)
             if planner is not None:
                 planner.playback_override = override
         except ValueError as exc:
@@ -1392,13 +1438,42 @@ class CoordinatorNode(Node):
             return result
 
         graph = self.catalogue.get_activity_plan(activity_id)
+
+        # A resume marks the earlier steps done before anything is planned or
+        # dispatched. Refused here, with the arm still where the operator left
+        # it, rather than at the step it would have started on.
+        resume_seed_nodes: set[int] = set()
+        if from_step is not None:
+            try:
+                resume_seed_nodes, total_steps = resume_seed(
+                    graph, self.catalogue.actions, self.robot_units, from_step
+                )
+            except (ResumeError, GraphError) as exc:
+                result.success = False
+                result.message = f"cannot resume: {exc}"
+                self.get_logger().error(result.message)
+                self._event("failed", activity_id=activity_id, message=result.message)
+                goal_handle.abort()
+                return result
+            self.get_logger().warn(
+                f"activity '{activity_id}': resuming at operator step {from_step} "
+                f"of {total_steps}, skipping {len(resume_seed_nodes)} node(s). "
+                "The arms are assumed to be where the previous run left them."
+            )
+            self._event(
+                "info", activity_id=activity_id, state="resuming",
+                message=f"from step {from_step} of {total_steps}",
+            )
+
         # Plan every arm action before the first one moves. Retiming a taught
         # trajectory costs up to 11 s under `speed_scale`, which is a stall in the
         # middle of a sequence; a recording that cannot be replayed under the
         # requested mode, or an anchor naming a pose that is not configured, has
         # to fail here rather than three actions in.
         problems, interrupted = (
-            self._prewarm_arm_actions(graph, activity_id, goal_handle)
+            self._prewarm_arm_actions(
+                graph, activity_id, goal_handle, skip=resume_seed_nodes
+            )
             if planner is not None
             else ([], False)
         )
@@ -1426,7 +1501,10 @@ class CoordinatorNode(Node):
         self.get_logger().info(f"running activity '{activity_id}' ({total} nodes)")
         self._event("started", activity_id=activity_id, message=f"{total} nodes")
 
-        completed: set[int] = set()
+        # A resumed run starts with the skipped nodes already counted, so the
+        # scheduler admits the requested step first and the progress numbers say
+        # where the activity is, not how much of it this process ran.
+        completed: set[int] = set(resume_seed_nodes)
         running: dict[int, _Child] = {}
         self._open_hand_windows.clear()
 

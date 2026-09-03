@@ -62,7 +62,10 @@ def test_explicit_both_arms_pose_plans_as_one_endpoint():
     cfg = ArmConfig.from_dict({
         "arm_executor": {
             "groups": {
-                "both_arms": {"planning_group": "both_arms", "joint_names": ["l1", "l2", "r1", "r2"]},
+                "both_arms": {
+                    "planning_group": "both_arms",
+                    "joint_names": ["l1", "l2", "r1", "r2"],
+                },
             },
             "poses": {"handoff": {"robot_id": "both_arms", "q": [0.1, 0.2, 0.3, 0.4]}},
         }
