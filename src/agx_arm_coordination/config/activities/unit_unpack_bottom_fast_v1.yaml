@@ -1,0 +1,26 @@
+# Bottom unit, unpack, fast: out of the packing pose straight into the
+# presentation pose. One-way.
+#
+# Actions: config/catalogue.d/unit_unpack_v1.yaml. Anchors: config/arm_config.yaml.
+#
+# The one-way half of unit_unpack_fast_v1, which unfolds and folds back in one
+# graph. An operator script starts and stops on a pose, so the round trip gives
+# it no place to stop and gives a resume no stable step to restart from.
+#
+# Node 10 moves TO the packing pose rather than assuming the arms are in it, so
+# the activity runs from wherever the previous one left them.
+#
+# Fast means the path, not the speed: this skips the two intermediate working
+# poses, so MoveIt plans one long transition instead of three short ones. The
+# plan is collision-aware but does not walk the taught path — run the slow
+# variant first when anything is standing in front of the unit.
+#
+# Arms only, one serial chain: no hand is addressed, nothing overlaps.
+activity: unit_unpack_bottom_fast_v1
+nodes:
+  - { action_no: 10, action_id: both_arms_to_packing_side_v02 }
+  - { action_no: 20, action_id: both_arms_to_transit_packing_side_v02 }
+  - { action_no: 30, action_id: both_arms_to_tee_cup_hold_init_v01 }
+edges:
+  [ [10,20],
+    [20,30] ]

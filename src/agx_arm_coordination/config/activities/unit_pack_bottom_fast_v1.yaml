@@ -1,0 +1,18 @@
+# Bottom unit, pack, fast: out of the presentation pose back into the packing
+# pose. One-way, the reverse of unit_unpack_bottom_fast_v1.
+#
+# Actions: config/catalogue.d/unit_unpack_v1.yaml. Anchors: config/arm_config.yaml.
+#
+# Node 10 moves TO the presentation pose first. The arms may be anywhere when
+# packing is called, and folding into the packing pose from an arbitrary pose is
+# the one transition this unit has no clearance margin for.
+#
+# Arms only, one serial chain.
+activity: unit_pack_bottom_fast_v1
+nodes:
+  - { action_no: 10, action_id: both_arms_to_tee_cup_hold_init_v01 }
+  - { action_no: 20, action_id: both_arms_to_transit_packing_side_v02 }
+  - { action_no: 30, action_id: both_arms_to_packing_side_v02 }
+edges:
+  [ [10,20],
+    [20,30] ]

@@ -468,3 +468,33 @@ class Scheduler:
                     )
                 )
         return batch
+
+
+def operator_steps(
+    graph: ActivityGraph,
+    catalogue: dict[str, Action],
+    units: dict[str, frozenset[str]] | None = None,
+) -> list[list[DispatchItem]]:
+    """The dispatch batches of an activity, in order, with nothing running.
+
+    One batch is one operator step: a sync group is two nodes but one step,
+    because a barrier is admitted whole and resuming into half of one is not a
+    state the activity has. Step numbers for an operator are the 1-based index
+    into this list.
+
+    Offline and cheap — the scheduler is a pure state machine — so a caller can
+    ask what an activity would do without a graph, a driver or an arm.
+    """
+    scheduler = Scheduler(graph, catalogue, units)
+    completed: set[int] = set()
+    batches: list[list[DispatchItem]] = []
+    while not scheduler.is_complete(completed):
+        batch = scheduler.next_batch(completed, set())
+        if not batch:
+            raise GraphError(
+                f"activity '{graph.activity_id}' deadlocks after "
+                f"{len(completed)} of {len(graph.nodes)} nodes"
+            )
+        batches.append(batch)
+        completed |= {item.action_no for item in batch}
+    return batches

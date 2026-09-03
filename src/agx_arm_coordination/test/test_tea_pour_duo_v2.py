@@ -26,7 +26,7 @@ from agx_arm_coordination.graph_model import (
     ACTIONTYPE_TRAJECTORY,
     ROBOT_UNITS_DEDICATED,
     ROBOT_UNITS_SHARED,
-    Scheduler,
+    operator_steps,
 )
 from agx_arm_coordination.performer import route
 
@@ -79,16 +79,7 @@ def _planner() -> ArmTrajectoryPlanner:
 
 def _dispatch_order(cat: ActivityCatalogue, units) -> list[list]:
     """What the scheduler would dispatch, batch by batch, with nothing running."""
-    graph = cat.get_activity_plan(ACTIVITY)
-    scheduler = Scheduler(graph, cat.actions, units)
-    completed: set[int] = set()
-    batches: list[list] = []
-    while not scheduler.is_complete(completed):
-        batch = scheduler.next_batch(completed, set())
-        assert batch, f"deadlock after {len(completed)} of {len(graph.nodes)} nodes"
-        batches.append(batch)
-        completed |= {item.action_no for item in batch}
-    return batches
+    return operator_steps(cat.get_activity_plan(ACTIVITY), cat.actions, units)
 
 
 def test_the_demo_validates_on_dedicated_buses():

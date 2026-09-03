@@ -1,0 +1,22 @@
+# Top unit, unpack: out of the packing pose into the working pose. One-way.
+#
+# Actions: config/catalogue.d/tea_pour_duo_v2.yaml. Anchors: config/arm_config.yaml.
+#
+# The top unit's two anchors are the ones tea_pour_duo_v2 enters and leaves on,
+# reused rather than re-declared: Packing_Pose_Side_Both and
+# Functional_Init_Both_V03. This is the same motion the demo does on its way in,
+# available on its own so the unit can be brought up without running a demo.
+#
+# Note the bottom unit's packing anchor is a DIFFERENT pose
+# (Packing_Pose_Side_V02, in the unit_unpack fragment) — the two units fold
+# differently and the action names are what keep them apart.
+#
+# Node 10 moves TO the packing pose rather than assuming it.
+#
+# Arms only, one serial chain.
+activity: unit_unpack_top_v1
+nodes:
+  - { action_no: 10, action_id: both_arms_to_packing_pose }
+  - { action_no: 20, action_id: both_arms_to_functional_init }
+edges:
+  [ [10,20] ]
