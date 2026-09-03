@@ -174,3 +174,33 @@ within 0.3 deg of the URDF bound, and every other joint's centre already agrees.
 Position ranges therefore cannot be applied to feedback values without that
 correction; velocity limits are offset-invariant and are unaffected.
 Detail: `sprint_refactor/reference/trajectory_retiming.md`.
+
+## Recovery transmits nothing after it takes the session — resolved 2026-09-04
+
+Recovery quiesced the SDK worker and then submitted its own re-arm and its
+feedback confirmation to that same worker. A quiesced worker keeps accepting
+submissions and dequeues none, so neither could complete:
+
+- `_enable_arm` timed out as `enable: still pending after 2.0s` on every attempt
+  and no frame reached the wire, which is why the capture showed zero outgoing
+  frames for the whole 25 s of recovery
+- `_wait_for_feedback` read through `_sdk_read`, which returns `None` when the
+  session is not the worker's — so a bus delivering ~2150 frames/s read as "not
+  ready" and recovery reported `attempt 1 did not restore feedback` indefinitely
+
+The controller error state could not clear either, because the transmit error
+counter decrements only on a successful transmission and nothing was being
+transmitted. Restarting the stack worked because a fresh session has no
+recovery in progress.
+
+Both call sites now take the `direct` path that `_ensure_feedback_push_enabled`
+already had, which calls the SDK inline for the owner that took the session.
+
+Superseded reading (2026-09-03): the cause was suspected to be the vendor read
+thread dying on the teardown race, or the reconnect itself. Neither was
+involved.
+
+Remaining: `bus_recovery_link_reset` still defaults to `false` and no launch
+file sets it, so recovery cannot reset a controller left in ERROR-PASSIVE by a
+genuine fault. Untested whether that matters now that the held-bus classifier
+keeps recovery off the emergency-stop path.

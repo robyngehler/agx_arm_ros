@@ -124,6 +124,22 @@ actions:
       target: { closure: 0.0 }
       payload_update: detach
 
+  left_gripper_open:
+    actiontype_id: Gripper
+    robot_id: left_gripper
+    metadata:
+      target: { closure: 0.0 }
+  left_gripper_half:
+    actiontype_id: Gripper
+    robot_id: left_gripper
+    metadata:
+      target: { closure: 0.5 }
+  left_gripper_close:
+    actiontype_id: Gripper
+    robot_id: left_gripper
+    metadata:
+      target: { closure: 1.0 }
+
   # --- Arm transitions (Trajectory, MoveIt-planned anchor endpoints) --------
   both_arms_home_to_pregrasp:
     actiontype_id: Trajectory

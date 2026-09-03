@@ -1130,3 +1130,65 @@ Follow-up to the 2026-08-26 entry, and a stricter rule than the fix it replaces.
 - Validation: L1 + L2. **Unexercised on hardware.** Every claim here is about
   motion and needs L3: whether `set_normal_mode` alone holds a loaded arm on both
   firmware tiers is reasoned from the mode semantics, not measured.
+
+## 2026-09-01 (a failed bootstrap left an energised arm with no driver)
+
+### The driver enabled both arms, then exited on the firmware query
+
+- Symptom: the buses verified healthy (`activate_stack.sh`: ERROR-ACTIVE,
+  3364/3750 RX/s, error delta 0), the arms went audibly stiff when the stack
+  started — and MoveIt showed both arms in the URDF zero pose with no joint
+  feedback at all. `activate_stack.sh --recover arms` recovered the buses and
+  changed nothing. It took three bring-ups before the pose was right from the
+  start.
+- Evidence, one boot, four launches: in launch 1 both
+  `agx_arm_ctrl_single` processes died 17.7 s in with `exit code 1` after
+  `All joints enable status is True` at +1.0 s and `Failed to get firmware
+  version` at +16.2 s. Launch 2 survived, but the firmware answered only after
+  the `set_normal_mode` escalation, at +11.6 s (left) and +13.5 s (right) —
+  0.55 s and 2.66 s after the re-assert. Launches 3 and 4 answered in ~2 s with
+  no escalation at all.
+- Cause, three parts:
+  1. `_init_agx_arm` sends the enable *before* the firmware query, and `exit(1)`
+     on a failed query unwinds out of `__init__`, so `main` sees no node and runs
+     none of its shutdown. The arm is left energised, holding the bootstrap's
+     setpoint, with its feedback push still off — which is why the *next*
+     bring-up needed the `set_normal_mode` escalation too. One failed start makes
+     the next one fail.
+  2. The query spent `enable_timeout` (5.0 s), a budget chosen for a different
+     question, and the `set_normal_mode` escalation got exactly one window.
+  3. Nothing above the driver notices its absence. The launch neither respawns it
+     nor shuts down; the MIT controller returns at `if not self.enabled` and kept
+     logging `control loop 199.9 Hz achieved` for a minute after both drivers
+     were gone; RViz renders the URDF zero pose, which looks like a robot.
+- Fix: the failed bootstrap now re-asserts the feedback push and drops the arm to
+  the firmware hold (`hold_current_pose`, falling through to `set_normal_mode`
+  where no pose can be read) before exiting; the query has its own
+  `firmware_query_timeout` and `firmware_recover_attempts` (default 5.0 s and 2);
+  and the driver's abnormal exit ends the launch through `on_exit`, so a stack
+  without arm feedback stops instead of running on.
+- Also measured, not yet reconciled: **both arms now report firmware 1.20 ->
+  `NeroFW.V112`**, MIT torque bound 16 N·m on all seven joints on both sides.
+  `AGENTS.md`, `CLAUDE.md` and `planning/decision_record.md` still say right 1.06
+  (default tier) and left 1.11 (`NeroFW.V111`), unflashable, with mixed tiers as
+  the permanent baseline. Every per-tier statement derived from that — including
+  the ~100/s and ~137/s feedback rates in `reference/feedback_rate_budget.md` —
+  needs re-measuring before it is quoted again.
+- Validation: L1 — the ladder, the budget and the park path are pinned in
+  `test_arm_startup_sequence.py`; the launch `on_exit` is exercised as a callable.
+  **Unexercised on hardware:** whether the park actually reaches an arm whose
+  firmware never answered is the one thing the failing state itself makes
+  unmeasurable from here.
+
+### The build silently did nothing, because install/ is dated in the future
+
+- Symptom: an edited source file rebuilt "successfully" (`Finished <<<
+  agx_arm_ctrl [1.4s]`) while the installed copy kept the old content.
+- Cause: this Jetson's clock is not monotonic across boots — the previous boot
+  ran ~2 days ahead, so `install/` and `build/` carry mtimes in the future
+  (1712 and 2413 files on 2026-09-01, plus 256 under `src/`). setuptools copies
+  by mtime comparison, so a file edited today is *older* than its own build
+  output and both the `build/lib` and the `install/` copy are skipped.
+- Workaround used here: delete the stale `build/lib` and `install/` copies of the
+  changed file, then rebuild. A clock that does not go backwards is the actual
+  fix; until then, treat a suspiciously fast build after an edit as a no-op.

@@ -1,0 +1,8 @@
+{
+  "iface": "can_nero_left",
+  "started_epoch": 1788435113.5791514,
+  "started_iso": "2026-09-03T13:31:53",
+  "fast_hz": 100.0,
+  "bus_hold_min_silence_s": 0.25,
+  "note": ""
+}

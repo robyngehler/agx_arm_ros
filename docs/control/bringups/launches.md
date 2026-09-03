@@ -31,6 +31,7 @@ sudo bash scripts/activate_stack.sh            # buses up and verified
 ./scripts/unpack_top_unit.py                   # top unit into Functional_Init_Both_V03
 ./scripts/pack_top_unit.py                     # and back
 ./scripts/start_tea_demo.py                    # tea_pour_duo_v2
+./scripts/start_block_restack.py               # block_restack_v1 (needs both grippers)
 ```
 
 Each waits for the stack, prints what is live and how many operator steps the

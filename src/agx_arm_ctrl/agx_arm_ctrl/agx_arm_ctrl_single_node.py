@@ -5,6 +5,7 @@ import errno
 import rclpy
 import math
 import threading
+import re
 import subprocess
 from functools import partial
 from typing import NamedTuple, Optional
@@ -205,8 +206,11 @@ class AgxArmRosNode(Node):
     _bus_held_since_monotonic = None
     _bus_held_logged = False
     _last_rx_advance_monotonic = None
+    _tec_cached = None
+    _tec_read_monotonic = 0.0
     bus_hold_patience_s = 60.0
     bus_hold_min_silence_s = 0.25
+    bus_hold_min_tec = 8
     bus_recovery_persistent = True
     bus_recovery_backoff_max_s = 5.0
     bus_recovery_persist_max_s = 300.0
@@ -314,6 +318,13 @@ class AgxArmRosNode(Node):
         self.declare_parameter("runtime_metrics_enabled", False)
         self.declare_parameter("runtime_metrics_period_s", 10.0)
         self.declare_parameter("enable_timeout", 5.0)
+        # The firmware handshake is not the enable and does not share its
+        # budget. An arm that answered the enable can still need seconds and a
+        # normal-mode re-assert before it answers get_firmware: measured after
+        # set_normal_mode, 0.55 s on one arm and 2.66 s on the other, and once
+        # not inside a single 5 s window at all.
+        self.declare_parameter("firmware_query_timeout", 5.0)
+        self.declare_parameter("firmware_recover_attempts", 2)
         self.declare_parameter("effector_type", "none")
         self.declare_parameter("tcp_offset", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         self.declare_parameter("gripper_default_effort", 1.0)
@@ -359,6 +370,12 @@ class AgxArmRosNode(Node):
         # delivers a complete update every 7-10 ms and this is evaluated at the
         # publish rate, so a per-sample comparison sees silence constantly.
         self.declare_parameter("bus_hold_min_silence_s", 0.25)
+        # How high the controller's transmit error counter must stand for a
+        # silent bus to count as held. Every unacknowledged transmission adds 8
+        # and every successful one subtracts 1, so 8 is one failed frame and
+        # normal operation reads 0. A 200 Hz stream saturates it at the
+        # error-passive ceiling of 128 within ~100 ms of the peer going away.
+        self.declare_parameter("bus_hold_min_tec", 8)
         # Minimum quiet time after a completed recovery before the watchdog may
         # fire again. Without it a congested (error-storming) bus re-latches a
         # comm error during the recovery's OWN enable/config sends, and the
@@ -426,6 +443,12 @@ class AgxArmRosNode(Node):
             acquisition_rate if acquisition_rate > 0.0 else float(self.pub_rate)
         )
         self.enable_timeout = self.get_parameter("enable_timeout").value
+        self.firmware_query_timeout = max(
+            0.5, float(self.get_parameter("firmware_query_timeout").value)
+        )
+        self.firmware_recover_attempts = max(
+            1, int(self.get_parameter("firmware_recover_attempts").value)
+        )
         self.effector_type = self.get_parameter("effector_type").value
         self.tcp_offset = self.get_parameter("tcp_offset").value
         self.gripper_default_effort = self.get_parameter("gripper_default_effort").value
@@ -458,6 +481,9 @@ class AgxArmRosNode(Node):
         self.bus_hold_min_silence_s = max(
             0.0, float(self.get_parameter("bus_hold_min_silence_s").value)
         )
+        self.bus_hold_min_tec = max(0, int(self.get_parameter("bus_hold_min_tec").value))
+        self._tec_cached = None
+        self._tec_read_monotonic = 0.0
         # Set when a stall first matched the held-bus signature; None otherwise.
         self._bus_held_since_monotonic = None
         self._bus_held_logged = False
@@ -623,6 +649,8 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"pub_rate: {self.pub_rate}")
         self.get_logger().info(f"acquisition_rate_hz: {self.acquisition_rate_hz}")
         self.get_logger().info(f"enable_timeout: {self.enable_timeout}")
+        self.get_logger().info(f"firmware_query_timeout: {self.firmware_query_timeout}")
+        self.get_logger().info(f"firmware_recover_attempts: {self.firmware_recover_attempts}")
         self.get_logger().info(f"effector_type: {self.effector_type}")
         self.get_logger().info(f"tcp_offset: {self.tcp_offset}")
         self.get_logger().info(f"gripper_default_effort: {self.gripper_default_effort}")
@@ -635,10 +663,10 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"bus_recovery_max_attempts: {self.bus_recovery_max_attempts}")
 
     def _wait_for_firmware(self) -> None:
-        """Poll the firmware query until it answers or the enable timeout runs out."""
+        """Poll the firmware query until it answers or its own budget runs out."""
         self.firmware = None
         start_time = time.time()
-        while time.time() - start_time < self.enable_timeout:
+        while time.time() - start_time < self.firmware_query_timeout:
             self.firmware = self.agx_arm.get_firmware()
             if self.firmware:
                 return
@@ -747,6 +775,25 @@ class AgxArmRosNode(Node):
         self._hand_window_push_silenced = False
         self._hand_window_silence_started = 0.0
 
+    def _park_after_failed_bootstrap(self) -> None:
+        """Leave the arm safe and answerable before a failed bootstrap exits.
+
+        The enable goes out before the firmware query, so giving up bare leaves
+        an energised arm with no owner, its push still off and the firmware on
+        whatever setpoint the bootstrap found. Both are put back here. The push
+        matters beyond this process: an arm left mute answers nothing on the
+        next bring-up either, which is how one failed start makes the next one
+        fail. The hold is the ladder's normal second rung and falls through to
+        ``set_normal_mode`` where no pose can be read, which is the case that
+        got here.
+
+        ``exit(1)`` unwinds out of ``__init__``, so ``main`` sees no node and
+        runs none of its shutdown; this is the only place that can do it.
+        """
+        self._ensure_feedback_push_enabled("failed bootstrap", force=True)
+        self.hold_current_pose("failed bootstrap")
+        self.shutdown()
+
     def _init_agx_arm(self):
         # Defaults matching the driver the SDK builds when no tier is given, so
         # an arm whose firmware never answers is still validated against the
@@ -789,11 +836,15 @@ class AgxArmRosNode(Node):
                     "still silent after enable", force=True
                 )
                 self._wait_for_firmware()
-            if not self.firmware:
-                # An arm whose feedback push is disabled answers nothing, so
-                # startup would die here — and with the node dead its
-                # set_normal_mode service never comes up, leaving no way to
-                # re-enable the push through ROS. Break that deadlock once.
+            # An arm whose feedback push is disabled answers nothing, so
+            # startup would die here — and with the node dead its
+            # set_normal_mode service never comes up, leaving no way to
+            # re-enable the push through ROS. Break that deadlock, and give the
+            # re-assert more than one window: the answer came 0.55 s after
+            # set_normal_mode on one arm and 2.66 s on the other.
+            for _ in range(self.firmware_recover_attempts):
+                if self.firmware:
+                    break
                 self._recover_silent_arm()
                 self._wait_for_firmware()
 
@@ -854,6 +905,7 @@ class AgxArmRosNode(Node):
                     "E-stop and wiring for this side. (3) does the bus carry "
                     "feedback frames (candump)?"
                 )
+                self._park_after_failed_bootstrap()
                 exit(1)
 
             self.agx_arm.set_speed_percent(self.speed_percent)
@@ -1105,10 +1157,11 @@ class AgxArmRosNode(Node):
             return None
         return snapshot
 
-    def _check_arm_ready(self, snapshot: "FeedbackSnapshot" = None) -> bool:
+    def _check_arm_ready(self, snapshot: "FeedbackSnapshot" = None, *,
+                         direct: bool = False) -> bool:
         joint_states = (
             snapshot.joint_angles if snapshot is not None else self._sdk_read(
-                "get_joint_angles", self.agx_arm.get_joint_angles
+                "get_joint_angles", self.agx_arm.get_joint_angles, direct=direct
             )
         )
         if joint_states is None:
@@ -1166,14 +1219,24 @@ class AgxArmRosNode(Node):
             self._sdk_read("is_ok", self.agx_arm.is_ok)
         )
 
-    def _sdk_read(self, name: str, fn):
+    def _sdk_read(self, name: str, fn, *, direct: bool = False):
         """One bounded SDK read, through the owner of the session.
 
         Callers outside the publish loop — services, one-off checks — have no
         snapshot to hand. Routing them here keeps the single-owner invariant
         without every call site having to acquire a whole batch. Returns None if
         the session is not currently ours, which reads as "not ready".
+
+        ``direct`` bypasses the worker for the caller that owns the session
+        outright (bus recovery). A submission there queues behind a quiesced
+        worker and returns None, so a live bus reads as "not ready" for as long
+        as recovery runs.
         """
+        if direct:
+            try:
+                return fn()
+            except Exception:
+                return None
         try:
             return self._sdk.call(name, fn, timeout=self.feedback_timeout)
         except (CallOutcomeUnknown, CallNotExecuted):
@@ -1181,7 +1244,8 @@ class AgxArmRosNode(Node):
         except Exception:
             return None
 
-    def _sdk_write(self, name: str, fn, *, lane: Lane = Lane.CONTROL, timeout=None):
+    def _sdk_write(self, name: str, fn, *, lane: Lane = Lane.CONTROL, timeout=None,
+                   direct: bool = False):
         """One bounded SDK write, through the owner of the session.
 
         The counterpart to :meth:`_sdk_read`, and deliberately not as forgiving:
@@ -1194,7 +1258,12 @@ class AgxArmRosNode(Node):
         interleave with a MIT setpoint cycle mid-bracket — the arm ends up in a
         mode neither caller believes it is in, and the evidence is a motion that
         was framed wrongly rather than an error anyone sees.
+
+        ``direct`` bypasses the worker for the caller that owns the session
+        outright (bus recovery), where a submission never dequeues.
         """
+        if direct:
+            return fn()
         return self._sdk.call(
             name, fn,
             timeout=self.feedback_timeout if timeout is None else timeout,
@@ -1647,7 +1716,8 @@ class AgxArmRosNode(Node):
     ENABLE_CONTRADICTED = "contradicted"
     ENABLE_UNAVAILABLE = "unavailable"
 
-    def _request_enable(self, enable: bool, timeout: float = 5.0) -> bool:
+    def _request_enable(self, enable: bool, timeout: float = 5.0, *,
+                        direct: bool = False) -> bool:
         """Send the enable/disable command. Claims nothing about the arm.
 
         Needs a transport only, no feedback. The return value says the SDK
@@ -1669,6 +1739,7 @@ class AgxArmRosNode(Node):
             action_name,
             (lambda: self.agx_arm.enable()) if enable
             else (lambda: self.agx_arm.disable()),
+            direct=direct,
         ):
             if time.time() > deadline:
                 self.get_logger().error(
@@ -1678,7 +1749,8 @@ class AgxArmRosNode(Node):
             time.sleep(0.01)
         return True
 
-    def _verify_enable(self, enable: bool, timeout: float = 5.0) -> str:
+    def _verify_enable(self, enable: bool, timeout: float = 5.0, *,
+                       direct: bool = False) -> str:
         """Read back what the joints report, and update ``enable_flag`` from it.
 
         The readback comes from the last low-speed feedback frame, which may
@@ -1694,6 +1766,7 @@ class AgxArmRosNode(Node):
             readback = self._sdk_read(
                 "get_joint_enable_status",
                 lambda: self.agx_arm.get_joint_enable_status(255),
+                direct=direct,
             )
             if readback is not None:
                 joints_enabled = bool(readback)
@@ -1729,7 +1802,8 @@ class AgxArmRosNode(Node):
         )
         return self.ENABLE_CONTRADICTED
 
-    def _enable_arm(self, enable: bool = True, timeout: float = 5.0) -> bool:
+    def _enable_arm(self, enable: bool = True, timeout: float = 5.0, *,
+                    direct: bool = False) -> bool:
         """Request enable/disable and report only what the readback confirmed.
 
         Composition of :meth:`_request_enable` and :meth:`_verify_enable`, which
@@ -1737,10 +1811,12 @@ class AgxArmRosNode(Node):
         needs feedback.
         """
         start = time.time()
-        if not self._request_enable(enable, timeout):
+        if not self._request_enable(enable, timeout, direct=direct):
             return False
         remaining = max(0.0, timeout - (time.time() - start))
-        return self._verify_enable(enable, remaining) == self.ENABLE_VERIFIED
+        return self._verify_enable(
+            enable, remaining, direct=direct
+        ) == self.ENABLE_VERIFIED
 
     @staticmethod
     def _pace(next_tick: float, period_s: float) -> float:
@@ -2086,6 +2162,61 @@ class AgxArmRosNode(Node):
         except OSError:
             return False
 
+    #: How long one read of the transmit error counter is reused. The counter is
+    #: only read while RX is already silent, so this bounds the subprocess to a
+    #: few calls per hold instead of one per publish cycle.
+    TEC_CACHE_TTL_S = 0.1
+
+    _TEC_RE = re.compile(r"berr-counter tx (\d+)")
+
+    def _link_tx_error_counter(self):
+        """The CAN controller's transmit error counter, or None if unreadable.
+
+        Netlink only: it is neither on the wire nor in sysfs. Every
+        unacknowledged transmission adds 8 to it and every successful one
+        subtracts 1, so a raised counter means the host is transmitting and
+        nothing on the bus is answering.
+        """
+        now = time.monotonic()
+        if self._tec_cached is not None and now - self._tec_read_monotonic < self.TEC_CACHE_TTL_S:
+            return self._tec_cached
+        self._tec_read_monotonic = now
+        self._tec_cached = None
+        if not getattr(self, "can_port", None):
+            return None
+        try:
+            out = subprocess.run(
+                ["ip", "-d", "link", "show", self.can_port],
+                capture_output=True, text=True, timeout=0.5,
+            ).stdout
+        except Exception:
+            return None
+        match = self._TEC_RE.search(out)
+        if match:
+            self._tec_cached = int(match.group(1))
+        return self._tec_cached
+
+    def _transmits_are_unacknowledged(self, previous_tx, tx) -> bool:
+        """Whether the host is transmitting into a bus nobody answers.
+
+        Read from the transmit error counter, not from ``tx_packets``: an
+        unacknowledged ONE-SHOT frame is abandoned and never counted, so
+        ``tx_packets`` freezes exactly when the hold begins. Measured on
+        can_nero_left: 3589 frames left the host at 1320/s during a watchdog
+        hold while ``tx_packets`` did not move
+        (``docs/sprint_refactor/reference/bus_hold_tx_evidence.md``).
+
+        The counter is a level, not an edge, so it stays raised while the
+        command stream is gated off — which is what the hold does to it.
+        """
+        tec = self._link_tx_error_counter()
+        if tec is not None:
+            return tec >= self.bus_hold_min_tec
+        # No netlink read available: fall back to the packet-count edge. It only
+        # reports while frames are still being acknowledged, so it under-detects
+        # rather than over-detects.
+        return previous_tx is not None and tx > previous_tx
+
     def _bus_hold_defers_recovery(self) -> bool:
         """True while a live-but-quiet bus should be waited out, not recovered.
 
@@ -2095,22 +2226,22 @@ class AgxArmRosNode(Node):
         never broken — and the lockout it latches afterwards refuses every
         command on the healthy bus that follows.
 
-        The signature that separates a held bus from a broken one, using only
-        kernel counters: the link is up, RX has been silent for longer than the
-        arm's own update spacing, and TX was still being accepted when the
-        silence began. A bus-off controller stops accepting TX and a downed link
-        fails the first check, so both fall through to the normal fault path.
-        The signature cannot tell a held bus from an unplugged one — that case
-        waits out the patience window and then recovers as before.
+        The signature that separates a held bus from a broken one: the link is
+        up, RX has been silent for longer than the arm's own update spacing, and
+        the transmit error counter says the host is sending into a bus nobody
+        answers. A downed link fails the first check and falls through to the
+        normal fault path. The signature cannot tell a held bus from an
+        unplugged one — that case waits out the patience window and then
+        recovers as before.
 
         The silence is measured against a clock, not against the previous
         sample: this runs at the publish rate (up to 5 ms apart) while complete
         joint updates arrive every 7-10 ms, so "no new frame since last call"
         is true constantly during healthy streaming.
 
-        Once the hold is entered, TX is no longer required to advance — the
-        command stream is deliberately stopped while it lasts, so requiring it
-        would end the hold the moment the gate took effect.
+        Once the hold is entered, only RX coming back ends it. The command
+        stream is gated off while it lasts, so any transmit-side condition would
+        end the hold the moment the gate took effect.
         """
         rx = self._link_counter("rx_packets")
         tx = self._link_counter("tx_packets")
@@ -2131,11 +2262,10 @@ class AgxArmRosNode(Node):
             # us, so it says nothing about the bus now.
             still_held = self._link_is_up() and silent_for >= self.bus_hold_min_silence_s
         else:
-            tx_accepted = previous_tx is not None and tx > previous_tx
             still_held = (
                 self._link_is_up()
                 and silent_for >= self.bus_hold_min_silence_s
-                and tx_accepted
+                and self._transmits_are_unacknowledged(previous_tx, tx)
             )
 
         if not still_held:
@@ -2511,7 +2641,9 @@ class AgxArmRosNode(Node):
                 rearmed = None
                 try:
                     if self._may_auto_enable_after_recovery():
-                        rearmed = self._enable_arm(True, self.enable_timeout)
+                        rearmed = self._enable_arm(
+                            True, self.enable_timeout, direct=True
+                        )
                     self.agx_arm.set_speed_percent(self.speed_percent)
                     self.agx_arm.set_tcp_offset(self.tcp_offset)
                 except Exception as e:
@@ -2528,7 +2660,9 @@ class AgxArmRosNode(Node):
                 # leader-mode assumption so the watchdog uses normal feedback.
                 self._leader_mode_active = False
 
-                if self._wait_for_feedback(self.enable_timeout):
+                # direct: recovery owns the session, so this read must not be
+                # submitted to the worker it quiesced.
+                if self._wait_for_feedback(self.enable_timeout, direct=True):
                     # Say what was verified, not what happened to be true
                     # afterwards. The 0E fault test logged "recovery succeeded"
                     # for a bus that had come back on its own, and the re-arm
@@ -2640,10 +2774,10 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"Reset CAN link {channel} (down/up)")
         return True
 
-    def _wait_for_feedback(self, timeout: float) -> bool:
+    def _wait_for_feedback(self, timeout: float, *, direct: bool = False) -> bool:
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if self.agx_arm.is_ok() and self._check_arm_ready():
+            if self.agx_arm.is_ok() and self._check_arm_ready(direct=direct):
                 return True
             time.sleep(0.02)
         return False

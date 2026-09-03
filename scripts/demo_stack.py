@@ -101,6 +101,21 @@ ARM_COMPONENTS_TEA = LaunchSpec(
     ),
 )
 
+#: The block demo's arm stack. `duo_gripper` puts an AGX parallel gripper on each
+#: arm instead of an OmniHand, which is what gives the two gripper trajectory
+#: servers the activity commands.
+ARM_COMPONENTS_GRIPPER = LaunchSpec(
+    package="agx_arm_ctrl",
+    launch_file="start_agx_arm_components.launch.py",
+    args=(
+        "mode:=moveit_mit",
+        "execution_profile:=duo_gripper",
+        "follow:=true",
+        "planning_pipelines:=ompl",
+        "use_rviz:=false",
+    ),
+)
+
 COORDINATION = LaunchSpec(
     package="agx_arm_coordination",
     launch_file="start_coordination.launch.py",
@@ -135,6 +150,23 @@ def arm_flow(name: str, activity: str, description: str) -> StackSpec:
         launches=(ARM_COMPONENTS, COORDINATION),
         description=description,
     )
+
+
+#: A gripper flow additionally waits for the two trajectory servers it commands.
+#: Without them a gripper action fails at dispatch, which on the block demo is
+#: step 2 of 63 — after the arms have already moved to the start pose.
+GRIPPER_ACTIONS = (
+    "/left_arm/gripper_controller/follow_joint_trajectory",
+    "/right_arm/gripper_controller/follow_joint_trajectory",
+)
+
+BLOCK_RESTACK = StackSpec(
+    name="start_block_restack",
+    activity="block_restack_v1",
+    launches=(ARM_COMPONENTS_GRIPPER, COORDINATION),
+    extra_actions=GRIPPER_ACTIONS,
+    description="Restack four blocks, handing each from the left gripper to the right.",
+)
 
 
 TEA_DEMO = StackSpec(
@@ -362,8 +394,30 @@ def _next_from_id(spec: StackSpec, watcher: _StackWatcher) -> str:
     )
 
 
+def _warn_if_a_dropped_connection_would_orphan_the_stack() -> None:
+    """Over SSH without tmux, a dropped link leaves the stack running unattended.
+
+    The launches deliberately run in their own session so a terminal Ctrl+C
+    reaches run_activity instead of them. The same property means a SIGHUP kills
+    only this wrapper: the teardown never runs, and the arms keep a live driver
+    with nobody supervising it.
+    """
+    if os.environ.get("TMUX") or os.environ.get("STY"):
+        return
+    if not (os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY")):
+        return
+    print(
+        "WARNING: this is an SSH session and not a tmux/screen one. If the\n"
+        "         connection drops, this wrapper dies and the launches keep\n"
+        "         running with nothing to shut them down. Prefer:\n"
+        "             tmux new -A -s demo\n",
+        file=sys.stderr,
+    )
+
+
 def run_stack(spec: StackSpec, args) -> int:
     check_from_id(spec.activity, args.from_id)
+    _warn_if_a_dropped_connection_would_orphan_the_stack()
 
     log_dir = Path(args.log_dir) if args.log_dir else Path(
         tempfile.mkdtemp(prefix=f"{spec.name}-")

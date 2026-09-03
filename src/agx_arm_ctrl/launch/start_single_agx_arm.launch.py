@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, Shutdown
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -221,6 +221,22 @@ def generate_launch_description():
                     'Production commanders use control/gripper/authorized_trajectory.',
     )
 
+    def _shutdown_on_driver_failure(event, context):
+        """Take the bringup down when this arm's driver exits abnormally.
+
+        Nothing above the driver notices its absence: MoveIt keeps planning, the
+        MIT controller keeps reporting its loop rate, and RViz keeps rendering
+        the URDF zero pose because no joint state ever arrives. A clean exit is
+        the shutdown everyone is already in, so only a non-zero return code
+        ends the launch.
+        """
+        if event.returncode in (0, None):
+            return None
+        return [Shutdown(reason=(
+            f'{event.process_name} exited with code {event.returncode}; '
+            'the stack has no arm feedback and nothing owns the arm'
+        ))]
+
     # node
     agx_arm_node = Node(
         package='agx_arm_ctrl',
@@ -228,6 +244,7 @@ def generate_launch_description():
         name='agx_arm_ctrl_single_node',
         namespace=LaunchConfiguration('namespace'),
         output='screen',
+        on_exit=_shutdown_on_driver_failure,
         ros_arguments=['--log-level', LaunchConfiguration('log_level')],
         parameters=[{
             'can_port': LaunchConfiguration('can_port'),
