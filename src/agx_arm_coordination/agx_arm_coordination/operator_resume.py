@@ -113,3 +113,28 @@ def _is_replay_action(action: Action | None) -> bool:
     # has already refused an unknown action_id, so this is only reached for a
     # hand action, which is never one.
     return action is not None and is_replay(action)
+
+
+def next_resume_step(steps, resumable, last_completed_action_id: str):
+    """Where a run that stopped part way can be picked up again.
+
+    Returns ``(completed_step, next_step)``: the step the last completed action
+    belongs to, and the first step at or after it that a resume may start on.
+    Either is 0/``None`` when there is nothing to go on — a run that completed
+    nothing restarts from the beginning, and one whose remaining steps are all
+    replays has no resume point at all.
+
+    Keyed on the action id because that is what the coordinator's event stream
+    reports; the step number is derived here rather than published, so the two
+    cannot disagree.
+    """
+    if not last_completed_action_id:
+        return 0, None
+    completed = 0
+    for index, batch in enumerate(steps, 1):
+        if any(item.action_id == last_completed_action_id for item in batch):
+            completed = index
+    if not completed:
+        return 0, None
+    following = [step for step in resumable if step > completed]
+    return completed, (following[0] if following else None)

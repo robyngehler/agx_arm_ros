@@ -20,6 +20,7 @@ from agx_arm_coordination.graph_loader import ActivityCatalogue
 from agx_arm_coordination.graph_model import ROBOT_UNITS_DEDICATED, operator_steps
 from agx_arm_coordination.operator_resume import (
     ResumeError,
+    next_resume_step,
     parse_from_step,
     resumable_steps,
     resume_seed,
@@ -286,3 +287,48 @@ def test_an_unresumed_run_plans_everything_it_did_before():
         if cat.get_action_detail(node.action_id).actiontype_id == "Trajectory"
     }
     assert set(planner.planned) == arm_actions
+
+
+# --- picking a stopped run back up ------------------------------------------
+
+def _tea_steps():
+    cat = _catalogue()
+    steps = operator_steps(
+        cat.get_activity_plan(TEA), cat.actions, ROBOT_UNITS_DEDICATED
+    )
+    return steps, resumable_steps(steps, cat.actions)
+
+
+def test_the_next_resume_step_skips_a_replay_that_follows():
+    """Step 8 completed, 9 and 10 are replays, so the operator is sent to 11."""
+    steps, allowed = _tea_steps()
+    assert next_resume_step(steps, allowed, "both_arms_to_can_adjust_while_grip") == (8, 11)
+
+
+def test_the_next_resume_step_is_the_one_immediately_after_when_it_is_planned():
+    steps, allowed = _tea_steps()
+    assert next_resume_step(steps, allowed, "both_arms_to_can_post_grip") == (15, 16)
+
+
+def test_a_completed_replay_still_reports_the_step_it_was():
+    """Reporting where the run got to is not the same question as where it may
+    restart, so a replay is a legitimate answer to the first."""
+    steps, allowed = _tea_steps()
+    assert next_resume_step(steps, allowed, "both_arms_can_pour") == (12, 13)
+
+
+def test_a_run_that_completed_nothing_has_no_resume_point():
+    steps, allowed = _tea_steps()
+    assert next_resume_step(steps, allowed, "") == (0, None)
+    assert next_resume_step(steps, allowed, "an_action_from_another_activity") == (0, None)
+
+
+def test_the_last_step_leaves_nothing_to_resume():
+    steps, allowed = _tea_steps()
+    assert next_resume_step(steps, allowed, "both_arms_to_packing_pose") == (21, None)
+
+
+def test_a_sync_pair_reports_one_step_whichever_half_completed_last():
+    steps, allowed = _tea_steps()
+    assert next_resume_step(steps, allowed, "both_arms_to_functional_init")[0] == 20
+    assert next_resume_step(steps, allowed, "left_hand_fist")[0] == 20
