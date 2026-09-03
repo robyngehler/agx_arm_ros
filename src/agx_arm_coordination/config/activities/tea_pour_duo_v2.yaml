@@ -16,8 +16,9 @@
 # here, not a re-authoring.
 #
 # PARALLELISM. Three steps run an arm move and a hand shape at the same time
-# (sync_flag 2, 3 and 4; sync_flag 1 was the right hand's and 5 was the closing
-# heart). That is only legal because every device owns its own CAN bus
+# (sync_flag 2, 3 and 5). sync_flag 1 was the right hand's and is gone; 4 is held
+# for the right hand beside node 100 and is commented out, so node 100 currently
+# carries it alone. That is only legal because every device owns its own CAN bus
 # (duo_motion_registry.yaml bus_topology: dedicated_per_device): a hand action
 # then holds no token the arms hold, so the scheduler admits the pair together
 # and the coordinator dispatches two independent goals. Under shared_per_side the

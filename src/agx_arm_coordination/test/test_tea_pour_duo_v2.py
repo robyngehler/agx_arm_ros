@@ -37,13 +37,14 @@ CTRL_CONFIG_DIR = (
     Path(__file__).resolve().parents[3] / "agx_arm_ctrl" / "config"
 )
 
-#: Steps the flow requires to overlap an arm move with a hand shape.
-#: sync_flag 1 was the right hand's `can_prep` beside the staging move; 5 was the
-#: closing heart. Both are gone.
+#: Steps the flow requires to overlap an arm move with a hand shape, keyed by
+#: sync_flag. 1 was the right hand's `can_prep` beside the staging move and is
+#: gone; 4 is held for the right hand beside `both_arms_can_goto_pour_init` and
+#: is currently commented out in the activity, so node 100 carries it alone.
 SYNC_GROUPS = {
     2: {"both_arms_to_can_grip_idle", "left_hand_can_pre_grip"},
     3: {"left_hand_can_grip", "both_arms_to_can_adjust_while_grip"},
-    4: {"both_arms_to_functional_init", "left_hand_fist"},
+    5: {"both_arms_to_functional_init", "left_hand_fist"},
 }
 
 #: Hand actions the activity dispatches. The right hand is out of service, so it
@@ -165,6 +166,67 @@ def test_the_overlapping_steps_are_dispatched_together():
     assert grouped == SYNC_GROUPS
 
 
+#: What one operator step is, in order: a dispatch batch, not a graph node. A
+#: sync group is one step even though it is two nodes, which is why `--from-id N`
+#: counts batches — resuming into half of a synchronized pair is not a state the
+#: activity has. Pinned here because the operator step numbers are a contract:
+#: an edit that inserts a node renumbers every step after it.
+OPERATOR_STEPS = [
+    {"both_arms_to_functional_init"},
+    {"both_arms_to_can_prep_grip"},
+    {"right_arm_can_prep_4grip"},
+    {"both_arms_to_can_grip_idle", "left_hand_can_pre_grip"},
+    {"both_arms_to_can_pre_grip"},
+    {"left_arm_can_grip_move"},
+    {"both_arms_to_can_pre_grip_adjust"},
+    {"both_arms_to_can_adjust_while_grip", "left_hand_can_grip"},
+    {"left_arm_can_lift_post_grip"},
+    {"both_arms_can_goto_pour_init"},
+    {"both_arms_to_pour_init"},
+    {"both_arms_can_pour"},
+    {"both_arms_to_pour_finish"},
+    {"both_arms_to_pre_place"},
+    {"both_arms_to_can_post_grip"},
+    {"both_arms_to_can_place"},
+    {"left_hand_can_release"},
+    {"left_arm_can_release_motion"},
+    {"left_arm_can_post_place_adjust"},
+    {"both_arms_to_functional_init", "left_hand_fist"},
+    {"both_arms_to_packing_pose"},
+]
+
+#: Steps whose batch is a recorded replay. A replay starts from wherever the arm
+#: stands, so resuming onto one commands taught joint angles from an unknown
+#: pose; the operator resumes at the nearest earlier planned step instead.
+RECORDED_STEPS = {3, 6, 9, 10, 12, 18, 19}
+
+
+def test_the_operator_steps_are_the_dispatch_batches_in_order():
+    cat = _catalogue()
+    steps = [
+        {item.action_id for item in batch}
+        for batch in _dispatch_order(cat, ROBOT_UNITS_DEDICATED)
+    ]
+    assert steps == OPERATOR_STEPS
+    assert len(steps) == 21
+
+
+def test_the_recorded_steps_are_the_ones_a_resume_may_not_start_on():
+    """Which step numbers carry a replay, so the resume rule has something to
+    check against rather than re-deriving it per caller."""
+    cat = _catalogue()
+    recorded = {
+        index
+        for index, batch in enumerate(_dispatch_order(cat, ROBOT_UNITS_DEDICATED), 1)
+        if any(
+            "recording" in cat.get_action_detail(item.action_id).metadata
+            or "waypoints" in cat.get_action_detail(item.action_id).metadata
+            for item in batch
+        )
+    }
+    assert recorded == RECORDED_STEPS
+
+
 def test_the_whole_graph_is_reachable():
     cat = _catalogue()
     batches = _dispatch_order(cat, ROBOT_UNITS_DEDICATED)
@@ -225,7 +287,10 @@ def test_no_recorded_action_carries_both_playback_and_a_legacy_scale():
         assert "velocity_scaling" not in action.metadata
         assert "acceleration_scaling" not in action.metadata
         spec, explicit = planner.playback_for(action)
-        assert explicit and spec.mode == "smooth"
+        # The demo's declared timing: every recording replays in taught time at
+        # tempo 1.0. Pinned because it is a choice about how the demo runs, so
+        # changing it shows up here rather than only on hardware.
+        assert explicit and spec.mode == "tempo_scale"
         assert spec.smoothing_window_sec == 0.5
         assert spec.speed_scale == 1.0
 
@@ -235,7 +300,7 @@ def test_anchor_moves_are_planned_not_replayed():
     it; a replay is executed without planning."""
     cat = _catalogue()
     planner = _planner()
-    for action_id in SYNC_GROUPS[2] | SYNC_GROUPS[4]:
+    for action_id in SYNC_GROUPS[2] | SYNC_GROUPS[5]:
         action = cat.get_action_detail(action_id)
         if action.actiontype_id != ACTIONTYPE_TRAJECTORY:
             continue
