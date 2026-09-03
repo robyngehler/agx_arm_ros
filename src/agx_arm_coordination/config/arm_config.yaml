@@ -34,6 +34,8 @@ arm_executor:
   # (e.g. Can_Pre_Grip_L/_R below pair into a both_arms target). An un-suffixed
   # bare list has no resolvable side — re-capture it or add robot_id.
   poses:
+    test_down: {robot_id: right_arm, q: [2.60361, 1.70938, 1.36296, 1.25673, -1.29345, -0.64382, -0.09175]}
+    test_up: {robot_id: right_arm, q: [2.11462, 1.69775, 1.38014, 1.29413, -1.27763, -0.58627, -0.16905]}
     Tee-Can_Pre_Place_L: {robot_id: both_arms, q: [-1.05194, 0.62216, -0.04585, 1.40921, -0.60011, -0.71602, 0.89781, 2.18232, 0.60282, -0.78521, 1.50098, 1.30989, 0.87490, 0.08327]}
     Tee-Can_Pour_Finish: {robot_id: both_arms, q: [0.94848, -0.39486, -1.53076, 1.40539, -0.01695, -0.71070, 1.06914, 2.18383, 0.60280, -0.78391, 1.49992, 1.30875, 0.89010, 0.08318]}
     Tee-Can_Pour_Init: {robot_id: both_arms, q: [0.44518, -0.30006, -0.32214, 1.56610, 0.18754, -0.01991, 0.70269, 2.00182, -0.59881, -1.22763, 1.76910, -0.68176, 0.26833, 0.45927]}
