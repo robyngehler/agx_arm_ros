@@ -373,9 +373,47 @@ Measure this below the SDK. `candump` reads the raw socket, so the SDK cannot be
 the reason a frame is missing from it — but `candump` does **not** show the TX
 loopback, and reading a capture as "no commands on the bus" is a mistake this
 investigation made once. Take TX from
-`/sys/class/net/<iface>/statistics/tx_packets`.
+`/sys/class/net/<iface>/statistics/tx_packets` **only while frames are being
+acknowledged** — superseded 2026-09-03, see the next entry: an unacknowledged
+ONE-SHOT frame is transmitted and never counted, so on a held bus that counter
+reads zero while the host is sending at full rate.
 
 Full budget, per-joint rates and method: `sprint_refactor/reference/feedback_rate_budget.md`.
+
+## `tx_packets` does not count what nobody acknowledges
+
+An external-watchdog emergency stop takes the CAN bus and gives it back on
+release. The driver has a classifier that recognises a held bus and waits it out
+instead of recovering, because recovery cannot succeed against a hold and
+latches a fault lockout that then refuses motion on the healthy bus that
+follows. It never fired. Every stop ended with the arm unusable until the stack
+was restarted.
+
+The classifier entered the hold only if `tx_packets` had advanced since the
+previous sample — "the link still accepts transmissions" — evaluated at the
+moment RX silence crossed its threshold. On `can_nero_left` (mttcan, ONE-SHOT)
+an unacknowledged frame is abandoned and never counted, so the counter freezes
+at exactly the instant the hold begins. The condition was unsatisfiable by
+construction.
+
+What made this expensive to see: the obvious reading is "the command stream
+stopped", and the obvious fix is to keep a stream running. A run with the stream
+running produced the same frozen counter. The pcap settled it — `LINUX_SLL`
+carries a direction flag, and it showed 3589 outgoing frames at ~1320/s across
+the hold while `tx_packets` did not move.
+
+The entry condition now reads the controller's transmit error counter over
+netlink. It is a *level*, not an edge: every unacknowledged transmission adds 8
+and every successful one subtracts 1, so it stays raised while the command
+stream is gated off — which is what the hold does to it. Replayed against the
+recording, the old condition never entered the hold and the new one enters
+0.26 s after RX goes silent and releases the instant RX returns.
+
+The general shape: **a signal that is produced by the thing you are trying to
+detect the absence of cannot detect it.** Prefer a level that persists over an
+edge that requires the failing activity to keep succeeding.
+
+Evidence and method: `sprint_refactor/reference/bus_hold_tx_evidence.md`.
 
 ## Recurring traps that cost more than one session
 

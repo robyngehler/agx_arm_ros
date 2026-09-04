@@ -5,6 +5,7 @@ import errno
 import rclpy
 import math
 import threading
+import re
 import subprocess
 from functools import partial
 from typing import NamedTuple, Optional
@@ -205,8 +206,11 @@ class AgxArmRosNode(Node):
     _bus_held_since_monotonic = None
     _bus_held_logged = False
     _last_rx_advance_monotonic = None
+    _tec_cached = None
+    _tec_read_monotonic = 0.0
     bus_hold_patience_s = 60.0
     bus_hold_min_silence_s = 0.25
+    bus_hold_min_tec = 8
     bus_recovery_persistent = True
     bus_recovery_backoff_max_s = 5.0
     bus_recovery_persist_max_s = 300.0
@@ -366,6 +370,12 @@ class AgxArmRosNode(Node):
         # delivers a complete update every 7-10 ms and this is evaluated at the
         # publish rate, so a per-sample comparison sees silence constantly.
         self.declare_parameter("bus_hold_min_silence_s", 0.25)
+        # How high the controller's transmit error counter must stand for a
+        # silent bus to count as held. Every unacknowledged transmission adds 8
+        # and every successful one subtracts 1, so 8 is one failed frame and
+        # normal operation reads 0. A 200 Hz stream saturates it at the
+        # error-passive ceiling of 128 within ~100 ms of the peer going away.
+        self.declare_parameter("bus_hold_min_tec", 8)
         # Minimum quiet time after a completed recovery before the watchdog may
         # fire again. Without it a congested (error-storming) bus re-latches a
         # comm error during the recovery's OWN enable/config sends, and the
@@ -471,6 +481,9 @@ class AgxArmRosNode(Node):
         self.bus_hold_min_silence_s = max(
             0.0, float(self.get_parameter("bus_hold_min_silence_s").value)
         )
+        self.bus_hold_min_tec = max(0, int(self.get_parameter("bus_hold_min_tec").value))
+        self._tec_cached = None
+        self._tec_read_monotonic = 0.0
         # Set when a stall first matched the held-bus signature; None otherwise.
         self._bus_held_since_monotonic = None
         self._bus_held_logged = False
@@ -2125,6 +2138,61 @@ class AgxArmRosNode(Node):
         except OSError:
             return False
 
+    #: How long one read of the transmit error counter is reused. The counter is
+    #: only read while RX is already silent, so this bounds the subprocess to a
+    #: few calls per hold instead of one per publish cycle.
+    TEC_CACHE_TTL_S = 0.1
+
+    _TEC_RE = re.compile(r"berr-counter tx (\d+)")
+
+    def _link_tx_error_counter(self):
+        """The CAN controller's transmit error counter, or None if unreadable.
+
+        Netlink only: it is neither on the wire nor in sysfs. Every
+        unacknowledged transmission adds 8 to it and every successful one
+        subtracts 1, so a raised counter means the host is transmitting and
+        nothing on the bus is answering.
+        """
+        now = time.monotonic()
+        if self._tec_cached is not None and now - self._tec_read_monotonic < self.TEC_CACHE_TTL_S:
+            return self._tec_cached
+        self._tec_read_monotonic = now
+        self._tec_cached = None
+        if not getattr(self, "can_port", None):
+            return None
+        try:
+            out = subprocess.run(
+                ["ip", "-d", "link", "show", self.can_port],
+                capture_output=True, text=True, timeout=0.5,
+            ).stdout
+        except Exception:
+            return None
+        match = self._TEC_RE.search(out)
+        if match:
+            self._tec_cached = int(match.group(1))
+        return self._tec_cached
+
+    def _transmits_are_unacknowledged(self, previous_tx, tx) -> bool:
+        """Whether the host is transmitting into a bus nobody answers.
+
+        Read from the transmit error counter, not from ``tx_packets``: an
+        unacknowledged ONE-SHOT frame is abandoned and never counted, so
+        ``tx_packets`` freezes exactly when the hold begins. Measured on
+        can_nero_left: 3589 frames left the host at 1320/s during a watchdog
+        hold while ``tx_packets`` did not move
+        (``docs/sprint_refactor/reference/bus_hold_tx_evidence.md``).
+
+        The counter is a level, not an edge, so it stays raised while the
+        command stream is gated off — which is what the hold does to it.
+        """
+        tec = self._link_tx_error_counter()
+        if tec is not None:
+            return tec >= self.bus_hold_min_tec
+        # No netlink read available: fall back to the packet-count edge. It only
+        # reports while frames are still being acknowledged, so it under-detects
+        # rather than over-detects.
+        return previous_tx is not None and tx > previous_tx
+
     def _bus_hold_defers_recovery(self) -> bool:
         """True while a live-but-quiet bus should be waited out, not recovered.
 
@@ -2134,22 +2202,22 @@ class AgxArmRosNode(Node):
         never broken — and the lockout it latches afterwards refuses every
         command on the healthy bus that follows.
 
-        The signature that separates a held bus from a broken one, using only
-        kernel counters: the link is up, RX has been silent for longer than the
-        arm's own update spacing, and TX was still being accepted when the
-        silence began. A bus-off controller stops accepting TX and a downed link
-        fails the first check, so both fall through to the normal fault path.
-        The signature cannot tell a held bus from an unplugged one — that case
-        waits out the patience window and then recovers as before.
+        The signature that separates a held bus from a broken one: the link is
+        up, RX has been silent for longer than the arm's own update spacing, and
+        the transmit error counter says the host is sending into a bus nobody
+        answers. A downed link fails the first check and falls through to the
+        normal fault path. The signature cannot tell a held bus from an
+        unplugged one — that case waits out the patience window and then
+        recovers as before.
 
         The silence is measured against a clock, not against the previous
         sample: this runs at the publish rate (up to 5 ms apart) while complete
         joint updates arrive every 7-10 ms, so "no new frame since last call"
         is true constantly during healthy streaming.
 
-        Once the hold is entered, TX is no longer required to advance — the
-        command stream is deliberately stopped while it lasts, so requiring it
-        would end the hold the moment the gate took effect.
+        Once the hold is entered, only RX coming back ends it. The command
+        stream is gated off while it lasts, so any transmit-side condition would
+        end the hold the moment the gate took effect.
         """
         rx = self._link_counter("rx_packets")
         tx = self._link_counter("tx_packets")
@@ -2170,11 +2238,10 @@ class AgxArmRosNode(Node):
             # us, so it says nothing about the bus now.
             still_held = self._link_is_up() and silent_for >= self.bus_hold_min_silence_s
         else:
-            tx_accepted = previous_tx is not None and tx > previous_tx
             still_held = (
                 self._link_is_up()
                 and silent_for >= self.bus_hold_min_silence_s
-                and tx_accepted
+                and self._transmits_are_unacknowledged(previous_tx, tx)
             )
 
         if not still_held:

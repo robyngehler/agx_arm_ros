@@ -374,3 +374,4 @@ def test_recovery_takes_the_sdk_session_and_gives_it_back():
     assert owned_during_recovery == [True]
     assert node._sdk.quiesced is False, "session was not handed back"
     node._sdk.shutdown()
+

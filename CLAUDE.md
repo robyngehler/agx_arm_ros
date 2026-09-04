@@ -146,7 +146,12 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   across sources point at the loop; differing rates point upstream
 - measure a CAN rate claim below the SDK with `candump` on the raw socket and
   cross-check `/sys/class/net/<iface>/statistics`; `candump` does not show the
-  TX loopback, so take TX from `tx_packets`
+  TX loopback. Take TX from `tx_packets` **only while frames are being
+  acknowledged** — an unacknowledged ONE-SHOT frame is never counted, so the
+  counter freezes on a bus held quiet while the host still sends at full rate
+  (3589 frames at ~1320/s, 2026-09-03). Direction comes from a pcap's SLL packet
+  type, transmit-side liveness from the controller's transmit error counter
+  (`docs/sprint_refactor/reference/bus_hold_tx_evidence.md`)
 - each device owns its own CAN bus: arms on `can_nero_left`/`can_nero_right` (native), hands on
   `hand_left`/`hand_right` (USB-CAN FD adapters); same-side arm and hand motion may run in parallel
   and the shared-bus hand window is a selectable degraded mode
@@ -170,6 +175,13 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   the same ladder, because the firmware keeps executing the last setpoint it
   was given. Freedrive is the one surviving kp=0 command, and it is kp=0 *with*
   gravity feedforward (`docs/sprint_refactor/reference/emergency_stop_ladder.md`)
+- a bus the external CAN watchdog holds quiet is not a fault: recovery against
+  it cannot succeed and latches the lockout that refuses motion after the
+  release. The signature is link up + RX silent past the arm's update spacing +
+  a raised **transmit error counter**, never `tx_packets`, which stops counting
+  unacknowledged ONE-SHOT frames exactly when the hold begins. Once entered,
+  only RX returning ends the hold
+  (`docs/sprint_refactor/reference/bus_hold_tx_evidence.md`)
 - use repo-owned `agx_arm_msgs` messages for hand diagnostics and tactile payloads, with statically
   defined fields
 - ask before any hardware-touching action; if hardware access is granted, `sudo` is allowed for repo CAN workflows in the intended hardware environment

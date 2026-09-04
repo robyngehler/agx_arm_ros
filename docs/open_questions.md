@@ -174,3 +174,35 @@ within 0.3 deg of the URDF bound, and every other joint's centre already agrees.
 Position ranges therefore cannot be applied to feedback values without that
 correction; velocity limits are offset-invariant and are unaffected.
 Detail: `sprint_refactor/reference/trajectory_retiming.md`.
+
+## Recovery transmits nothing after it takes the session
+
+Open since 2026-09-03. Measured on `can_nero_left` during a watchdog emergency
+stop (`sprint_refactor/reference/bus_hold_tx_evidence.md`).
+
+Once `_recover_bus` took the SDK session, the driver sent **zero** frames for
+the remaining 25 s of the capture, across four `enable` attempts that each
+reported `still pending after 2.0s`. That message means the worker call did not
+finish — not that the arm failed to answer: the pcap shows the frames never
+reached the wire at all. Meanwhile the arm's feedback returned at full rate
+(~2150 frames/s) and never reached ROS; `move_group` kept reporting the joint
+state from the instant of the stop, and `_wait_for_feedback` kept reporting that
+feedback had not been restored.
+
+Two consequences follow while this stands:
+
+- the controller error state cannot clear, because the transmit error counter
+  decrements only on a *successful* transmission — a link left ERROR-PASSIVE by
+  a fault stays there until the stack restarts or the link is reset
+- `bus_recovery_link_reset` defaults to `false` and no launch file sets it, so
+  recovery is socket-only and cannot touch controller state either
+
+Not on the path once the held-bus classifier is entered, which is why it did not
+block the fix. It is still the behaviour of every recovery that does run, and it
+is not established whether the cause is the vendor read thread dying on the
+teardown race (`EBADF` on a `recvmsg` whose socket `shutdown()` closed under it,
+seen 2026-09-02) or something in the reconnect itself.
+
+Next step: capture a recovery with `scripts/measure_estop_bus_hold.py` plus the
+pcap and check whether any frame leaves the host after `_connect_transport`
+returns.
