@@ -25,7 +25,7 @@ actions:
       planning_group: both_arms
       source: moveit_planned
       to_pose: Packing_Pose_Side_V02
-      velocity_scaling: 0.10
+      velocity_scaling: 0.20
       acceleration_scaling: 0.10
       description: "Folded packing pose. Start and end point of the unpack/pack cycle."
 
@@ -36,7 +36,7 @@ actions:
       planning_group: both_arms
       source: moveit_planned
       to_pose: To_Packing_Pose_Side_V02
-      velocity_scaling: 0.10
+      velocity_scaling: 0.20
       acceleration_scaling: 0.10
       description: "Shoulders lifted out of the packing pose, arms still at the side. The clearance pose between packing and any working pose."
 
@@ -48,7 +48,7 @@ actions:
       planning_group: both_arms
       source: moveit_planned
       to_pose: To_Functional_Init_V02
-      velocity_scaling: 0.10
+      velocity_scaling: 0.20
       acceleration_scaling: 0.10
       description: "Arms swung to the front, low. Intermediate pose on the way into the working area."
 
@@ -59,7 +59,7 @@ actions:
       planning_group: both_arms
       source: moveit_planned
       to_pose: Functional_Init_Hold_V02
-      velocity_scaling: 0.10
+      velocity_scaling: 0.20
       acceleration_scaling: 0.10
       description: "Neutral working pose with both hands raised in front of the unit."
 
@@ -70,6 +70,6 @@ actions:
       planning_group: both_arms
       source: moveit_planned
       to_pose: Tee-Cup_Hold_Init_V01
-      velocity_scaling: 0.10
+      velocity_scaling: 0.20
       acceleration_scaling: 0.10
       description: "Presentation pose the unpack ends in; the pose a cup is handed to."

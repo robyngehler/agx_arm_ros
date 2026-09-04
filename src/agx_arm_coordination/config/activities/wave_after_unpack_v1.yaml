@@ -1,0 +1,46 @@
+# Wave demo, run after unit_unpack_top_v1 has brought the top unit out of its
+# packing pose. Enters and leaves on Functional_Init_Both_V03.
+#
+# Actions: config/catalogue.d/wave_after_unpack_v1.yaml, plus
+# `both_arms_to_functional_init` from catalogue.d/tea_pour_duo_v2.yaml.
+# Anchors: config/arm_config.yaml.
+#
+# Node 10 moves TO the entry pose rather than assuming it, the same way
+# unit_unpack_top_v1 does, so the activity is runnable on its own.
+#
+# Nodes 40 + 50 are the pause between the two waves: an anchor move back to the
+# working pose and then a two-second hold on it. The hold is an action because
+# the coordinator has no dwell primitive — a node ends when its motion ends, and
+# the gap to the next dispatch is a poll period, not a duration anyone chose.
+#
+# Arms only: no hand action, no sync group, one serial chain.
+#
+# Rough timing: 5 anchor moves + 30.2 s + 19.8 s of taught replay at speed_scale
+# 1.0 + the 2 s hold. Expect ~1.5 minutes.
+activity: wave_after_unpack_v1
+nodes:
+  # Phase 1: into the working pose, then wave with both arms.
+  - { action_no: 10, action_id: both_arms_to_functional_init }
+  - { action_no: 11, action_id: both_arms_hold_functional_init_5s }
+  - { action_no: 20, action_id: both_arms_to_wave_both_init_v01 }
+  - { action_no: 30, action_id: both_arms_wave_both_v01 }          # recorded, duo, 30.2 s
+
+  # Phase 2: back to the working pose and hold there.
+  - { action_no: 40, action_id: both_arms_to_functional_init }
+  - { action_no: 41, action_id: both_arms_hold_functional_init_5s }
+
+  # Phase 3: the right arm waves alone.
+  - { action_no: 60, action_id: both_arms_to_wave_right_init_v01 }
+  - { action_no: 70, action_id: right_arm_wave_right_v01 }         # recorded, right, 19.8 s
+
+  # Phase 4: back to the pose the activity started on.
+  - { action_no: 80, action_id: both_arms_to_functional_init }
+edges:
+  [ [10,11],
+    [11,20],
+    [20,30],
+    [30,40],
+    [40,41],
+    [41,60],
+    [60,70],
+    [70,80] ]
