@@ -639,6 +639,10 @@ class AgxArmRosNode(Node):
         # so a rising count can be logged even while feedback looks healthy.
         self._last_send_error_count = 0
         self._last_tx_loss_log = 0.0
+        # Sends the CAN layer dropped while the firmware query was polling.
+        # -1 means the pinned SDK cannot report it.
+        self._firmware_query_tx_drops = -1
+        self._firmware_query_last_send_error = None
 
     def _log_parameters(self):
         self.get_logger().info(f"can_port: {self.can_port}")
@@ -662,15 +666,55 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"bus_recovery_link_reset: {self.bus_recovery_link_reset}")
         self.get_logger().info(f"bus_recovery_max_attempts: {self.bus_recovery_max_attempts}")
 
+    def _send_error_state(self) -> tuple:
+        """``(send failures since connect, last send error)``, or ``(-1, None)``.
+
+        Both are plain attribute reads on the comm object, not SDK session
+        calls, so they do not go through the worker.
+        """
+        get_count = getattr(self.agx_arm, "get_send_error_count", None)
+        if get_count is None:
+            return -1, None
+        try:
+            count = int(get_count())
+        except Exception:
+            return -1, None
+        get_last = getattr(self.agx_arm, "get_last_send_error", None)
+        return count, (get_last() if get_last is not None else None)
+
     def _wait_for_firmware(self) -> None:
-        """Poll the firmware query until it answers or its own budget runs out."""
+        """Poll the firmware query until it answers or its own budget runs out.
+
+        Counts the sends the comm layer dropped while polling. ENOBUFS and
+        ENETDOWN are swallowed there without raising, so a request that never
+        reached the wire is otherwise indistinguishable from an arm that did not
+        answer — and the request throttle then withholds the next one for a
+        further second.
+        """
         self.firmware = None
+        before, _ = self._send_error_state()
         start_time = time.time()
         while time.time() - start_time < self.firmware_query_timeout:
             self.firmware = self.agx_arm.get_firmware()
             if self.firmware:
                 return
             time.sleep(0.005)
+
+        after, last_error = self._send_error_state()
+        if before < 0 or after < 0:
+            return
+        if self._firmware_query_tx_drops < 0:
+            self._firmware_query_tx_drops = 0
+        dropped = after - before
+        if dropped <= 0:
+            return
+        self._firmware_query_tx_drops += dropped
+        self._firmware_query_last_send_error = last_error
+        self.get_logger().warn(
+            f"firmware query: the CAN layer dropped {dropped} send(s) in "
+            f"{self.firmware_query_timeout:.1f}s, so the request never reached "
+            f"the wire. Last send error: {last_error}"
+        )
 
     def _connect_transport(self) -> bool:
         """Open the SDK session and record that one exists.
@@ -891,19 +935,43 @@ class AgxArmRosNode(Node):
                         "reconnected on firmware tier", force=True
                     )
             else:
-                # Name each half separately: a transport that exists and
-                # feedback that never came have different fixes. See
+                # Name each half separately: a transport that exists, a request
+                # that never reached the wire and an arm that did not answer
+                # have different fixes. See
                 # docs/sprint_refactor/reference/l3_command_authority.md.
+                drops = self._firmware_query_tx_drops
+                if drops > 0:
+                    tx_state = (
+                        f"CAN sends dropped: {drops}, last "
+                        f"{self._firmware_query_last_send_error}"
+                    )
+                    guidance = (
+                        "The queries never reached the wire, so the arm was "
+                        "never asked and its silence says nothing. Fix the host "
+                        "TX path first: on Jetson the 40-pin header pinmux is "
+                        "discarded by a kernel update, so re-run sudo "
+                        "/opt/nvidia/jetson-io/jetson-io.py, and check whether "
+                        "the TX packet counter advances (ip -s link show)."
+                    )
+                else:
+                    tx_state = (
+                        "CAN sends dropped: none"
+                        if drops == 0
+                        else "CAN send errors: not observable (stale SDK pin)"
+                    )
+                    guidance = (
+                        "Check in this order: (1) does this interface's TX "
+                        "packet counter advance at all (ip -s link show)? If "
+                        "not, the frames never leave the host — on Jetson the "
+                        "40-pin header pinmux is discarded by a kernel update, "
+                        "so re-run sudo /opt/nvidia/jetson-io/jetson-io.py. "
+                        "(2) arm power, E-stop and wiring for this side. "
+                        "(3) does the bus carry feedback frames (candump)?"
+                    )
                 self.get_logger().error(
-                    "Failed to get firmware version. Transport session: present; "
-                    "feedback-push bootstrap: sent; feedback: none; enable: "
-                    "unverified. Check in this order: (1) does this interface's "
-                    "TX packet counter advance at all (ip -s link show)? If not, "
-                    "the frames never leave the host — on Jetson the 40-pin "
-                    "header pinmux is discarded by a kernel update, so re-run "
-                    "sudo /opt/nvidia/jetson-io/jetson-io.py. (2) arm power, "
-                    "E-stop and wiring for this side. (3) does the bus carry "
-                    "feedback frames (candump)?"
+                    "Failed to get firmware version. Transport session: "
+                    f"present; feedback-push bootstrap: sent; {tx_state}; "
+                    f"firmware answer: none; enable: unverified. {guidance}"
                 )
                 self._park_after_failed_bootstrap()
                 exit(1)
