@@ -55,12 +55,16 @@ edge only where netlink cannot be read.
 Replayed against this recording: the old condition never entered the hold; the
 new one enters at +11.72 s and releases at +22.09 s, the instant RX returns.
 
-## Still open
+## The second defect this capture exposed — resolved 2026-09-04
 
-After recovery took the session at +14.77 s, **the driver transmitted nothing
-for the remaining 25 s**, across several `enable` attempts that each reported
-`still pending after 2.0s`. The arm's feedback returned at +22.70 s at full rate
-and never reached ROS (`move_group` kept reporting the joint state from the
-instant of the stop). Recovery is a one-way door here and the cause is not
-established. It is out of the path once the hold is entered, but it remains the
-behaviour of every recovery that does run.
+After recovery took the session at +14.77 s the driver transmitted nothing for
+the remaining 25 s, across several `enable` attempts that each reported `still
+pending after 2.0s`, while the arm's feedback returned at +22.70 s at full rate
+and never reached ROS.
+
+Recovery takes the session by quiescing the SDK worker, then submitted its
+re-arm and its feedback confirmation to that same worker. A quiesced worker
+accepts submissions and dequeues none, so the enable never reached the wire and
+`_sdk_read` returned `None` for a bus delivering ~2150 frames/s — which is what
+`attempt 1 did not restore feedback` was reporting. Both now take the `direct`
+path. Detail: `docs/open_questions.md`.

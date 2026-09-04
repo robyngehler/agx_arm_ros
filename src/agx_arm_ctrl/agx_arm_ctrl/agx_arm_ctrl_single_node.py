@@ -1157,10 +1157,11 @@ class AgxArmRosNode(Node):
             return None
         return snapshot
 
-    def _check_arm_ready(self, snapshot: "FeedbackSnapshot" = None) -> bool:
+    def _check_arm_ready(self, snapshot: "FeedbackSnapshot" = None, *,
+                         direct: bool = False) -> bool:
         joint_states = (
             snapshot.joint_angles if snapshot is not None else self._sdk_read(
-                "get_joint_angles", self.agx_arm.get_joint_angles
+                "get_joint_angles", self.agx_arm.get_joint_angles, direct=direct
             )
         )
         if joint_states is None:
@@ -1218,14 +1219,24 @@ class AgxArmRosNode(Node):
             self._sdk_read("is_ok", self.agx_arm.is_ok)
         )
 
-    def _sdk_read(self, name: str, fn):
+    def _sdk_read(self, name: str, fn, *, direct: bool = False):
         """One bounded SDK read, through the owner of the session.
 
         Callers outside the publish loop — services, one-off checks — have no
         snapshot to hand. Routing them here keeps the single-owner invariant
         without every call site having to acquire a whole batch. Returns None if
         the session is not currently ours, which reads as "not ready".
+
+        ``direct`` bypasses the worker for the caller that owns the session
+        outright (bus recovery). A submission there queues behind a quiesced
+        worker and returns None, so a live bus reads as "not ready" for as long
+        as recovery runs.
         """
+        if direct:
+            try:
+                return fn()
+            except Exception:
+                return None
         try:
             return self._sdk.call(name, fn, timeout=self.feedback_timeout)
         except (CallOutcomeUnknown, CallNotExecuted):
@@ -1233,7 +1244,8 @@ class AgxArmRosNode(Node):
         except Exception:
             return None
 
-    def _sdk_write(self, name: str, fn, *, lane: Lane = Lane.CONTROL, timeout=None):
+    def _sdk_write(self, name: str, fn, *, lane: Lane = Lane.CONTROL, timeout=None,
+                   direct: bool = False):
         """One bounded SDK write, through the owner of the session.
 
         The counterpart to :meth:`_sdk_read`, and deliberately not as forgiving:
@@ -1246,7 +1258,12 @@ class AgxArmRosNode(Node):
         interleave with a MIT setpoint cycle mid-bracket — the arm ends up in a
         mode neither caller believes it is in, and the evidence is a motion that
         was framed wrongly rather than an error anyone sees.
+
+        ``direct`` bypasses the worker for the caller that owns the session
+        outright (bus recovery), where a submission never dequeues.
         """
+        if direct:
+            return fn()
         return self._sdk.call(
             name, fn,
             timeout=self.feedback_timeout if timeout is None else timeout,
@@ -1699,7 +1716,8 @@ class AgxArmRosNode(Node):
     ENABLE_CONTRADICTED = "contradicted"
     ENABLE_UNAVAILABLE = "unavailable"
 
-    def _request_enable(self, enable: bool, timeout: float = 5.0) -> bool:
+    def _request_enable(self, enable: bool, timeout: float = 5.0, *,
+                        direct: bool = False) -> bool:
         """Send the enable/disable command. Claims nothing about the arm.
 
         Needs a transport only, no feedback. The return value says the SDK
@@ -1721,6 +1739,7 @@ class AgxArmRosNode(Node):
             action_name,
             (lambda: self.agx_arm.enable()) if enable
             else (lambda: self.agx_arm.disable()),
+            direct=direct,
         ):
             if time.time() > deadline:
                 self.get_logger().error(
@@ -1730,7 +1749,8 @@ class AgxArmRosNode(Node):
             time.sleep(0.01)
         return True
 
-    def _verify_enable(self, enable: bool, timeout: float = 5.0) -> str:
+    def _verify_enable(self, enable: bool, timeout: float = 5.0, *,
+                       direct: bool = False) -> str:
         """Read back what the joints report, and update ``enable_flag`` from it.
 
         The readback comes from the last low-speed feedback frame, which may
@@ -1746,6 +1766,7 @@ class AgxArmRosNode(Node):
             readback = self._sdk_read(
                 "get_joint_enable_status",
                 lambda: self.agx_arm.get_joint_enable_status(255),
+                direct=direct,
             )
             if readback is not None:
                 joints_enabled = bool(readback)
@@ -1781,7 +1802,8 @@ class AgxArmRosNode(Node):
         )
         return self.ENABLE_CONTRADICTED
 
-    def _enable_arm(self, enable: bool = True, timeout: float = 5.0) -> bool:
+    def _enable_arm(self, enable: bool = True, timeout: float = 5.0, *,
+                    direct: bool = False) -> bool:
         """Request enable/disable and report only what the readback confirmed.
 
         Composition of :meth:`_request_enable` and :meth:`_verify_enable`, which
@@ -1789,10 +1811,12 @@ class AgxArmRosNode(Node):
         needs feedback.
         """
         start = time.time()
-        if not self._request_enable(enable, timeout):
+        if not self._request_enable(enable, timeout, direct=direct):
             return False
         remaining = max(0.0, timeout - (time.time() - start))
-        return self._verify_enable(enable, remaining) == self.ENABLE_VERIFIED
+        return self._verify_enable(
+            enable, remaining, direct=direct
+        ) == self.ENABLE_VERIFIED
 
     @staticmethod
     def _pace(next_tick: float, period_s: float) -> float:
@@ -2617,7 +2641,9 @@ class AgxArmRosNode(Node):
                 rearmed = None
                 try:
                     if self._may_auto_enable_after_recovery():
-                        rearmed = self._enable_arm(True, self.enable_timeout)
+                        rearmed = self._enable_arm(
+                            True, self.enable_timeout, direct=True
+                        )
                     self.agx_arm.set_speed_percent(self.speed_percent)
                     self.agx_arm.set_tcp_offset(self.tcp_offset)
                 except Exception as e:
@@ -2634,7 +2660,9 @@ class AgxArmRosNode(Node):
                 # leader-mode assumption so the watchdog uses normal feedback.
                 self._leader_mode_active = False
 
-                if self._wait_for_feedback(self.enable_timeout):
+                # direct: recovery owns the session, so this read must not be
+                # submitted to the worker it quiesced.
+                if self._wait_for_feedback(self.enable_timeout, direct=True):
                     # Say what was verified, not what happened to be true
                     # afterwards. The 0E fault test logged "recovery succeeded"
                     # for a bus that had come back on its own, and the re-arm
@@ -2746,10 +2774,10 @@ class AgxArmRosNode(Node):
         self.get_logger().info(f"Reset CAN link {channel} (down/up)")
         return True
 
-    def _wait_for_feedback(self, timeout: float) -> bool:
+    def _wait_for_feedback(self, timeout: float, *, direct: bool = False) -> bool:
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if self.agx_arm.is_ok() and self._check_arm_ready():
+            if self.agx_arm.is_ok() and self._check_arm_ready(direct=direct):
                 return True
             time.sleep(0.02)
         return False

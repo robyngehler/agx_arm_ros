@@ -175,34 +175,32 @@ Position ranges therefore cannot be applied to feedback values without that
 correction; velocity limits are offset-invariant and are unaffected.
 Detail: `sprint_refactor/reference/trajectory_retiming.md`.
 
-## Recovery transmits nothing after it takes the session
+## Recovery transmits nothing after it takes the session — resolved 2026-09-04
 
-Open since 2026-09-03. Measured on `can_nero_left` during a watchdog emergency
-stop (`sprint_refactor/reference/bus_hold_tx_evidence.md`).
+Recovery quiesced the SDK worker and then submitted its own re-arm and its
+feedback confirmation to that same worker. A quiesced worker keeps accepting
+submissions and dequeues none, so neither could complete:
 
-Once `_recover_bus` took the SDK session, the driver sent **zero** frames for
-the remaining 25 s of the capture, across four `enable` attempts that each
-reported `still pending after 2.0s`. That message means the worker call did not
-finish — not that the arm failed to answer: the pcap shows the frames never
-reached the wire at all. Meanwhile the arm's feedback returned at full rate
-(~2150 frames/s) and never reached ROS; `move_group` kept reporting the joint
-state from the instant of the stop, and `_wait_for_feedback` kept reporting that
-feedback had not been restored.
+- `_enable_arm` timed out as `enable: still pending after 2.0s` on every attempt
+  and no frame reached the wire, which is why the capture showed zero outgoing
+  frames for the whole 25 s of recovery
+- `_wait_for_feedback` read through `_sdk_read`, which returns `None` when the
+  session is not the worker's — so a bus delivering ~2150 frames/s read as "not
+  ready" and recovery reported `attempt 1 did not restore feedback` indefinitely
 
-Two consequences follow while this stands:
+The controller error state could not clear either, because the transmit error
+counter decrements only on a successful transmission and nothing was being
+transmitted. Restarting the stack worked because a fresh session has no
+recovery in progress.
 
-- the controller error state cannot clear, because the transmit error counter
-  decrements only on a *successful* transmission — a link left ERROR-PASSIVE by
-  a fault stays there until the stack restarts or the link is reset
-- `bus_recovery_link_reset` defaults to `false` and no launch file sets it, so
-  recovery is socket-only and cannot touch controller state either
+Both call sites now take the `direct` path that `_ensure_feedback_push_enabled`
+already had, which calls the SDK inline for the owner that took the session.
 
-Not on the path once the held-bus classifier is entered, which is why it did not
-block the fix. It is still the behaviour of every recovery that does run, and it
-is not established whether the cause is the vendor read thread dying on the
-teardown race (`EBADF` on a `recvmsg` whose socket `shutdown()` closed under it,
-seen 2026-09-02) or something in the reconnect itself.
+Superseded reading (2026-09-03): the cause was suspected to be the vendor read
+thread dying on the teardown race, or the reconnect itself. Neither was
+involved.
 
-Next step: capture a recovery with `scripts/measure_estop_bus_hold.py` plus the
-pcap and check whether any frame leaves the host after `_connect_transport`
-returns.
+Remaining: `bus_recovery_link_reset` still defaults to `false` and no launch
+file sets it, so recovery cannot reset a controller left in ERROR-PASSIVE by a
+genuine fault. Untested whether that matters now that the held-bus classifier
+keeps recovery off the emergency-stop path.

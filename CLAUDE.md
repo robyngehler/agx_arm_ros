@@ -84,6 +84,10 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
 - keep exactly one owner of a device's SDK session at any instant: steady-state
   calls go through that device's serialized worker on a declared priority lane,
   and recovery is the one exception because it takes the session off the worker.
+  That exception has to be complete: a quiesced worker accepts submissions and
+  dequeues none, so every call recovery makes while holding the session bypasses
+  the worker — the re-arm and the feedback confirmation included, or a healthy
+  bus reads as dead for recovery's whole budget
   This holds for arms and hands alike — each hand bridge owns an `SdkWorker` with
   the same four lanes since 2026-08-15, and no ROS callback reaches the vendor SDK
   directly. The safety lane preempts the queue but not the call in flight, and the

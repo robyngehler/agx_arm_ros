@@ -375,3 +375,116 @@ def test_recovery_takes_the_sdk_session_and_gives_it_back():
     assert node._sdk.quiesced is False, "session was not handed back"
     node._sdk.shutdown()
 
+
+# --------------------------------------------------------------------------
+# Recovery owns the session it quiesced
+#
+# Recovery quiesces the worker and then has to re-arm and confirm feedback
+# through something. Submitting either to that worker cannot complete: a
+# quiesced worker keeps accepting submissions and dequeues none, so the re-arm
+# never reaches the wire and a live bus reads as "not ready" for as long as
+# recovery runs.
+# --------------------------------------------------------------------------
+
+
+class _SessionArm:
+    """Records which calls actually reached the SDK. Healthy throughout."""
+
+    def __init__(self):
+        self.calls = []
+        self._ts = 1000.0
+
+    def enable(self):
+        self.calls.append("enable")
+        return True
+
+    def get_joint_enable_status(self, _joint):
+        self.calls.append("enable_readback")
+        return True
+
+    def is_ok(self):
+        return True
+
+    def get_joint_angles(self):
+        self.calls.append("joint_angles")
+        self._ts += 0.01
+        return SimpleNamespace(timestamp=self._ts, hz=137.0, msg=[0.0] * 7)
+
+
+def _session_node(*, quiesced: bool):
+    from agx_arm_ctrl.sdk_worker import SdkWorker as _W
+
+    node = AgxArmRosNode.__new__(AgxArmRosNode)
+    node.get_logger = lambda: _FakeLogger()
+    node.agx_arm = _SessionArm()
+    node._sdk = _W("arm_left")
+    node.feedback_timeout = 0.2
+    node.enable_timeout = 1.0
+    node.enable_flag = False
+    node._transport_available = lambda: True
+    node._last_feedback_frame_ts = None
+    node._last_feedback_advance_monotonic = time.monotonic()
+    if quiesced:
+        assert node._sdk.quiesce(timeout=1.0)
+    return node
+
+
+def test_the_rearm_reaches_the_arm_while_recovery_owns_the_session():
+    """The re-arm must reach the wire, not the queue recovery just stopped."""
+    node = _session_node(quiesced=True)
+    try:
+        assert node._enable_arm(True, 1.0, direct=True) is True
+        assert "enable" in node.agx_arm.calls
+    finally:
+        node._sdk.resume()
+        node._sdk.shutdown()
+
+
+def test_a_rearm_submitted_to_the_quiesced_worker_never_reaches_the_arm():
+    """The shape the direct path exists to avoid, pinned so it cannot return."""
+    from agx_arm_ctrl.sdk_worker import CallOutcomeUnknown
+
+    node = _session_node(quiesced=True)
+    try:
+        try:
+            node._request_enable(True, 0.3)
+        except CallOutcomeUnknown:
+            pass
+        assert node.agx_arm.calls == [], (
+            f"the enable must not have reached the arm, got {node.agx_arm.calls}"
+        )
+    finally:
+        node._sdk.resume()
+        node._sdk.shutdown()
+
+
+def test_recovery_confirms_a_live_bus_while_it_owns_the_session():
+    """Confirming the bus came back is the whole exit condition of recovery."""
+    node = _session_node(quiesced=True)
+    try:
+        assert node._wait_for_feedback(1.0, direct=True) is True
+        assert "joint_angles" in node.agx_arm.calls
+    finally:
+        node._sdk.resume()
+        node._sdk.shutdown()
+
+
+def test_a_feedback_wait_on_the_quiesced_worker_reads_a_live_bus_as_dead():
+    """Why recovery reported 'did not restore feedback' on a healthy bus."""
+    node = _session_node(quiesced=True)
+    try:
+        assert node._wait_for_feedback(0.4) is False
+        assert node.agx_arm.calls == []
+    finally:
+        node._sdk.resume()
+        node._sdk.shutdown()
+
+
+def test_the_ordinary_paths_still_go_through_the_worker():
+    """`direct` is the recovery exception, not a new default."""
+    node = _session_node(quiesced=False)
+    try:
+        assert node._wait_for_feedback(1.0) is True
+        assert "joint_angles" in node.agx_arm.calls
+    finally:
+        node._sdk.shutdown()

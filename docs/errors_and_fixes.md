@@ -415,6 +415,35 @@ edge that requires the failing activity to keep succeeding.
 
 Evidence and method: `sprint_refactor/reference/bus_hold_tx_evidence.md`.
 
+## Recovery submitted its own work to the worker it had stopped
+
+An emergency stop left the arm unusable until the stack was restarted, on a bus
+that was healthy again seconds later. Recovery takes the SDK session by
+quiescing the worker, then re-arms the arm and waits for feedback to confirm the
+bus came back. Both of those went *through the quiesced worker*.
+
+A quiesced worker keeps accepting submissions and dequeues none, by design — a
+caller should not have to know that ownership moved. So the re-arm never reached
+the wire (`enable: still pending after 2.0s`, and zero outgoing frames in the
+capture for 25 s), and the feedback wait read `None` from a bus delivering ~2150
+frames/s and reported `did not restore feedback` on a loop for its full 300 s
+budget.
+
+The escape hatch already existed: `_ensure_feedback_push_enabled` takes a
+`direct` flag documented as "bypasses the worker for the callers that own the
+session outright (bus recovery, shutdown)". Two of the three things recovery
+does simply never used it.
+
+The general shape: **an owner that suspends a queue must not then use that
+queue.** Where a component takes exclusive ownership by stopping a dispatcher,
+every call it makes while holding that ownership needs the bypass — not just the
+one whose author happened to hit the problem first. A partial bypass is worse
+than none, because the working calls make the broken ones look like a hardware
+fault.
+
+Detail: `open_questions.md`, "Recovery transmits nothing after it takes the
+session".
+
 ## Recurring traps that cost more than one session
 
 Escalated from the sprint records because each one recurred, or generalises past
