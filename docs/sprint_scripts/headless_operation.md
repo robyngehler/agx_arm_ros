@@ -1,11 +1,12 @@
 # Running the Jetson headless over SSH
 
 status: EVALUATION
-last_updated: 2026-09-01
+last_updated: 2026-09-05
 scope: what is in place for operating the unit with no monitor, and what is missing
 
-Measured on the unit 2026-09-01. Items 4 and 6 have since been acted on and
-are marked; the rest is a report.
+Measured on the unit 2026-09-01. Items 4 and 6 have since been acted on and are
+marked; the rest is a report. §4 was extended 2026-09-05 with the reversible
+demo-mode scripts.
 
 ## What already works
 
@@ -90,6 +91,21 @@ several control cycles.
 
 The trade: the unit draws its full budget and the fan runs harder whether or not
 it is doing anything.
+
+Two further scripts cover the same ground with a restore path, for a demo the
+unit is meant to come out of again: `scripts/jetson_presentation_mode.sh
+{on|off|status}` (CPU governor, CPU hotplug, USB/PCI/net runtime PM, WiFi power
+save, sleep targets) and `scripts/jetson_clock_boost.sh {on|off|status}`
+(`jetson_clocks`, which pins CPU min to max and disables the CPU idle states).
+Both save what they change under `/run`, so the saved state and the settings
+disappear together at reboot.
+
+They do **not** set `nvpmodel`, and a governor cannot reach a clock the power
+model forbids — check `nvpmodel -q` reads MAXN before relying on them, or run
+`jetson_performance_mode.sh` instead. Do not mix the two families in one session:
+`jetson_performance_mode.sh` calls `jetson_clocks` without `--store`, so a
+`jetson_clock_boost.sh on` afterwards records the already-boosted clocks as the
+state to restore.
 
 ### 5. The unit boots to `graphical.target` — it runs a desktop nobody sees
 
