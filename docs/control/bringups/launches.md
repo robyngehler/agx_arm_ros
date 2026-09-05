@@ -20,30 +20,69 @@ truth for slice composition, prefixes, frames, side buses, and gravity URDF deri
 ## Operator entry points
 
 The scripts below are the supported way to run a demo. They wrap the launch lines
-in the rest of this page, wait for the surfaces the next step needs, and run the
-activity through the existing `run_activity` client. The raw commands stay
-documented here because the scripts are a convenience, not a new contract.
+in the rest of this page and run activities through the existing `run_activity`
+client. The raw commands stay documented here because the scripts are a
+convenience, not a new contract.
+
+**One long-lived stack, many short activity runs.** The supervisor owns the
+launches and stays up; every activity attaches to it. A cancelled activity leaves
+the stack running, so a resume costs nothing but the retry.
 
 ```bash
 sudo bash scripts/activate_stack.sh            # buses up and verified
-./scripts/unpack_bottom_unit.py --slow         # bottom unit out of its packing pose
-./scripts/pack_bottom_unit.py --slow           # and back into it
+
+tmux new -A -s stack                           # pane 1: the stack, left running
+./scripts/start_demo_stack.py                  # profile follows AGX_UNIT
+
+# pane 2: activities, one after another against that stack
 ./scripts/unpack_top_unit.py                   # top unit into Functional_Init_Both_V03
-./scripts/pack_top_unit.py                     # and back
-./scripts/start_tea_demo.py                    # tea_pour_duo_v2
-./scripts/start_block_restack.py               # block_restack_v1 (needs both grippers)
+./scripts/wave.py                              # wave with both arms and return
+./scripts/pack_top_unit.py                     # and back into the packing pose
+
+./scripts/stop_demo_stack.py                   # or Ctrl+C in pane 1
 ```
 
-Each waits for the stack, prints what is live and how many operator steps the
-activity has, then blocks on Enter. Common options: `--from-id N` resumes at
-operator step N, `--no-prompt` skips the Enter gate, `--dry-run` brings the stack
-up and sends nothing, `--log-dir PATH` keeps the launch logs somewhere you choose.
-The bottom-unit scripts also take `--speed fast|slow` (`--fast` / `--slow`).
+On the bottom unit the flows are `unpack_bottom_unit.py` / `pack_bottom_unit.py`,
+which also take `--speed fast|slow` (`--fast` / `--slow`).
 
-**Ctrl+C goes to `run_activity`, not to the stack.** The first press cancels the
-activity, the second escalates to the unit emergency stop. The launches are torn
-down only after the client has returned, so the coordinator still has a driver to
-unwind against.
+**Which unit this machine is comes from `AGX_UNIT`**, set once with
+`./scripts/isolate_ros_graph.sh --unit top|bottom` together with the ROS domain.
+`start_demo_stack.py` takes the execution profile from it — `duo_hand` on top,
+`duo_arm` on the bottom unit, or `duo_gripper` with `--grippers` — and every
+activity script refuses to run on the unit it was not written for. `--unit`
+overrides it for one command.
+
+The two demos that need a different stack ask for it by name:
+
+```bash
+./scripts/start_demo_stack.py --stack tea      # duo_hand_external_bridge, hand bridges, teapot mass
+./scripts/start_tea_demo.py                    # tea_pour_duo_v2
+
+./scripts/start_demo_stack.py --stack block    # duo_gripper
+./scripts/start_block_restack.py               # block_restack_v1
+```
+
+An activity run against the wrong stack is refused before anything is sent, and
+names the command that brings up the right one.
+
+Common activity options: `--from-id N` resumes at operator step N, `--no-prompt`
+skips the Enter gate, `--metadata-json` passes run-time overrides through.
+Supervisor options: `--timeout-sec` per bring-up phase, `--log-dir PATH`.
+
+**Components come up before coordination**, and each phase is waited for
+separately. The coordinator's action clients only wait for their servers at
+dispatch time, so `/execute_activity` appearing says nothing about whether an arm
+is there.
+
+**Launch logs are kept.** `logs/demo_stack/<unit>_<timestamp>/` per bring-up, one
+file per launch, printed when the supervisor starts. They are not a temp
+directory that disappears with the run.
+
+**Ctrl+C in the activity pane goes to `run_activity`.** The first press cancels
+the activity, the second escalates to the unit emergency stop. Nothing tears the
+stack down behind it — the supervisor is a different process in a different
+pane, so the coordinator keeps a driver to unwind against and the stack is still
+there afterwards.
 
 **`--from-id` counts operator steps, not graph nodes.** One step is one dispatch
 batch, so a synchronized arm-plus-hand pair is a single step. A step that replays

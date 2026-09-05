@@ -5,12 +5,13 @@ Arms only. The first step moves to the presentation pose, so the fold into the
 packing pose — the transition with no clearance margin — always starts from a
 known pose.
 """
-from demo_stack import arm_flow, main_for
+from demo_stack import ActivitySpec, main_for
 
 
 def spec(args):
-    return arm_flow(
+    return ActivitySpec(
         name="pack_bottom_unit",
+        unit="bottom",
         activity=f"unit_pack_bottom_{args.speed}_v1",
         description=f"bottom unit: presentation pose -> packing pose ({args.speed})",
     )

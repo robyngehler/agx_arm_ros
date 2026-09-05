@@ -289,18 +289,24 @@ service lives on the MIT controller, which is an arm surface.
 
 ### 2. Live bring-up
 
-The supported way is the operator script, which runs exactly the composition
-below, waits for it, and then blocks on Enter:
+The supported way is the operator scripts: a supervisor that brings up exactly
+the composition below and stays alive owning it, and an activity script that runs
+against it.
 
 ```bash
 sudo bash ./scripts/activate_stack.sh
-./scripts/start_tea_demo.py                 # --from-id N to resume, --dry-run to stop before the goal
+
+tmux new -A -s stack                        # pane 1
+./scripts/start_demo_stack.py --stack tea   # stays up; stop with Ctrl+C here
+
+./scripts/start_tea_demo.py                 # pane 2; --from-id N to resume
 ```
 
-It prints the 21 operator steps and which of them replay a taught path (3, 6, 9,
-10, 12, 18, 19) and are therefore not resume points. Ctrl+C reaches
-`run_activity`, so the cancel ladder below is unchanged. On a failure it names the
-step reached and the `--from-id` to continue from.
+The activity script prints the 21 operator steps and which of them replay a
+taught path (3, 6, 9, 10, 12, 18, 19) and are therefore not resume points. Ctrl+C
+reaches `run_activity`, so the cancel ladder below is unchanged. On a failure it
+names the step reached and the `--from-id` to continue from — and the stack is
+still up to resume against.
 
 The composition it starts, for reference and for running by hand:
 

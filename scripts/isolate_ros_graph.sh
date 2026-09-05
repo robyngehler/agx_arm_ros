@@ -1,21 +1,25 @@
 #!/bin/bash
 #
-# isolate_ros_graph.sh — keep this unit's ROS graph off the network.
+# isolate_ros_graph.sh — say which unit this machine is, and keep its ROS graph
+# off the network.
 #
-# Two units on one router share a DDS graph, and this stack names its topics by
-# side, not by unit: both publish /left_arm/feedback/joint_states, both offer
+# One place decides both, because they are the same decision. Two units on one
+# router share a DDS graph, and this stack names its topics by side, not by unit:
+# both publish /left_arm/feedback/joint_states, both offer
 # /right_arm/emergency_stop and /execute_activity, and /tf is global with
 # identical frame names on both. One trajectory command then reaches two arm
 # drivers. Nothing here needs the network — each unit brings up its own launches
-# and runs run_activity against them locally (scripts/demo_stack.py) — so the
-# graph is confined to loopback and given a domain of its own.
+# and runs run_activity against them locally (scripts/demo_stack.py).
 #
+#   AGX_UNIT=top|bottom    Which unit this machine is. scripts/start_demo_stack.py
+#                          takes the execution profile from it, and every activity
+#                          script refuses to run on the unit it was not written for.
 #   ROS_LOCALHOST_ONLY=1   DDS discovery and traffic stay on lo. This is the
 #                          actual isolation: it holds even if both units end up
 #                          on the same domain.
-#   ROS_DOMAIN_ID=<n>      Different UDP ports per unit. Redundant on purpose —
-#                          it still separates the two if someone unsets
-#                          ROS_LOCALHOST_ONLY for a debugging session.
+#   ROS_DOMAIN_ID=<n>      Different UDP ports per unit, derived from AGX_UNIT.
+#                          Redundant on purpose — it still separates the two if
+#                          someone unsets ROS_LOCALHOST_ONLY for a debugging session.
 #
 # WHAT IT COSTS. No RViz, `ros2 topic echo` or rqt from a laptop against this
 # unit. The demo stacks run with use_rviz:=false anyway.
@@ -26,16 +30,21 @@
 # §2). The demos are operated from an interactive tmux session.
 #
 # Usage:
-#   ./scripts/isolate_ros_graph.sh --domain 41    # top unit
-#   ./scripts/isolate_ros_graph.sh --domain 42    # bottom unit
-#   ./scripts/isolate_ros_graph.sh --show         # report, change nothing
-#   ./scripts/isolate_ros_graph.sh --revert       # remove the managed block
+#   ./scripts/isolate_ros_graph.sh --unit top             # AGX_UNIT + domain 41
+#   ./scripts/isolate_ros_graph.sh --unit bottom          # AGX_UNIT + domain 42
+#   ./scripts/isolate_ros_graph.sh --unit top --domain 51 # override the domain
+#   ./scripts/isolate_ros_graph.sh --show                 # report, change nothing
+#   ./scripts/isolate_ros_graph.sh --revert               # remove the managed block
 
 set -uo pipefail
 
 BASHRC="${HOME}/.bashrc"
-BEGIN_MARK="# >>> agx_arm_ros ros graph isolation >>>"
-END_MARK="# <<< agx_arm_ros ros graph isolation <<<"
+BEGIN_MARK="# >>> agx_arm_ros unit identity >>>"
+END_MARK="# <<< agx_arm_ros unit identity <<<"
+# What earlier versions of this script wrote; removed on apply so a unit that
+# was set up before AGX_UNIT existed does not end up with two blocks.
+LEGACY_BEGIN_MARK="# >>> agx_arm_ros ros graph isolation >>>"
+LEGACY_END_MARK="# <<< agx_arm_ros ros graph isolation <<<"
 
 # The L2 activity harness runs on 77 and refuses to start when that domain is
 # not empty (src/agx_arm_coordination/test/test_l2_activity_integration.py).
@@ -43,21 +52,33 @@ RESERVED_DOMAIN=77
 # Above 101 the DDS port range starts overlapping the ephemeral ports.
 MAX_DOMAIN=101
 
+#: The domain each unit gets unless --domain overrides it.
+domain_for_unit() {
+    case "$1" in
+        top)    echo 41 ;;
+        bottom) echo 42 ;;
+        *)      echo "" ;;
+    esac
+}
+
 MODE=""
 DOMAIN=""
+UNIT=""
 
 usage() {
-    echo "usage: $0 --domain <0-${MAX_DOMAIN}> | --show | --revert" >&2
+    echo "usage: $0 --unit <top|bottom> [--domain <0-${MAX_DOMAIN}>] | --show | --revert" >&2
     exit 2
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --unit)   UNIT="${2:-}"; MODE=apply; shift 2 || usage ;;
+        --unit=*) UNIT="${1#*=}"; MODE=apply; shift ;;
         --domain) DOMAIN="${2:-}"; MODE=apply; shift 2 || usage ;;
         --domain=*) DOMAIN="${1#*=}"; MODE=apply; shift ;;
         --show|show) MODE=show; shift ;;
         --revert)    MODE=revert; shift ;;
-        -h|--help)   sed -n '2,34p' "$(readlink -f "${BASH_SOURCE[0]}")"; exit 0 ;;
+        -h|--help)   sed -n '2,37p' "$(readlink -f "${BASH_SOURCE[0]}")"; exit 0 ;;
         *) usage ;;
     esac
 done
@@ -71,11 +92,12 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 managed_block() {
-    grep -A3 -F "$BEGIN_MARK" "$BASHRC" 2>/dev/null | grep -E '^export ROS_' || true
+    grep -A4 -F "$BEGIN_MARK" "$BASHRC" 2>/dev/null | grep -E '^export (ROS_|AGX_)' || true
 }
 
 report() {
     local nodes
+    echo "unit            : AGX_UNIT=${AGX_UNIT:-<unset>}"
     echo "shell now       : ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-<unset>}" \
          "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-<unset, means 0>}"
     if grep -qF "$BEGIN_MARK" "$BASHRC" 2>/dev/null; then
@@ -107,11 +129,13 @@ fi
 BACKUP="${BASHRC}.$(date +%Y%m%d-%H%M%S).bak"
 cp "$BASHRC" "$BACKUP" || exit 1
 
-# Drop any previous block so a second run replaces it instead of stacking.
+# Drop any previous block so a second run replaces it instead of stacking, and
+# the pre-AGX_UNIT block a unit set up yesterday still carries.
 sed -i "\|^${BEGIN_MARK}\$|,\|^${END_MARK}\$|d" "$BASHRC"
+sed -i "\|^${LEGACY_BEGIN_MARK}\$|,\|^${LEGACY_END_MARK}\$|d" "$BASHRC"
 
 if [ "$MODE" = revert ]; then
-    if grep -qF "$BEGIN_MARK" "$BASHRC"; then
+    if grep -qF "$BEGIN_MARK" "$BASHRC" || grep -qF "$LEGACY_BEGIN_MARK" "$BASHRC"; then
         echo "failed to remove the managed block; ${BASHRC} restored from ${BACKUP}" >&2
         cp "$BACKUP" "$BASHRC"
         exit 1
@@ -123,16 +147,29 @@ fi
 
 # --- apply ------------------------------------------------------------------
 
+restore_and_fail() {
+    echo "$1" >&2
+    cp "$BACKUP" "$BASHRC"
+    exit 2
+}
+
+case "$UNIT" in
+    top|bottom) ;;
+    '') restore_and_fail "--unit is required: this machine has to say whether it is the top or the bottom unit." ;;
+    *)  restore_and_fail "--unit must be top or bottom, got '${UNIT}'" ;;
+esac
+
+# The domain follows the unit unless it was given explicitly.
+[ -n "$DOMAIN" ] || DOMAIN="$(domain_for_unit "$UNIT")"
+
 case "$DOMAIN" in
-    ''|*[!0-9]*) echo "--domain needs a number, got '${DOMAIN}'" >&2; cp "$BACKUP" "$BASHRC"; exit 2 ;;
+    ''|*[!0-9]*) restore_and_fail "--domain needs a number, got '${DOMAIN}'" ;;
 esac
 if [ "$DOMAIN" -gt "$MAX_DOMAIN" ]; then
-    echo "--domain ${DOMAIN} is above ${MAX_DOMAIN}; the DDS ports would reach into the ephemeral range." >&2
-    cp "$BACKUP" "$BASHRC"; exit 2
+    restore_and_fail "--domain ${DOMAIN} is above ${MAX_DOMAIN}; the DDS ports would reach into the ephemeral range."
 fi
 if [ "$DOMAIN" -eq "$RESERVED_DOMAIN" ]; then
-    echo "--domain ${RESERVED_DOMAIN} is the L2 test harness domain; it refuses to start when the domain is not empty." >&2
-    cp "$BACKUP" "$BASHRC"; exit 2
+    restore_and_fail "--domain ${RESERVED_DOMAIN} is the L2 test harness domain; it refuses to start when the domain is not empty."
 fi
 if [ "$DOMAIN" -eq 0 ]; then
     echo "WARNING: 0 is the default domain, so any unconfigured ROS machine in the room joins it." >&2
@@ -141,6 +178,7 @@ fi
 
 BLOCK="${BEGIN_MARK}
 # Managed by scripts/isolate_ros_graph.sh — change it through that script.
+export AGX_UNIT=${UNIT}
 export ROS_LOCALHOST_ONLY=1
 export ROS_DOMAIN_ID=${DOMAIN}
 ${END_MARK}"
@@ -158,7 +196,8 @@ else
     printf '%s\n' "$BLOCK" >> "$BASHRC"
 fi
 
-if ! grep -qF "export ROS_DOMAIN_ID=${DOMAIN}" "$BASHRC"; then
+if ! grep -qF "export AGX_UNIT=${UNIT}" "$BASHRC" \
+   || ! grep -qF "export ROS_DOMAIN_ID=${DOMAIN}" "$BASHRC"; then
     echo "the block did not land in ${BASHRC}; restoring ${BACKUP}" >&2
     cp "$BACKUP" "$BASHRC"
     exit 1
@@ -188,8 +227,10 @@ fi
 
 cat <<NEXT
 
-A script cannot export into the shell that called it. For the shell you are in:
+This machine is now the ${UNIT} unit. A script cannot export into the shell that
+called it, so for the shell you are in:
 
+    export AGX_UNIT=${UNIT}
     export ROS_LOCALHOST_ONLY=1
     export ROS_DOMAIN_ID=${DOMAIN}
 

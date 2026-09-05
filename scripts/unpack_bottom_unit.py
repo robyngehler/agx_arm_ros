@@ -5,12 +5,13 @@ Arms only. Runs from wherever the arms stand: the first step moves to the packin
 pose rather than assuming it. Every step is a planned anchor move, so any step is
 a valid --from-id.
 """
-from demo_stack import arm_flow, main_for
+from demo_stack import ActivitySpec, main_for
 
 
 def spec(args):
-    return arm_flow(
+    return ActivitySpec(
         name="unpack_bottom_unit",
+        unit="bottom",
         activity=f"unit_unpack_bottom_{args.speed}_v1",
         description=f"bottom unit: packing pose -> presentation pose ({args.speed})",
     )

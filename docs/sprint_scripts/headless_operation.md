@@ -146,11 +146,20 @@ this is a decision about how the unit is used, not a defect.
 Was `ROS_LOCALHOST_ONLY=0` with no domain id, so any ROS 2 machine joining the
 same AP would have joined the graph, and discovery ran as multicast over WiFi.
 
-**Every unit sets `ROS_LOCALHOST_ONLY=1` and its own `ROS_DOMAIN_ID` in
-`~/.bashrc`, above the ROS sourcing.** `scripts/isolate_ros_graph.sh --domain <n>`
-writes that block, backs the file up, and stops the `ros2` daemon, which
-otherwise keeps serving the graph of the domain it was started in. `--show`
-reports, `--revert` removes it.
+**Every unit says which unit it is, and the rest follows from that.**
+`scripts/isolate_ros_graph.sh --unit top|bottom` writes one managed block into
+`~/.bashrc` above the ROS sourcing — `AGX_UNIT`, `ROS_LOCALHOST_ONLY=1` and the
+`ROS_DOMAIN_ID` derived from the unit (top 41, bottom 42; `--domain` overrides
+it) — backs the file up, and stops the `ros2` daemon, which otherwise keeps
+serving the graph of the domain it was started in. `--show` reports, `--revert`
+removes it.
+
+`AGX_UNIT` is the same identity the script layer uses:
+`scripts/start_demo_stack.py` takes the execution profile from it and every
+activity script refuses to run on the unit it was not written for. Which unit a
+machine is was previously encoded separately in the script the operator typed,
+the profile the stack came up with, and the domain — three places that could each
+be wrong on their own.
 
 The network is only how a unit is reached; the graph stays on it. Discovery and
 traffic are confined to loopback, so nothing on the WiFi can join and nothing
@@ -179,25 +188,37 @@ exports are in `~/.bashrc`, so an interactive SSH session has them and
 
 ## 7. A dropped connection orphans the stack — and that one is ours
 
-The demo scripts start their launches with `start_new_session=True` on purpose,
-so a terminal Ctrl+C reaches `run_activity` and its cancel ladder instead of the
-stack it is cancelling against. The same property means a SIGHUP from a dropped
-SSH session kills **only the wrapper**: its teardown never runs, and the launches
+The supervisor starts its launches with `start_new_session=True` on purpose, so
+it decides when they stop and in which order rather than a terminal signal
+reaching all of them at once. The same property means a SIGHUP from a dropped SSH
+session kills **only the supervisor**: its teardown never runs, and the launches
 keep going with a live arm driver and nobody supervising it. The next run then
 finds the buses held.
 
-`demo_stack.py` now warns when it is started over SSH outside tmux or screen and
-names the command to use. It is a warning rather than a refusal: an operator on a
+Splitting the supervisor from the activity scripts moved this rather than fixing
+it — but it also left a trace. The supervisor writes
+`~/.cache/agx_demo_stack/<unit>.json` with its pid and log directory, so a second
+SSH session can find what is still running instead of guessing;
+`stop_demo_stack.py` reads it, and clears it when the supervisor it names is
+gone. Not `/run/user/<uid>`, which systemd removes when the user's last login
+session ends — precisely the dropped-SSH case.
+
+`start_demo_stack.py` warns when it is started over SSH outside tmux or screen
+and names the command to use. It is a warning rather than a refusal: an operator on a
 wired link with a monitor beside them does not need it.
 
-**Run the demos inside tmux when working over SSH:**
+**Run the stack inside tmux when working over SSH:**
 
 ```bash
-tmux new -A -s demo
-./scripts/start_tea_demo.py
-# detach with ctrl-b d; the run survives the disconnect
-tmux attach -t demo
+tmux new -A -s stack
+./scripts/start_demo_stack.py
+# detach with ctrl-b d; the stack survives the disconnect
+tmux attach -t stack
 ```
+
+Activities run from a second pane against that stack. Only the supervisor has to
+survive a disconnect — an activity that loses its terminal loses `run_activity`
+with it, and the coordinator's own cancel path takes over from there.
 
 ## Where it stands
 
@@ -208,8 +229,8 @@ not on one.
 
 Open, in the order they are worth doing:
 
-1. `./scripts/isolate_ros_graph.sh --domain <n>` on each unit, distinct domains,
-   then `--show` on both with the other unit's stack up
+1. `./scripts/isolate_ros_graph.sh --unit top|bottom` on each unit, then `--show`
+   on both with the other unit's stack up
 2. run `sudo ./scripts/jetson_performance_mode.sh --install`
 3. rename the host away from `ubuntu`, so `.local` resolves to this machine and
    not to whichever stock Ubuntu box booted first (§3) — with two units this is
