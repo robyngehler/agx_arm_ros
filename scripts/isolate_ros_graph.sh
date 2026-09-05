@@ -119,11 +119,50 @@ report() {
         echo "next session    : no managed block in ${BASHRC}"
     fi
     echo "rmw             : ${RMW_IMPLEMENTATION:-<unset, Humble default rmw_fastrtps_cpp>}"
-    if command -v ros2 >/dev/null; then
-        nodes="$(timeout 10 ros2 node list 2>/dev/null | grep -c .)"
-        echo "nodes visible   : ${nodes:-0} (in the domain this shell is in)"
-    else
+    report_nodes
+    echo "dds multicast   : $(dds_multicast_interfaces)"
+}
+
+# Counted without the ros2 daemon and with an explicit discovery window. The
+# daemon is a cache with its own failure mode: one on this unit answered
+# `!rclpy.ok()` while reporting itself as running, and a graph of 23 nodes read
+# as 0. A count that cannot fail silently is the whole point of this line, so a
+# failed query says so instead of returning a number.
+report_nodes() {
+    local out rc
+    if ! command -v ros2 >/dev/null; then
         echo "nodes visible   : ros2 not on PATH in this shell"
+        return 0
+    fi
+    out="$(timeout 60 ros2 node list --no-daemon --spin-time 5 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "nodes visible   : QUERY FAILED (exit ${rc}) — this is not 'no nodes'"
+        printf '%s\n' "$out" | tail -3 | sed 's/^/                  /'
+        return 0
+    fi
+    echo "nodes visible   : $(printf '%s\n' "$out" | grep -c .) (in the domain this shell is in)"
+    local dupes
+    dupes="$(printf '%s\n' "$out" | sort | uniq -d | paste -sd' ' -)"
+    if [ -n "$dupes" ]; then
+        echo "DUPLICATE NAMES : ${dupes}"
+        echo "                  two units are in one graph; this is the collision"
+    fi
+}
+
+# Where DDS discovery is actually reachable, which is what confines a graph.
+# 239.255.0.1 on loopback only is the isolated state; the group on a shared
+# interface is not, whoever joined it.
+dds_multicast_interfaces() {
+    local ifaces
+    ifaces="$(awk '/^[0-9]+\t/{ifc=$2} /0100FFEF/{print ifc}' /proc/net/igmp 2>/dev/null \
+              | paste -sd' ' -)"
+    if [ -z "$ifaces" ]; then
+        echo "no interface has joined 239.255.0.1"
+    elif [ "$ifaces" = "lo" ]; then
+        echo "lo only — confined"
+    else
+        echo "${ifaces} — NOT confined to loopback"
     fi
 }
 
