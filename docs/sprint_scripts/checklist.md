@@ -20,7 +20,7 @@ Source proposal: `demo_script_proposal.md`. The lifecycle split that followed it
 | CAN activation with verification and recovery | landed — `scripts/activate_stack.sh`, including the `rmmod mttcan` / `modprobe` / reactivate cycle |
 | The operator scripts | landed — `scripts/demo_stack.py` plus one CLI per verb: four pack/unpack flows, the wave, the tea demo, and the block restack |
 | Stack lifecycle split from activity execution | landed — `start_demo_stack.py` owns the launches and stays alive; every activity script attaches to it. A cancelled activity now leaves the stack up, which is what makes the `--from-id` it prints usable |
-| Unit identity | landed — `AGX_UNIT`, written by `isolate_ros_graph.sh --unit` beside the ROS domain. The stack profile follows it and an activity refuses to run on the unit it was not written for |
+| Unit identity | landed — `AGX_UNIT` (`top`, `bottom`, `stacking`), written by `isolate_ros_graph.sh --unit` beside the ROS domain it derives (41/42/50). The stack profile follows it — `duo_hand`, `duo_arm`, `duo_gripper` — and an activity refuses to run on the unit it was not written for |
 | Sequential bring-up | landed — components are waited for before coordination is started, each phase reported separately. The coordinator's action clients only wait for their servers at dispatch, so `/execute_activity` says nothing about the arms |
 | Orderly shutdown | landed — `stop_demo_stack.py` signals the supervisor named in `~/.cache/agx_demo_stack/<unit>.json`; the supervisor stops coordination, waits, then components, escalating SIGINT → SIGTERM → SIGKILL per launch. No `pkill ros2` |
 | Persistent logs | landed — `logs/demo_stack/<unit>_<timestamp>/`, one file per launch, instead of a temp dir that disappeared with the run |
@@ -66,22 +66,24 @@ Per unit, after `isolate_ros_graph.sh --unit <this one>` and a new session.
    error counters that would separate it from a healthy bus
 3. `./scripts/start_demo_stack.py` in tmux — components ready, then coordination
    ready, then READY. Nothing is commanded; this replaces the old `--dry-run`
-4. with the other unit's stack also up: `isolate_ros_graph.sh --show` on both
-   counts only its own nodes
+4. top and bottom both up: `isolate_ros_graph.sh --show` on each counts only its
+   own nodes. This is the pair that shares a router; `stacking` stands alone
 5. bottom: `unpack_bottom_unit.py --slow`, then `pack_bottom_unit.py --slow`, then
    the fast variants
 6. top: `unpack_top_unit.py`, `wave.py`, `pack_top_unit.py` — three activities
    against **one** bring-up, which is the point of the split
 7. `stop_demo_stack.py`: coordination exits, then components, state file gone
-8. tea: `start_demo_stack.py --stack tea`, then `start_tea_demo.py` end to end
-9. Ctrl+C mid-activity: the activity cancels, and the stack is **still up**
-   afterwards
-10. `--from-id N` against that same stack, using the number the script printed
-11. an emergency stop, then the explicit re-arm, then a resumed run
-12. an activity against the wrong stack and on the wrong unit — both must be
+8. stacking: `start_demo_stack.py` comes up on `duo_gripper` with no flag, then
+   `start_block_restack.py`
+9. tea: `start_demo_stack.py --stack tea`, then `start_tea_demo.py` end to end
+10. Ctrl+C mid-activity: the activity cancels, and the stack is **still up**
+    afterwards
+11. `--from-id N` against that same stack, using the number the script printed
+12. an emergency stop, then the explicit re-arm, then a resumed run
+13. an activity against the wrong stack and on the wrong unit — both must be
     refused before anything is sent
 
-Items 9 and 10 are what decide whether this layer is worth anything: everything
+Items 10 and 11 are what decide whether this layer is worth anything: everything
 else is a shorter way to type commands that already worked.
 
 ## Open questions

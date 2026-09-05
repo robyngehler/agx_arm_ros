@@ -3,22 +3,32 @@
 # isolate_ros_graph.sh — say which unit this machine is, and keep its ROS graph
 # off the network.
 #
-# One place decides both, because they are the same decision. Two units on one
-# router share a DDS graph, and this stack names its topics by side, not by unit:
-# both publish /left_arm/feedback/joint_states, both offer
-# /right_arm/emergency_stop and /execute_activity, and /tf is global with
-# identical frame names on both. One trajectory command then reaches two arm
-# drivers. Nothing here needs the network — each unit brings up its own launches
-# and runs run_activity against them locally (scripts/demo_stack.py).
+# One place decides both, because they are the same decision. Three machines,
+# each a Duo system:
 #
-#   AGX_UNIT=top|bottom    Which unit this machine is. scripts/start_demo_stack.py
+#   top, bottom   the two Duo systems of the tea-demo installation, physically
+#                 stacked and on one router. They share a DDS graph, and this
+#                 stack names its topics by side, not by unit: both publish
+#                 /left_arm/feedback/joint_states, both offer
+#                 /right_arm/emergency_stop and /execute_activity, and /tf is
+#                 global with identical frame names on both. One trajectory
+#                 command then reaches two arm drivers.
+#   stacking      the solo Duo system that runs the block restack on its AGX
+#                 grippers. It stands on its own, so it has no conflict to
+#                 resolve — it is configured the same way anyway, because a unit
+#                 that declares what it is cannot be brought up as the wrong one.
+#
+# Nothing here needs the network: each unit brings up its own launches and runs
+# run_activity against them locally (scripts/demo_stack.py).
+#
+#   AGX_UNIT=<unit>        Which unit this machine is. scripts/start_demo_stack.py
 #                          takes the execution profile from it, and every activity
 #                          script refuses to run on the unit it was not written for.
 #   ROS_LOCALHOST_ONLY=1   DDS discovery and traffic stay on lo. This is the
-#                          actual isolation: it holds even if both units end up
+#                          actual isolation: it holds even if two units end up
 #                          on the same domain.
 #   ROS_DOMAIN_ID=<n>      Different UDP ports per unit, derived from AGX_UNIT.
-#                          Redundant on purpose — it still separates the two if
+#                          Redundant on purpose — it still separates them if
 #                          someone unsets ROS_LOCALHOST_ONLY for a debugging session.
 #
 # WHAT IT COSTS. No RViz, `ros2 topic echo` or rqt from a laptop against this
@@ -32,6 +42,7 @@
 # Usage:
 #   ./scripts/isolate_ros_graph.sh --unit top             # AGX_UNIT + domain 41
 #   ./scripts/isolate_ros_graph.sh --unit bottom          # AGX_UNIT + domain 42
+#   ./scripts/isolate_ros_graph.sh --unit stacking        # AGX_UNIT + domain 50
 #   ./scripts/isolate_ros_graph.sh --unit top --domain 51 # override the domain
 #   ./scripts/isolate_ros_graph.sh --show                 # report, change nothing
 #   ./scripts/isolate_ros_graph.sh --revert               # remove the managed block
@@ -52,12 +63,14 @@ RESERVED_DOMAIN=77
 # Above 101 the DDS port range starts overlapping the ephemeral ports.
 MAX_DOMAIN=101
 
-#: The domain each unit gets unless --domain overrides it.
+#: The domain each unit gets unless --domain overrides it. 41 and 42 are the two
+#: that share a router; 50 keeps the solo unit clear of both.
 domain_for_unit() {
     case "$1" in
-        top)    echo 41 ;;
-        bottom) echo 42 ;;
-        *)      echo "" ;;
+        top)      echo 41 ;;
+        bottom)   echo 42 ;;
+        stacking) echo 50 ;;
+        *)        echo "" ;;
     esac
 }
 
@@ -66,7 +79,7 @@ DOMAIN=""
 UNIT=""
 
 usage() {
-    echo "usage: $0 --unit <top|bottom> [--domain <0-${MAX_DOMAIN}>] | --show | --revert" >&2
+    echo "usage: $0 --unit <top|bottom|stacking> [--domain <0-${MAX_DOMAIN}>] | --show | --revert" >&2
     exit 2
 }
 
@@ -78,7 +91,7 @@ while [ $# -gt 0 ]; do
         --domain=*) DOMAIN="${1#*=}"; MODE=apply; shift ;;
         --show|show) MODE=show; shift ;;
         --revert)    MODE=revert; shift ;;
-        -h|--help)   sed -n '2,37p' "$(readlink -f "${BASH_SOURCE[0]}")"; exit 0 ;;
+        -h|--help)   sed -n '2,49p' "$(readlink -f "${BASH_SOURCE[0]}")"; exit 0 ;;
         *) usage ;;
     esac
 done
@@ -154,9 +167,9 @@ restore_and_fail() {
 }
 
 case "$UNIT" in
-    top|bottom) ;;
-    '') restore_and_fail "--unit is required: this machine has to say whether it is the top or the bottom unit." ;;
-    *)  restore_and_fail "--unit must be top or bottom, got '${UNIT}'" ;;
+    top|bottom|stacking) ;;
+    '') restore_and_fail "--unit is required: this machine has to say which unit it is (top, bottom or stacking)." ;;
+    *)  restore_and_fail "--unit must be top, bottom or stacking, got '${UNIT}'" ;;
 esac
 
 # The domain follows the unit unless it was given explicitly.

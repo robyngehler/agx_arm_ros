@@ -9,8 +9,8 @@ It does not replace `docs/control/bringups/launches.md` or `docs/control/bringup
 - `scripts/activate_stack.sh`: the operator entry point — activates the buses, verifies they carry
   clean traffic, and reloads the CAN driver when they do not
 - `scripts/activate_duo_can.sh`: the bring-up itself, matched by physical slot; called by the above
-- `scripts/isolate_ros_graph.sh --unit top|bottom`: says which unit the machine is and keeps its ROS
-  graph on loopback in its own domain; run once per unit
+- `scripts/isolate_ros_graph.sh --unit top|bottom|stacking`: says which unit the machine is and keeps
+  its ROS graph on loopback in its own domain; run once per unit
 - `scripts/start_demo_stack.py` / `stop_demo_stack.py`: the stack supervisor — brings the launches up
   in order and stays alive owning them
 - `scripts/unpack_bottom_unit.py`, `pack_bottom_unit.py`, `unpack_top_unit.py`,
@@ -34,13 +34,13 @@ operational control docs.
 | `scripts/activate_stack.sh` | wraps the above: samples each bus after bring-up (RX advancing on the arms, controller ERROR-ACTIVE, error counters flat) and runs a bounded `rmmod`/`modprobe`/reactivate cycle when a bus does not pass. `--show` and `--verify-only` change nothing; `--recover` forces the reload chain |
 | `scripts/isolate_ros_graph.sh` | writes `AGX_UNIT`, `ROS_LOCALHOST_ONLY=1` and the unit's `ROS_DOMAIN_ID` into `~/.bashrc` as one managed block, and stops the `ros2` daemon so it does not keep serving the old domain. `--show` reports, `--revert` removes it |
 | `scripts/demo_stack.py` | shared code for both roles: the unit lookup, the stack definitions, the phased readiness waits, the supervisor's state file, and the activity client that runs `run_activity` in the foreground so Ctrl+C reaches its cancel ladder |
-| `scripts/start_demo_stack.py` | the stack supervisor: components, then coordination, each waited for; stays alive owning both. Profile from `AGX_UNIT`; `--stack tea\|block` for the two flows that need a different one; `--grippers` for `duo_gripper` on the bottom unit |
+| `scripts/start_demo_stack.py` | the stack supervisor: components, then coordination, each waited for; stays alive owning both. Profile from `AGX_UNIT` — `duo_hand` on top, `duo_arm` on bottom, `duo_gripper` on stacking; `--stack tea` for the one composition that differs from its unit's own; `--grippers` for `duo_gripper` on the bottom unit |
 | `scripts/stop_demo_stack.py` | signals the supervisor named in the state file and waits for its teardown. Does not search for or kill ROS processes |
 | `scripts/unpack_bottom_unit.py` / `pack_bottom_unit.py` | bottom unit between its packing pose and the presentation pose; `--speed fast\|slow` picks the path |
 | `scripts/unpack_top_unit.py` / `pack_top_unit.py` | top unit between its packing pose and `Functional_Init_Both_V03` |
 | `scripts/wave.py` | top unit: wave with both arms, entering and leaving on `Functional_Init_Both_V03`, so it runs between unpack and pack or on its own |
 | `scripts/start_tea_demo.py` | runs `tea_pour_duo_v2` against the `tea` stack |
-| `scripts/start_block_restack.py` | runs `block_restack_v1` against the `block` stack — the only flow that needs a parallel gripper on both arms |
+| `scripts/start_block_restack.py` | runs `block_restack_v1` on the stacking unit, whose stack is `duo_gripper` and needs no flag |
 | `scripts/prepare_can_interfaces.py` | role-based CAN or CAN FD preparation for USB or fallback adapter setups |
 | `scripts/colcon_build_system_python.sh` | keeps builds on system Python and filters stale or conflicting local environment state |
 | `scripts/run_in_ros_conda.sh` | runs a ROS command inside the repo-owned Conda runtime after sourcing ROS and local overlays |

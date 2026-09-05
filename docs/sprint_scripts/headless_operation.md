@@ -6,7 +6,7 @@ scope: what is in place for operating a unit with no monitor, and what is missin
 
 Measured on the unit 2026-09-01. Items 4 and 6 have since been acted on and are
 marked; the rest is a report. §4 and §6 were extended 2026-09-05 for the
-two-unit demo, where both units share a router.
+three Duo units, two of which share a router.
 
 ## What already works
 
@@ -147,12 +147,19 @@ Was `ROS_LOCALHOST_ONLY=0` with no domain id, so any ROS 2 machine joining the
 same AP would have joined the graph, and discovery ran as multicast over WiFi.
 
 **Every unit says which unit it is, and the rest follows from that.**
-`scripts/isolate_ros_graph.sh --unit top|bottom` writes one managed block into
+`scripts/isolate_ros_graph.sh --unit <name>` writes one managed block into
 `~/.bashrc` above the ROS sourcing — `AGX_UNIT`, `ROS_LOCALHOST_ONLY=1` and the
-`ROS_DOMAIN_ID` derived from the unit (top 41, bottom 42; `--domain` overrides
-it) — backs the file up, and stops the `ros2` daemon, which otherwise keeps
-serving the graph of the domain it was started in. `--show` reports, `--revert`
-removes it.
+`ROS_DOMAIN_ID` derived from the unit — backs the file up, and stops the `ros2`
+daemon, which otherwise keeps serving the graph of the domain it was started in.
+`--show` reports, `--revert` removes it.
+
+| `AGX_UNIT` | What it is | Profile | Domain |
+| --- | --- | --- | --- |
+| `top` | tea-demo installation, upper | `duo_hand` | 41 |
+| `bottom` | tea-demo installation, lower | `duo_arm` | 42 |
+| `stacking` | the solo unit, AGX grippers, block restack | `duo_gripper` | 50 |
+
+`--domain` overrides the derived one.
 
 `AGX_UNIT` is the same identity the script layer uses:
 `scripts/start_demo_stack.py` takes the execution profile from it and every
@@ -161,13 +168,18 @@ machine is was previously encoded separately in the script the operator typed,
 the profile the stack came up with, and the domain — three places that could each
 be wrong on their own.
 
+Only `top` and `bottom` share a router and therefore have a conflict to resolve.
+`stacking` stands on its own and is configured the same way regardless, because
+the identity is worth more than the isolation: a unit that declares what it is
+cannot be brought up as the wrong one.
+
 The network is only how a unit is reached; the graph stays on it. Discovery and
 traffic are confined to loopback, so nothing on the WiFi can join and nothing
 leaves for it — which also takes the flakiest part of multi-machine ROS,
 multicast discovery over WiFi, out of the picture.
 
-**With two units on one router this is a safety property, not hygiene.** The
-stack names its topics by side, not by unit: both units publish
+**With `top` and `bottom` on one router this is a safety property, not hygiene.**
+The stack names its topics by side, not by unit: both units publish
 `/left_arm/feedback/joint_states`, both offer `/right_arm/emergency_stop` and
 `/execute_activity`, and `/tf` is global with identical frame names on both. On a
 shared graph one trajectory command reaches two arm drivers, and each unit's
@@ -229,11 +241,11 @@ not on one.
 
 Open, in the order they are worth doing:
 
-1. `./scripts/isolate_ros_graph.sh --unit top|bottom` on each unit, then `--show`
-   on both with the other unit's stack up
+1. `./scripts/isolate_ros_graph.sh --unit top|bottom|stacking` on each of the
+   three units, then `--show` on top and bottom with the other one's stack up
 2. run `sudo ./scripts/jetson_performance_mode.sh --install`
 3. rename the host away from `ubuntu`, so `.local` resolves to this machine and
-   not to whichever stock Ubuntu box booted first (§3) — with two units this is
+   not to whichever stock Ubuntu box booted first (§3) — with three units this is
    also what tells them apart in an SSH session
 4. add the AP profile, from a wired session, at a lower autoconnect priority than
    the two client profiles (§1) — this is what makes the unit independent of a

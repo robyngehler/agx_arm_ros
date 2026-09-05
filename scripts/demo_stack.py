@@ -13,8 +13,10 @@ wants it. The resume hint printed on a failure named a coordinator that the same
 function had just shut down. The stack now outlives every activity run against
 it, so a cancel, a resume and the next activity all reuse one bring-up.
 
-WHICH UNIT THIS IS. ``AGX_UNIT`` (top or bottom), set in ~/.bashrc by
-scripts/isolate_ros_graph.sh alongside the ROS domain. It decides which
+WHICH UNIT THIS IS. ``AGX_UNIT``, set in ~/.bashrc by
+scripts/isolate_ros_graph.sh alongside the ROS domain. ``top`` and ``bottom`` are
+the two Duo systems of the tea-demo installation; ``stacking`` is the solo Duo
+system that runs the block restack on its AGX grippers. It decides which
 execution profile the stack comes up with, and every activity script refuses to
 run on the unit it was not written for. ``--unit`` overrides it.
 
@@ -61,7 +63,11 @@ STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "ag
 # --- which unit this is -----------------------------------------------------
 
 UNIT_ENV_VAR = "AGX_UNIT"
-UNIT_NAMES = ("top", "bottom")
+
+#: Three Duo systems. ``top`` and ``bottom`` are the tea-demo installation, one
+#: above the other on one router; ``stacking`` is the solo unit that runs the
+#: block restack on its AGX grippers and stands on its own.
+UNIT_NAMES = ("top", "bottom", "stacking")
 
 
 def resolve_unit(explicit: str | None = None) -> str:
@@ -73,7 +79,7 @@ def resolve_unit(explicit: str | None = None) -> str:
         raise SystemExit(f"unknown unit '{unit}'; expected one of {', '.join(UNIT_NAMES)}")
     raise SystemExit(
         f"this machine does not say which unit it is: {UNIT_ENV_VAR} is unset.\n"
-        f"  set it once with:  ./scripts/isolate_ros_graph.sh --unit top|bottom\n"
+        f"  set it once with:  ./scripts/isolate_ros_graph.sh --unit {'|'.join(UNIT_NAMES)}\n"
         f"  or pass --unit for this command only"
     )
 
@@ -215,6 +221,23 @@ GRIPPER_ACTIONS = (
 HAND_PERFORM_ACTIONS = ("/left_hand/perform", "/right_hand/perform")
 
 
+def stacking_stack() -> UnitSpec:
+    """The solo unit: an AGX gripper on each arm instead of a hand.
+
+    Its only stack, so the block restack has no second composition to choose
+    between. The two gripper trajectory servers are part of readiness, because a
+    gripper action that fails at dispatch fails after the arms have moved.
+    """
+    return UnitSpec(
+        unit="stacking",
+        stack="demo",
+        execution_profile="duo_gripper",
+        launches=(arm_components("duo_gripper"), COORDINATION),
+        extra_component_actions=GRIPPER_ACTIONS,
+        description="stacking unit: both arms with AGX grippers",
+    )
+
+
 def tea_stack(unit: str) -> UnitSpec:
     """The tea demo's stack: hands modelled and driven, teapot mass declared.
 
@@ -222,6 +245,10 @@ def tea_stack(unit: str) -> UnitSpec:
     coordination launch starts the bridges. The payload mass is required: the
     grip action attaches the teapot gravity model part way through the sequence.
     """
+    if unit == "stacking":
+        raise SystemExit(
+            "--stack tea needs OmniHands; the stacking unit carries AGX grippers"
+        )
     return UnitSpec(
         unit=unit,
         stack="tea",
@@ -235,27 +262,17 @@ def tea_stack(unit: str) -> UnitSpec:
     )
 
 
-def block_stack(unit: str) -> UnitSpec:
-    """The block restack's stack: an AGX gripper on each arm instead of a hand."""
-    return UnitSpec(
-        unit=unit,
-        stack="block",
-        execution_profile="duo_gripper",
-        launches=(arm_components("duo_gripper"), COORDINATION),
-        extra_component_actions=GRIPPER_ACTIONS,
-        description="block restack: both arms with AGX grippers",
-    )
-
-
-STACK_CHOICES = ("demo", "tea", "block")
+STACK_CHOICES = ("demo", "tea")
 
 
 def unit_stack(unit: str, *, stack: str = "demo", grippers: bool = False) -> UnitSpec:
     """The stack to bring up on this unit."""
     if stack == "tea":
         return tea_stack(unit)
-    if stack == "block":
-        return block_stack(unit)
+    if unit == "stacking":
+        if grippers:
+            raise SystemExit("the stacking unit is duo_gripper already; --grippers is redundant")
+        return stacking_stack()
     if unit == "top":
         if grippers:
             raise SystemExit("--grippers applies to the bottom unit; the top unit carries hands")
@@ -803,12 +820,11 @@ def supervisor_parser(description: str) -> argparse.ArgumentParser:
     _add_unit_argument(parser)
     parser.add_argument(
         "--stack", choices=STACK_CHOICES, default="demo",
-        help="which stack to bring up: the unit's pack/unpack/wave stack (demo), "
-             "the tea demo's, or the block restack's",
+        help="which stack to bring up: this unit's own (demo), or the tea demo's",
     )
     parser.add_argument(
         "--grippers", action="store_true",
-        help="bottom unit demo stack: duo_gripper instead of duo_arm",
+        help="bottom unit: duo_gripper instead of duo_arm",
     )
     parser.add_argument(
         "--timeout-sec", type=float, default=120.0,

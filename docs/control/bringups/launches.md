@@ -46,20 +46,32 @@ On the bottom unit the flows are `unpack_bottom_unit.py` / `pack_bottom_unit.py`
 which also take `--speed fast|slow` (`--fast` / `--slow`).
 
 **Which unit this machine is comes from `AGX_UNIT`**, set once with
-`./scripts/isolate_ros_graph.sh --unit top|bottom` together with the ROS domain.
-`start_demo_stack.py` takes the execution profile from it — `duo_hand` on top,
-`duo_arm` on the bottom unit, or `duo_gripper` with `--grippers` — and every
-activity script refuses to run on the unit it was not written for. `--unit`
-overrides it for one command.
+`./scripts/isolate_ros_graph.sh --unit <name>` together with the ROS domain.
+There are three Duo systems:
 
-The two demos that need a different stack ask for it by name:
+| `AGX_UNIT` | What it is | Profile | Domain |
+| --- | --- | --- | --- |
+| `top` | tea-demo installation, upper | `duo_hand` | 41 |
+| `bottom` | tea-demo installation, lower | `duo_arm` (`--grippers` → `duo_gripper`) | 42 |
+| `stacking` | the solo unit, AGX grippers | `duo_gripper` | 50 |
+
+`start_demo_stack.py` takes the profile from that, and every activity script
+refuses to run on the unit it was not written for. `--unit` overrides it for one
+command.
+
+The stacking unit needs no flag — `duo_gripper` is its stack:
+
+```bash
+./scripts/start_demo_stack.py                  # duo_gripper, both gripper servers waited for
+./scripts/start_block_restack.py               # block_restack_v1
+```
+
+The tea demo is the one composition that differs from its unit's own, so it asks
+for it by name:
 
 ```bash
 ./scripts/start_demo_stack.py --stack tea      # duo_hand_external_bridge, hand bridges, teapot mass
 ./scripts/start_tea_demo.py                    # tea_pour_duo_v2
-
-./scripts/start_demo_stack.py --stack block    # duo_gripper
-./scripts/start_block_restack.py               # block_restack_v1
 ```
 
 An activity run against the wrong stack is refused before anything is sent, and
