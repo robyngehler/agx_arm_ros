@@ -2,11 +2,11 @@
 
 status: EVALUATION
 last_updated: 2026-09-05
-scope: what is in place for operating the unit with no monitor, and what is missing
+scope: what is in place for operating a unit with no monitor, and what is missing
 
 Measured on the unit 2026-09-01. Items 4 and 6 have since been acted on and are
-marked; the rest is a report. §4 was extended 2026-09-05 with the reversible
-demo-mode scripts.
+marked; the rest is a report. §4 and §6 were extended 2026-09-05 for the
+two-unit demo, where both units share a router.
 
 ## What already works
 
@@ -127,20 +127,41 @@ The trade is that plugging a monitor in later gives a console, not a desktop,
 until the target is switched back and the machine rebooted. **Not changed** —
 this is a decision about how the unit is used, not a defect.
 
-### 6. The ROS graph on the network — done
+### 6. The ROS graph on the network — done, and it is per unit
 
 Was `ROS_LOCALHOST_ONLY=0` with no domain id, so any ROS 2 machine joining the
 same AP would have joined the graph, and discovery ran as multicast over WiFi.
 
-**Set 2026-09-01: `ROS_LOCALHOST_ONLY=1` in `~/.bashrc`, above the ROS sourcing.**
-The network is only how the unit is reached; the graph stays on it. DDS
-discovery and traffic are confined to loopback, so nothing on the WiFi can join
-and nothing leaves for it — which also takes the flakiest part of multi-machine
-ROS, multicast discovery over WiFi, out of the picture entirely.
+**Every unit sets `ROS_LOCALHOST_ONLY=1` and its own `ROS_DOMAIN_ID` in
+`~/.bashrc`, above the ROS sourcing.** `scripts/isolate_ros_graph.sh --domain <n>`
+writes that block, backs the file up, and stops the `ros2` daemon, which
+otherwise keeps serving the graph of the domain it was started in. `--show`
+reports, `--revert` removes it.
 
-The cost, stated plainly: no laptop-side RViz, `ros2 topic echo` or rqt against
-this unit any more. Reverse it by unsetting the variable if that is ever wanted.
-A backup of the previous `~/.bashrc` is beside it.
+The network is only how a unit is reached; the graph stays on it. Discovery and
+traffic are confined to loopback, so nothing on the WiFi can join and nothing
+leaves for it — which also takes the flakiest part of multi-machine ROS,
+multicast discovery over WiFi, out of the picture.
+
+**With two units on one router this is a safety property, not hygiene.** The
+stack names its topics by side, not by unit: both units publish
+`/left_arm/feedback/joint_states`, both offer `/right_arm/emergency_stop` and
+`/execute_activity`, and `/tf` is global with identical frame names on both. On a
+shared graph one trajectory command reaches two arm drivers, and each unit's
+MoveIt collision-checks against the other's poses. Nothing needs the network:
+each unit starts its own launches and runs `run_activity` against them locally
+(`scripts/demo_stack.py`). The domain id is the redundant half — it still
+separates the units if `ROS_LOCALHOST_ONLY` is unset for a debugging session, and
+localhost-only still separates them if both end up on the same domain.
+
+Domains: keep them under 101, where the DDS ports start reaching into the
+ephemeral range, and off 77, which the L2 activity harness claims and refuses to
+share.
+
+The cost, stated plainly: no laptop-side RViz, `ros2 topic echo` or rqt against a
+unit any more. The demo stacks run with `use_rviz:=false` in any case. The
+exports are in `~/.bashrc`, so an interactive SSH session has them and
+`ssh <host> '<command>'` does not — see §2.
 
 ## 7. A dropped connection orphans the stack — and that one is ours
 
@@ -166,19 +187,23 @@ tmux attach -t demo
 
 ## Where it stands
 
-Done: the ROS graph is confined to loopback (§6), and every power-saving knob has
-a script that turns it off (§4) — **that script still has to be run**, it is not
-applied yet.
+Done: confining the ROS graph to loopback has a script (§6), and every
+power-saving knob has one (§4). **Both still have to be run on each unit** — they
+are not applied yet, and the graph isolation has to be verified on *both* units,
+not on one.
 
 Open, in the order they are worth doing:
 
-1. run `sudo ./scripts/jetson_performance_mode.sh --install`
-2. rename the host away from `ubuntu`, so `.local` resolves to this machine and
-   not to whichever stock Ubuntu box booted first (§3)
-3. add the AP profile, from a wired session, at a lower autoconnect priority than
+1. `./scripts/isolate_ros_graph.sh --domain <n>` on each unit, distinct domains,
+   then `--show` on both with the other unit's stack up
+2. run `sudo ./scripts/jetson_performance_mode.sh --install`
+3. rename the host away from `ubuntu`, so `.local` resolves to this machine and
+   not to whichever stock Ubuntu box booted first (§3) — with two units this is
+   also what tells them apart in an SSH session
+4. add the AP profile, from a wired session, at a lower autoconnect priority than
    the two client profiles (§1) — this is what makes the unit independent of a
    room's network
-4. switch the boot target once nobody needs the desktop (§5)
+5. switch the boot target once nobody needs the desktop (§5)
 
 Deliberately not done: moving the ROS sourcing for non-interactive SSH (§2), and
 anything that would put the ROS graph back on the network.
