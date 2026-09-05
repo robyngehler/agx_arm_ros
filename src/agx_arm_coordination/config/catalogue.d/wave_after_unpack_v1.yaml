@@ -3,11 +3,6 @@
 # Merged into the shared catalogue by graph_loader (config/catalogue.d/*.yaml).
 # Anchors: config/arm_config.yaml. Recordings: config/recordings/.
 #
-# The activity enters and leaves on Functional_Init_Both_V03, which is where
-# unit_unpack_top_v1 ends, so `both_arms_to_functional_init` is REUSED from the
-# tea fragment instead of redefined here: action_ids are one flat namespace and a
-# second definition is a load error, not an override.
-#
 # Both anchors are `both_arms` poses — the taught vectors are 14-DoF, so an
 # anchor move always states where both arms are, including the arm that is not
 # the subject of the step.
@@ -27,6 +22,28 @@
 actions:
 
   # --- Anchor moves (Trajectory, MoveIt-planned, collision-aware) ------------
+  both_arms_to_functional_init_v03:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Functional_Init_Both_V03
+      velocity_scaling: 0.10
+      acceleration_scaling: 0.10
+      description: "Neutral working pose for top stack. Best fit for tea demo and wave actions. Right arm on top."
+
+  both_arms_to_functional_init_v02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Functional_Init_Both_V02
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.10
+      description: "Neutral working pose for top stack. In contrast to v03 the left arm is on top of the right one."
+
   both_arms_to_wave_both_init_v01:
     actiontype_id: Trajectory
     robot_id: both_arms
@@ -38,13 +55,13 @@ actions:
       acceleration_scaling: 0.10
       description: "Both arms raised into the start pose of the two-arm wave."
 
-  both_arms_to_wave_right_init_v01:
+  both_arms_to_wave_both_init_v02:
     actiontype_id: Trajectory
     robot_id: both_arms
     metadata:
       planning_group: both_arms
       source: moveit_planned
-      to_pose: Wave_Right_Init_V01
+      to_pose: Wave_Both_Init_V02
       velocity_scaling: 0.20
       acceleration_scaling: 0.10
       description: "Right arm into the start pose of the right-arm wave; the left arm drops to the pose it holds through it."
@@ -57,7 +74,7 @@ actions:
   #
   # The positions repeat Functional_Init_Both_V03 from arm_config.yaml;
   # test_wave_after_unpack_v1 asserts the two still agree.
-  both_arms_hold_functional_init_5s:
+  both_arms_hold_functional_init_v03_2s:
     actiontype_id: Trajectory
     robot_id: both_arms
     metadata:
@@ -77,20 +94,16 @@ actions:
     metadata:
       planning_group: both_arms
       source: recorded
-      # 2236 pts, 30.16 s, taught 2026-08-24 as a duo merge of the two arms.
-      # Starts within 0.002 rad of Wave_Both_Init_V01.
-      recording: recordings/Wave_Both_V01.json
-      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.5 }
-      description: "Both arms wave."
-
-  right_arm_wave_right_v01:
-    actiontype_id: Trajectory
-    robot_id: right_arm
-    metadata:
-      planning_group: right_arm
-      source: recorded
-      # 1192 pts, 19.76 s, taught 2026-08-24 on the right arm. Starts within
-      # 0.021 rad of the right half of Wave_Right_Init_V01.
-      recording: recordings/Wave_Right_V01.json
+      recording: recordings/Wave_Both_V01-03.json
       playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
-      description: "Right arm waves alone; the left arm holds its anchor pose."
+      description: "Both arms wave on top of MM."
+
+  both_arms_wave_both_v02:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: recorded
+      recording: recordings/Wave_Both_V02-02.json
+      playback: { mode: tempo_scale, smoothing_window_sec: 0.5, speed_scale: 1.0 }
+      description: "Both arms wave slightly in front of MM."
