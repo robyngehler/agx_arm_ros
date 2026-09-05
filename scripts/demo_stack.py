@@ -376,7 +376,10 @@ class _StackWatcher:
         """Returns the names still missing when the timeout ran out — empty is ready."""
         deadline = time.monotonic() + timeout_s
         missing = self.missing(**wanted)
-        last_report = 0.0
+        # From now, not from zero: monotonic() is always far past 10, so a zero
+        # here reported "still waiting" on the very first check and made every
+        # attach print a list of surfaces that were about to appear.
+        last_report = time.monotonic()
         while missing and time.monotonic() < deadline:
             self._rclpy.spin_once(self._node, timeout_sec=0.25)
             missing = self.missing(**wanted)
