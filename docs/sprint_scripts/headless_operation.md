@@ -93,19 +93,33 @@ The trade: the unit draws its full budget and the fan runs harder whether or not
 it is doing anything.
 
 Two further scripts cover the same ground with a restore path, for a demo the
-unit is meant to come out of again: `scripts/jetson_presentation_mode.sh
-{on|off|status}` (CPU governor, CPU hotplug, USB/PCI/net runtime PM, WiFi power
-save, sleep targets) and `scripts/jetson_clock_boost.sh {on|off|status}`
-(`jetson_clocks`, which pins CPU min to max and disables the CPU idle states).
-Both save what they change under `/run`, so the saved state and the settings
-disappear together at reboot.
+unit is meant to come out of again. They split on one line: what costs latency or
+a link, and what costs heat.
 
-They do **not** set `nvpmodel`, and a governor cannot reach a clock the power
-model forbids — check `nvpmodel -q` reads MAXN before relying on them, or run
-`jetson_performance_mode.sh` instead. Do not mix the two families in one session:
-`jetson_performance_mode.sh` calls `jetson_clocks` without `--store`, so a
-`jetson_clock_boost.sh on` afterwards records the already-boosted clocks as the
-state to restore.
+`scripts/jetson_presentation_mode.sh {on|off|status}` takes off everything that
+lets the platform stall something — `nvpmodel` to MAXN, `performance` governor,
+all cores online, USB/PCI/net runtime PM, PCIe ASPM, WiFi power save, the sleep
+targets. **It leaves the CPU idle states alone**, so cores reach full clock under
+load and still idle between bursts. `nvpmodel` here is a ceiling, not a floor: it
+permits the top clocks rather than asking for them, and a governor cannot reach a
+clock the power model forbids.
+
+`scripts/jetson_clock_boost.sh {on|off|status}` is the rest — `jetson_clocks`,
+which pins CPU min to max, pins GPU and memory clocks, and **disables the CPU
+idle states**. That is the one that draws the full budget whether or not the unit
+is doing anything, so it is a separate opt-in.
+
+WiFi power save is set twice on purpose: with `iw` for the link that is up now,
+and in the NetworkManager profile so a reconnect does not put it back. The demo
+is operated over that radio, so the profile is the half that matters — and the
+profile, like `nvpmodel`, survives a reboot. Their previous values are therefore
+kept in `/var/lib/jetson-presentation-mode` rather than `/run`, so `off` still
+undoes them after a reboot. Everything else is runtime state that a reboot resets
+on its own, and its saved values live in `/run` beside it.
+
+Do not mix these with `jetson_performance_mode.sh` in one session: that one calls
+`jetson_clocks` without `--store`, so a `jetson_clock_boost.sh on` afterwards
+records the already-boosted clocks as the state to restore.
 
 ### 5. The unit boots to `graphical.target` — it runs a desktop nobody sees
 
