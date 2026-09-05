@@ -33,9 +33,19 @@ Two rules here encode findings from the Phase 0 baseline rather than taste:
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, List, Optional
+
+REARM_HINT = (
+    "clear it with 'ros2 service call /unit_safety/rearm std_srvs/srv/Trigger {}'"
+)
+
+# Three missed heartbeats of the writer node (2.0 s each). Past this an observer
+# stops treating the incarnation it follows as alive, which is what lets it adopt
+# a writer that started earlier but is the only one still publishing.
+DEFAULT_STALE_WRITER_AFTER_S = 6.0
 
 
 class DeviceState(Enum):
@@ -117,9 +127,10 @@ class UnitSafetySnapshot:
     ``incarnation`` and ``started_ns`` identify one *run* of the writer.
     Generations are only comparable inside a single incarnation: a restarted
     writer counts from zero again, so an epoch alone cannot order two messages
-    that came from different runs. ``started_ns`` is what orders the
-    incarnations themselves, so a straggler published by a writer that has since
-    died cannot be mistaken for news.
+    that came from different runs. ``started_ns`` orders the incarnations
+    themselves, so a straggler from a superseded writer cannot be mistaken for
+    news — while that writer is still being heard from. Start time orders two
+    live writers; whether one is still alive is a question only silence answers.
     """
 
     epoch: int
@@ -199,6 +210,15 @@ class UnitSafety:
     applies within an incarnation; a new one is adopted outright and
     fail-closed, since a restart is no evidence of safety. A straggler from the
     previous incarnation is rejected rather than allowed to un-stop the unit.
+
+    **A writer counts as superseded only while the one that replaced it is still
+    publishing.** Start time orders two live writers; it cannot establish that
+    the younger one is still there. Ordering on start time alone leaves an
+    observer following a dead incarnation and deaf to the live writer, so its
+    rearm is dropped and no running process can clear the stop — measured on the
+    unit 2026-09-05, both arms held STOPPED with the only live writer ignored.
+    Silence past ``stale_writer_after_s`` therefore reopens adoption, still
+    fail-closed.
     """
 
     def __init__(
@@ -208,6 +228,7 @@ class UnitSafety:
         writer: bool = True,
         incarnation: str = "",
         started_ns: int = 0,
+        stale_writer_after_s: float = DEFAULT_STALE_WRITER_AFTER_S,
     ) -> None:
         """Create a unit-safety view.
 
@@ -219,12 +240,20 @@ class UnitSafety:
         ``incarnation`` and ``started_ns`` identify this run of the writer and
         travel with every generation it allocates. An observer leaves them empty
         and takes them from whatever it adopts.
+
+        ``stale_writer_after_s`` is how long an observer keeps treating the
+        incarnation it follows as alive without hearing from it. It must exceed
+        the writer's heartbeat period, or an ordinary gap between heartbeats
+        reads as a dead writer.
         """
         self._lock = threading.Lock()
         self._writer_id = writer_id
         self._writer = writer
         self._incarnation = incarnation
         self._started_ns = started_ns
+        self._stale_writer_after_s = float(stale_writer_after_s)
+        self._last_followed_seen: Optional[float] = None
+        self._pending_reports: List[str] = []
         # Who allocated the generation currently held. For a writer that is
         # itself; for an observer it is whoever published what it adopted, which
         # is not the same thing and must not be reported as if it were.
@@ -235,6 +264,10 @@ class UnitSafety:
         self._reason = "init"
         self.conflicts = 0
         self.incarnation_changes = 0
+        # Messages from a writer this observer has already moved past. One or two
+        # are a dead writer's last words; a steady stream is a second writer that
+        # is still running.
+        self.stragglers = 0
         self._listeners: List[Callable[[UnitSafetySnapshot], None]] = []
 
     def snapshot(self) -> UnitSafetySnapshot:
@@ -277,10 +310,13 @@ class UnitSafety:
         with self._lock:
             return self._writer
 
-    def observe(self, snapshot: UnitSafetySnapshot) -> bool:
+    def observe(
+        self, snapshot: UnitSafetySnapshot, *, now: Optional[float] = None
+    ) -> bool:
         """Adopt unit safety state seen from another process.
 
-        Returns True when the snapshot moved this process forward.
+        Returns True when the snapshot moved this process forward. ``now`` is a
+        monotonic reading, injected by tests.
 
         Ordering is per incarnation. Inside one run of the writer an older or
         equal epoch is ignored, so out-of-order delivery cannot resurrect a
@@ -292,66 +328,137 @@ class UnitSafety:
         That is deliberately not "reconstruct the old counter". An observer
         cannot know what happened while the writer was down, and guessing that
         nothing did is the one answer that can silently re-enable motion.
+
+        An older incarnation is refused only while the one being followed is
+        still heard from. Silence past ``stale_writer_after_s`` reopens
+        adoption, fail-closed, so the unit cannot end up following a writer that
+        no longer exists while ignoring the one that does.
         """
+        now = time.monotonic() if now is None else now
         with self._lock:
             same_incarnation = snapshot.incarnation == self._incarnation
+            if same_incarnation:
+                self._last_followed_seen = now
 
-            if not same_incarnation and self._seen_any:
-                # A different run of the writer. Anything older than the
-                # incarnation we already follow is a straggler from a writer
-                # that has since died, and adopting it would walk the unit
-                # backwards into a safety era that has already ended.
-                if snapshot.started_ns < self._started_ns:
+            adopted_new_incarnation = not same_incarnation and self._seen_any
+            if adopted_new_incarnation:
+                # A different run of the writer. An older start time is a
+                # straggler from a writer that has since died — adopting it
+                # would walk the unit back into a safety era that has ended —
+                # but only while the incarnation being followed is still
+                # publishing. If that one has gone silent, the older writer is
+                # the only one left, and refusing it strands the unit stopped
+                # with nothing alive able to rearm it.
+                followed_is_live = (
+                    self._last_followed_seen is not None
+                    and now - self._last_followed_seen < self._stale_writer_after_s
+                )
+                superseded = snapshot.started_ns < self._started_ns
+                if superseded and followed_is_live:
+                    self.stragglers += 1
+                    self._report_straggler_locked(snapshot)
                     return False
                 self.incarnation_changes += 1
+                previous_incarnation = self._incarnation
                 self._incarnation = snapshot.incarnation
                 self._started_ns = snapshot.started_ns
                 self._source_writer_id = snapshot.writer_id
                 self._epoch = snapshot.epoch
                 self._stopped = True
-                self._reason = (
-                    f"unit-safety writer restarted (incarnation "
-                    f"'{snapshot.incarnation}' from '{snapshot.writer_id}'); "
-                    "holding the stop until an explicit rearm"
+                self._last_followed_seen = now
+                if superseded:
+                    self._reason = (
+                        f"unit-safety writer '{snapshot.writer_id}' incarnation "
+                        f"'{snapshot.incarnation}' adopted after incarnation "
+                        f"'{previous_incarnation}' went silent; holding the stop "
+                        "until an explicit rearm"
+                    )
+                else:
+                    self._reason = (
+                        f"unit-safety writer restarted (incarnation "
+                        f"'{snapshot.incarnation}' from '{snapshot.writer_id}'); "
+                        "holding the stop until an explicit rearm"
+                    )
+                self._pending_reports.append(
+                    f"unit safety writer changed ({self.incarnation_changes} so "
+                    f"far): {self._reason}. This device is holding a stop because "
+                    f"the new writer cannot vouch for what happened while the "
+                    f"previous one was reachable; {REARM_HINT}."
                 )
-                current = self._snapshot_locked()
-                listeners = list(self._listeners)
-                self._notify(listeners, current)
-                return True
-
-            contradiction = (
-                same_incarnation
-                and snapshot.epoch == self._epoch
-                and snapshot.stopped != self._stopped
-                and snapshot.writer_id != self._source_writer_id
-            )
-            if contradiction:
-                # One generation, two meanings, two allocators. No ordering
-                # resolves this — it is the concrete symptom of more than one
-                # writer, so it is counted, and the safer reading wins.
-                self.conflicts += 1
-                if not snapshot.stopped:
-                    return False
-                self._stopped = True
-                self._reason = (
-                    f"conflicting unit-safety generation {snapshot.epoch} from "
-                    f"'{snapshot.writer_id}'; holding the stop"
-                )
-            elif self._seen_any and snapshot.epoch <= self._epoch:
-                return False
             else:
-                # First observation, or a forward step inside this incarnation.
-                self._incarnation = snapshot.incarnation
-                self._started_ns = snapshot.started_ns
-                self._source_writer_id = snapshot.writer_id
-                self._epoch = snapshot.epoch
-                self._stopped = snapshot.stopped
-                self._reason = snapshot.reason
+                contradiction = (
+                    same_incarnation
+                    and snapshot.epoch == self._epoch
+                    and snapshot.stopped != self._stopped
+                    and snapshot.writer_id != self._source_writer_id
+                )
+                if contradiction:
+                    # One generation, two meanings, two allocators. No ordering
+                    # resolves this — it is the concrete symptom of more than one
+                    # writer, so it is counted, and the safer reading wins.
+                    self.conflicts += 1
+                    self._pending_reports.append(
+                        f"unit safety CONTRADICTION seen ({self.conflicts} so "
+                        f"far): generation {snapshot.epoch} from "
+                        f"'{snapshot.writer_id}' contradicts the same generation "
+                        f"from '{self._source_writer_id}'. More than one process "
+                        "is allocating generations; find the second writer."
+                    )
+                    if not snapshot.stopped:
+                        return False
+                    self._stopped = True
+                    self._reason = (
+                        f"conflicting unit-safety generation {snapshot.epoch} "
+                        f"from '{snapshot.writer_id}'; holding the stop"
+                    )
+                elif self._seen_any and snapshot.epoch <= self._epoch:
+                    return False
+                else:
+                    # First observation, or a forward step inside this
+                    # incarnation.
+                    self._incarnation = snapshot.incarnation
+                    self._started_ns = snapshot.started_ns
+                    self._source_writer_id = snapshot.writer_id
+                    self._epoch = snapshot.epoch
+                    self._stopped = snapshot.stopped
+                    self._reason = snapshot.reason
+                    self._last_followed_seen = now
             self._seen_any = True
             current = self._snapshot_locked()
             listeners = list(self._listeners)
         self._notify(listeners, current)
         return True
+
+    def _report_straggler_locked(self, snapshot: UnitSafetySnapshot) -> None:
+        """Queue a report about a writer this observer has already moved past.
+
+        A dead writer leaves a message or two behind; a second *running* writer
+        produces one every heartbeat, forever. The count is what separates them,
+        so the first report waits for the third straggler and repeats sparsely
+        after that.
+        """
+        if self.stragglers != 3 and self.stragglers % 60 != 0:
+            return
+        self._pending_reports.append(
+            f"a superseded unit-safety writer is still publishing "
+            f"({self.stragglers} messages from incarnation "
+            f"'{snapshot.incarnation}', writer '{snapshot.writer_id}'): more "
+            "than one unit_safety process is alive on this unit. Its "
+            "generations are being refused; stop the leftover process."
+        )
+
+    def drain_reports(self) -> List[str]:
+        """Take the reports queued since the last call, once each.
+
+        A counter says what has happened since process start, so logging on a
+        non-zero counter reprints one event for the life of the process — a
+        single writer change produced 582 identical error lines in one session.
+        Reports are queued where the transition happens and consumed here.
+        """
+        with self._lock:
+            reports = self._pending_reports
+            self._pending_reports = []
+        return reports
 
     def _advance(self, *, stopped: bool, reason: str) -> UnitSafetySnapshot:
         with self._lock:

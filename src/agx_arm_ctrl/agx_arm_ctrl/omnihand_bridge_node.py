@@ -1799,12 +1799,20 @@ class OmniHandBridgeNode(Node):
                 started_ns=int(msg.writer_started_ns),
             )
         )
+        state = self._unit_safety.snapshot()
         if adopted:
+            # The state after adoption, not the message that caused it: a writer
+            # change publishes stopped=False and lands this device STOPPED.
             self.get_logger().warn(
-                f"unit safety generation {msg.epoch}: stopped={msg.stopped} "
-                f"({msg.reason})"
+                f"unit safety generation {state.epoch} from '{state.writer_id}': "
+                f"stopped={state.stopped} ({state.reason})"
             )
-        if not msg.stopped:
+        for report in self._unit_safety.drain_reports():
+            self.get_logger().error(report)
+        # Only on the transition. A latched stop is republished by the writer's
+        # heartbeat, and re-stopping a stopped hand every heartbeat puts pointless
+        # work on the safety lane.
+        if not adopted or not state.stopped:
             return
 
         # Stop the hardware, do not just close the gate. The authority goes

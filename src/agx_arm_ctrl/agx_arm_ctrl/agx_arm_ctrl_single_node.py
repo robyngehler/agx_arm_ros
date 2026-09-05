@@ -1358,24 +1358,15 @@ class AgxArmRosNode(Node):
             )
         )
         if adopted:
+            # The state after adoption, not the message that caused it: a writer
+            # change publishes stopped=False and lands this device STOPPED.
+            state = self._unit_safety.snapshot()
             self.get_logger().warn(
-                f"unit safety generation {msg.epoch} from '{msg.writer_id}': "
-                f"stopped={msg.stopped} ({msg.reason})"
+                f"unit safety generation {state.epoch} from '{state.writer_id}': "
+                f"stopped={state.stopped} ({state.reason})"
             )
-        if self._unit_safety.incarnation_changes:
-            self.get_logger().error(
-                "unit safety writer RESTARTED "
-                f"({self._unit_safety.incarnation_changes} so far): this device "
-                "is holding a stop because the new writer cannot vouch for what "
-                "happened while it was down. An explicit rearm clears it."
-            )
-        if self._unit_safety.conflicts:
-            self.get_logger().error(
-                "unit safety CONTRADICTION seen "
-                f"({self._unit_safety.conflicts} so far): more than one process "
-                "is allocating generations. The stop is being held; find the "
-                "second writer."
-            )
+        for report in self._unit_safety.drain_reports():
+            self.get_logger().error(report)
 
     def _request_unit_stop(self, reason: str) -> None:
         """Tell the unit a new safety era began. Never blocks the stop itself.

@@ -11,6 +11,8 @@ Both only show up mid-motion, which no test covered.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 import rclpy
 from agx_arm_msgs.msg import AgxUnitSafety
@@ -69,6 +71,21 @@ def _unit_stop(stopped: bool = True, epoch: int = 1) -> AgxUnitSafety:
     return msg
 
 
+def _wait_for(predicate, timeout: float = 2.0) -> bool:
+    """Wait for work submitted to the SDK worker to reach the backend.
+
+    The stop goes onto the safety lane and is executed by the worker thread, so
+    asserting on the backend the instant the callback returns is a race the test
+    usually wins and sometimes does not.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return predicate()
+
+
 def test_a_unit_stop_stops_the_hand_not_only_the_gate(bridge_node):
     stopped: list[bool] = []
     bridge_node.backend.stop = lambda: stopped.append(True)
@@ -78,7 +95,7 @@ def test_a_unit_stop_stops_the_hand_not_only_the_gate(bridge_node):
 
     bridge_node._unit_safety_callback(_unit_stop())
 
-    assert stopped == [True]
+    assert _wait_for(lambda: stopped == [True]), "the unit stop never reached the hand"
     assert bridge_node.pending_command is None
 
 

@@ -8,6 +8,8 @@ could not be told that a new safety era had begun, and the symptom was silence
 rather than an error.
 """
 
+import threading
+
 from agx_arm_ctrl.device_authority import (
     DeviceAuthority,
     DeviceState,
@@ -133,6 +135,117 @@ def test_observe_preserves_the_writer_that_actually_allocated_the_generation():
         "the observer reported itself as the allocator of a generation it adopted"
     )
     assert safety.snapshot().incarnation == "run-a"
+
+
+def test_the_live_writer_is_adopted_once_the_followed_incarnation_goes_silent():
+    """The unit must not end up stopped with nothing alive able to rearm it.
+
+    Measured on the unit 2026-09-05: a Ctrl+C left the first launch's nodes
+    running, three further launches each started their own writer, and the
+    observers ended up following an incarnation that no longer existed. The one
+    live writer had the *oldest* start time, so every generation it published —
+    the operator rearm included — was refused as a straggler.
+    """
+    safety, device = _observer()
+    live = _writer(incarnation="run-a", started_ns=1_000)
+    safety.observe(live.snapshot(), now=0.0)
+
+    # A second launch's writer takes over, and is then killed.
+    transient = _writer(incarnation="run-b", started_ns=2_000)
+    safety.observe(transient.snapshot(), now=1.0)
+    assert device.state is DeviceState.STOPPED
+
+    # Past the liveliness window nothing has been heard from run-b.
+    assert safety.observe(live.snapshot(), now=20.0), (
+        "the only live writer was refused as a straggler; the unit is stopped "
+        "with nothing able to rearm it"
+    )
+    assert safety.stopped, "adopting the surviving writer must still fail closed"
+
+    safety.observe(live.rearm("operator rearm"), now=20.1)
+    assert not safety.stopped
+    assert device.state is DeviceState.STANDBY
+
+
+def test_a_straggler_is_refused_while_the_followed_writer_is_still_alive():
+    """Silence is the evidence, not start order alone."""
+    safety, _device = _observer()
+    old = _writer(incarnation="run-a", started_ns=1_000)
+    safety.observe(old.snapshot(), now=0.0)
+    new = _writer(incarnation="run-b", started_ns=2_000)
+    safety.observe(new.snapshot(), now=1.0)
+
+    for tick in range(20):
+        # run-b keeps heartbeating, so run-a stays superseded however long the
+        # two overlap.
+        safety.observe(new.snapshot(), now=2.0 + tick)
+        assert not safety.observe(old.snapshot(), now=2.5 + tick)
+    assert safety.incarnation_changes == 1
+
+
+def test_a_second_live_writer_is_reported_rather_than_read_as_a_restart():
+    """Two writers alternate forever; the operator has to be told which it is."""
+    safety, _device = _observer()
+    a = _writer(incarnation="run-a", started_ns=1_000)
+    b = _writer(incarnation="run-b", started_ns=2_000)
+    safety.observe(a.snapshot(), now=0.0)
+    safety.observe(b.snapshot(), now=0.5)
+    safety.drain_reports()
+
+    for tick in range(4):
+        safety.observe(b.snapshot(), now=1.0 + tick)
+        safety.observe(a.snapshot(), now=1.5 + tick)
+
+    assert safety.incarnation_changes == 1, "an overlap was counted as a restart"
+    assert safety.stragglers == 4
+    reports = safety.drain_reports()
+    assert len(reports) == 1
+    assert "more than one unit_safety process is alive" in reports[0]
+
+
+def test_a_writer_change_is_reported_once_rather_than_on_every_heartbeat():
+    """582 identical error lines came out of one writer change in one session."""
+    safety, _device = _observer()
+    writer = _writer(incarnation="run-a", started_ns=1_000)
+    safety.observe(writer.snapshot(), now=0.0)
+    restarted = _writer(incarnation="run-b", started_ns=2_000)
+    safety.observe(restarted.snapshot(), now=1.0)
+
+    reports = safety.drain_reports()
+    assert len(reports) == 1
+    assert "unit safety writer changed (1 so far)" in reports[0]
+    assert "unit_safety/rearm" in reports[0], "the report does not name the way out"
+
+    for tick in range(30):
+        safety.observe(restarted.snapshot(), now=2.0 + tick)
+    assert safety.drain_reports() == []
+
+
+def test_a_writer_change_notifies_listeners_outside_the_lock():
+    """A listener may take its own locks, and read this state back.
+
+    The listener on this path stops the device and publishes its authority.
+    Holding the lock across it is a deadlock waiting for a listener that reads
+    the state it was just handed.
+    """
+    safety, _device = _observer()
+    writer = _writer(incarnation="run-a", started_ns=1_000)
+    safety.observe(writer.snapshot(), now=0.0)
+
+    seen = []
+
+    def listener(_snapshot):
+        # In a thread with a deadline, so a regression fails instead of hanging.
+        reader = threading.Thread(target=lambda: seen.append(safety.snapshot()))
+        reader.start()
+        reader.join(timeout=2.0)
+
+    safety.add_listener(listener)
+
+    restarted = _writer(incarnation="run-b", started_ns=2_000)
+    safety.observe(restarted.snapshot(), now=1.0)
+    assert len(seen) == 1, "the listener ran while the state was locked against it"
+    assert seen[0].stopped
 
 
 def test_two_live_writers_are_still_reported_as_a_contradiction():

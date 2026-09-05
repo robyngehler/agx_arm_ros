@@ -28,8 +28,14 @@ string writer_id      # the process that allocated this generation
 # restarted writer publishes until it climbs back past 5.
 #
 # writer_started_ns orders the incarnations themselves, so a message from a
-# writer that has since died cannot be mistaken for news. Adopting a new
-# incarnation fails closed — the unit is held stopped until that writer
-# explicitly rearms it.
+# superseded writer cannot be mistaken for news. Adopting a new incarnation
+# fails closed — the unit is held stopped until that writer explicitly rearms
+# it.
+#
+# A writer counts as superseded only while the incarnation that replaced it is
+# still publishing. Start time orders two live writers; it cannot say that the
+# younger one still exists. An observer that keeps following a dead incarnation
+# refuses the live writer's rearm, and the unit is then stopped with no running
+# process able to clear it.
 string writer_incarnation
 uint64 writer_started_ns
