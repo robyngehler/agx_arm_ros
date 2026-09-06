@@ -104,7 +104,7 @@ class NeroMitControllerNode(Node):
         # this Jetson, for a handful of callbacks. They contend on the GIL and
         # the wait set without buying concurrency Python can use.
         self.declare_parameter("executor_threads", 4)
-        self.declare_parameter("feedback_timeout_s", 0.25)
+        self.declare_parameter("feedback_timeout_s", 0.5)
         self.declare_parameter("auto_enable_on_trajectory", True)
         self.declare_parameter("hold_final_point", True)
         self.declare_parameter("gain_ramp_time_s", 1.0)

@@ -57,7 +57,8 @@ trajectory and the hand goal executing with nobody left to cancel them.
 **No stop path sends a kp=0 MIT command.** Such a command ends a moving setpoint
 but carries no stiffness, so it sags the arm — it is not a weaker hold. Every rung
 holds the current pose: MIT hold at the measured pose → the driver's
-`MOVE-J(current_q)` (`hold_current_pose`, latching no fault) → `set_normal_mode`,
+`MOVE-J(current_q)` (`hold_current_pose`, latching no fault but holding the
+device in STANDBY until `release_pose_hold`) → `set_normal_mode`,
 which needs neither pose nor feedback → the external CAN watchdog, which also
 commands `MOVE-J` at the current pose. Detail:
 `../../sprint_refactor/reference/emergency_stop_ladder.md`.
