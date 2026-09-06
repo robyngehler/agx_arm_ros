@@ -17,15 +17,18 @@
 #      rmmod mttcan; modprobe mttcan; sudo bash scripts/activate_duo_can.sh
 #    cycle, done here with a verification between attempts instead of by eye.
 #
-# WHAT "HEALTHY" MEANS HERE, and why the two device types differ:
+# WHAT "HEALTHY" MEANS HERE. Presence, link UP, ERROR-ACTIVE and flat error
+# counters, for every device type. Those are the conditions a bus must meet
+# before a driver can use it at all.
 #
-#   arms   an arm pushes joint feedback unprompted, with no host node running —
-#          measured 2026-09-03 at ~3178 frames/s per arm on an idle stack. So RX
-#          must be advancing, the controller must be ERROR-ACTIVE, and the error
-#          counters must not move over the window.
-#   hands  a hand is polled, not pushed, so it is silent until a bridge talks to
-#          it. Requiring RX here would fail a healthy hand. Presence, UP,
-#          ERROR-ACTIVE and flat error counters only.
+# RX IS REPORTED, NOT JUDGED. An arm pushes joint feedback unprompted once it has
+# been commanded — measured 2026-09-03 at ~3178 frames/s per arm on an idle
+# stack — but a cold arm pushes nothing until a driver has spoken to it, and the
+# left arm's 1.11 firmware does so as a rule. A hand is polled, so it is silent
+# until a bridge talks to it. A silent bus is therefore a warning with the rate
+# printed beside it, never a failure: what "no RX" distinguishes is a bus nobody
+# has used yet from a broken one, and it cannot tell them apart before the stack
+# runs.
 #
 # CALIBRATION CAVEAT. The reported first-start symptom is "messages rising but
 # rviz/MoveIt never comes up", which a plain RX check passes. The discriminator
@@ -150,8 +153,10 @@ json_row() {
 }
 
 # Sample every target once, wait, sample again, and print one line each. Sets
-# FAILED to the space-separated list of targets that did not pass.
+# FAILED to the space-separated list of targets that did not pass, and WARNED to
+# those that passed with something worth printing.
 FAILED=""
+WARNED=""
 sample_and_judge() {
     local judge="$1" target
     local -A rx0 stats0
@@ -163,6 +168,7 @@ sample_and_judge() {
     sleep "$WINDOW"
 
     FAILED=""
+    WARNED=""
     [ "$JSON" = 1 ] || printf '%-16s %-13s %-8s %-11s %-9s %s\n' \
         TARGET STATE RX/s ERR-DELTA BERR VERDICT
     for target in $(targets); do
@@ -199,8 +205,10 @@ sample_and_judge() {
         elif [ "$err_delta" -gt 0 ]; then
             verdict=fail; reason="error counters advanced by $err_delta"
         elif is_arm "$target" && [ "$rate" != "?" ] && [ "$rate" -eq 0 ]; then
-            # Only the arms push unprompted; see the header.
-            verdict=fail; reason="no feedback frames (arm should push unprompted)"
+            # Silence is not a fault before the stack has commanded the arm; see
+            # the header.
+            verdict=warn
+            reason="silent — normal until a driver has commanded the arm"
         fi
 
         if [ "$JSON" = 1 ]; then
@@ -214,23 +222,33 @@ sample_and_judge() {
                 "${reason:-ok}"
         fi
         [ "$verdict" = fail ] && FAILED="$FAILED $target"
+        [ "$verdict" = warn ] && WARNED="$WARNED $target"
     done
     FAILED="${FAILED# }"
+    WARNED="${WARNED# }"
 
     if [ "$JSON" = 1 ]; then
         # Command substitution eats trailing newlines, so the separator left to
         # strip is the bare comma.
-        local joined failed_json=""
+        local joined failed_json="" warned_json=""
         joined="$(printf '%s,\n' "${json_rows[@]}")"
         for target in $FAILED; do failed_json="$failed_json\"$target\", "; done
-        printf '{\n  "group": "%s",\n  "window_s": %s,\n  "healthy": %s,\n  "failed": [%s],\n  "interfaces": [\n%s\n  ]\n}\n' \
+        for target in $WARNED; do warned_json="$warned_json\"$target\", "; done
+        printf '{\n  "group": "%s",\n  "window_s": %s,\n  "healthy": %s,\n  "failed": [%s],\n  "warned": [%s],\n  "interfaces": [\n%s\n  ]\n}\n' \
             "$GROUP" "$WINDOW" \
             "$([ -z "$FAILED" ] && echo true || echo false)" \
-            "${failed_json%, }" "${joined%,}"
+            "${failed_json%, }" "${warned_json%, }" "${joined%,}"
     fi
 
     [ "$judge" = judge ] || return 0
     [ -z "$FAILED" ]
+}
+
+# A warning is a bus that met every condition this script can check and is
+# silent. Named once so an operator is not left reading the table for it.
+report_warnings() {
+    [ -n "$WARNED" ] || return 0
+    echo "silent, which is normal before the stack runs: $WARNED"
 }
 
 require_root() {
@@ -338,7 +356,7 @@ case "$MODE" in
         ;;
     verify)
         if sample_and_judge judge; then
-            [ "$JSON" = 1 ] || { echo; echo "all verified buses are healthy"; }
+            [ "$JSON" = 1 ] || { echo; report_warnings; echo "all verified buses are healthy"; }
             exit 0
         fi
         [ "$JSON" = 1 ] || { echo; echo "not healthy: $FAILED" >&2; }
@@ -358,6 +376,7 @@ if [ "$MODE" = activate ]; then
     echo
     if sample_and_judge judge; then
         echo
+        report_warnings
         echo "stack activated and verified"
         exit 0
     fi
@@ -385,6 +404,7 @@ while [ "$attempt" -le "$ATTEMPTS" ]; do
     echo
     if sample_and_judge judge; then
         echo
+        report_warnings
         echo "recovered after $attempt attempt(s)"
         exit 0
     fi

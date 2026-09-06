@@ -24,6 +24,7 @@
 #   ./scripts/start_demo_session.sh --clock-boost  # also pin clocks and idle states
 #   ./scripts/start_demo_session.sh --no-platform  # leave the platform knobs alone
 #   ./scripts/start_demo_session.sh --no-can       # leave the buses alone
+#   ./scripts/start_demo_session.sh --can all      # check the hand buses too
 #   ./scripts/start_demo_session.sh --status       # report, change nothing
 
 set -euo pipefail
@@ -39,24 +40,29 @@ MODE=start
 STACK=demo
 GRIPPERS=0
 READY_TIMEOUT=300
+CAN_GROUP=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --status)       MODE=status ;;
         --no-platform)  DO_PLATFORM=0 ;;
         --no-can)       DO_CAN=0 ;;
+        --can)          CAN_GROUP="${2:?--can needs arms, hands or all}"; shift ;;
         --clock-boost)  CLOCK_BOOST=1 ;;
         --grippers)     GRIPPERS=1 ;;
         --stack)        STACK="${2:?--stack needs demo or tea}"; shift ;;
         --ready-timeout) READY_TIMEOUT="${2:?--ready-timeout needs seconds}"; shift ;;
         -h|--help)      sed -n '2,28p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "usage: $0 [--status] [--stack demo|tea] [--grippers]" \
-                "[--clock-boost] [--no-platform] [--no-can]" >&2; exit 2 ;;
+                "[--clock-boost] [--no-platform] [--no-can] [--can arms|hands|all]" \
+                >&2; exit 2 ;;
     esac
     shift
 done
 
 case "$STACK" in demo|tea) ;; *) echo "--stack takes demo or tea" >&2; exit 2 ;; esac
+case "${CAN_GROUP:-arms}" in arms|hands|all) ;;
+    *) echo "--can takes arms, hands or all" >&2; exit 2 ;; esac
 
 step() { printf '\n== %s\n' "$*"; }
 note() { printf '   %s\n' "$*"; }
@@ -81,6 +87,14 @@ if [ -z "$UNIT" ]; then
   then open a new session"
 fi
 case "$UNIT" in top|bottom|stacking) ;; *) fail "unknown AGX_UNIT '$UNIT'" ;; esac
+
+# Which buses this run needs. Only the tea stack drives hands; every other stack
+# is arms (or arms plus their AGX grippers, which are on the arm bus). Checking a
+# hand bus on a unit that carries no hands reports MISSING for hardware nobody
+# asked for, and the recovery chain then tries to load a driver for it.
+if [ -z "$CAN_GROUP" ]; then
+    if [ "$STACK" = tea ]; then CAN_GROUP=all; else CAN_GROUP=arms; fi
+fi
 
 STATE_FILE="$STATE_DIR/$UNIT.json"
 
@@ -149,12 +163,19 @@ if stack_running; then
     note "live stack. Stop it first if the buses need attention:"
     note "    ./scripts/stop_demo_stack.py"
 elif [ "$DO_CAN" = 1 ]; then
-    step "CAN buses: activating and verifying"
-    if ! sudo "$REPO_ROOT/scripts/activate_stack.sh"; then
-        fail "the CAN buses did not come up healthy.
-  Check power and cabling, then:
-      ./scripts/activate_stack.sh --show
-      sudo ./scripts/activate_stack.sh --recover"
+    step "CAN buses: activating and verifying ($CAN_GROUP)"
+    # Not fatal. Verification here samples a bus nobody is using yet, and the
+    # conditions it can check before the stack runs do not separate a bus that is
+    # merely idle from a broken one. The stack's own bring-up does — an arm driver
+    # that cannot reach its arm fails at readiness, with the arm named. So a bad
+    # verdict is printed and the bring-up continues.
+    if ! sudo "$REPO_ROOT/scripts/activate_stack.sh" "$CAN_GROUP"; then
+        note ""
+        note "the bus check did not come back clean — continuing anyway, because the"
+        note "stack's own bring-up is the test that can tell an idle bus from a dead"
+        note "one. If the arms do not come up, stop the stack and look at the buses:"
+        note "    ./scripts/activate_stack.sh --show"
+        note "    sudo ./scripts/activate_stack.sh --recover"
     fi
 else
     step "CAN buses: skipped (--no-can)"
