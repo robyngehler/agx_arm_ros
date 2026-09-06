@@ -64,6 +64,16 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 # --- preconditions ----------------------------------------------------------
 
+# Not under sudo: the steps that need root take it themselves, and root has no
+# AGX_UNIT and a different home, so the stack would be started as root and its
+# state file written where the operator's stop command will not look.
+if [ "$(id -u)" -eq 0 ]; then
+    fail "run this as the operator, not with sudo — the platform and CAN steps
+  take root themselves. As root there is no AGX_UNIT, and the stack's state
+  file would land outside your home where stop_demo_stack.py cannot find it.
+      ./scripts/start_demo_session.sh"
+fi
+
 UNIT="${AGX_UNIT:-}"
 if [ -z "$UNIT" ]; then
     fail "this machine does not say which unit it is: AGX_UNIT is unset.

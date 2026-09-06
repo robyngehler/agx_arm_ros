@@ -89,6 +89,25 @@ def resolve_unit(explicit: str | None = None) -> str:
     )
 
 
+def refuse_root() -> None:
+    """These scripts belong to the operator, and root cannot do their job.
+
+    root has no ``AGX_UNIT`` and a different home, so the unit is unknown and the
+    supervisor's state file is looked for in the wrong place — under sudo a
+    running stack reports as stopped and the stop exits 0.
+    """
+    if os.geteuid() != 0:
+        return
+    raise SystemExit(
+        f"{Path(sys.argv[0]).name} does not need root, and root cannot do its job.\n"
+        f"  {UNIT_ENV_VAR} is unset for root, and the state file is looked for in\n"
+        f"      {STATE_DIR}\n"
+        f"  rather than in the operator's home, so a running stack reports as stopped.\n"
+        f"  Run it as the user that started the stack:\n"
+        f"      ./scripts/{Path(sys.argv[0]).name}"
+    )
+
+
 def require_unit(expected: str, explicit: str | None = None) -> str:
     """Refuse an activity written for the other unit."""
     unit = resolve_unit(explicit)
@@ -547,6 +566,7 @@ def _warn_if_a_dropped_connection_would_orphan_the_stack() -> None:
 
 def run_supervisor(spec: UnitSpec, args) -> int:
     """Bring the stack up in order, then stay alive owning it."""
+    refuse_root()
     existing = running_supervisor(spec.unit)
     if existing is not None:
         print(
@@ -690,6 +710,7 @@ class ActivitySpec:
 
 def run_activity(spec: ActivitySpec, args) -> int:
     """Verify the right stack is up on the right unit, then run one activity."""
+    refuse_root()
     unit = require_unit(spec.unit, args.unit) if spec.unit else resolve_unit(args.unit)
     check_from_id(spec.activity, args.from_id)
 
@@ -697,6 +718,7 @@ def run_activity(spec: ActivitySpec, args) -> int:
     if state is None:
         print(
             f"no demo stack is running on the {unit} unit.\n"
+            f"  (looked for {StackState.path(unit)})\n"
             f"Start it first, in its own pane:\n"
             f"    ./scripts/start_demo_stack.py{'' if spec.stack == 'demo' else ' --stack ' + spec.stack}",
             file=sys.stderr,

@@ -19,7 +19,14 @@ import signal
 import sys
 import time
 
-from demo_stack import UNIT_NAMES, UNIT_ENV_VAR, StackState, resolve_unit, running_supervisor
+from demo_stack import (
+    UNIT_NAMES,
+    UNIT_ENV_VAR,
+    StackState,
+    refuse_root,
+    resolve_unit,
+    running_supervisor,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,13 +58,16 @@ def _wait_for_exit(state: StackState, timeout_s: float) -> bool:
 
 def main() -> int:
     args = build_parser().parse_args()
+    refuse_root()
     unit = resolve_unit(args.unit)
 
     state = running_supervisor(unit)
     if state is None:
         print(f"no {unit} demo stack supervisor is running.")
-        # A stale file is already cleared by running_supervisor; say so only if
-        # something is left that this cannot account for.
+        # Name the path: "nothing is running" and "I looked in the wrong home"
+        # are the same sentence otherwise, and only one of them means the arms
+        # are safe.
+        print(f"  (looked for {StackState.path(unit)})")
         return 0
 
     print(f"stopping the {unit} demo stack (supervisor pid {state.pid})")

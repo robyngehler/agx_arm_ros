@@ -62,7 +62,24 @@ the test rather than sitting in the list.
 Re-anchoring them is a judgement about which current pose replaced which old one,
 so it is left to whoever captured them.
 
-## Hardware validation gate (not started)
+## Hardware validation gate
+
+**Top unit, 2026-09-06: items 1, 3, 6 and 7 passed.** One `start_demo_session.sh`
+brought the platform, the buses and the stack up — all four buses ERROR-ACTIVE
+with flat error counters, the arms pushing 2126 and 2188 frames/s — and
+`unpack_top_unit.py`, `wave.py` and `pack_top_unit.py` then ran against **one**
+bring-up, which is what the lifecycle split exists for. The reteached
+`wave_after_unpack_v1` completed all 7 steps; the stale expectations are in
+`test_wave_after_unpack_v1.py`, not in the activity.
+
+Item 7 passed by Ctrl+C in the supervisor's pane. `stop_demo_stack.py` itself was
+not exercised: it was run under `sudo`, which has no `AGX_UNIT` and a different
+home, so it reported a running stack as stopped and exited 0. Both that and
+`start_demo_session.sh` now refuse to run as root, and a supervisor that is not
+found names the path it looked in. **Re-run item 7 through the script.**
+
+Items 2, 4, 5, 8-13 remain open; items 10 and 11 are still the ones that decide
+whether this layer is worth anything.
 
 Per unit, after `isolate_ros_graph.sh --unit <this one>` and a new session.
 
