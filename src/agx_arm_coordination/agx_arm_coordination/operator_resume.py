@@ -118,11 +118,16 @@ def _is_replay_action(action: Action | None) -> bool:
 def next_resume_step(steps, resumable, last_completed_action_id: str):
     """Where a run that stopped part way can be picked up again.
 
-    Returns ``(completed_step, next_step)``: the step the last completed action
-    belongs to, and the first step at or after it that a resume may start on.
-    Either is 0/``None`` when there is nothing to go on — a run that completed
-    nothing restarts from the beginning, and one whose remaining steps are all
-    replays has no resume point at all.
+    Returns ``(completed_step, resume_step)``: the step the last completed action
+    belongs to, and the step a resume must start on to run everything that is
+    left. Either is 0/``None`` when there is nothing to go on.
+
+    Where the step after the completed one replays a taught path, the answer is
+    the nearest **earlier** planned step — the same one :func:`resume_seed` names
+    when an operator asks for the replay directly. A replay is the taught motion
+    the activity exists for, so it may not be skipped to reach a later planned
+    step; the anchor move before it plans from the current state and puts the arm
+    where the replay starts. Re-running that anchor move is the cost.
 
     Keyed on the action id because that is what the coordinator's event stream
     reports; the step number is derived here rather than published, so the two
@@ -136,5 +141,11 @@ def next_resume_step(steps, resumable, last_completed_action_id: str):
             completed = index
     if not completed:
         return 0, None
-    following = [step for step in resumable if step > completed]
-    return completed, (following[0] if following else None)
+
+    following = completed + 1
+    if following > len(steps):
+        return completed, None
+    if following in resumable:
+        return completed, following
+    earlier = [step for step in resumable if step < following]
+    return completed, (earlier[-1] if earlier else None)

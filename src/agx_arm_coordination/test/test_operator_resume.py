@@ -299,10 +299,27 @@ def _tea_steps():
     return steps, resumable_steps(steps, cat.actions)
 
 
-def test_the_next_resume_step_skips_a_replay_that_follows():
-    """Step 8 completed, 9 and 10 are replays, so the operator is sent to 11."""
+def test_a_replay_that_follows_sends_the_operator_back_not_forward():
+    """Step 8 completed and 9 is a replay, so the resume point is 8 again.
+
+    Forward would be 11, which runs the pour with the can still on the table: a
+    replay is the taught motion the activity exists for and may not be skipped.
+    """
     steps, allowed = _tea_steps()
-    assert next_resume_step(steps, allowed, "both_arms_to_can_adjust_while_grip") == (8, 11)
+    assert next_resume_step(steps, allowed, "both_arms_to_can_adjust_while_grip") == (8, 8)
+
+
+def test_the_resume_step_agrees_with_what_resume_seed_advises():
+    """The automatic hint and the manual refusal answer the same question."""
+    cat = _catalogue()
+    plan = cat.get_activity_plan(TEA)
+    steps, allowed = _tea_steps()
+    _, advised = next_resume_step(steps, allowed, "both_arms_to_can_adjust_while_grip")
+    with pytest.raises(ResumeError) as refusal:
+        resume_seed(plan, cat.actions, ROBOT_UNITS_DEDICATED, 9)
+    assert f"is {advised}" in str(refusal.value)
+    # And the advised step is one a resume actually accepts.
+    resume_seed(plan, cat.actions, ROBOT_UNITS_DEDICATED, advised)
 
 
 def test_the_next_resume_step_is_the_one_immediately_after_when_it_is_planned():
