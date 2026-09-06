@@ -59,6 +59,11 @@ LOG_ROOT = REPO_ROOT / "logs" / "demo_stack"
 #: ends, which is the dropped-SSH case a tmux supervisor exists to survive.
 STATE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "agx_demo_stack"
 
+#: How the last activity run against a stack ended, written in that stack's log
+#: dir. The resume point in prose is for the operator; this is for a caller that
+#: has no terminal to read.
+RUN_RESULT_NAME = "last_activity.json"
+
 
 # --- which unit this is -----------------------------------------------------
 
@@ -737,7 +742,7 @@ def run_activity(spec: ActivitySpec, args) -> int:
                 print("\nnot started")
                 return 130
 
-        return _execute(spec, args, watcher)
+        return _execute(spec, args, watcher, state)
     finally:
         watcher.close()
 
@@ -754,7 +759,7 @@ def _run_activity_command(spec: ActivitySpec, args) -> list[str]:
     return command
 
 
-def _execute(spec: ActivitySpec, args, watcher: _StackWatcher) -> int:
+def _execute(spec: ActivitySpec, args, watcher: _StackWatcher, state: StackState) -> int:
     """Run the activity in the foreground and let it own the interrupt."""
     command = _run_activity_command(spec, args)
     print(f"\n$ {' '.join(command)}\n", flush=True)
@@ -773,6 +778,7 @@ def _execute(spec: ActivitySpec, args, watcher: _StackWatcher) -> int:
         signal.signal(signal.SIGINT, previous)
 
     watcher.pump(0.5)
+    _write_run_result(spec, args, watcher, state, code)
     if code == 0:
         print("\nactivity completed")
     else:
@@ -789,24 +795,70 @@ def _execute(spec: ActivitySpec, args, watcher: _StackWatcher) -> int:
     return code
 
 
-def _next_from_id(spec: ActivitySpec, watcher: _StackWatcher) -> str:
-    """What the operator should pass to pick this run up again.
+def _resume_point(spec: ActivitySpec, watcher: _StackWatcher):
+    """``(total_steps, completed_step, resume_from_id)`` for the run that just ended.
 
     The mapping lives in operator_resume beside the one the coordinator uses, so
-    the number printed here is the number the coordinator will accept.
+    the number here is the number the coordinator will accept.
     """
     from agx_arm_coordination.operator_resume import next_resume_step
 
     steps, resumable, _ = activity_steps(spec.activity)
     done, following = next_resume_step(steps, resumable, watcher.last_completed_action)
-    if not done:
+    return len(steps), (done or None), following
+
+
+def _next_from_id(spec: ActivitySpec, watcher: _StackWatcher) -> str:
+    """What the operator should pass to pick this run up again."""
+    _, done, following = _resume_point(spec, watcher)
+    if done is None:
         return "nothing completed; rerun without --from-id"
     if following is None:
-        return f"step {done} completed; no later step is a valid resume point"
+        return f"step {done} completed; nothing after it can be resumed onto"
+    if following <= done:
+        # Backwards on purpose: step done+1 replays a taught path, so the resume
+        # re-runs the planned move that puts the arm where the replay starts.
+        return (
+            f"step {done} completed ({watcher.last_completed_action}); "
+            f"step {done + 1} replays a taught path, so resume with "
+            f"--from-id {following} to re-approach it"
+        )
     return (
         f"step {done} completed ({watcher.last_completed_action}); "
         f"resume with --from-id {following}"
     )
+
+
+def _write_run_result(
+    spec: ActivitySpec, args, watcher: _StackWatcher, state: StackState, code: int
+) -> None:
+    """Record how the run ended, in the stack's log dir, for a non-terminal caller.
+
+    The same numbers `_next_from_id` prints, given a machine-readable outlet so a
+    web UI or a wrapper offers the resume point without parsing prose. Failing to
+    write it is reported and never changes the activity's exit code.
+    """
+    result = {
+        "script": spec.name,
+        "activity": spec.activity,
+        "unit": state.unit,
+        "stack": state.stack,
+        "from_id": args.from_id,
+        "exit_code": code,
+        "completed_action": watcher.last_completed_action or None,
+        "finished": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        total, done, following = _resume_point(spec, watcher)
+        result.update(total_steps=total, completed_step=done, resume_from_id=following)
+    except Exception as exc:  # the step model is the coordinator's; a run still ended
+        result.update(total_steps=None, completed_step=None, resume_from_id=None,
+                      resume_error=str(exc))
+    try:
+        path = Path(state.log_dir) / RUN_RESULT_NAME
+        path.write_text(json.dumps(result, indent=2) + "\n")
+    except OSError as exc:
+        print(f"  (could not write the run result: {exc})", file=sys.stderr)
 
 
 # --- the shared CLIs --------------------------------------------------------

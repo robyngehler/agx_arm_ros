@@ -43,6 +43,7 @@
 #   sudo ./scripts/activate_stack.sh arms            # arms only
 #   sudo ./scripts/activate_stack.sh --recover       # go straight to the reload chain
 #   ./scripts/activate_stack.sh --show               # report, change nothing (no sudo)
+#   ./scripts/activate_stack.sh --show --json        # the same report for a program
 #   ./scripts/activate_stack.sh --verify-only        # sample and judge, change nothing
 #
 # Options:
@@ -67,12 +68,14 @@ ATTEMPTS=3
 WINDOW=2
 GROUP=all
 MODE=activate
+JSON=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --show|show)      MODE=show ;;
         --verify-only)    MODE=verify ;;
         --recover)        MODE=recover ;;
+        --json)           JSON=1 ;;
         --attempts)       ATTEMPTS="${2:?--attempts needs a number}"; shift ;;
         --window)         WINDOW="${2:?--window needs seconds}"; shift ;;
         arms)             GROUP=arms ;;
@@ -80,10 +83,17 @@ while [ $# -gt 0 ]; do
         --all|all)        GROUP=all ;;
         -h|--help)        sed -n '2,50p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "usage: $0 [arms|hands|--all] [--show|--verify-only|--recover]" \
-                "[--attempts N] [--window S]" >&2; exit 2 ;;
+                "[--json] [--attempts N] [--window S]" >&2; exit 2 ;;
     esac
     shift
 done
+
+# JSON is a report format, not a mode: it says nothing about a bus that a
+# reload's own output would have to be read for anyway.
+if [ "$JSON" = 1 ] && [ "$MODE" != show ] && [ "$MODE" != verify ]; then
+    echo "--json applies to --show and --verify-only" >&2
+    exit 2
+fi
 
 targets() {
     case "$GROUP" in
@@ -134,12 +144,18 @@ link_up() {
     [ "$(cat "/sys/class/net/$1/operstate" 2>/dev/null)" = "up" ]
 }
 
+json_row() {
+    printf '    {"interface": "%s", "state": "%s", "rx_per_s": %s, "error_delta": %s, "tec": %s, "rec": %s, "verdict": "%s", "reason": "%s"}' \
+        "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8"
+}
+
 # Sample every target once, wait, sample again, and print one line each. Sets
 # FAILED to the space-separated list of targets that did not pass.
 FAILED=""
 sample_and_judge() {
     local judge="$1" target
     local -A rx0 stats0
+    local -a json_rows=()
     for target in $(targets); do
         rx0["$target"]="$(rx_packets "$target")"
         stats0["$target"]="$(bus_stats "$target")"
@@ -147,13 +163,18 @@ sample_and_judge() {
     sleep "$WINDOW"
 
     FAILED=""
-    printf '%-16s %-13s %-8s %-11s %-9s %s\n' \
+    [ "$JSON" = 1 ] || printf '%-16s %-13s %-8s %-11s %-9s %s\n' \
         TARGET STATE RX/s ERR-DELTA BERR VERDICT
     for target in $(targets); do
         local verdict=ok reason=""
         if ! present "$target"; then
-            printf '%-16s %-13s %-8s %-11s %-9s %s\n' \
-                "$target" MISSING - - - "not present"
+            if [ "$JSON" = 1 ]; then
+                json_rows+=("$(json_row "$target" MISSING null null null null \
+                    fail "not present")")
+            else
+                printf '%-16s %-13s %-8s %-11s %-9s %s\n' \
+                    "$target" MISSING - - - "not present"
+            fi
             FAILED="$FAILED $target"
             continue
         fi
@@ -182,12 +203,32 @@ sample_and_judge() {
             verdict=fail; reason="no feedback frames (arm should push unprompted)"
         fi
 
-        printf '%-16s %-13s %-8s %-11s %-9s %s\n' \
-            "$target" "$state1" "$rate" "$err_delta" "$tec/$rec" \
-            "${reason:-ok}"
+        if [ "$JSON" = 1 ]; then
+            json_rows+=("$(json_row "$target" "$state1" \
+                "$([ "$rate" = "?" ] && echo null || echo "$rate")" \
+                "$err_delta" "${tec:-null}" "${rec:-null}" \
+                "$verdict" "${reason:-ok}")")
+        else
+            printf '%-16s %-13s %-8s %-11s %-9s %s\n' \
+                "$target" "$state1" "$rate" "$err_delta" "$tec/$rec" \
+                "${reason:-ok}"
+        fi
         [ "$verdict" = fail ] && FAILED="$FAILED $target"
     done
     FAILED="${FAILED# }"
+
+    if [ "$JSON" = 1 ]; then
+        # Command substitution eats trailing newlines, so the separator left to
+        # strip is the bare comma.
+        local joined failed_json=""
+        joined="$(printf '%s,\n' "${json_rows[@]}")"
+        for target in $FAILED; do failed_json="$failed_json\"$target\", "; done
+        printf '{\n  "group": "%s",\n  "window_s": %s,\n  "healthy": %s,\n  "failed": [%s],\n  "interfaces": [\n%s\n  ]\n}\n' \
+            "$GROUP" "$WINDOW" \
+            "$([ -z "$FAILED" ] && echo true || echo false)" \
+            "${failed_json%, }" "${joined%,}"
+    fi
+
     [ "$judge" = judge ] || return 0
     [ -z "$FAILED" ]
 }
@@ -286,6 +327,10 @@ recover_once() {
 
 case "$MODE" in
     show)
+        if [ "$JSON" = 1 ]; then
+            sample_and_judge report
+            exit 0
+        fi
         bash "$ACTIVATE" --show
         echo
         sample_and_judge report
@@ -293,12 +338,10 @@ case "$MODE" in
         ;;
     verify)
         if sample_and_judge judge; then
-            echo
-            echo "all verified buses are healthy"
+            [ "$JSON" = 1 ] || { echo; echo "all verified buses are healthy"; }
             exit 0
         fi
-        echo
-        echo "not healthy: $FAILED" >&2
+        [ "$JSON" = 1 ] || { echo; echo "not healthy: $FAILED" >&2; }
         exit 1
         ;;
 esac

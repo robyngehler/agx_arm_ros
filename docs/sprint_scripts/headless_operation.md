@@ -17,7 +17,7 @@ three Duo units, two of which share a router.
 | mDNS | `avahi-daemon` enabled and active |
 | WiFi | connected as a client to `agx-7ax-nju`, `192.168.31.50/24`; a second profile `agx-7ax-cym` is saved, both autoconnect |
 | Wired fallback | `eno1` up at `192.168.209.231/24` |
-| tmux | installed |
+| tmux | **not installed** on `top`, checked 2026-09-06 (`apt-cache policy tmux`: none; no `screen` either). The 2026-09-01 reading "installed" was wrong and is superseded. `sudo apt install tmux` — this is load-bearing, see §7 |
 | AP capability | the radio reports `AP` among its supported interface modes, so the hardware can do it |
 
 So an interactive `ssh nvidia@192.168.31.50` works today, and the demo scripts
@@ -219,7 +219,20 @@ session ends — precisely the dropped-SSH case.
 and names the command to use. It is a warning rather than a refusal: an operator on a
 wired link with a monitor beside them does not need it.
 
-**Run the stack inside tmux when working over SSH:**
+**Run the stack inside tmux when working over SSH.** One command does the whole
+cold order — platform knobs, CAN buses, then the supervisor in its own detached
+tmux session — and waits until the stack reports READY:
+
+```bash
+./scripts/start_demo_session.sh          # --stack tea, --grippers, --clock-boost
+./scripts/start_demo_session.sh --status # report all four layers, change nothing
+```
+
+It is not the stack's owner: it puts the supervisor in tmux session `agx-stack`
+and exits, so losing this session loses nothing. It skips bus activation when a
+supervisor is already up, because activation takes the interfaces down and up.
+
+By hand, the same thing:
 
 ```bash
 tmux new -A -s stack
@@ -228,22 +241,32 @@ tmux new -A -s stack
 tmux attach -t stack
 ```
 
+A tmux pane command started with an explicit command list runs under the default
+shell and therefore has **no ROS environment** (§2); `start_demo_session.sh`
+starts the supervisor under `bash -ic` for that reason.
+
 Activities run from a second pane against that stack. Only the supervisor has to
 survive a disconnect — an activity that loses its terminal loses `run_activity`
 with it, and the coordinator's own cancel path takes over from there.
 
 ## Where it stands
 
-Done: confining the ROS graph to loopback has a script (§6), and every
-power-saving knob has one (§4). **Both still have to be run on each unit** — they
-are not applied yet, and the graph isolation has to be verified on *both* units,
-not on one.
+Done: confining the ROS graph to loopback has a script (§6), every power-saving
+knob has one (§4), and the cold order across all three layers has one
+(`scripts/start_demo_session.sh`, §7).
+
+**The graph isolation is applied on `top`** — verified 2026-09-06: `AGX_UNIT=top`,
+`ROS_DOMAIN_ID=41`, `ROS_LOCALHOST_ONLY=1`, from the managed block at
+`~/.bashrc:120`. The 2026-09-01 reading "not applied yet" is superseded for this
+unit; `bottom` and `stacking` are unverified.
 
 Open, in the order they are worth doing:
 
-1. `./scripts/isolate_ros_graph.sh --unit top|bottom|stacking` on each of the
-   three units, then `--show` on top and bottom with the other one's stack up
-2. run `sudo ./scripts/jetson_performance_mode.sh --install`
+1. `sudo apt install tmux` on each unit — nothing else here survives a dropped
+   SSH session without it, and `start_demo_session.sh` refuses to start until it
+   is there
+2. `./scripts/isolate_ros_graph.sh --unit bottom|stacking` on the other two
+   units, then `--show` on top and bottom with the other one's stack up
 3. rename the host away from `ubuntu`, so `.local` resolves to this machine and
    not to whichever stock Ubuntu box booted first (§3) — with three units this is
    also what tells them apart in an SSH session
@@ -251,6 +274,10 @@ Open, in the order they are worth doing:
    the two client profiles (§1) — this is what makes the unit independent of a
    room's network
 5. switch the boot target once nobody needs the desktop (§5)
+
+`jetson_performance_mode.sh --install` is deliberately **not** on that list any
+more: `start_demo_session.sh` runs `jetson_presentation_mode.sh` per session,
+which has a restore path, and the two must not be mixed (§4).
 
 Deliberately not done: moving the ROS sourcing for non-interactive SSH (§2), and
 anything that would put the ROS graph back on the network.
