@@ -60,8 +60,8 @@ profiles:
   # of the ~4400 the bus carries under MIT), so there is no second interface to
   # declare and no hand-window handshake.
   #
-  # Hardware note: only the right arm carries a gripper today. left_gripper and
-  # duo_gripper are structurally complete but unvalidated on hardware.
+  # Hardware note: duo_gripper is validated — the block restack demo runs on it.
+  # left_gripper alone has no run of its own yet.
   left_gripper:
     robot_name: duo_nero_system
     use_duo_model: true

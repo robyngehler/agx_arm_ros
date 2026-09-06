@@ -623,6 +623,13 @@ class AgxArmRosNode(Node):
         # the next tick unless something in the gates holds it. Until the
         # unit-safety writer existed, the local unit stop was that latch.
         self._estop_latched = False
+        # Latched by hold_current_pose, cleared only by release_pose_hold. Same
+        # reason as the e-stop latch above: _sync_authority is derived and would
+        # re-arm the device on the next tick. A held arm that still admits
+        # move_mit is not held — the next setpoint re-frames MIT and takes the
+        # firmware straight back out of its position hold.
+        self._pose_hold_latched = False
+        self._pose_hold_reason = ""
         self._command_rejections = {}
         self._last_rejection_log_monotonic = {}
         self._rejection_log_period_s = 2.0
@@ -1169,6 +1176,11 @@ class AgxArmRosNode(Node):
         self.create_service(
             Trigger, "hold_current_pose", self._hold_current_pose_callback
         )
+        # The hold latches STANDBY, so it needs a way out that is not
+        # clear_fault_lockout — there is no fault to acknowledge.
+        self.create_service(
+            Trigger, "release_pose_hold", self._release_pose_hold_callback
+        )
         self.create_service(
             Trigger, "clear_fault_lockout", self._clear_fault_lockout_callback
         )
@@ -1426,24 +1438,15 @@ class AgxArmRosNode(Node):
             )
         )
         if adopted:
+            # The state after adoption, not the message that caused it: a writer
+            # change publishes stopped=False and lands this device STOPPED.
+            state = self._unit_safety.snapshot()
             self.get_logger().warn(
-                f"unit safety generation {msg.epoch} from '{msg.writer_id}': "
-                f"stopped={msg.stopped} ({msg.reason})"
+                f"unit safety generation {state.epoch} from '{state.writer_id}': "
+                f"stopped={state.stopped} ({state.reason})"
             )
-        if self._unit_safety.incarnation_changes:
-            self.get_logger().error(
-                "unit safety writer RESTARTED "
-                f"({self._unit_safety.incarnation_changes} so far): this device "
-                "is holding a stop because the new writer cannot vouch for what "
-                "happened while it was down. An explicit rearm clears it."
-            )
-        if self._unit_safety.conflicts:
-            self.get_logger().error(
-                "unit safety CONTRADICTION seen "
-                f"({self._unit_safety.conflicts} so far): more than one process "
-                "is allocating generations. The stop is being held; find the "
-                "second writer."
-            )
+        for report in self._unit_safety.drain_reports():
+            self.get_logger().error(report)
 
     def _request_unit_stop(self, reason: str) -> None:
         """Tell the unit a new safety era began. Never blocks the stop itself.
@@ -1550,6 +1553,11 @@ class AgxArmRosNode(Node):
             # The lockout is gone, so clear_fault_lockout was called.
             # Acknowledging the latch is not arming the device.
             authority.acknowledge_fault(reason)
+        if self._pose_hold_latched:
+            # STANDBY, not FAULTED: the arm is held, nothing is wrong with it,
+            # and release_pose_hold costs no lockout to clear.
+            authority.go_standby(f"{reason}: {self._pose_hold_reason}")
+            return
         if not self.enable_flag:
             authority.go_standby(f"{reason}: arm not enabled")
             return
@@ -1715,8 +1723,14 @@ class AgxArmRosNode(Node):
         del request
         was_locked = self._fault_lockout
         was_estopped = self._estop_latched
+        was_held = self._pose_hold_latched
         self._estop_latched = False
         self._fault_lockout = False
+        # A pose hold is strictly weaker than a fault, so the operator surface
+        # that acknowledges a fault releases it too. Otherwise clearing the
+        # lockout leaves the arm refusing motion for a reason nothing printed.
+        self._pose_hold_latched = False
+        self._pose_hold_reason = ""
         self._fault_lockout_logged = False
         self._last_good_feedback_monotonic = time.monotonic()
         self._publish_fault_lockout()
@@ -1734,6 +1748,8 @@ class AgxArmRosNode(Node):
             cleared.append("emergency stop latch cleared")
         if was_locked:
             cleared.append("fault lockout cleared")
+        if was_held:
+            cleared.append("pose hold released")
         if self._unit_safety.stopped:
             cleared.append(
                 "NOTE: a unit safety stop is still in force; call "
@@ -4806,11 +4822,19 @@ class AgxArmRosNode(Node):
 
 
     def hold_current_pose(self, reason: str) -> tuple[bool, str]:
-        """MOVE-J at the current pose, latching nothing. The ladder's second rung.
+        """MOVE-J at the current pose, latching no fault. The ladder's second rung.
 
         The emergency stop's hold without its fault lockout, so an ordinary
         escalation — a controller that lost its feedback, this node exiting —
         does not cost the next bring-up a lockout to clear.
+
+        It does latch a *state*: the device goes to STANDBY and stays there
+        until ``release_pose_hold``. A hold that admits the next ``move_mit``
+        is not a hold — the setpoint re-frames the arm into MIT and takes the
+        firmware out of its position hold, which leaves the trajectory and the
+        hold commanding the same arm. The latch is taken before the firmware is
+        commanded, so a setpoint queued during the MOVE-J assertions is refused
+        rather than delivered when the safety lane frees up.
 
         Where no trustworthy pose exists it falls through to the mode frame,
         which needs none. There is no rung below that here: a kp=0 MIT command
@@ -4821,6 +4845,7 @@ class AgxArmRosNode(Node):
             return False, "recovery owns the SDK session; no hold was commanded"
         if not self.enable_flag:
             return False, "arm is not enabled; there is nothing to hold"
+        self._latch_pose_hold(reason)
         # No separate health gate: a trustworthy pose is exactly the condition
         # for commanding a hold, and _capture_hold_pose establishes it. A second
         # check would only add a way to skip the hold.
@@ -4852,6 +4877,40 @@ class AgxArmRosNode(Node):
         )
         self.get_logger().error(detail)
         return False, detail
+
+    def _latch_pose_hold(self, reason: str) -> None:
+        """Refuse motion until the hold is released, without latching a fault."""
+        self._pose_hold_latched = True
+        self._pose_hold_reason = f"pose hold ({reason})"
+        # Published now, not on the next publish cycle: the point of the latch
+        # is that the setpoint arriving in the next few milliseconds is refused.
+        self._sync_authority("pose hold")
+
+    def release_pose_hold(self, reason: str) -> tuple[bool, str]:
+        """Give a held arm back to its controller. The counterpart of the hold.
+
+        Clears the latch only. The device re-arms through the same gates as
+        every other state — enable readback and advancing feedback — so a
+        release against a still-broken arm leaves it in STANDBY.
+        """
+        if not self._pose_hold_latched:
+            return True, "nothing to release: no pose hold was active"
+        held_reason = self._pose_hold_reason
+        self._pose_hold_latched = False
+        self._pose_hold_reason = ""
+        self._sync_authority(f"pose hold released: {reason}")
+        snapshot = self._authority.snapshot()
+        return True, (
+            f"released {held_reason}; device is {snapshot.state.value}"
+            + ("" if snapshot.motion_ready else
+               " — it re-arms once feedback and the joint enable readback verify")
+        )
+
+    def _release_pose_hold_callback(self, request, response):
+        del request
+        response.success, response.message = self.release_pose_hold("operator")
+        self.get_logger().warn(response.message)
+        return response
 
     def _hold_current_pose_callback(self, request, response):
         del request

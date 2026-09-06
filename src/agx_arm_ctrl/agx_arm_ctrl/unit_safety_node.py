@@ -49,6 +49,10 @@ class UnitSafetyNode(Node):
         # subscriber; the heartbeat covers a subscriber that was connected while
         # this node restarted and would otherwise sit on a generation from the
         # previous instance without ever being told.
+        #
+        # It is also the liveness signal observers read: silence past their
+        # `stale_writer_after_s` (6.0 s) means this writer is gone. Keep the
+        # period well under a third of that.
         self.declare_parameter("heartbeat_period_s", 2.0)
 
         self.writer_id = str(self.get_parameter("writer_id").value)

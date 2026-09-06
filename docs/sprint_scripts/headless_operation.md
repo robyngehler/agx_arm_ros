@@ -1,11 +1,12 @@
 # Running the Jetson headless over SSH
 
 status: EVALUATION
-last_updated: 2026-09-01
-scope: what is in place for operating the unit with no monitor, and what is missing
+last_updated: 2026-09-05
+scope: what is in place for operating a unit with no monitor, and what is missing
 
-Measured on the unit 2026-09-01. Items 4 and 6 have since been acted on and
-are marked; the rest is a report.
+Measured on the unit 2026-09-01. Items 4 and 6 have since been acted on and are
+marked; the rest is a report. §4 and §6 were extended 2026-09-05 for the
+three Duo units, two of which share a router.
 
 ## What already works
 
@@ -16,7 +17,7 @@ are marked; the rest is a report.
 | mDNS | `avahi-daemon` enabled and active |
 | WiFi | connected as a client to `agx-7ax-nju`, `192.168.31.50/24`; a second profile `agx-7ax-cym` is saved, both autoconnect |
 | Wired fallback | `eno1` up at `192.168.209.231/24` |
-| tmux | installed |
+| tmux | **not installed** on `top`, checked 2026-09-06 (`apt-cache policy tmux`: none; no `screen` either). The 2026-09-01 reading "installed" was wrong and is superseded. `sudo apt install tmux` — this is load-bearing, see §7 |
 | AP capability | the radio reports `AP` among its supported interface modes, so the hardware can do it |
 
 So an interactive `ssh nvidia@192.168.31.50` works today, and the demo scripts
@@ -91,6 +92,35 @@ several control cycles.
 The trade: the unit draws its full budget and the fan runs harder whether or not
 it is doing anything.
 
+Two further scripts cover the same ground with a restore path, for a demo the
+unit is meant to come out of again. They split on one line: what costs latency or
+a link, and what costs heat.
+
+`scripts/jetson_presentation_mode.sh {on|off|status}` takes off everything that
+lets the platform stall something — `nvpmodel` to MAXN, `performance` governor,
+all cores online, USB/PCI/net runtime PM, PCIe ASPM, WiFi power save, the sleep
+targets. **It leaves the CPU idle states alone**, so cores reach full clock under
+load and still idle between bursts. `nvpmodel` here is a ceiling, not a floor: it
+permits the top clocks rather than asking for them, and a governor cannot reach a
+clock the power model forbids.
+
+`scripts/jetson_clock_boost.sh {on|off|status}` is the rest — `jetson_clocks`,
+which pins CPU min to max, pins GPU and memory clocks, and **disables the CPU
+idle states**. That is the one that draws the full budget whether or not the unit
+is doing anything, so it is a separate opt-in.
+
+WiFi power save is set twice on purpose: with `iw` for the link that is up now,
+and in the NetworkManager profile so a reconnect does not put it back. The demo
+is operated over that radio, so the profile is the half that matters — and the
+profile, like `nvpmodel`, survives a reboot. Their previous values are therefore
+kept in `/var/lib/jetson-presentation-mode` rather than `/run`, so `off` still
+undoes them after a reboot. Everything else is runtime state that a reboot resets
+on its own, and its saved values live in `/run` beside it.
+
+Do not mix these with `jetson_performance_mode.sh` in one session: that one calls
+`jetson_clocks` without `--store`, so a `jetson_clock_boost.sh on` afterwards
+records the already-boosted clocks as the state to restore.
+
 ### 5. The unit boots to `graphical.target` — it runs a desktop nobody sees
 
 `systemctl get-default` returns `graphical.target`, so the machine starts the
@@ -111,58 +141,143 @@ The trade is that plugging a monitor in later gives a console, not a desktop,
 until the target is switched back and the machine rebooted. **Not changed** —
 this is a decision about how the unit is used, not a defect.
 
-### 6. The ROS graph on the network — done
+### 6. The ROS graph on the network — done, and it is per unit
 
 Was `ROS_LOCALHOST_ONLY=0` with no domain id, so any ROS 2 machine joining the
 same AP would have joined the graph, and discovery ran as multicast over WiFi.
 
-**Set 2026-09-01: `ROS_LOCALHOST_ONLY=1` in `~/.bashrc`, above the ROS sourcing.**
-The network is only how the unit is reached; the graph stays on it. DDS
-discovery and traffic are confined to loopback, so nothing on the WiFi can join
-and nothing leaves for it — which also takes the flakiest part of multi-machine
-ROS, multicast discovery over WiFi, out of the picture entirely.
+**Every unit says which unit it is, and the rest follows from that.**
+`scripts/isolate_ros_graph.sh --unit <name>` writes one managed block into
+`~/.bashrc` above the ROS sourcing — `AGX_UNIT`, `ROS_LOCALHOST_ONLY=1` and the
+`ROS_DOMAIN_ID` derived from the unit — backs the file up, and stops the `ros2`
+daemon, which otherwise keeps serving the graph of the domain it was started in.
+`--show` reports, `--revert` removes it.
 
-The cost, stated plainly: no laptop-side RViz, `ros2 topic echo` or rqt against
-this unit any more. Reverse it by unsetting the variable if that is ever wanted.
-A backup of the previous `~/.bashrc` is beside it.
+| `AGX_UNIT` | What it is | Profile | Domain |
+| --- | --- | --- | --- |
+| `top` | tea-demo installation, upper | `duo_hand` | 41 |
+| `bottom` | tea-demo installation, lower | `duo_arm` | 42 |
+| `stacking` | the solo unit, AGX grippers, block restack | `duo_gripper` | 50 |
+
+`--domain` overrides the derived one.
+
+`AGX_UNIT` is the same identity the script layer uses:
+`scripts/start_demo_stack.py` takes the execution profile from it and every
+activity script refuses to run on the unit it was not written for. Which unit a
+machine is was previously encoded separately in the script the operator typed,
+the profile the stack came up with, and the domain — three places that could each
+be wrong on their own.
+
+Only `top` and `bottom` share a router and therefore have a conflict to resolve.
+`stacking` stands on its own and is configured the same way regardless, because
+the identity is worth more than the isolation: a unit that declares what it is
+cannot be brought up as the wrong one.
+
+The network is only how a unit is reached; the graph stays on it. Discovery and
+traffic are confined to loopback, so nothing on the WiFi can join and nothing
+leaves for it — which also takes the flakiest part of multi-machine ROS,
+multicast discovery over WiFi, out of the picture.
+
+**With `top` and `bottom` on one router this is a safety property, not hygiene.**
+The stack names its topics by side, not by unit: both units publish
+`/left_arm/feedback/joint_states`, both offer `/right_arm/emergency_stop` and
+`/execute_activity`, and `/tf` is global with identical frame names on both. On a
+shared graph one trajectory command reaches two arm drivers, and each unit's
+MoveIt collision-checks against the other's poses. Nothing needs the network:
+each unit starts its own launches and runs `run_activity` against them locally
+(`scripts/demo_stack.py`). The domain id is the redundant half — it still
+separates the units if `ROS_LOCALHOST_ONLY` is unset for a debugging session, and
+localhost-only still separates them if both end up on the same domain.
+
+Domains: keep them under 101, where the DDS ports start reaching into the
+ephemeral range, and off 77, which the L2 activity harness claims and refuses to
+share.
+
+The cost, stated plainly: no laptop-side RViz, `ros2 topic echo` or rqt against a
+unit any more. The demo stacks run with `use_rviz:=false` in any case. The
+exports are in `~/.bashrc`, so an interactive SSH session has them and
+`ssh <host> '<command>'` does not — see §2.
 
 ## 7. A dropped connection orphans the stack — and that one is ours
 
-The demo scripts start their launches with `start_new_session=True` on purpose,
-so a terminal Ctrl+C reaches `run_activity` and its cancel ladder instead of the
-stack it is cancelling against. The same property means a SIGHUP from a dropped
-SSH session kills **only the wrapper**: its teardown never runs, and the launches
+The supervisor starts its launches with `start_new_session=True` on purpose, so
+it decides when they stop and in which order rather than a terminal signal
+reaching all of them at once. The same property means a SIGHUP from a dropped SSH
+session kills **only the supervisor**: its teardown never runs, and the launches
 keep going with a live arm driver and nobody supervising it. The next run then
 finds the buses held.
 
-`demo_stack.py` now warns when it is started over SSH outside tmux or screen and
-names the command to use. It is a warning rather than a refusal: an operator on a
+Splitting the supervisor from the activity scripts moved this rather than fixing
+it — but it also left a trace. The supervisor writes
+`~/.cache/agx_demo_stack/<unit>.json` with its pid and log directory, so a second
+SSH session can find what is still running instead of guessing;
+`stop_demo_stack.py` reads it, and clears it when the supervisor it names is
+gone. Not `/run/user/<uid>`, which systemd removes when the user's last login
+session ends — precisely the dropped-SSH case.
+
+`start_demo_stack.py` warns when it is started over SSH outside tmux or screen
+and names the command to use. It is a warning rather than a refusal: an operator on a
 wired link with a monitor beside them does not need it.
 
-**Run the demos inside tmux when working over SSH:**
+**Run the stack inside tmux when working over SSH.** One command does the whole
+cold order — platform knobs, CAN buses, then the supervisor in its own detached
+tmux session — and waits until the stack reports READY:
 
 ```bash
-tmux new -A -s demo
-./scripts/start_tea_demo.py
-# detach with ctrl-b d; the run survives the disconnect
-tmux attach -t demo
+./scripts/start_demo_session.sh          # --stack tea, --grippers, --clock-boost
+./scripts/start_demo_session.sh --status # report all four layers, change nothing
 ```
+
+It is not the stack's owner: it puts the supervisor in tmux session `agx-stack`
+and exits, so losing this session loses nothing. It skips bus activation when a
+supervisor is already up, because activation takes the interfaces down and up.
+
+By hand, the same thing:
+
+```bash
+tmux new -A -s stack
+./scripts/start_demo_stack.py
+# detach with ctrl-b d; the stack survives the disconnect
+tmux attach -t stack
+```
+
+A tmux pane command started with an explicit command list runs under the default
+shell and therefore has **no ROS environment** (§2); `start_demo_session.sh`
+starts the supervisor under `bash -ic` for that reason.
+
+Activities run from a second pane against that stack. Only the supervisor has to
+survive a disconnect — an activity that loses its terminal loses `run_activity`
+with it, and the coordinator's own cancel path takes over from there.
 
 ## Where it stands
 
-Done: the ROS graph is confined to loopback (§6), and every power-saving knob has
-a script that turns it off (§4) — **that script still has to be run**, it is not
-applied yet.
+Done: confining the ROS graph to loopback has a script (§6), every power-saving
+knob has one (§4), and the cold order across all three layers has one
+(`scripts/start_demo_session.sh`, §7).
+
+**The graph isolation is applied on `top`** — verified 2026-09-06: `AGX_UNIT=top`,
+`ROS_DOMAIN_ID=41`, `ROS_LOCALHOST_ONLY=1`, from the managed block at
+`~/.bashrc:120`. The 2026-09-01 reading "not applied yet" is superseded for this
+unit; `bottom` and `stacking` are unverified.
 
 Open, in the order they are worth doing:
 
-1. run `sudo ./scripts/jetson_performance_mode.sh --install`
-2. rename the host away from `ubuntu`, so `.local` resolves to this machine and
-   not to whichever stock Ubuntu box booted first (§3)
-3. add the AP profile, from a wired session, at a lower autoconnect priority than
+1. `sudo apt install tmux` on each unit — nothing else here survives a dropped
+   SSH session without it, and `start_demo_session.sh` refuses to start until it
+   is there
+2. `./scripts/isolate_ros_graph.sh --unit bottom|stacking` on the other two
+   units, then `--show` on top and bottom with the other one's stack up
+3. rename the host away from `ubuntu`, so `.local` resolves to this machine and
+   not to whichever stock Ubuntu box booted first (§3) — with three units this is
+   also what tells them apart in an SSH session
+4. add the AP profile, from a wired session, at a lower autoconnect priority than
    the two client profiles (§1) — this is what makes the unit independent of a
    room's network
-4. switch the boot target once nobody needs the desktop (§5)
+5. switch the boot target once nobody needs the desktop (§5)
+
+`jetson_performance_mode.sh --install` is deliberately **not** on that list any
+more: `start_demo_session.sh` runs `jetson_presentation_mode.sh` per session,
+which has a restore path, and the two must not be mixed (§4).
 
 Deliberately not done: moving the ROS sourcing for non-interactive SSH (§2), and
 anything that would put the ROS graph back on the network.

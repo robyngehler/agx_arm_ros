@@ -4,10 +4,11 @@
 Arms only, two steps. The first step moves to the working pose, so the fold starts
 from a known pose rather than from wherever a cancelled demo stopped.
 """
-from demo_stack import arm_flow, main_for
+from demo_stack import ActivitySpec, main_for
 
-SPEC = arm_flow(
+SPEC = ActivitySpec(
     name="pack_top_unit",
+    unit="top",
     activity="unit_pack_top_v1",
     description="top unit: Functional_Init_Both_V03 -> packing pose",
 )

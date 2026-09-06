@@ -7,6 +7,7 @@ Operational source of truth for bringing up and using the current system.
 - `environment.md`: Python environment split, ROS overlay handling, build/test wrappers, and platform caveats
 - `bringups/launches.md`: baseline, tool, and demo launch map for native runtime, MoveIt, MIT, OmniHand, and coordinator slices
 - `bringups/teach_and_run.md`: current teach, record, replay, anchor capture, and coordination-facing motion workflow
+- `jetson_reset.md`: on-device cleanup and reset ladder for a demo unit that has drifted, plus the unit-to-unit comparison command
 
 ## Scope
 

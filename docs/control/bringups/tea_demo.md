@@ -57,7 +57,8 @@ trajectory and the hand goal executing with nobody left to cancel them.
 **No stop path sends a kp=0 MIT command.** Such a command ends a moving setpoint
 but carries no stiffness, so it sags the arm — it is not a weaker hold. Every rung
 holds the current pose: MIT hold at the measured pose → the driver's
-`MOVE-J(current_q)` (`hold_current_pose`, latching no fault) → `set_normal_mode`,
+`MOVE-J(current_q)` (`hold_current_pose`, latching no fault but holding the
+device in STANDBY until `release_pose_hold`) → `set_normal_mode`,
 which needs neither pose nor feedback → the external CAN watchdog, which also
 commands `MOVE-J` at the current pose. Detail:
 `../../sprint_refactor/reference/emergency_stop_ladder.md`.
@@ -289,18 +290,24 @@ service lives on the MIT controller, which is an arm surface.
 
 ### 2. Live bring-up
 
-The supported way is the operator script, which runs exactly the composition
-below, waits for it, and then blocks on Enter:
+The supported way is the operator scripts: a supervisor that brings up exactly
+the composition below and stays alive owning it, and an activity script that runs
+against it.
 
 ```bash
 sudo bash ./scripts/activate_stack.sh
-./scripts/start_tea_demo.py                 # --from-id N to resume, --dry-run to stop before the goal
+
+tmux new -A -s stack                        # pane 1
+./scripts/start_demo_stack.py --stack tea   # stays up; stop with Ctrl+C here
+
+./scripts/start_tea_demo.py                 # pane 2; --from-id N to resume
 ```
 
-It prints the 21 operator steps and which of them replay a taught path (3, 6, 9,
-10, 12, 18, 19) and are therefore not resume points. Ctrl+C reaches
-`run_activity`, so the cancel ladder below is unchanged. On a failure it names the
-step reached and the `--from-id` to continue from.
+The activity script prints the 21 operator steps and which of them replay a
+taught path (3, 6, 9, 10, 12, 18, 19) and are therefore not resume points. Ctrl+C
+reaches `run_activity`, so the cancel ladder below is unchanged. On a failure it
+names the step reached and the `--from-id` to continue from — and the stack is
+still up to resume against.
 
 The composition it starts, for reference and for running by hand:
 

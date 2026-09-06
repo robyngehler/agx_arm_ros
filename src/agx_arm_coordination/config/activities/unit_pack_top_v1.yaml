@@ -1,7 +1,7 @@
 # Top unit, pack: out of the working pose back into the packing pose. One-way,
 # the reverse of unit_unpack_top_v1.
 #
-# Actions: config/catalogue.d/tea_pour_duo_v2.yaml. Anchors: config/arm_config.yaml.
+# Actions: config/catalogue.d/tea_pour_duo_v2.yaml, config/catalogue.d/wave_after_unpack_v1.yaml. Anchors: config/arm_config.yaml.
 #
 # Node 10 moves TO the working pose first, so the fold into the packing pose
 # starts from a known pose rather than from wherever a cancelled demo stopped.
@@ -9,7 +9,7 @@
 # Arms only, one serial chain.
 activity: unit_pack_top_v1
 nodes:
-  - { action_no: 10, action_id: both_arms_to_functional_init }
+  - { action_no: 10, action_id: both_arms_to_functional_init_v02 }
   - { action_no: 20, action_id: both_arms_to_packing_pose }
 edges:
   [ [10,20] ]

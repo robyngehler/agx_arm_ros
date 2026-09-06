@@ -19,28 +19,24 @@
 # 1.0 + the 2 s hold. Expect ~1.5 minutes.
 activity: wave_after_unpack_v1
 nodes:
-  # Phase 1: into the working pose, then wave with both arms.
-  - { action_no: 10, action_id: both_arms_to_functional_init }
-  - { action_no: 11, action_id: both_arms_hold_functional_init_5s }
-  - { action_no: 20, action_id: both_arms_to_wave_both_init_v01 }
-  - { action_no: 30, action_id: both_arms_wave_both_v01 }          # recorded, duo, 30.2 s
+  # Phase 1: into the working pose, then wave with both arms in front of MM.
+  - { action_no: 10, action_id: both_arms_to_functional_init_v03 }
+  - { action_no: 11, action_id: both_arms_hold_functional_init_v03_2s }
 
-  # Phase 2: back to the working pose and hold there.
-  - { action_no: 40, action_id: both_arms_to_functional_init }
-  - { action_no: 41, action_id: both_arms_hold_functional_init_5s }
+  # Phase 2: wave with both arms in front of MM.
+  - { action_no: 20, action_id: both_arms_to_wave_both_init_v02 }
+  - { action_no: 30, action_id: both_arms_wave_both_v02 }          
 
-  # Phase 3: the right arm waves alone.
-  - { action_no: 60, action_id: both_arms_to_wave_right_init_v01 }
-  - { action_no: 70, action_id: right_arm_wave_right_v01 }         # recorded, right, 19.8 s
+  # Phase 3: wave with both arms on top of MM.
+  - { action_no: 40, action_id: both_arms_to_wave_both_init_v01 }
+  - { action_no: 41, action_id: both_arms_wave_both_v01 }
 
-  # Phase 4: back to the pose the activity started on.
-  - { action_no: 80, action_id: both_arms_to_functional_init }
+  # Phase 4: back to an init pose, ready to pack.
+  - { action_no: 80, action_id: both_arms_to_functional_init_v02 }
 edges:
   [ [10,11],
     [11,20],
     [20,30],
     [30,40],
     [40,41],
-    [41,60],
-    [60,70],
-    [70,80] ]
+    [41,80] ]

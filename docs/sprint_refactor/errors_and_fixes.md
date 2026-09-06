@@ -1192,3 +1192,47 @@ Follow-up to the 2026-08-26 entry, and a stricter rule than the fix it replaces.
 - Workaround used here: delete the stale `build/lib` and `install/` copies of the
   changed file, then rebuild. A clock that does not go backwards is the actual
   fix; until then, treat a suspiciously fast build after an edit as a no-op.
+
+## 2026-09-05 (a stopped unit no live process could rearm)
+
+### An observer kept following a writer that no longer existed
+
+- Symptom: after a Ctrl+C during startup and three further `components.launch`
+  starts, both arms and both hands sat at `state=5` (STOPPED), `motion_ready`
+  false, and `unit safety writer RESTARTED (N so far)` repeated at the writer's
+  2 s heartbeat for as long as the stack ran (582 identical lines in one node's
+  log).
+- Cause, in two parts. The first launch's nodes survived the Ctrl+C — they were
+  reparented to `systemd --user` with their launch process group gone — so every
+  later launch added a second `unit_safety` writer. A new incarnation fails
+  closed by design, which is correct. What was not correct is where that left
+  the observers: `UnitSafety.observe` ordered incarnations by `writer_started_ns`
+  alone, so once an observer followed a younger writer, every message from an
+  older one was refused as a straggler. The younger writers were killed with
+  their launches; the surviving writer was the *oldest*, and its generations —
+  the operator rearm included — were dropped in silence. Nothing running could
+  clear the stop.
+- Fix: an incarnation counts as superseded only while the one that replaced it is
+  still being heard from. After `stale_writer_after_s` (6.0 s, three heartbeats)
+  of silence from the followed incarnation, an older live writer is adopted —
+  still fail-closed, so the stop is held, but a rearm now reaches the devices.
+- Also fixed on the same path:
+  - the restart error logged whenever the *counter* was non-zero, so one event
+    printed for the life of the process. Reports are queued where the transition
+    happens and drained once (`UnitSafety.drain_reports`), and they name the
+    rearm call.
+  - the adopted state was logged as the incoming message, so the moment a device
+    latched a stop it printed `stopped=False (init)`.
+  - two live writers were indistinguishable from a restart. Refused messages from
+    a superseded incarnation are counted, and a steady stream of them is reported
+    as a second `unit_safety` process rather than as a series of restarts.
+  - the writer-change path notified its listeners while holding the state lock,
+    unlike every other path in that class. The listener stops the device.
+  - the hand bridge re-stopped an already-stopped hand on every heartbeat,
+    because it gated on the message rather than on the transition.
+- Validation: L1, `test_unit_safety_writer_restart.py` (12 cases, five new) plus
+  the package suite. **Not exercised on hardware**: the stack that produced the
+  symptom was still running and was not restarted from here.
+- Open, and the actual root cause of the duplicate writers: node processes
+  survive a Ctrl+C of `ros2 launch` during startup. Until that is closed, check
+  for leftovers before relaunching — `pgrep -af 'agx_arm_ctrl|mit_controller|unit_safety|omnihand'`.
