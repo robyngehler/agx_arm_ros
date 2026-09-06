@@ -72,7 +72,18 @@ bring-up, which is what the lifecycle split exists for. The reteached
 `wave_after_unpack_v1` completed all 7 steps; the stale expectations are in
 `test_wave_after_unpack_v1.py`, not in the activity.
 
-**Item 7 is not passed, and the second attempt found a defect in the stop ladder.**
+**Item 7 passed on the third attempt, 2026-09-06.** `stop_demo_stack.py` reported
+`stopped`, and both arm drivers ended as `process has finished cleanly` where the
+attempt before had them dying on signal inside the hold. The shutdown hold now
+completes, which is the whole point of the rung.
+
+Still noisy, and not on the hold path: the `mit_tools` helpers and both MIT
+controllers exit -2 with a `KeyboardInterrupt` out of `spin()`, and `move_group`
+exits -11. None owns a CAN session or asserts a hold, but launch reports each as
+`ERROR ... process has died`, which trains an operator to read past exactly the
+line that would carry a real one.
+
+**What the two earlier attempts found:**
 The supervisor SIGINT'd each launch's whole process group, but `ros2 launch`
 forwards SIGINT to its nodes itself — so every node received two. The first
 started the arm driver's `hold_on_shutdown`, the second arrived inside
