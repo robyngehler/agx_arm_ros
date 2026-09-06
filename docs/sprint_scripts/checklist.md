@@ -87,12 +87,17 @@ has no `AGX_UNIT` and a different home, so it reported a running stack as stoppe
 and exited 0; the operator scripts refuse root now, and a supervisor that is not
 found names the path it looked in.
 
-**Unexplained, and open:** on the second attempt the launches were down at
-12:38:27 and the supervisor was still alive 75 s later, without printing an
-escalation. The teardown now prints `all launches are down`, which separates a
-launch that will not stop from a supervisor that will not exit, and the
-supervisor leaves through `os._exit` once its teardown is complete. Re-run item 7
-and read that line.
+**The stop then waited on a process that had already exited.** The supervisor is
+the process of a tmux pane held open by `remain-on-exit`, so once it exits it
+stays defunct until that pane is closed — and `os.kill(pid, 0)`, which
+`StackState.alive()` used, succeeds for the whole of that time. Measured
+2026-09-06: pid 19555 in state `Z`, launches down, `all launches are down`
+printed, stop still reporting `still shutting down`. `alive()` reads the process
+state and calls a zombie exited; the same reading previously refused a fresh
+bring-up and told activity scripts a dead stack was up.
+
+The state file is now removed after the launches rather than before, so its
+absence does not report "no stack" while the arms are still coming down.
 
 Items 2, 4, 5, 8-13 remain open; items 10 and 11 are still the ones that decide
 whether this layer is worth anything.

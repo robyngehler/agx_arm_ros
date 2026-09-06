@@ -306,6 +306,22 @@ def unit_stack(unit: str, *, stack: str = "demo", grippers: bool = False) -> Uni
 
 # --- the supervisor's state file --------------------------------------------
 
+def _has_exited(pid: int) -> bool:
+    """True when the process is defunct — exited, not yet reaped.
+
+    Unreadable /proc counts as still running: refusing to act on a stack that
+    may be up is the safe direction of the two.
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    # The comm field may hold spaces and parentheses, so the state is the first
+    # field after the last ')'.
+    fields = stat.rpartition(")")[2].split()
+    return bool(fields) and fields[0] == "Z"
+
+
 @dataclass
 class StackState:
     unit: str
@@ -334,11 +350,19 @@ class StackState:
             return None
 
     def alive(self) -> bool:
+        """Whether the supervisor is still running.
+
+        A zombie is not: it has exited and is waiting to be reaped, and
+        ``os.kill(pid, 0)`` succeeds for all of that time. The supervisor is the
+        process of a tmux pane held open by remain-on-exit, so it stays defunct
+        until that pane is closed — long enough for a stop to time out on a
+        teardown that already finished.
+        """
         try:
             os.kill(self.pid, 0)
         except (ProcessLookupError, PermissionError):
             return False
-        return True
+        return not _has_exited(self.pid)
 
     def remove(self) -> None:
         self.path(self.unit).unlink(missing_ok=True)
@@ -660,12 +684,16 @@ def run_supervisor(spec: UnitSpec, args) -> int:
 
         return _supervise(launches, interrupted)
     finally:
-        if state is not None:
-            state.remove()
         if watcher is not None:
             watcher.close()
         print("shutting the stack down")
         launches.stop()
+        # After the launches, not before: while the file exists the supervisor
+        # still owns them, so its absence is not reported during a teardown that
+        # is still bringing the arms down. A supervisor killed mid-teardown
+        # leaves it, and running_supervisor clears it on the next read.
+        if state is not None:
+            state.remove()
 
 
 def run_supervisor_and_exit(spec: UnitSpec, args) -> None:
