@@ -22,6 +22,7 @@ Public entry point: the ``execute_activity`` action server (PerformActivity).
 
 from __future__ import annotations
 
+from functools import partial
 import json
 from pathlib import Path
 import signal
@@ -48,7 +49,7 @@ from std_srvs.srv import Empty, SetBool, Trigger
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from agx_arm_msgs.action import PerformActivity, PerformAction
-from agx_arm_msgs.msg import AgxUnitSafety, RobotEvent
+from agx_arm_msgs.msg import AgxDeviceAuthority, AgxUnitSafety, RobotEvent
 from action_msgs.msg import GoalStatus
 from control_msgs.action import FollowJointTrajectory
 
@@ -339,6 +340,16 @@ RETRYABLE_MOVEIT_CODES = frozenset({
 #: INVALID_* configuration codes, which are deterministic and would only make the
 #: same refusal three times slower.
 
+#: Authority state codes, for naming the state a refused dispatch found.
+_AUTHORITY_STATE_NAMES = {
+    AgxDeviceAuthority.STATE_OFFLINE: "offline",
+    AgxDeviceAuthority.STATE_STANDBY: "in standby",
+    AgxDeviceAuthority.STATE_READY: "ready",
+    AgxDeviceAuthority.STATE_RECOVERING: "recovering",
+    AgxDeviceAuthority.STATE_FAULTED: "faulted",
+    AgxDeviceAuthority.STATE_STOPPED: "stopped by unit safety",
+}
+
 
 class _ArmChild(_Child):
     """Arm child over a MoveGroup or ExecuteTrajectory goal (both moveit_msgs).
@@ -534,6 +545,8 @@ class CoordinatorNode(Node):
         self._hold_clients: dict[str, object] = {}
         self._estop_clients: dict[str, object] = {}
         self._payload_clients: dict[str, object] = {}
+        #: side -> the last authority message from that arm's driver.
+        self._arm_authority: dict[str, AgxDeviceAuthority] = {}
         for side in ("left", "right"):
             name = self.hand_action_template.format(side=side)
             self._hand_clients[side] = ActionClient(
@@ -568,6 +581,16 @@ class CoordinatorNode(Node):
             )
             self._estop_clients[side] = self.create_client(
                 Trigger, f"{arm_ns}/emergency_stop", callback_group=self._cb_group
+            )
+            # Whether this arm currently accepts motion at all. Latched by the
+            # driver, so the state is here before the first dispatch rather
+            # than after the first transition.
+            self.create_subscription(
+                AgxDeviceAuthority,
+                f"{arm_ns}/feedback/authority",
+                partial(self._on_arm_authority, side),
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+                callback_group=self._cb_group,
             )
         # Sides whose arm is currently quiesced for a hand window (prepared but
         # not yet resumed), so any exit path can close them again.
@@ -997,6 +1020,40 @@ class CoordinatorNode(Node):
         )
         return child
 
+    def _on_arm_authority(self, side: str, msg: AgxDeviceAuthority) -> None:
+        self._arm_authority[side] = msg
+
+    def _sides_of(self, joint_names) -> list[str]:
+        """Which arms a plan commands, read off its joint names."""
+        return [side for side in ("left", "right")
+                if any(name.startswith(f"{side}_arm") for name in joint_names)]
+
+    def _require_arms_ready(self, plan) -> None:
+        """Refuse to dispatch into an arm that is not accepting motion.
+
+        A driver-side pose hold or fault makes the arm refuse every setpoint,
+        and MoveIt discovers that as a tracking error partway through the
+        motion. The arm has already been commanded by then, so the failure
+        arrives as ``error_code=-4`` on a goal that never could have run.
+        """
+        not_ready = []
+        for side in self._sides_of(plan.joint_names):
+            authority = self._arm_authority.get(side)
+            if authority is None:
+                # Latched topic and no message: the driver is not up. The
+                # action clients report that better than a guess here would.
+                continue
+            if not authority.motion_ready:
+                not_ready.append(
+                    f"{side} arm is {_AUTHORITY_STATE_NAMES.get(authority.state, authority.state)}"
+                    + (f" ({authority.reason})" if authority.reason else "")
+                )
+        if not_ready:
+            raise DispatchError(
+                "; ".join(not_ready)
+                + ". Release the hold or clear the fault before resuming."
+            )
+
     def _dispatch_arm(self, action_no, action, activity_id) -> _Child:
         try:
             plan = self.arm_planner.plan(action)
@@ -1009,6 +1066,8 @@ class CoordinatorNode(Node):
         except ArmConfigError as exc:
             raise DispatchError(str(exc)) from exc
 
+        if not self.arm_dry_run:
+            self._require_arms_ready(plan)
         if isinstance(plan, MoveGroupPlan):
             return self._dispatch_move_group(action_no, plan)
         if isinstance(plan, RecordedTrajectoryPlan):

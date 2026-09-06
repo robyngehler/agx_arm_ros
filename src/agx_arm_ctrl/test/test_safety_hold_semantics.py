@@ -17,7 +17,7 @@ import pytest
 from std_srvs.srv import Trigger
 
 from agx_arm_ctrl.agx_arm_ctrl_single_node import AgxArmRosNode
-from agx_arm_ctrl.device_authority import DeviceAuthority, UnitSafety
+from agx_arm_ctrl.device_authority import DeviceAuthority, DeviceState, UnitSafety
 from agx_arm_ctrl.sdk_worker import Lane, SdkWorker
 
 
@@ -108,6 +108,17 @@ def _node(arm, *, recovering=False, estop=False, unit_stopped=False,
     node._current_motion_mode = None
     node.is_switch_seamlessly = True
     node._estop_latched = estop
+    node._pose_hold_latched = False
+    node._pose_hold_reason = ""
+    # The rest of the gates _sync_authority derives from. The pose hold
+    # publishes its STANDBY through that mapping, so the model has to be
+    # complete or the hold reads a gate that is not there.
+    node._fault_lockout = False
+    node._fault_lockout_logged = False
+    node._hand_window_active = False
+    node.control_ready = True
+    node._control_ready_logged = True
+    node._publish_fault_lockout = lambda: None
     node._recovery_in_progress = recovering
     node._recovery_lock = threading.Lock()
     node._recovery_started_monotonic = 0.0
@@ -551,3 +562,82 @@ def test_the_hold_service_latches_nothing():
     assert node._estop_latched is False
     assert node.unit_stop_requests == []
     assert message
+
+
+def test_the_hold_latches_standby_so_the_next_setpoint_cannot_undo_it():
+    """A hold that still admits move_mit is not a hold.
+
+    The setpoint after it re-frames the arm into MIT and takes the firmware
+    straight back out of its position hold, so the trajectory and the hold end
+    up commanding the same arm.
+    """
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+
+    node.hold_current_pose("test")
+
+    assert node._authority.state is DeviceState.STANDBY
+    assert node._authority.motion_ready is False
+
+
+def test_the_latch_survives_the_derived_sync():
+    """The gates are all open; only the hold keeps the device out of READY."""
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+    node.hold_current_pose("test")
+
+    node._sync_authority("publish loop")
+
+    assert node._authority.motion_ready is False
+
+
+def test_a_hold_that_could_not_be_commanded_still_refuses_motion():
+    """No trustworthy pose is a reason to refuse motion, not to allow it."""
+    arm = _MutePoseArm()
+    node = _shutdown_node(arm)
+
+    ok, _message = node.hold_current_pose("test")
+
+    assert ok is False
+    assert node._authority.motion_ready is False
+
+
+def test_releasing_the_hold_gives_the_arm_back():
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+    node.hold_current_pose("test")
+
+    ok, message = node.release_pose_hold("test")
+
+    assert ok is True
+    assert node._authority.motion_ready is True
+    assert message
+
+
+def test_clearing_the_fault_lockout_also_releases_a_pose_hold():
+    """The operator surface that acknowledges a fault covers the weaker state.
+
+    Otherwise clearing the lockout leaves the arm refusing motion for a reason
+    nothing printed.
+    """
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+    node.hold_current_pose("test")
+
+    response = node._clear_fault_lockout_callback(None, Trigger.Response())
+
+    assert response.success is True
+    assert "pose hold released" in response.message
+    assert node._authority.motion_ready is True
+
+
+def test_the_hold_latches_no_fault():
+    """STANDBY, not FAULTED: an ordinary escalation costs no lockout to clear."""
+    arm = _HoldArm()
+    node = _shutdown_node(arm)
+
+    node.hold_current_pose("test")
+
+    assert node._fault_lockout is False
+    assert node._estop_latched is False
+    assert node._authority.state is not DeviceState.FAULTED

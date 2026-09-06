@@ -174,7 +174,8 @@ Use these when a task benefits from a narrower persona (delegate via the `/agent
   height** — such a command ends a moving setpoint with no stiffness, which is
   a sag, not a weaker hold. The rungs: MIT hold at the measured pose ->
   `MOVE-J(current_q)` (reachable alone as `hold_current_pose`, latching no
-  fault) -> `set_normal_mode`, needing neither pose nor feedback -> the CAN
+  fault but holding the device in STANDBY until `release_pose_hold`) ->
+  `set_normal_mode`, needing neither pose nor feedback -> the CAN
   watchdog, which also commands `MOVE-J` at the current pose. Shutdown is on
   the same ladder, because the firmware keeps executing the last setpoint it
   was given. Freedrive is the one surviving kp=0 command, and it is kp=0 *with*

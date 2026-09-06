@@ -76,7 +76,11 @@ model, and that gate is what keeps the prohibition true.
 1. **MIT hold** at the measured pose — the controller's own, while it has feedback
 2. **`MOVE-J(current_q)`** — the driver's, reading the pose from the SDK rather
    than from a ROS subscription, so a starved executor does not cost the rung.
-   Reachable on its own as `hold_current_pose` (Trigger), which latches no fault
+   Reachable on its own as `hold_current_pose` (Trigger), which latches no
+   fault but does hold the device in STANDBY until `release_pose_hold`
+   (`clear_fault_lockout` releases it too). A hold that still admits
+   `move_mit` is not a hold: the next setpoint re-frames the arm into MIT
+   and takes the firmware back out of its position hold
 3. **`set_normal_mode`** — the mode frame, where not even the driver has a pose
 4. **the external CAN watchdog** — where the bus is genuinely gone. It also
    commands `MOVE-J` at the current pose

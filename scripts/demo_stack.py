@@ -785,8 +785,9 @@ def _execute(spec: ActivitySpec, args, watcher: _StackWatcher, state: StackState
         print(f"\nactivity did not complete (exit {code})", file=sys.stderr)
         print(f"  {_next_from_id(spec, watcher)}", file=sys.stderr)
         print(
-            "  the stack is still up; after an emergency stop or a bus recovery, "
-            "re-arm explicitly before resuming:\n"
+            "  the stack is still up; after an emergency stop, a pose hold or a "
+            "bus recovery, re-arm explicitly before resuming\n"
+            "  (clear_fault_lockout also releases a pose hold):\n"
             "    ros2 service call /left_arm/clear_fault_lockout std_srvs/srv/Trigger\n"
             "    ros2 service call /right_arm/clear_fault_lockout std_srvs/srv/Trigger\n"
             "    ros2 service call /unit_safety/rearm std_srvs/srv/Trigger",
