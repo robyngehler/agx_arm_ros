@@ -36,7 +36,10 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"override {UNIT_ENV_VAR} for this command",
     )
     parser.add_argument(
-        "--timeout-sec", type=float, default=90.0,
+        # The supervisor's own ladder bounds this: two launches, each 30s on
+        # SIGINT then 10s on SIGTERM. Giving up earlier reports a teardown that
+        # is still running correctly as a failure.
+        "--timeout-sec", type=float, default=120.0,
         help="how long to wait for the supervisor to finish its teardown",
     )
     return parser
@@ -88,8 +91,10 @@ def main() -> int:
     if not _wait_for_exit(state, args.timeout_sec):
         print(
             f"the supervisor is still running after {args.timeout_sec:.0f}s.\n"
-            f"  its teardown gives each launch 20s on SIGINT before escalating, so\n"
-            f"  give it longer with --timeout-sec, or look at {state.log_dir}.",
+            f"  its teardown gives each launch 30s on SIGINT then 10s on SIGTERM, so\n"
+            f"  give it longer with --timeout-sec, or look at {state.log_dir}.\n"
+            f"  Its pane says which phase it is in: 'all launches are down' means the\n"
+            f"  launches stopped and the supervisor itself is not exiting.",
             file=sys.stderr,
         )
         return 1

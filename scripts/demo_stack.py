@@ -459,18 +459,27 @@ class _Launches:
         return None
 
     def stop(self) -> None:
-        """Newest first, one at a time: coordination unwinds before its arms go away."""
+        """Newest first, one at a time: coordination unwinds before its arms go away.
+
+        Signal the launch process, never its group. `ros2 launch` forwards SIGINT
+        to each node itself, so a group signal delivers a second one — which
+        arrives inside the arm driver's shutdown hold and aborts it as a
+        KeyboardInterrupt, leaving the firmware on its last setpoint instead of
+        the MOVE-J the hold asserts. The group is only for SIGKILL, where launch
+        is already gone and orphans have to follow it.
+        """
         for spec, proc in reversed(self._procs):
             if proc.poll() is not None:
                 continue
             print(f"  stopping {spec.label()}", flush=True)
-            self._signal_group(proc, signal.SIGINT)
-            if not self._wait(proc, 20.0):
+            self._signal(proc, signal.SIGINT)
+            if not self._wait(proc, 30.0):
                 print(f"  {spec.label()} did not stop on SIGINT; terminating", flush=True)
-                self._signal_group(proc, signal.SIGTERM)
+                self._signal(proc, signal.SIGTERM)
                 if not self._wait(proc, 10.0):
                     print(f"  {spec.label()} did not terminate; killing it", flush=True)
                     self._signal_group(proc, signal.SIGKILL)
+        print("  all launches are down", flush=True)
 
     @staticmethod
     def _wait(proc: subprocess.Popen, timeout_s: float) -> bool:
@@ -480,6 +489,14 @@ class _Launches:
                 return True
             time.sleep(0.2)
         return proc.poll() is not None
+
+    @staticmethod
+    def _signal(proc: subprocess.Popen, sig) -> None:
+        """The launch process only; it shuts its own nodes down in order."""
+        try:
+            proc.send_signal(sig)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     @staticmethod
     def _signal_group(proc: subprocess.Popen, sig) -> None:
@@ -649,6 +666,20 @@ def run_supervisor(spec: UnitSpec, args) -> int:
             watcher.close()
         print("shutting the stack down")
         launches.stop()
+
+
+def run_supervisor_and_exit(spec: UnitSpec, args) -> None:
+    """Run the supervisor, then leave without waiting on interpreter teardown.
+
+    Everything this process owns is stopped by the time run_supervisor returns,
+    and a stop command is waiting on the pid. Library teardown after that point
+    can only delay the exit, and rclpy's is known to block on its signal
+    handler's destruction.
+    """
+    code = run_supervisor(spec, args)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
 
 
 def _install_shutdown_handler() -> dict:

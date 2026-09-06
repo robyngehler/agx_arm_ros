@@ -72,11 +72,27 @@ bring-up, which is what the lifecycle split exists for. The reteached
 `wave_after_unpack_v1` completed all 7 steps; the stale expectations are in
 `test_wave_after_unpack_v1.py`, not in the activity.
 
-Item 7 passed by Ctrl+C in the supervisor's pane. `stop_demo_stack.py` itself was
-not exercised: it was run under `sudo`, which has no `AGX_UNIT` and a different
-home, so it reported a running stack as stopped and exited 0. Both that and
-`start_demo_session.sh` now refuse to run as root, and a supervisor that is not
-found names the path it looked in. **Re-run item 7 through the script.**
+**Item 7 is not passed, and the second attempt found a defect in the stop ladder.**
+The supervisor SIGINT'd each launch's whole process group, but `ros2 launch`
+forwards SIGINT to its nodes itself — so every node received two. The first
+started the arm driver's `hold_on_shutdown`, the second arrived inside
+`_assert_firmware_hold` and ended it as a `KeyboardInterrupt`: both drivers
+exited on signal with the `MOVE-J(current_q)` assertion incomplete, leaving the
+firmware on its last setpoint rather than on the hold the ladder specifies.
+Shutdown is a rung like any other, and this teardown skipped it.
+
+The teardown now signals the launch process only and leaves the group to SIGKILL,
+where nothing is left to interrupt. The first attempt was run under `sudo`, which
+has no `AGX_UNIT` and a different home, so it reported a running stack as stopped
+and exited 0; the operator scripts refuse root now, and a supervisor that is not
+found names the path it looked in.
+
+**Unexplained, and open:** on the second attempt the launches were down at
+12:38:27 and the supervisor was still alive 75 s later, without printing an
+escalation. The teardown now prints `all launches are down`, which separates a
+launch that will not stop from a supervisor that will not exit, and the
+supervisor leaves through `os._exit` once its teardown is complete. Re-run item 7
+and read that line.
 
 Items 2, 4, 5, 8-13 remain open; items 10 and 11 are still the ones that decide
 whether this layer is worth anything.

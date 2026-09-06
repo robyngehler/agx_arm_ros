@@ -12,13 +12,18 @@ against the stack this one holds. Stop it with Ctrl+C here or
     tmux new -A -s demo
     ./scripts/start_demo_stack.py
 """
-from demo_stack import resolve_unit, run_supervisor, supervisor_parser, unit_stack
+from demo_stack import (
+    resolve_unit,
+    run_supervisor_and_exit,
+    supervisor_parser,
+    unit_stack,
+)
 
 
 def main() -> None:
     args = supervisor_parser(__doc__).parse_args()
     spec = unit_stack(resolve_unit(args.unit), stack=args.stack, grippers=args.grippers)
-    raise SystemExit(run_supervisor(spec, args))
+    run_supervisor_and_exit(spec, args)
 
 
 if __name__ == "__main__":

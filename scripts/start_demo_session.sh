@@ -166,10 +166,18 @@ if stack_running; then
     step "stack: already running (supervisor pid $(supervisor_pid))"
 else
     if tmux has-session -t "$SESSION" 2>/dev/null; then
-        fail "a tmux session '$SESSION' exists but holds no running supervisor.
+        # remain-on-exit keeps the pane after a stop, so a normal shutdown leaves
+        # a dead session behind. Clear that one — its output is also in the log
+        # dir. A pane still running something is not ours to close.
+        if [ "$(tmux list-panes -t "$SESSION" -F '#{pane_dead}' 2>/dev/null | head -1)" = 1 ]; then
+            step "stack: clearing the finished '$SESSION' session from the last run"
+            tmux kill-session -t "$SESSION"
+        else
+            fail "a tmux session '$SESSION' exists but holds no running supervisor.
   Look at it, then close it:
       tmux attach -t $SESSION
       tmux kill-session -t $SESSION"
+        fi
     fi
 
     SUPERVISOR="./scripts/start_demo_stack.py"
@@ -180,6 +188,8 @@ else
     note "$SUPERVISOR"
     # remain-on-exit keeps a failed bring-up's output readable in its pane, and
     # gives this script a precise "the supervisor exited" signal to wait on.
+    # tmux writes its own "Pane is dead" line there; remain-on-exit-format, which
+    # would say more, needs tmux 3.4 and this unit has 3.2a.
     tmux new-session -d -s "$SESSION" -c "$REPO_ROOT" "bash -ic '$SUPERVISOR'" \
         \; set-window-option -t "$SESSION" remain-on-exit on
 
