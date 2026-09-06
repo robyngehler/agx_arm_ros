@@ -14,6 +14,17 @@ actions:
 
   # --- Arm anchor moves (Trajectory, MoveIt-planned) -------------------------
 
+  both_arms_to_packing_pose_podest:
+    actiontype_id: Trajectory
+    robot_id: both_arms
+    metadata:
+      planning_group: both_arms
+      source: moveit_planned
+      to_pose: Packing_Pose_Podest
+      velocity_scaling: 0.20
+      acceleration_scaling: 0.20
+      description: "Move both arms to the packing pose on the podest."
+
   both_arms_to_boxing_idle:
     actiontype_id: Trajectory
     robot_id: both_arms

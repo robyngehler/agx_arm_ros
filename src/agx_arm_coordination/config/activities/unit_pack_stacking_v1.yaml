@@ -1,0 +1,15 @@
+# Get Stacking unit out of the working pose back into the packing pose. One-way,
+# the reverse of unit_unpack_stacking_v1.
+#
+# Actions: config/catalogue.d/block_restack_v1.yaml. Anchors: config/arm_config.yaml.
+#
+# Node 10 moves TO the working pose first, so the fold into the packing pose
+# starts from a known pose rather than from wherever a cancelled demo stopped.
+#
+# Arms only, one serial chain.
+activity: unit_pack_stacking_v1
+nodes:
+  - { action_no: 10, action_id: both_arms_to_boxing_idle }
+  - { action_no: 20, action_id: both_arms_to_packing_pose_podest }
+edges:
+  [ [10,20] ]

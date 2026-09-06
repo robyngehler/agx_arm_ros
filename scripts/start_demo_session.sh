@@ -262,7 +262,9 @@ EOF
 EOF
     ;;
     stacking:demo) cat <<'EOF'
+  ./scripts/unpack_stacking_unit.py
   ./scripts/start_block_restack.py
+  ./scripts/pack_stacking_unit.py
 EOF
     ;;
     *:tea)         cat <<'EOF'
