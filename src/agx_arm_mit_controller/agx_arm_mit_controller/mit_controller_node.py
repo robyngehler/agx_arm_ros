@@ -1140,7 +1140,18 @@ class NeroMitControllerNode(Node):
             return False
         return (time.monotonic() - self.last_feedback_monotonic) <= self.feedback_timeout_s
 
-    def _capture_current_reference(self) -> SampledTrajectoryPoint:
+    def _capture_current_reference(self) -> Optional[SampledTrajectoryPoint]:
+        """The measured pose, as something to hold at — or None if it is too old.
+
+        A hold command sends the arm to this pose. Taken from a sample Δt old it
+        sends a moving arm back where it was Δt ago: the dead-man's bound is
+        0.5 s, which at 1 rad/s is 0.5 rad of backwards travel on an abort.
+        Where no fresh sample exists there is no trustworthy pose, and the pose
+        hold belongs to the driver's MOVE-J rung, which reads the pose from the
+        SDK instead.
+        """
+        if time.monotonic() - self.last_feedback_monotonic > self.FRESH_POSE_MAX_AGE_S:
+            return None
         return SampledTrajectoryPoint(
             positions=tuple(self.feedback_positions[joint] for joint in self.joint_names),
             velocities=(0.0,) * len(self.joint_names),
@@ -1470,7 +1481,15 @@ class NeroMitControllerNode(Node):
 
                     elapsed = time.monotonic() - start_time
                     desired = buffer.sample(elapsed)
-                    position_limit_detail = self._position_error_limit_violation(desired)
+                    # Compared at the time the feedback was taken, not now: the
+                    # trajectory advances while a sample is in flight, so a
+                    # measurement Δt old reports joint_speed * Δt of error the
+                    # joint does not have. At the 0.5 s freshness bound that is
+                    # 0.5 rad at 1 rad/s — the whole limit.
+                    feedback_elapsed = max(0.0, self.last_feedback_monotonic - start_time)
+                    position_limit_detail = self._position_error_limit_violation(
+                        buffer.sample(feedback_elapsed)
+                    )
                     if position_limit_detail:
                         self.active_trajectory = None
                         if self._has_fresh_feedback():
@@ -1724,6 +1743,8 @@ class NeroMitControllerNode(Node):
             cmd.kd = []
             cmd.torque = []
 
+            feedback_age = time.monotonic() - self.last_feedback_monotonic
+
             for index, joint_name in enumerate(self.joint_names):
                 # set to hold or trajectory pose
                 current_position = self.feedback_positions[joint_name]
@@ -1732,8 +1753,13 @@ class NeroMitControllerNode(Node):
                 desired_torque = clamp(float(feedforward[index]), self.torque_limit[index])
                 position_error = desired_position - current_position
 
-                # (un)comment the following block to switch a joint to (not) hold if it exceeds the position error limit
-                if math.fabs(position_error) > self.position_error_limit[index]:
+                # Hold a joint that has fallen too far behind the setpoint —
+                # but only while the measurement is recent enough to say so.
+                # An older sample reports the setpoint's own travel as error.
+                if (
+                    math.fabs(position_error) > self.position_error_limit[index]
+                    and feedback_age <= self.FRESH_POSE_MAX_AGE_S
+                ):
                     self.get_logger().warn(
                         f"Joint {joint_name} exceeded position error limit; switching that joint to hold"
                     )
@@ -1759,6 +1785,13 @@ class NeroMitControllerNode(Node):
             self.move_mit_pub.publish(cmd)
             self._publish_reference(reference)
             self._publish_gravity_feedforward(cmd.torque)
+
+    #: How old a sample may be and still say where the arm is *now* — the
+    #: bound on comparing it against a moving setpoint, and on holding at it.
+    #: A different question from the dead-man's ``feedback_timeout_s``, which
+    #: asks whether the arm is alive at all. The arm delivers a complete joint
+    #: update every 7-10 ms, so this is several updates of slack.
+    FRESH_POSE_MAX_AGE_S = 0.05
 
     #: How often the driver hold is re-requested while feedback stays stale. A
     #: service call is not a stream: the firmware holds what MOVE-J gave it, so
@@ -1818,6 +1851,10 @@ class NeroMitControllerNode(Node):
             return False
 
         reference = self._capture_current_reference()
+        if reference is None:
+            # Too old to say where the arm is. The rung below reads the pose
+            # from the SDK rather than from this subscription.
+            return False
         feedforward = self._compute_feedforward(reference)
         if first_non_finite((
             ("p_des", reference.positions),

@@ -10,6 +10,11 @@
     auto_enable_on_trajectory: true
     hold_final_point: true
     gain_ramp_time_s: 1.0
+    # Tracking lag, radians — how far a joint may fall behind the commanded
+    # path before the goal aborts and the joint is held. Not a goal accuracy:
+    # that is joint_goal_tolerance_rad in the coordinator. 0.5 rad is 29 deg,
+    # already generous for a real lag, so a trip here is worth investigating
+    # rather than raising.
     position_error_limit: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
     # Manufacturer maximum joint speeds: J1-J3 180 deg/s, J4-J7 225 deg/s.
     # A clamp below them silently limits what the planner and the time-optimal

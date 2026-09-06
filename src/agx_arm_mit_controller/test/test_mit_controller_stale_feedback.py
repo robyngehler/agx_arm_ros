@@ -64,3 +64,44 @@ def test_stale_feedback_drops_active_trajectory_and_recaptures_hold():
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+
+def test_a_hold_pose_is_never_taken_from_a_sample_that_has_aged():
+    """A hold command sends the arm to the pose it is given.
+
+    Taken from a sample Δt old it sends a moving arm back where it was Δt ago.
+    The dead-man tolerates 0.5 s, which at 1 rad/s is 0.5 rad of backwards
+    travel — the jump observed on the bottom unit after an aborted goal.
+    """
+    rclpy.init()
+    node = NeroMitControllerNode()
+    try:
+        node._feedback_callback(_joint_state([0.4] * 7))
+
+        # Older than a pose may be, younger than the dead-man's bound: the
+        # arm is alive, and the sample still cannot say where it is now.
+        node.last_feedback_monotonic = time.monotonic() - 0.3
+        assert node._has_fresh_feedback()
+
+        assert node._capture_current_reference() is None
+        assert node._publish_stiff_hold_command() is False
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+def test_a_fresh_sample_still_yields_a_hold_pose():
+    rclpy.init()
+    node = NeroMitControllerNode()
+    try:
+        node._feedback_callback(_joint_state([0.4] * 7))
+
+        reference = node._capture_current_reference()
+
+        assert reference is not None
+        assert reference.positions == (0.4,) * 7
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
